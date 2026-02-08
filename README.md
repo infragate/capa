@@ -13,16 +13,29 @@ CAPA is a powerful package manager for AI agents that allows you to define skill
 
 ## Installation
 
-### Prerequisites
+### Quick Install
 
-- Bun v1.0+ (https://bun.sh)
-- macOS or Windows (latest versions)
+**macOS and Linux:**
+```bash
+curl -LsSf https://capa.infragate.ai/install.sh | sh
+```
+
+**Windows:**
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://capa.infragate.ai/install.ps1 | iex"
+```
+
+See [INSTALL.md](INSTALL.md) for advanced installation options and troubleshooting.
 
 ### Build from Source
 
+**Prerequisites:**
+- Bun v1.0+ (https://bun.sh)
+- macOS, Linux, or Windows
+
 ```bash
 # Clone the repository
-git clone <repository-url>
+git clone https://github.com/infragate/capa.git
 cd capa
 
 # Install dependencies
@@ -31,7 +44,7 @@ bun install
 # Build the executable
 bun run build
 
-# The binary will be at ./dist/capa
+# The binary will be at ./dist/capa (or ./dist/capa.exe on Windows)
 # Add it to your PATH for global access
 ```
 
