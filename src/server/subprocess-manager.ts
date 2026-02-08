@@ -46,12 +46,15 @@ export class SubprocessManager {
     serverId: string,
     definition: MCPServerDefinition
   ): Promise<MCPSubprocessInfo> {
+    console.log(`            [SubprocessManager] Getting/creating subprocess for: ${serverId}`);
+    
     // Generate hash of server configuration
     const configHash = this.hashConfig(definition);
 
     // Check if subprocess already exists
     const existing = this.db.getMCPSubprocessByHash(configHash);
     if (existing && existing.pid && this.isProcessRunning(existing.pid)) {
+      console.log(`              Found existing subprocess (PID: ${existing.pid})`);
       let info = this.subprocesses.get(existing.id);
       if (!info) {
         info = {
@@ -67,6 +70,7 @@ export class SubprocessManager {
     }
 
     // Create new subprocess
+    console.log(`              Creating new subprocess...`);
     return await this.createSubprocess(serverId, definition, configHash);
   }
 
@@ -78,6 +82,8 @@ export class SubprocessManager {
     if (!definition.cmd) {
       throw new Error(`Server ${serverId} is remote and cannot be spawned as subprocess`);
     }
+
+    console.log(`              Spawning subprocess: ${definition.cmd} ${(definition.args || []).join(' ')}`);
 
     const info: MCPSubprocessInfo = {
       id: serverId,
@@ -101,6 +107,7 @@ export class SubprocessManager {
     });
 
     info.process = proc;
+    console.log(`              Subprocess started with PID: ${proc.pid}`);
 
     // Store in database
     this.db.upsertMCPSubprocess({
@@ -113,7 +120,7 @@ export class SubprocessManager {
 
     // Set up event handlers
     proc.on('error', (error) => {
-      console.error(`MCP subprocess ${serverId} error:`, error);
+      console.error(`              ✗ MCP subprocess ${serverId} error:`, error);
       info.status = 'crashed';
       this.db.upsertMCPSubprocess({
         id: serverId,
@@ -125,12 +132,12 @@ export class SubprocessManager {
     });
 
     proc.on('exit', (code, signal) => {
-      console.log(`MCP subprocess ${serverId} exited with code ${code}, signal ${signal}`);
+      console.log(`              MCP subprocess ${serverId} exited with code ${code}, signal ${signal}`);
       info.status = 'stopped';
       
       // Auto-restart on crash (not on clean exit)
       if (code !== 0 && code !== null) {
-        console.log(`Auto-restarting ${serverId}...`);
+        console.log(`              Auto-restarting ${serverId}...`);
         setTimeout(() => {
           this.createSubprocess(serverId, definition, configHash);
         }, 1000);
@@ -142,11 +149,11 @@ export class SubprocessManager {
 
     // Capture stdout/stderr for logging
     proc.stdout?.on('data', (data) => {
-      console.log(`[${serverId}] ${data.toString().trim()}`);
+      console.log(`              [${serverId} stdout] ${data.toString().trim()}`);
     });
 
     proc.stderr?.on('data', (data) => {
-      console.error(`[${serverId}] ${data.toString().trim()}`);
+      console.error(`              [${serverId} stderr] ${data.toString().trim()}`);
     });
 
     // For stdio transport, the subprocess is ready immediately
@@ -159,6 +166,7 @@ export class SubprocessManager {
       status: 'running',
     });
 
+    console.log(`              ✓ Subprocess ready (status: ${info.status})`);
     return info;
   }
 

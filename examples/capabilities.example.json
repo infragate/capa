@@ -5,16 +5,14 @@
       "id": "web-researcher",
       "type": "inline",
       "def": {
-        "description": "Web research and information gathering using Brave Search",
-        "requires": ["brave_search"]
+        "content": "---\nname: web-researcher\ndescription: Web research and information gathering using Brave Search\n---\n\n# Web Researcher\n\nThis skill enables comprehensive web research capabilities.\n\n## Required Tools\n\n- brave_search\n\n## Usage\n\nUse this skill when you need to search the web for information."
       }
     },
     {
-      "id": "python-runner",
-      "type": "inline",
+      "id": "find-skills",
+      "type": "github",
       "def": {
-        "description": "Execute Python scripts for data analysis",
-        "requires": ["python_exec"]
+        "repo": "vercel-labs/agent-skills@find-skills"
       }
     }
   ],

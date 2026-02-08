@@ -4,12 +4,13 @@ CAPA is a powerful package manager for AI agents that allows you to define skill
 
 ## Features
 
-- 📦 **Skills Management**: Define and organize agent skills with their required tools
+- 📦 **Skills Management**: Define and organize agent skills using the [skills.sh](https://skills.sh) SKILL.md format
 - 🔧 **Flexible Tool Definitions**: Support for both MCP-based tools and CLI commands
 - 🔐 **Secure Credential Management**: Built-in web UI for managing API keys and sensitive data
 - 🔄 **Session-based Tool Loading**: Dynamically load tools based on active skills
 - 🚀 **Auto-managed MCP Servers**: Automatically spawn and manage child MCP server processes
 - 💾 **SQLite-backed Storage**: Persistent storage for projects, sessions, and credentials
+- 🌐 **Skills.sh Compatible**: Works with the open agent skills ecosystem
 
 ## Installation
 
@@ -71,8 +72,7 @@ Edit `capabilities.json` to define your skills and tools:
       "id": "web-researcher",
       "type": "inline",
       "def": {
-        "description": "Web research and information gathering",
-        "requires": ["web_search", "web_scrape"]
+        "content": "---\nname: web-researcher\ndescription: Web research and information gathering\n---\n\n# Web Researcher\n\nThis skill provides web research capabilities using search and scraping tools."
       }
     }
   ],
@@ -123,7 +123,7 @@ capa install
 ```
 
 This will:
-- Copy skill definitions to client directories (`.cursor/skills/`, `.claude/skills/`)
+- Install skill directories with SKILL.md files to client directories (`.cursor/skills/`, `.claude/skills/`)
 - Start the CAPA server (if not running)
 - Check for required credentials
 - Display your MCP endpoint URL
@@ -156,6 +156,10 @@ Add the MCP endpoint to your client configuration:
 
 ## Capabilities File Structure
 
+The `capabilities.json` (or `capabilities.yaml`) file defines your agent's skills, tools, and MCP servers.
+
+> 📖 For detailed information about skills, see [SKILLS.md](SKILLS.md)
+
 ### Clients
 
 List of MCP clients where skills should be installed:
@@ -166,27 +170,37 @@ List of MCP clients where skills should be installed:
 
 ### Skills
 
-Skills define collections of tools:
+Skills are installed as directories containing `SKILL.md` files (compatible with [skills.sh](https://skills.sh)):
 
+**Inline skill** (embed SKILL.md content directly):
 ```json
 {
-  "id": "skill-name",
-  "type": "inline",  // or "remote"
+  "id": "web-researcher",
+  "type": "inline",
   "def": {
-    "description": "What this skill does",
-    "requires": ["tool1", "tool2"]
+    "content": "---\nname: web-researcher\ndescription: Web research skill\n---\n\n# Web Researcher\n\nUse this for web research tasks."
   }
 }
 ```
 
-For remote skills:
+**GitHub skill** (fetch from skills.sh ecosystem):
 ```json
 {
-  "id": "remote-skill",
+  "id": "find-skills",
+  "type": "github",
+  "def": {
+    "repo": "vercel-labs/agent-skills@find-skills"
+  }
+}
+```
+
+**Remote skill** (fetch SKILL.md from URL):
+```json
+{
+  "id": "custom-skill",
   "type": "remote",
   "def": {
-    "url": "https://example.com/skills/my-skill.json",
-    "requires": []
+    "url": "https://example.com/my-skill/SKILL.md"
   }
 }
 ```
@@ -416,6 +430,8 @@ CAPA stores configuration in `~/.capa/`:
 
 ## Examples
 
+See [examples/capabilities-with-skills.json](examples/capabilities-with-skills.json) for a complete example showcasing all skill types.
+
 ### Example 1: Simple Web Search Skill
 
 ```json
@@ -426,8 +442,7 @@ CAPA stores configuration in `~/.capa/`:
       "id": "web-search",
       "type": "inline",
       "def": {
-        "description": "Web search capability",
-        "requires": ["brave_search"]
+        "content": "---\nname: web-search\ndescription: Web search capability\n---\n\n# Web Search\n\nUse brave_search for web queries."
       }
     }
   ],
@@ -466,8 +481,7 @@ CAPA stores configuration in `~/.capa/`:
       "id": "data-analyst",
       "type": "inline",
       "def": {
-        "description": "Data analysis with Python",
-        "requires": ["pandas_query", "plot_data"]
+        "content": "---\nname: data-analyst\ndescription: Data analysis with Python\n---\n\n# Data Analyst\n\nAnalyze datasets using pandas and matplotlib."
       }
     }
   ],
@@ -540,6 +554,15 @@ netstat -an | findstr 5912  # Windows
 - CAPA automatically restarts crashed servers
 - Check server logs in CAPA output
 - Verify server command and environment variables
+
+See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for more solutions.
+
+## Documentation
+
+- [SKILLS.md](SKILLS.md) - Complete guide to working with skills
+- [QUICKSTART.md](QUICKSTART.md) - Get started in 5 minutes
+- [DEVELOPMENT.md](DEVELOPMENT.md) - Contributing and development guide
+- [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - Common issues and solutions
 
 ## License
 

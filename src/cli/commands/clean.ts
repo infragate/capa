@@ -1,4 +1,4 @@
-import { existsSync, unlinkSync } from 'fs';
+import { existsSync, rmSync, statSync } from 'fs';
 import { detectCapabilitiesFile, generateProjectId } from '../../shared/paths';
 import { loadSettings, getDatabasePath } from '../../shared/config';
 import { CapaDatabase } from '../../db/database';
@@ -33,11 +33,23 @@ export async function cleanCommand(): Promise<void> {
   
   console.log('\n🧹 Cleaning managed files...');
   
+  // Track directories that need to be removed
+  const dirsToRemove = new Set<string>();
+  
   for (const filePath of managedFiles) {
     if (existsSync(filePath)) {
       try {
-        unlinkSync(filePath);
-        console.log(`  ✓ Removed ${filePath}`);
+        const stats = statSync(filePath);
+        
+        if (stats.isDirectory()) {
+          // Remove entire directory
+          rmSync(filePath, { recursive: true, force: true });
+          console.log(`  ✓ Removed directory ${filePath}`);
+        } else {
+          // Remove single file
+          rmSync(filePath);
+          console.log(`  ✓ Removed ${filePath}`);
+        }
       } catch (error) {
         console.error(`  ✗ Failed to remove ${filePath}:`, error);
       }

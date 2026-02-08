@@ -11,15 +11,19 @@ export interface Capabilities {
 
 export interface Skill {
   id: string;
-  type: 'inline' | 'remote';
+  type: 'inline' | 'remote' | 'github';
   def: SkillDefinition;
 }
 
 export interface SkillDefinition {
-  description: string;
-  requires: string[]; // Tool IDs
-  // For remote skills
+  description?: string;
+  requires?: string[]; // Tool IDs
+  // For remote skills (raw SKILL.md URL)
   url?: string;
+  // For GitHub skills (e.g., "vercel-labs/agent-skills@find-skills")
+  repo?: string;
+  // For inline skills (SKILL.md content as string)
+  content?: string;
 }
 
 export interface MCPServer {

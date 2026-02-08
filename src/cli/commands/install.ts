@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync } from 'fs';
+import { existsSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { resolve, join } from 'path';
 import { detectCapabilitiesFile, generateProjectId } from '../../shared/paths';
 import { parseCapabilitiesFile } from '../../shared/capabilities';
@@ -98,19 +98,44 @@ async function installSkills(
   for (const skill of skills) {
     console.log(`  Installing skill: ${skill.id}`);
     
-    let skillContent: string;
+    let skillMarkdown: string;
+    let additionalFiles: Map<string, string> = new Map();
     
-    if (skill.type === 'inline') {
-      // Inline skill - create JSON file
-      skillContent = JSON.stringify(skill.def, null, 2);
+    if (skill.type === 'inline' && skill.def.content) {
+      // Inline skill - use provided SKILL.md content
+      skillMarkdown = skill.def.content;
+    } else if (skill.type === 'github' && skill.def.repo) {
+      // GitHub skill - fetch from repository (e.g., "vercel-labs/agent-skills@find-skills")
+      try {
+        const [repoPath, skillName] = skill.def.repo.split('@');
+        if (!repoPath || !skillName) {
+          throw new Error('Invalid GitHub repo format. Use: owner/repo@skill-name');
+        }
+        
+        // Fetch SKILL.md from GitHub raw content
+        const baseUrl = `https://raw.githubusercontent.com/${repoPath}/main/skills/${skillName}`;
+        const skillMdUrl = `${baseUrl}/SKILL.md`;
+        
+        const response = await fetch(skillMdUrl);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch SKILL.md: ${response.statusText}`);
+        }
+        skillMarkdown = await response.text();
+        
+        // TODO: Fetch additional files if needed (recursively download directory)
+        // For now, we just install SKILL.md
+      } catch (error) {
+        console.error(`  ✗ Failed to fetch skill from GitHub:`, error);
+        continue;
+      }
     } else if (skill.type === 'remote' && skill.def.url) {
-      // Remote skill - fetch content
+      // Remote skill - fetch SKILL.md from URL
       try {
         const response = await fetch(skill.def.url);
         if (!response.ok) {
           throw new Error(`Failed to fetch: ${response.statusText}`);
         }
-        skillContent = await response.text();
+        skillMarkdown = await response.text();
       } catch (error) {
         console.error(`  ✗ Failed to fetch skill ${skill.id}:`, error);
         continue;
@@ -144,34 +169,45 @@ async function installSkills(
       }
       
       // Use the correct skills directory for this agent
-      const clientDir = join(projectPath, agentConfig.skillsDir);
-      const skillPath = join(clientDir, `${skill.id}.json`);
+      const skillsBaseDir = join(projectPath, agentConfig.skillsDir);
+      const skillDir = join(skillsBaseDir, skill.id);
+      const skillMdPath = join(skillDir, 'SKILL.md');
       
-      // Check if file already exists
-      if (existsSync(skillPath)) {
+      // Check if directory already exists
+      if (existsSync(skillDir)) {
         // Check if it's managed by capa
         const managedFiles = db.getManagedFiles(projectId);
-        if (!managedFiles.includes(skillPath)) {
+        if (!managedFiles.includes(skillDir)) {
           console.error(
-            `  ✗ File already exists and is not managed by capa: ${skillPath}`
+            `  ✗ Directory already exists and is not managed by capa: ${skillDir}`
           );
           console.error('    Please delete it manually and run "capa install" again.');
           process.exit(1);
         }
+        // Clean up existing directory
+        rmSync(skillDir, { recursive: true, force: true });
       }
       
-      // Create directory if needed
-      if (!existsSync(clientDir)) {
-        mkdirSync(clientDir, { recursive: true });
+      // Create skill directory
+      mkdirSync(skillDir, { recursive: true });
+      
+      // Write SKILL.md file
+      writeFileSync(skillMdPath, skillMarkdown, 'utf-8');
+      
+      // Write any additional files
+      for (const [filePath, content] of additionalFiles) {
+        const fullPath = join(skillDir, filePath);
+        const fileDir = join(fullPath, '..');
+        if (!existsSync(fileDir)) {
+          mkdirSync(fileDir, { recursive: true });
+        }
+        writeFileSync(fullPath, content, 'utf-8');
       }
       
-      // Write skill file
-      await Bun.write(skillPath, skillContent);
+      // Track skill directory as managed (not individual files)
+      db.addManagedFile(projectId, skillDir);
       
-      // Track as managed file
-      db.addManagedFile(projectId, skillPath);
-      
-      console.log(`    ✓ Installed to ${skillPath}`);
+      console.log(`    ✓ Installed to ${skillDir}`);
     }
   }
 }

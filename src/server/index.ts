@@ -66,8 +66,11 @@ class CapaServer {
     const url = new URL(request.url);
     const path = url.pathname;
 
+    console.log(`[${new Date().toISOString()}] ${request.method} ${path}`);
+
     // Health check
     if (path === '/health') {
+      console.log('  → Health check');
       return new Response(
         JSON.stringify({ status: 'ok', version: CURRENT_VERSION }),
         { headers: { 'Content-Type': 'application/json' } }
@@ -76,11 +79,13 @@ class CapaServer {
 
     // Web UI for credentials
     if (path === '/ui' || path.startsWith('/ui/')) {
+      console.log('  → Web UI');
       return this.handleWebUI(request);
     }
 
     // API endpoints
     if (path.startsWith('/api/')) {
+      console.log('  → API endpoint');
       return this.handleAPI(request);
     }
 
@@ -88,9 +93,11 @@ class CapaServer {
     const mcpMatch = path.match(/^\/([^/]+)\/mcp$/);
     if (mcpMatch) {
       const projectId = mcpMatch[1];
+      console.log(`  → MCP endpoint for project: ${projectId}`);
       return this.handleMCP(request, projectId);
     }
 
+    console.log('  → 404 Not Found');
     return new Response('Not Found', { status: 404 });
   }
 
@@ -139,13 +146,18 @@ class CapaServer {
 
   private async handleProjectConfigure(projectId: string, request: Request): Promise<Response> {
     try {
+      console.log(`  [API] Configure project: ${projectId}`);
       const capabilities: Capabilities = await request.json();
+      console.log(`    Skills: ${capabilities.skills.map(s => s.id).join(', ')}`);
+      console.log(`    Tools: ${capabilities.tools.length}`);
+      console.log(`    Servers: ${capabilities.servers.length}`);
 
       // Store capabilities
       this.sessionManager.setProjectCapabilities(projectId, capabilities);
 
       // Extract all required variables
       const requiredVars = extractAllVariables(capabilities);
+      console.log(`    Required variables: ${requiredVars.join(', ')}`);
 
       // Check if all variables are set
       const missingVars: string[] = [];
@@ -157,6 +169,7 @@ class CapaServer {
       }
 
       if (missingVars.length > 0) {
+        console.log(`    ⚠ Missing variables: ${missingVars.join(', ')}`);
         const credentialsUrl = `http://${this.settings.server.host}:${this.settings.server.port}/ui?project=${projectId}`;
         
         return new Response(
@@ -173,6 +186,7 @@ class CapaServer {
         );
       }
 
+      console.log(`    ✓ Project configured successfully`);
       return new Response(
         JSON.stringify({
           success: true,
@@ -184,6 +198,7 @@ class CapaServer {
         }
       );
     } catch (error: any) {
+      console.error(`    ✗ Error: ${error.message}`);
       return new Response(
         JSON.stringify({ error: error.message }),
         {
@@ -195,8 +210,10 @@ class CapaServer {
   }
 
   private async handleGetVariables(projectId: string): Promise<Response> {
+    console.log(`  [API] Get variables for project: ${projectId}`);
     const capabilities = this.sessionManager.getProjectCapabilities(projectId);
     if (!capabilities) {
+      console.log(`    ✗ Project not configured`);
       return new Response(
         JSON.stringify({ error: 'Project not configured' }),
         { status: 404, headers: { 'Content-Type': 'application/json' } }
@@ -205,6 +222,7 @@ class CapaServer {
 
     const requiredVars = extractAllVariables(capabilities);
     const values = this.db.getAllVariables(projectId);
+    console.log(`    Required: ${requiredVars.length}, Set: ${Object.keys(values).length}`);
 
     return new Response(
       JSON.stringify({
@@ -217,17 +235,21 @@ class CapaServer {
 
   private async handleSetVariables(projectId: string, request: Request): Promise<Response> {
     try {
+      console.log(`  [API] Set variables for project: ${projectId}`);
       const variables: Record<string, string> = await request.json();
 
       for (const [key, value] of Object.entries(variables)) {
+        console.log(`    Setting: ${key} = ${value.substring(0, 20)}${value.length > 20 ? '...' : ''}`);
         this.db.setVariable(projectId, key, value);
       }
 
+      console.log(`    ✓ Set ${Object.keys(variables).length} variable(s)`);
       return new Response(
         JSON.stringify({ success: true }),
         { headers: { 'Content-Type': 'application/json' } }
       );
     } catch (error: any) {
+      console.error(`    ✗ Error: ${error.message}`);
       return new Response(
         JSON.stringify({ error: error.message }),
         {
@@ -243,9 +265,11 @@ class CapaServer {
     let mcpServer = this.mcpServers.get(projectId);
     
     if (!mcpServer) {
+      console.log(`  [MCP] Creating new MCP server for project: ${projectId}`);
       // Get project from database
       const project = this.db.getProject(projectId);
       if (!project) {
+        console.log(`    ✗ Project not found`);
         return new Response('Project not found', { status: 404 });
       }
 
@@ -259,12 +283,14 @@ class CapaServer {
       );
 
       this.mcpServers.set(projectId, mcpServer);
+      console.log(`    ✓ MCP server created`);
     }
 
     // Handle MCP protocol via HTTP (simplified without SSE)
     if (request.method === 'POST') {
       try {
         const message = await request.json();
+        console.log(`  [MCP] ${message.method || 'notification'} (id: ${message.id || 'none'})`);
         
         // Handle JSON-RPC message
         const result = await mcpServer.handleMessage(message);
@@ -283,6 +309,7 @@ class CapaServer {
           }
         );
       } catch (error: any) {
+        console.error(`  [MCP] ✗ Error: ${error.message}`);
         return new Response(
           JSON.stringify({ 
             jsonrpc: '2.0',

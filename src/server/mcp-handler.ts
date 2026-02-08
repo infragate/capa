@@ -287,9 +287,11 @@ export class CapaMCPServer {
   async handleMessage(message: any): Promise<any> {
     // Handle initialization
     if (message.method === 'initialize') {
+      console.log(`    [MCP Handler] Initialize request`);
       // Create session for this connection
       const session = this.sessionManager.createSession(this.projectId);
       this.sessionId = session.sessionId;
+      console.log(`      Session ID: ${this.sessionId}`);
 
       return {
         jsonrpc: '2.0',
@@ -309,6 +311,7 @@ export class CapaMCPServer {
 
     // Handle initialized notification
     if (message.method === 'initialized') {
+      console.log(`    [MCP Handler] Initialized notification`);
       return {
         jsonrpc: '2.0',
         result: {},
@@ -317,6 +320,7 @@ export class CapaMCPServer {
 
     // Handle tools/list
     if (message.method === 'tools/list') {
+      console.log(`    [MCP Handler] List tools request`);
       const tools: MCPTool[] = [];
 
       // Always include setup_tools
@@ -352,6 +356,7 @@ export class CapaMCPServer {
         }
       }
 
+      console.log(`      Returning ${tools.length} tool(s): ${tools.map(t => t.name).join(', ')}`);
       return {
         jsonrpc: '2.0',
         id: message.id,
@@ -364,6 +369,8 @@ export class CapaMCPServer {
     // Handle tools/call
     if (message.method === 'tools/call') {
       const { name, arguments: args } = message.params;
+      console.log(`    [MCP Handler] Call tool: ${name}`);
+      console.log(`      Arguments: ${JSON.stringify(args)}`);
 
       // Handle setup_tools
       if (name === 'setup_tools') {
@@ -372,10 +379,13 @@ export class CapaMCPServer {
           if (!this.sessionId) {
             const session = this.sessionManager.createSession(this.projectId);
             this.sessionId = session.sessionId;
+            console.log(`      Created session: ${this.sessionId}`);
           }
 
           // Setup tools
+          console.log(`      Activating skills: ${args.skills.join(', ')}`);
           const toolIds = this.sessionManager.setupTools(this.sessionId, args.skills);
+          console.log(`      ✓ Loaded ${toolIds.length} tool(s): ${toolIds.join(', ')}`);
 
           return {
             jsonrpc: '2.0',
@@ -395,6 +405,7 @@ export class CapaMCPServer {
             },
           };
         } catch (error: any) {
+          console.error(`      ✗ Error: ${error.message}`);
           return {
             jsonrpc: '2.0',
             id: message.id,
@@ -408,6 +419,7 @@ export class CapaMCPServer {
 
       // Handle other tools
       if (!this.sessionId) {
+        console.log(`      ✗ No active session`);
         return {
           jsonrpc: '2.0',
           id: message.id,
@@ -420,6 +432,7 @@ export class CapaMCPServer {
 
       const session = this.sessionManager.getSession(this.sessionId);
       if (!session) {
+        console.log(`      ✗ Session not found`);
         return {
           jsonrpc: '2.0',
           id: message.id,
@@ -436,6 +449,7 @@ export class CapaMCPServer {
       // Find tool definition
       const toolDef = this.sessionManager.getToolDefinition(this.projectId, name);
       if (!toolDef) {
+        console.log(`      ✗ Tool not found`);
         return {
           jsonrpc: '2.0',
           id: message.id,
@@ -446,20 +460,26 @@ export class CapaMCPServer {
         };
       }
 
+      console.log(`      Tool type: ${toolDef.type}`);
+
       // Execute tool based on type
       let result: any;
       try {
         if (toolDef.type === 'command') {
+          console.log(`      Executing command tool...`);
           const executor = new CommandToolExecutor(this.db, this.projectId, this.projectPath);
           result = await executor.execute(
             name,
             toolDef.def as ToolCommandDefinition,
             args as Record<string, any>
           );
+          console.log(`      ✓ Command executed, success: ${result.success}`);
         } else if (toolDef.type === 'mcp') {
+          console.log(`      Executing MCP tool...`);
           const mcpDef = toolDef.def as ToolMCPDefinition;
           const capabilities = this.sessionManager.getProjectCapabilities(this.projectId);
           if (!capabilities) {
+            console.log(`      ✗ Project capabilities not found`);
             return {
               jsonrpc: '2.0',
               id: message.id,
@@ -474,6 +494,7 @@ export class CapaMCPServer {
           const serverId = mcpDef.server.replace('@', '');
           const serverDef = capabilities.servers.find((s) => s.id === serverId);
           if (!serverDef) {
+            console.log(`      ✗ Server not found: ${serverId}`);
             return {
               jsonrpc: '2.0',
               id: message.id,
@@ -484,8 +505,10 @@ export class CapaMCPServer {
             };
           }
 
+          console.log(`      Using MCP server: ${serverId}`);
           const proxy = new MCPProxy(this.db, this.projectId, this.subprocessManager);
           result = await proxy.executeTool(name, mcpDef, serverDef.def, args as Record<string, any>);
+          console.log(`      ✓ MCP tool executed`);
         }
 
         return {
@@ -501,6 +524,7 @@ export class CapaMCPServer {
           },
         };
       } catch (error: any) {
+        console.error(`      ✗ Tool execution error: ${error.message}`);
         return {
           jsonrpc: '2.0',
           id: message.id,
@@ -513,6 +537,7 @@ export class CapaMCPServer {
     }
 
     // Unknown method
+    console.log(`    [MCP Handler] ✗ Unknown method: ${message.method}`);
     return {
       jsonrpc: '2.0',
       id: message.id,

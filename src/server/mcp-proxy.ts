@@ -32,6 +32,10 @@ export class MCPProxy {
     serverDefinition: MCPServerDefinition,
     args: Record<string, any>
   ): Promise<MCPToolResult> {
+    console.log(`        [MCPProxy] Executing tool: ${toolId} on server: ${definition.server}`);
+    console.log(`          Tool name: ${definition.tool}`);
+    console.log(`          Args: ${JSON.stringify(args)}`);
+    
     // Resolve variables in server definition
     const resolvedServerDef = resolveVariablesInObject(
       serverDefinition,
@@ -41,6 +45,7 @@ export class MCPProxy {
 
     // Check for unresolved variables
     if (hasUnresolvedVariables(resolvedServerDef)) {
+      console.error(`          ✗ Unresolved variables in server configuration`);
       return {
         success: false,
         error: 'Server configuration has unresolved variables. Please configure credentials.',
@@ -51,6 +56,7 @@ export class MCPProxy {
     const client = await this.getOrCreateClient(definition.server, resolvedServerDef);
 
     if (!client) {
+      console.error(`          ✗ Failed to get client`);
       return {
         success: false,
         error: `Failed to connect to MCP server: ${definition.server}`,
@@ -58,17 +64,20 @@ export class MCPProxy {
     }
 
     try {
+      console.log(`          Calling tool on MCP server...`);
       // Call the tool
       const result = await client.callTool({
         name: definition.tool,
         arguments: args,
       });
 
+      console.log(`          ✓ Tool call succeeded`);
       return {
         success: true,
         result: result.content,
       };
     } catch (error: any) {
+      console.error(`          ✗ Tool call failed: ${error.message}`);
       return {
         success: false,
         error: error.message || 'Tool execution failed',
@@ -107,8 +116,11 @@ export class MCPProxy {
     // Check if client already exists
     const existing = this.clients.get(serverId);
     if (existing) {
+      console.log(`          Using existing MCP client for server: ${serverId}`);
       return existing;
     }
+
+    console.log(`          Creating new MCP client for server: ${serverId}`);
 
     // For local subprocess-based servers
     if (serverDefinition.cmd) {
@@ -118,7 +130,7 @@ export class MCPProxy {
     // For remote HTTP-based servers
     if (serverDefinition.url) {
       // TODO: Implement HTTP client for remote MCP servers
-      console.warn('Remote HTTP MCP servers not yet implemented');
+      console.warn('          Remote HTTP MCP servers not yet implemented');
       return null;
     }
 
@@ -130,6 +142,10 @@ export class MCPProxy {
     serverDefinition: MCPServerDefinition
   ): Promise<Client | null> {
     try {
+      console.log(`          Creating stdio client for: ${serverId}`);
+      console.log(`            Command: ${serverDefinition.cmd}`);
+      console.log(`            Args: ${JSON.stringify(serverDefinition.args || [])}`);
+      
       // Get or create subprocess
       const subprocess = await this.subprocessManager.getOrCreateSubprocess(
         serverId,
@@ -137,9 +153,11 @@ export class MCPProxy {
       );
 
       if (subprocess.status !== 'running' || !subprocess.process) {
-        console.error(`Subprocess ${serverId} is not running`);
+        console.error(`            ✗ Subprocess ${serverId} is not running (status: ${subprocess.status})`);
         return null;
       }
+
+      console.log(`            Subprocess running with PID: ${subprocess.process.pid}`);
 
       // Create stdio transport
       const transport = new StdioClientTransport({
@@ -159,12 +177,14 @@ export class MCPProxy {
         }
       );
 
+      console.log(`            Connecting client...`);
       await client.connect(transport);
 
       this.clients.set(serverId, client);
+      console.log(`            ✓ Client connected`);
       return client;
     } catch (error) {
-      console.error(`Failed to create MCP client for ${serverId}:`, error);
+      console.error(`            ✗ Failed to create MCP client for ${serverId}:`, error);
       return null;
     }
   }

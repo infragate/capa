@@ -29,14 +29,18 @@ export class CommandToolExecutor {
     definition: ToolCommandDefinition,
     args: Record<string, any>
   ): Promise<CommandExecutionResult> {
+    console.log(`        [CommandExecutor] Executing tool: ${toolId}`);
+    console.log(`          Args: ${JSON.stringify(args)}`);
+    
     // Check if tool needs initialization
     const initState = this.db.getToolInitState(this.projectId, toolId);
     
     if (definition.init && (!initState || !initState.initialized)) {
-      console.log(`Initializing tool ${toolId}...`);
+      console.log(`          Initializing tool ${toolId}...`);
       const initResult = await this.runCommand(definition.init, {});
       
       if (!initResult.success) {
+        console.error(`          ✗ Init failed: ${initResult.error}`);
         // Store error
         this.db.setToolInitialized(this.projectId, toolId, initResult.error || 'Init failed');
         return {
@@ -45,9 +49,11 @@ export class CommandToolExecutor {
         };
       }
       
+      console.log(`          ✓ Tool initialized`);
       // Mark as initialized
       this.db.setToolInitialized(this.projectId, toolId, null);
     } else if (initState && initState.last_error) {
+      console.error(`          ✗ Tool initialization previously failed: ${initState.last_error}`);
       // Tool initialization previously failed
       return {
         success: false,
@@ -56,7 +62,13 @@ export class CommandToolExecutor {
     }
 
     // Run the actual command
-    return await this.runCommand(definition.run, args);
+    const result = await this.runCommand(definition.run, args);
+    if (result.success) {
+      console.log(`          ✓ Command succeeded`);
+    } else {
+      console.error(`          ✗ Command failed: ${result.error}`);
+    }
+    return result;
   }
 
   private async runCommand(
@@ -91,6 +103,9 @@ export class CommandToolExecutor {
     // Determine working directory
     const cwd = spec.dir ? resolve(this.projectPath, spec.dir) : this.projectPath;
 
+    console.log(`          Running command: ${cmd}`);
+    console.log(`          Working directory: ${cwd}`);
+
     // Execute command
     return new Promise((resolve) => {
       const proc = spawn(cmd, {
@@ -112,6 +127,7 @@ export class CommandToolExecutor {
       });
 
       proc.on('error', (error) => {
+        console.error(`          Process error: ${error.message}`);
         resolve({
           success: false,
           error: error.message,
@@ -120,14 +136,22 @@ export class CommandToolExecutor {
 
       proc.on('exit', (code) => {
         if (code === 0) {
+          const output = (stdout || stderr).replace(/\n$/, '');
+          console.log(`          Exit code: 0`);
+          if (output) {
+            console.log(`          Output: ${output.substring(0, 200)}${output.length > 200 ? '...' : ''}`);
+          }
           resolve({
             success: true,
-            result: stdout || stderr,
+            result: output,
           });
         } else {
+          const error = (stderr || stdout || `Command exited with code ${code}`).replace(/\n$/, '');
+          console.error(`          Exit code: ${code}`);
+          console.error(`          Error: ${error.substring(0, 200)}${error.length > 200 ? '...' : ''}`);
           resolve({
             success: false,
-            error: stderr || stdout || `Command exited with code ${code}`,
+            error: error,
           });
         }
       });
