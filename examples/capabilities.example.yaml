@@ -1,0 +1,49 @@
+clients:
+  - cursor
+  - claude-code
+
+skills:
+  - id: web-researcher
+    type: inline
+    def:
+      description: Web research and information gathering using Brave Search
+      requires:
+        - brave_search
+
+  - id: python-runner
+    type: inline
+    def:
+      description: Execute Python scripts for data analysis
+      requires:
+        - python_exec
+
+servers:
+  - id: brave-search-server
+    type: mcp
+    def:
+      cmd: npx
+      args:
+        - -y
+        - "@modelcontextprotocol/server-brave-search"
+      env:
+        BRAVE_API_KEY: ${BraveApiKey}
+
+tools:
+  - id: brave_search
+    type: mcp
+    def:
+      server: "@brave-search-server"
+      tool: brave_web_search
+
+  - id: python_exec
+    type: command
+    def:
+      init:
+        cmd: python --version
+      run:
+        args:
+          - name: code
+            type: string
+            description: Python code to execute
+            required: true
+        cmd: python -c "{code}"

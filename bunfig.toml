@@ -1,0 +1,6 @@
+[install]
+optional = true
+dev = true
+peer = true
+
+[install.scopes]

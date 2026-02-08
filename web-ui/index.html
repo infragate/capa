@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CAPA - Credentials Configuration</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    .container {
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      max-width: 600px;
+      width: 100%;
+      padding: 40px;
+    }
+
+    h1 {
+      color: #333;
+      margin-bottom: 10px;
+      font-size: 28px;
+    }
+
+    .project-info {
+      color: #666;
+      margin-bottom: 30px;
+      font-size: 14px;
+    }
+
+    .info-box {
+      background: #f0f4ff;
+      border-left: 4px solid #667eea;
+      padding: 15px;
+      margin-bottom: 30px;
+      border-radius: 4px;
+    }
+
+    .info-box p {
+      color: #555;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    .form-group {
+      margin-bottom: 25px;
+    }
+
+    label {
+      display: block;
+      color: #333;
+      font-weight: 600;
+      margin-bottom: 8px;
+      font-size: 14px;
+    }
+
+    input[type="text"],
+    input[type="password"] {
+      width: 100%;
+      padding: 12px 15px;
+      border: 2px solid #e0e0e0;
+      border-radius: 6px;
+      font-size: 14px;
+      transition: border-color 0.3s;
+    }
+
+    input[type="text"]:focus,
+    input[type="password"]:focus {
+      outline: none;
+      border-color: #667eea;
+    }
+
+    .btn {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border: none;
+      padding: 14px 30px;
+      border-radius: 6px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      width: 100%;
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+
+    .btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 10px 20px rgba(102, 126, 234, 0.4);
+    }
+
+    .btn:active {
+      transform: translateY(0);
+    }
+
+    .btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .message {
+      padding: 12px 15px;
+      border-radius: 6px;
+      margin-bottom: 20px;
+      font-size: 14px;
+    }
+
+    .message.error {
+      background: #fee;
+      color: #c33;
+      border: 1px solid #fcc;
+    }
+
+    .message.success {
+      background: #efe;
+      color: #3c3;
+      border: 1px solid #cfc;
+    }
+
+    .no-vars {
+      text-align: center;
+      padding: 40px;
+      color: #666;
+    }
+
+    .no-vars h2 {
+      color: #333;
+      margin-bottom: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🔑 Credentials Configuration</h1>
+    <p class="project-info">Project: <strong id="project-name"></strong></p>
+
+    <div id="message-container"></div>
+
+    <div id="no-vars-message" class="no-vars" style="display: none;">
+      <h2>✓ All Set!</h2>
+      <p>No credentials are required for this project.</p>
+    </div>
+
+    <div id="form-container">
+      <div class="info-box">
+        <p>Please provide the required credentials and configuration variables for your project. These values will be stored securely and used to connect to your tools and services.</p>
+      </div>
+
+      <form id="credentials-form">
+        <div id="variables-container"></div>
+        <button type="submit" class="btn" id="save-btn">Save Credentials</button>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    const urlParams = new URLSearchParams(window.location.search);
+    const projectId = urlParams.get('project');
+    const returnUrl = urlParams.get('return');
+
+    document.getElementById('project-name').textContent = projectId || 'Unknown';
+
+    async function loadVariables() {
+      try {
+        const response = await fetch(`/api/projects/${projectId}/variables`);
+        const data = await response.json();
+
+        if (data.required.length === 0) {
+          document.getElementById('form-container').style.display = 'none';
+          document.getElementById('no-vars-message').style.display = 'block';
+          return;
+        }
+
+        const container = document.getElementById('variables-container');
+        container.innerHTML = '';
+
+        for (const varName of data.required) {
+          const value = data.values[varName] || '';
+          
+          const formGroup = document.createElement('div');
+          formGroup.className = 'form-group';
+
+          const label = document.createElement('label');
+          label.textContent = varName;
+          label.setAttribute('for', `var-${varName}`);
+
+          const input = document.createElement('input');
+          input.type = 'password';
+          input.id = `var-${varName}`;
+          input.name = varName;
+          input.value = value;
+          input.placeholder = `Enter ${varName}`;
+          input.required = true;
+
+          formGroup.appendChild(label);
+          formGroup.appendChild(input);
+          container.appendChild(formGroup);
+        }
+      } catch (error) {
+        showMessage('Failed to load variables: ' + error.message, 'error');
+      }
+    }
+
+    document.getElementById('credentials-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      const formData = new FormData(e.target);
+      const variables = {};
+      
+      for (const [key, value] of formData.entries()) {
+        variables[key] = value;
+      }
+
+      const saveBtn = document.getElementById('save-btn');
+      saveBtn.disabled = true;
+      saveBtn.textContent = 'Saving...';
+
+      try {
+        const response = await fetch(`/api/projects/${projectId}/variables`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(variables),
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to save credentials');
+        }
+
+        showMessage('✓ Credentials saved successfully!', 'success');
+        
+        setTimeout(() => {
+          if (returnUrl) {
+            window.location.href = returnUrl;
+          } else {
+            window.close();
+          }
+        }, 1500);
+      } catch (error) {
+        showMessage('Failed to save credentials: ' + error.message, 'error');
+        saveBtn.disabled = false;
+        saveBtn.textContent = 'Save Credentials';
+      }
+    });
+
+    function showMessage(text, type) {
+      const container = document.getElementById('message-container');
+      const message = document.createElement('div');
+      message.className = `message ${type}`;
+      message.textContent = text;
+      container.innerHTML = '';
+      container.appendChild(message);
+    }
+
+    loadVariables();
+  </script>
+</body>
+</html>
