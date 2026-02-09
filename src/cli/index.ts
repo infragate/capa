@@ -6,6 +6,8 @@ import { stopCommand } from './commands/stop';
 import { restartCommand } from './commands/restart';
 import { installCommand } from './commands/install';
 import { cleanCommand } from './commands/clean';
+import { addCommand } from './commands/add';
+import { VERSION } from '../version';
 
 // Check if running as server
 if (process.argv[2] === '__server__') {
@@ -21,7 +23,7 @@ if (process.argv[2] === '__server__') {
 program
   .name('capa')
   .description('An agentic skills and tools package manager')
-  .version('1.0.0');
+  .version(VERSION);
 
 program
   .command('init')
@@ -37,6 +39,14 @@ program
   .description('Install skills and configure tools')
   .action(async () => {
     await installCommand();
+  });
+
+program
+  .command('add <source>')
+  .description('Add a skill from various sources (GitHub, GitLab, Git URL, local path)')
+  .option('--id <id>', 'Custom skill ID (defaults to auto-generated from source)')
+  .action(async (source: string, options) => {
+    await addCommand(source, options);
   });
 
 program

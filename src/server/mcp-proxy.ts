@@ -4,6 +4,7 @@ import type { CapaDatabase } from '../db/database';
 import type { MCPServerDefinition, ToolMCPDefinition } from '../types/capabilities';
 import { SubprocessManager } from './subprocess-manager';
 import { resolveVariablesInObject, hasUnresolvedVariables } from '../shared/variable-resolver';
+import { VERSION } from '../version';
 
 export interface MCPToolResult {
   success: boolean;
@@ -173,7 +174,7 @@ export class MCPProxy {
       const client = new Client(
         {
           name: `capa-proxy-${serverId}`,
-          version: '1.0.0',
+          version: VERSION,
         },
         {
           capabilities: {},

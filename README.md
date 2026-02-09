@@ -1,6 +1,6 @@
 # CAPA: An Agentic Skills and Tools Package Manager
 
-CAPA is a powerful package manager for AI agents that allows you to define skills and tools, manage credentials, and seamlessly integrate with MCP (Model Context Protocol) clients like Cursor and Claude Desktop.
+CAPA is a powerful package manager for AI agents that allows you to define skills and tools, manage credentials, and seamlessly integrate with MCP (Model Context Protocol) clients like Cursor and Claude.
 
 ## Features
 
@@ -11,6 +11,7 @@ CAPA is a powerful package manager for AI agents that allows you to define skill
 - 🚀 **Auto-managed MCP Servers**: Automatically spawn and manage child MCP server processes
 - 💾 **SQLite-backed Storage**: Persistent storage for projects, sessions, and credentials
 - 🌐 **Skills.sh Compatible**: Works with the open agent skills ecosystem
+- ⚡ **npx skills Proxy**: `capa add` supports all `npx skills add` formats (GitHub, GitLab, Git URLs, local paths)
 
 ## Installation
 
@@ -60,7 +61,18 @@ capa init --format json
 
 This creates a `capabilities.json` file (or `capabilities.yaml` if you prefer YAML).
 
-### 2. Define Your Capabilities
+### 2. Add Skills
+
+You can add skills from various sources:
+
+```bash
+# Add from GitHub (compatible with npx skills add)
+capa add vercel-labs/agent-skills
+
+# Or manually define your capabilities
+```
+
+### 3. Define Your Capabilities (Alternative to `capa add`)
 
 Edit `capabilities.json` to define your skills and tools:
 
@@ -116,11 +128,13 @@ Edit `capabilities.json` to define your skills and tools:
 }
 ```
 
-### 3. Install
+### 4. Install
 
 ```bash
 capa install
 ```
+
+> **Note**: If you used `capa add`, the installation happens automatically. You only need to run `capa install` manually if you edited the capabilities file directly.
 
 This will:
 - Install skill directories with SKILL.md files to client directories (`.cursor/skills/`, `.claude/skills/`)
@@ -128,7 +142,7 @@ This will:
 - Check for required credentials
 - Display your MCP endpoint URL
 
-### 4. Configure Credentials (if needed)
+### 5. Configure Credentials (if needed)
 
 If your tools require credentials, CAPA will display a URL:
 
@@ -139,7 +153,7 @@ Please open: http://localhost:5912/ui?project=my-project-a3f2
 
 Open this URL in your browser and enter the required values (e.g., API keys).
 
-### 5. Add to Your MCP Client
+### 6. Add to Your MCP Client
 
 Add the MCP endpoint to your client configuration:
 
@@ -306,6 +320,37 @@ capa init --format json   # Creates capabilities.json
 capa init --format yaml   # Creates capabilities.yaml
 ```
 
+### `capa add`
+
+Add a skill from various sources (GitHub, GitLab, Git URL, local path).
+
+```bash
+# GitHub short syntax
+capa add vercel-labs/agent-skills
+
+# Full GitHub URL
+capa add https://github.com/vercel-labs/agent-skills
+
+# Direct path to a skill in a repo
+capa add https://github.com/vercel-labs/agent-skills/tree/main/skills/web-design-guidelines
+
+# GitLab URL
+capa add https://gitlab.com/org/repo
+
+# Any git URL
+capa add git@github.com:vercel-labs/agent-skills.git
+
+# Local path
+capa add ./my-local-skills
+
+# Custom skill ID
+capa add vercel-labs/agent-skills --id my-custom-skill
+```
+
+This command:
+1. Adds the skill to your capabilities file
+2. Automatically runs `capa install` to install the skill
+
 ### `capa install`
 
 Install skills and configure tools.
@@ -430,7 +475,9 @@ CAPA stores configuration in `~/.capa/`:
 
 ## Examples
 
-See [examples/capabilities-with-skills.json](examples/capabilities-with-skills.json) for a complete example showcasing all skill types.
+See the following examples:
+- [examples/capabilities-with-skills.json](examples/capabilities-with-skills.json) - Complete example showcasing all skill types
+- [examples/add-command-examples.md](examples/add-command-examples.md) - Comprehensive guide to using `capa add` with various source formats
 
 ### Example 1: Simple Web Search Skill
 
@@ -561,6 +608,7 @@ See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for more solutions.
 
 - [SKILLS.md](SKILLS.md) - Complete guide to working with skills
 - [QUICKSTART.md](QUICKSTART.md) - Get started in 5 minutes
+- [examples/add-command-examples.md](examples/add-command-examples.md) - Comprehensive guide to `capa add`
 - [DEVELOPMENT.md](DEVELOPMENT.md) - Contributing and development guide
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - Common issues and solutions
 

@@ -5,8 +5,7 @@ import { createDefaultCapabilities, writeCapabilitiesFile } from '../../shared/c
 import type { CapabilitiesFormat } from '../../types/capabilities';
 import { ensureCapaDir } from '../../shared/config';
 import { ensureServer } from '../utils/server-manager';
-
-const CURRENT_VERSION = '1.0.0';
+import { VERSION } from '../../version';
 
 export async function initCommand(format: CapabilitiesFormat): Promise<void> {
   const projectPath = process.cwd();
@@ -27,5 +26,5 @@ export async function initCommand(format: CapabilitiesFormat): Promise<void> {
   console.log(`✓ Created ${capabilitiesPath}`);
   
   // Ensure server is running
-  await ensureServer(CURRENT_VERSION);
+  await ensureServer(VERSION);
 }

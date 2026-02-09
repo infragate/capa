@@ -3,9 +3,10 @@ import { join } from 'path';
 import { existsSync } from 'fs';
 import { mkdir } from 'fs/promises';
 import type { ServerSettings } from '../types/database';
+import { VERSION } from '../version';
 
 const DEFAULT_SETTINGS: ServerSettings = {
-  version: '1.0.0',
+  version: VERSION,
   server: {
     port: 5912,
     host: '127.0.0.1',

@@ -14,6 +14,7 @@ import { CommandToolExecutor } from './tool-executor';
 import { MCPProxy } from './mcp-proxy';
 import { SubprocessManager } from './subprocess-manager';
 import { extractAllVariables } from '../shared/variable-resolver';
+import { VERSION } from '../version';
 
 export class CapaMCPServer {
   private server: Server;
@@ -43,7 +44,7 @@ export class CapaMCPServer {
     this.server = new Server(
       {
         name: `capa-${projectId}`,
-        version: '1.0.0',
+        version: VERSION,
       },
       {
         capabilities: {
@@ -383,7 +384,7 @@ export class CapaMCPServer {
           },
           serverInfo: {
             name: `capa-${this.projectId}`,
-            version: '1.0.0',
+            version: VERSION,
           },
         },
       };

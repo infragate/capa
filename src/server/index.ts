@@ -9,8 +9,7 @@ import { SubprocessManager } from './subprocess-manager';
 import { CapaMCPServer } from './mcp-handler';
 import type { Capabilities } from '../types/capabilities';
 import { extractAllVariables } from '../shared/variable-resolver';
-
-const CURRENT_VERSION = '1.0.0';
+import { VERSION } from '../version';
 
 class CapaServer {
   private db!: CapaDatabase;
@@ -44,7 +43,7 @@ class CapaServer {
     this.writePidFile();
 
     console.log(`✓ CAPA server running at http://${this.settings.server.host}:${this.settings.server.port}`);
-    console.log(`  Version: ${CURRENT_VERSION}`);
+    console.log(`  Version: ${VERSION}`);
   }
 
   private async startHttpServer() {
@@ -72,7 +71,7 @@ class CapaServer {
     if (path === '/health') {
       console.log('  → Health check');
       return new Response(
-        JSON.stringify({ status: 'ok', version: CURRENT_VERSION }),
+        JSON.stringify({ status: 'ok', version: VERSION }),
         { headers: { 'Content-Type': 'application/json' } }
       );
     }
@@ -347,7 +346,7 @@ class CapaServer {
 
   private writePidFile() {
     const pidFile = getPidFilePath();
-    const content = `${process.pid}:${CURRENT_VERSION}`;
+    const content = `${process.pid}:${VERSION}`;
     writeFileSync(pidFile, content, 'utf-8');
   }
 

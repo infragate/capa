@@ -8,8 +8,7 @@ import { CapaDatabase } from '../../db/database';
 import type { Skill } from '../../types/capabilities';
 import { getAgentConfig, agents } from 'skills/src/agents';
 import type { AgentType } from 'skills/src/types';
-
-const CURRENT_VERSION = '1.0.0';
+import { VERSION } from '../../version';
 
 export async function installCommand(): Promise<void> {
   const projectPath = process.cwd();
@@ -34,7 +33,7 @@ export async function installCommand(): Promise<void> {
   console.log(`Project ID: ${projectId}`);
   
   // Ensure server is running
-  const serverStatus = await ensureServer(CURRENT_VERSION);
+  const serverStatus = await ensureServer(VERSION);
   
   if (!serverStatus.running || !serverStatus.url) {
     console.error('✗ Failed to start server');
