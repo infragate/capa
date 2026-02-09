@@ -4,10 +4,3 @@ dev = true
 peer = true
 
 [install.scopes]
-
-[test]
-# Only run tests in the current project directory
-preload = []
-# Coverage configuration
-coverage = true
-coverageThreshold = 80.0
