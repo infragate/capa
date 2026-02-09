@@ -9,11 +9,16 @@ export interface MCPSubprocessInfo {
   port: number | null;
   url: string | null;
   status: 'starting' | 'running' | 'crashed' | 'stopped';
+  restartCount?: number;
+  lastRestartTime?: number;
 }
 
 export class SubprocessManager {
   private subprocesses = new Map<string, MCPSubprocessInfo>();
   private db: CapaDatabase;
+  private readonly MAX_RESTART_ATTEMPTS = 3;
+  private readonly RESTART_WINDOW_MS = 60000; // 1 minute
+  private readonly BASE_RESTART_DELAY_MS = 1000;
 
   constructor(db: CapaDatabase) {
     this.db = db;
@@ -44,7 +49,8 @@ export class SubprocessManager {
    */
   async getOrCreateSubprocess(
     serverId: string,
-    definition: MCPServerDefinition
+    definition: MCPServerDefinition,
+    projectPath: string
   ): Promise<MCPSubprocessInfo> {
     console.log(`            [SubprocessManager] Getting/creating subprocess for: ${serverId}`);
     
@@ -71,13 +77,14 @@ export class SubprocessManager {
 
     // Create new subprocess
     console.log(`              Creating new subprocess...`);
-    return await this.createSubprocess(serverId, definition, configHash);
+    return await this.createSubprocess(serverId, definition, configHash, projectPath);
   }
 
   private async createSubprocess(
     serverId: string,
     definition: MCPServerDefinition,
-    configHash: string
+    configHash: string,
+    projectPath: string
   ): Promise<MCPSubprocessInfo> {
     if (!definition.cmd) {
       throw new Error(`Server ${serverId} is remote and cannot be spawned as subprocess`);
@@ -91,6 +98,8 @@ export class SubprocessManager {
       port: null,
       url: null,
       status: 'starting',
+      restartCount: 0,
+      lastRestartTime: Date.now(),
     };
 
     this.subprocesses.set(serverId, info);
@@ -99,11 +108,14 @@ export class SubprocessManager {
     const args = definition.args || [];
     const env = { ...process.env, ...definition.env };
 
-    // Spawn process
+    console.log(`              Working directory: ${projectPath}`);
+
+    // Spawn process from the project directory
     const proc = spawn(definition.cmd, args, {
       env,
       stdio: ['pipe', 'pipe', 'pipe'],
       detached: false,
+      cwd: projectPath,
     });
 
     info.process = proc;
@@ -115,7 +127,7 @@ export class SubprocessManager {
       config_hash: configHash,
       pid: proc.pid || null,
       port: null,
-      status: 'starting',
+      status: 'running',
     });
 
     // Set up event handlers
@@ -137,10 +149,45 @@ export class SubprocessManager {
       
       // Auto-restart on crash (not on clean exit)
       if (code !== 0 && code !== null) {
-        console.log(`              Auto-restarting ${serverId}...`);
+        // Initialize restart tracking if needed
+        if (!info.restartCount) {
+          info.restartCount = 0;
+          info.lastRestartTime = Date.now();
+        }
+
+        // Reset restart count if outside the restart window
+        const now = Date.now();
+        if (info.lastRestartTime && (now - info.lastRestartTime) > this.RESTART_WINDOW_MS) {
+          console.log(`              Restart window elapsed, resetting restart count`);
+          info.restartCount = 0;
+        }
+
+        // Check if we've exceeded max restart attempts
+        if (info.restartCount >= this.MAX_RESTART_ATTEMPTS) {
+          console.error(`              ✗ Max restart attempts (${this.MAX_RESTART_ATTEMPTS}) reached for ${serverId}`);
+          console.error(`              ✗ Subprocess will not be restarted. Please check configuration and try again.`);
+          info.status = 'crashed';
+          this.db.upsertMCPSubprocess({
+            id: serverId,
+            config_hash: configHash,
+            pid: null,
+            port: null,
+            status: 'crashed',
+          });
+          return;
+        }
+
+        // Increment restart count and attempt restart with exponential backoff
+        info.restartCount++;
+        info.lastRestartTime = now;
+        const delay = this.BASE_RESTART_DELAY_MS * Math.pow(2, info.restartCount - 1);
+        
+        console.log(`              Auto-restarting ${serverId} (attempt ${info.restartCount}/${this.MAX_RESTART_ATTEMPTS}) in ${delay}ms...`);
         setTimeout(() => {
-          this.createSubprocess(serverId, definition, configHash);
-        }, 1000);
+          this.createSubprocess(serverId, definition, configHash, projectPath).catch((error) => {
+            console.error(`              ✗ Failed to restart ${serverId}:`, error);
+          });
+        }, delay);
       } else {
         this.db.deleteMCPSubprocess(serverId);
         this.subprocesses.delete(serverId);
@@ -190,6 +237,19 @@ export class SubprocessManager {
 
     this.subprocesses.delete(serverId);
     this.db.deleteMCPSubprocess(serverId);
+  }
+
+  /**
+   * Reset a crashed subprocess (clears restart count, allowing manual retry)
+   */
+  resetSubprocess(serverId: string): void {
+    const info = this.subprocesses.get(serverId);
+    if (info) {
+      info.restartCount = 0;
+      info.lastRestartTime = Date.now();
+      info.status = 'stopped';
+      console.log(`            Reset subprocess ${serverId} - ready for manual restart`);
+    }
   }
 
   /**

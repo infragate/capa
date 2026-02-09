@@ -139,7 +139,7 @@ export class SessionManager {
 
     for (const skillId of skillIds) {
       const skill = capabilities.skills.find((s) => s.id === skillId);
-      if (skill) {
+      if (skill && skill.def && skill.def.requires) {
         for (const toolId of skill.def.requires) {
           requiredTools.add(toolId);
         }

@@ -18,9 +18,60 @@ export async function parseCapabilitiesFile(
 export function createDefaultCapabilities(): Capabilities {
   return {
     clients: ['cursor', 'claude-code'],
-    skills: [],
+    skills: [
+      {
+        id: 'capabilities-manager',
+        type: 'github',
+        def: {
+          repo: 'infragate/capa@abilities-manager',
+          description: 'Guide for managing capabilities with capa CLI',
+          requires: ['capa_init', 'capa_install', 'find_skills']
+        }
+      }
+    ],
     servers: [],
-    tools: [],
+    tools: [
+      {
+        id: 'capa_init',
+        type: 'command',
+        def: {
+          run: {
+            cmd: 'capa init',
+            args: []
+          }
+        }
+      },
+      {
+        id: 'capa_install',
+        type: 'command',
+        def: {
+          run: {
+            cmd: 'capa install',
+            args: []
+          }
+        }
+      },
+      {
+        id: 'find_skills',
+        type: 'command',
+        def: {
+          init: {
+            cmd: 'npx skills@latest'
+          },
+          run: {
+            cmd: 'npx skills find {query}',
+            args: [
+              {
+                name: 'query',
+                type: 'string',
+                description: 'Search query for finding skills',
+                required: true
+              }
+            ]
+          }
+        }
+      }
+    ]
   };
 }
 

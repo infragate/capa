@@ -1,3 +1,6 @@
+// Note: We use the low-level Server API instead of McpServer because we're implementing
+// a custom HTTP-based transport and need fine-grained control over JSON-RPC message handling.
+// This is an advanced use case where Server (not McpServer) is the appropriate choice.
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import {
   CallToolRequestSchema,
@@ -17,9 +20,11 @@ export class CapaMCPServer {
   private db: CapaDatabase;
   private sessionManager: SessionManager;
   private subprocessManager: SubprocessManager;
+  private mcpProxy: MCPProxy;
   private projectId: string;
   private projectPath: string;
   private sessionId: string | null = null;
+  private toolSchemaCache: Map<string, MCPTool> = new Map();
 
   constructor(
     db: CapaDatabase,
@@ -33,6 +38,7 @@ export class CapaMCPServer {
     this.subprocessManager = subprocessManager;
     this.projectId = projectId;
     this.projectPath = projectPath;
+    this.mcpProxy = new MCPProxy(db, projectId, projectPath, subprocessManager);
 
     this.server = new Server(
       {
@@ -80,7 +86,8 @@ export class CapaMCPServer {
             for (const toolId of session.availableTools) {
               const tool = capabilities.tools.find((t) => t.id === toolId);
               if (tool) {
-                tools.push(this.convertToolToMCP(tool));
+                const mcpTool = await this.convertToolToMCP(tool, capabilities);
+                tools.push(mcpTool);
               }
             }
           }
@@ -178,8 +185,7 @@ export class CapaMCPServer {
           };
         }
 
-        const proxy = new MCPProxy(this.db, this.projectId, this.subprocessManager);
-        result = await proxy.executeTool(name, mcpDef, serverDef.def, args as Record<string, any>);
+        result = await this.mcpProxy.executeTool(name, mcpDef, serverDef.def, args as Record<string, any>);
       }
 
       return {
@@ -224,12 +230,22 @@ export class CapaMCPServer {
         ],
       };
     } catch (error: any) {
+      // If skill not found, include list of available skills
+      let errorMessage = error.message || 'Failed to setup tools';
+      if (error.message && error.message.startsWith('Skill not found:')) {
+        const capabilities = this.sessionManager.getProjectCapabilities(this.projectId);
+        if (capabilities && capabilities.skills.length > 0) {
+          const availableSkills = capabilities.skills.map(s => s.id).join(', ');
+          errorMessage = `${error.message}. Available skills: ${availableSkills}`;
+        }
+      }
+      
       return {
         content: [
           {
             type: 'text',
             text: JSON.stringify({
-              error: error.message || 'Failed to setup tools',
+              error: errorMessage,
             }),
           },
         ],
@@ -237,7 +253,12 @@ export class CapaMCPServer {
     }
   }
 
-  private convertToolToMCP(tool: Tool): MCPTool {
+  private async convertToolToMCP(tool: Tool, capabilities: Capabilities): Promise<MCPTool> {
+    // Check cache first
+    if (this.toolSchemaCache.has(tool.id)) {
+      return this.toolSchemaCache.get(tool.id)!;
+    }
+
     if (tool.type === 'command') {
       const def = tool.def as ToolCommandDefinition;
       const properties: any = {};
@@ -255,25 +276,84 @@ export class CapaMCPServer {
         }
       }
 
-      return {
+      const mcpTool: MCPTool = {
         name: tool.id,
         description: `Command tool: ${tool.id}`,
         inputSchema: {
-          type: 'object',
+          type: 'object' as const,
           properties,
           required,
         },
       };
+      
+      // Cache it
+      this.toolSchemaCache.set(tool.id, mcpTool);
+      return mcpTool;
     } else {
-      // MCP tool - we'll use a generic schema
-      return {
-        name: tool.id,
-        description: `MCP tool: ${tool.id}`,
-        inputSchema: {
-          type: 'object',
-          properties: {},
-        },
-      };
+      // MCP tool - fetch the actual schema from the MCP server
+      const mcpDef = tool.def as ToolMCPDefinition;
+      const serverId = mcpDef.server.replace('@', '');
+      const serverDef = capabilities.servers.find((s) => s.id === serverId);
+      
+      if (!serverDef) {
+        console.error(`      Server not found for tool ${tool.id}: ${serverId}`);
+        const mcpTool: MCPTool = {
+          name: tool.id,
+          description: `MCP tool: ${tool.id} (server not found)`,
+          inputSchema: {
+            type: 'object' as const,
+            properties: {},
+          },
+        };
+        this.toolSchemaCache.set(tool.id, mcpTool);
+        return mcpTool;
+      }
+
+      try {
+        // Use the shared MCP proxy instance
+        const remoteTools = await this.mcpProxy.listTools(serverId, serverDef.def);
+        
+        // Find the matching tool on the remote server
+        const remoteTool = remoteTools.find((t: any) => t.name === mcpDef.tool);
+        
+        if (remoteTool) {
+          console.log(`      ✓ Fetched schema for ${tool.id} from ${serverId}`);
+          const mcpTool: MCPTool = {
+            name: tool.id,
+            description: remoteTool.description || `MCP tool: ${tool.id}`,
+            inputSchema: remoteTool.inputSchema || {
+              type: 'object' as const,
+              properties: {},
+            },
+          };
+          this.toolSchemaCache.set(tool.id, mcpTool);
+          return mcpTool;
+        } else {
+          console.warn(`      ⚠ Tool ${mcpDef.tool} not found on server ${serverId}`);
+          const mcpTool: MCPTool = {
+            name: tool.id,
+            description: `MCP tool: ${tool.id} (not found on remote server)`,
+            inputSchema: {
+              type: 'object' as const,
+              properties: {},
+            },
+          };
+          this.toolSchemaCache.set(tool.id, mcpTool);
+          return mcpTool;
+        }
+      } catch (error: any) {
+        console.error(`      ✗ Failed to fetch schema for ${tool.id}:`, error.message);
+        const mcpTool: MCPTool = {
+          name: tool.id,
+          description: `MCP tool: ${tool.id}`,
+          inputSchema: {
+            type: 'object' as const,
+            properties: {},
+          },
+        };
+        this.toolSchemaCache.set(tool.id, mcpTool);
+        return mcpTool;
+      }
     }
   }
 
@@ -349,7 +429,8 @@ export class CapaMCPServer {
             for (const toolId of session.availableTools) {
               const tool = capabilities.tools.find((t) => t.id === toolId);
               if (tool) {
-                tools.push(this.convertToolToMCP(tool));
+                const mcpTool = await this.convertToolToMCP(tool, capabilities);
+                tools.push(mcpTool);
               }
             }
           }
@@ -406,12 +487,23 @@ export class CapaMCPServer {
           };
         } catch (error: any) {
           console.error(`      ✗ Error: ${error.message}`);
+          
+          // If skill not found, include list of available skills
+          let errorMessage = error.message || 'Failed to setup tools';
+          if (error.message && error.message.startsWith('Skill not found:')) {
+            const capabilities = this.sessionManager.getProjectCapabilities(this.projectId);
+            if (capabilities && capabilities.skills.length > 0) {
+              const availableSkills = capabilities.skills.map(s => s.id).join(', ');
+              errorMessage = `${error.message}. Available skills: ${availableSkills}`;
+            }
+          }
+          
           return {
             jsonrpc: '2.0',
             id: message.id,
             error: {
               code: -32603,
-              message: error.message || 'Failed to setup tools',
+              message: errorMessage,
             },
           };
         }
@@ -506,8 +598,7 @@ export class CapaMCPServer {
           }
 
           console.log(`      Using MCP server: ${serverId}`);
-          const proxy = new MCPProxy(this.db, this.projectId, this.subprocessManager);
-          result = await proxy.executeTool(name, mcpDef, serverDef.def, args as Record<string, any>);
+          result = await this.mcpProxy.executeTool(name, mcpDef, serverDef.def, args as Record<string, any>);
           console.log(`      ✓ MCP tool executed`);
         }
 

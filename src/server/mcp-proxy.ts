@@ -14,12 +14,14 @@ export interface MCPToolResult {
 export class MCPProxy {
   private db: CapaDatabase;
   private projectId: string;
+  private projectPath: string;
   private subprocessManager: SubprocessManager;
   private clients = new Map<string, Client>();
 
-  constructor(db: CapaDatabase, projectId: string, subprocessManager: SubprocessManager) {
+  constructor(db: CapaDatabase, projectId: string, projectPath: string, subprocessManager: SubprocessManager) {
     this.db = db;
     this.projectId = projectId;
+    this.projectPath = projectPath;
     this.subprocessManager = subprocessManager;
   }
 
@@ -149,7 +151,8 @@ export class MCPProxy {
       // Get or create subprocess
       const subprocess = await this.subprocessManager.getOrCreateSubprocess(
         serverId,
-        serverDefinition
+        serverDefinition,
+        this.projectPath
       );
 
       if (subprocess.status !== 'running' || !subprocess.process) {

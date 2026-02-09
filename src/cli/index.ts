@@ -28,7 +28,7 @@ program
   .description('Initialize a new capabilities file')
   .option('-f, --format <format>', 'File format (json or yaml)', 'json')
   .action(async (options) => {
-    const format = options.format === 'yaml' ? 'yaml' : 'json';
+    const format = options.format === 'json' ? 'json' : 'yaml';
     await initCommand(format);
   });
 
