@@ -18,6 +18,7 @@ class CapaServer {
   private httpServer!: HttpServer;
   private settings: any;
   private mcpServers = new Map<string, CapaMCPServer>();
+  private startTime: number = Date.now();
 
   async start() {
     console.log('Starting CAPA server...');
@@ -70,8 +71,13 @@ class CapaServer {
     // Health check
     if (path === '/health') {
       console.log('  → Health check');
+      const uptime = (Date.now() - this.startTime) / 1000; // uptime in seconds
       return new Response(
-        JSON.stringify({ status: 'ok', version: VERSION }),
+        JSON.stringify({ 
+          status: 'ok', 
+          version: VERSION,
+          uptime: uptime
+        }),
         { headers: { 'Content-Type': 'application/json' } }
       );
     }
