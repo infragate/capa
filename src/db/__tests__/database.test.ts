@@ -147,7 +147,7 @@ describe('CapaDatabase', () => {
       
       const state = db.getToolInitState('test-proj', 'tool-1');
       expect(state).not.toBeNull();
-      expect(state?.initialized).toBe(1);
+      expect(state?.initialized).toBeTruthy();
       expect(state?.last_error).toBeNull();
     });
 
@@ -156,7 +156,7 @@ describe('CapaDatabase', () => {
       
       const state = db.getToolInitState('test-proj', 'tool-1');
       expect(state).not.toBeNull();
-      expect(state?.initialized).toBe(0);
+      expect(state?.initialized).toBeFalsy();
       expect(state?.last_error).toBe('Init failed');
     });
 
@@ -165,7 +165,7 @@ describe('CapaDatabase', () => {
       db.setToolInitialized('test-proj', 'tool-1', null);
       
       const state = db.getToolInitState('test-proj', 'tool-1');
-      expect(state?.initialized).toBe(1);
+      expect(state?.initialized).toBeTruthy();
       expect(state?.last_error).toBeNull();
     });
   });

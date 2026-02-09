@@ -96,9 +96,9 @@ describe('capabilities', () => {
         skills: [
           {
             id: 'custom-skill',
-            type: 'npm',
+            type: 'github',
             def: {
-              package: 'my-package',
+              repo: 'owner/my-package',
               description: 'Custom skill',
             },
           },
