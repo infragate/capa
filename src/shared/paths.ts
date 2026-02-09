@@ -39,11 +39,11 @@ export function detectCapabilitiesFile(projectPath: string): { path: string; for
   const jsonPath = getCapabilitiesPath(projectPath, 'json');
   const yamlPath = getCapabilitiesPath(projectPath, 'yaml');
   
-  if (Bun.file(jsonPath).size > 0 || existsSync(jsonPath)) {
+  if (existsSync(jsonPath)) {
     return { path: jsonPath, format: 'json' };
   }
   
-  if (Bun.file(yamlPath).size > 0 || existsSync(yamlPath)) {
+  if (existsSync(yamlPath)) {
     return { path: yamlPath, format: 'yaml' };
   }
   
