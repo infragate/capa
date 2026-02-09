@@ -10,7 +10,9 @@
     "dev": "bun run src/cli/index.ts",
     "prebuild": "bun run scripts/generate-version.ts",
     "build": "bun build src/cli/index.ts --compile --outfile dist/capa",
-    "server": "bun run src/server/index.ts"
+    "server": "bun run src/server/index.ts",
+    "test": "bun test",
+    "test:coverage": "bun test --coverage"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.4",
