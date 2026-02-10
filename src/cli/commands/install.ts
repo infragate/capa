@@ -9,6 +9,7 @@ import type { Skill } from '../../types/capabilities';
 import { getAgentConfig, agents } from 'skills/src/agents';
 import type { AgentType } from 'skills/src/types';
 import { VERSION } from '../../version';
+import { registerMCPServer } from '../utils/mcp-client-manager';
 
 export async function installCommand(): Promise<void> {
   const projectPath = process.cwd();
@@ -71,9 +72,14 @@ export async function installCommand(): Promise<void> {
   
   const result = await response.json();
   
+  // Step 3: Register MCP server with client configurations
+  const mcpUrl = `${serverStatus.url}/${projectId}/mcp`;
+  console.log('\n🔗 Registering MCP server with clients...');
+  await registerMCPServer(projectPath, projectId, mcpUrl, capabilities.clients);
+  
   db.close();
   
-  // Step 3: Check if credential setup is needed
+  // Step 4: Check if credential setup is needed
   if (result.needsCredentials && result.credentialsUrl) {
     console.log('\n🔑 Credentials required!');
     console.log(`Please open: ${result.credentialsUrl}`);
@@ -82,9 +88,8 @@ export async function installCommand(): Promise<void> {
     console.log('\n✓ Installation complete!');
   }
   
-  // Step 4: Display MCP endpoint
-  console.log(`\n📡 MCP Endpoint: ${serverStatus.url}/${projectId}/mcp`);
-  console.log('\nAdd this endpoint to your MCP client configuration.');
+  // Step 5: Display MCP endpoint
+  console.log(`\n📡 MCP Endpoint: ${mcpUrl}`);
 }
 
 async function installSkills(
