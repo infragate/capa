@@ -100,17 +100,21 @@ CAPA will:
 
 ### 4. Configure Your MCP Client
 
-Add to `.cursor/mcp.json`:
+**Good news!** `capa install` automatically registers with supported clients (Cursor, Claude Desktop). 
+
+If you need to verify or manually configure, the entry in `.cursor/mcp.json` looks like:
 
 ```json
 {
   "mcpServers": {
-    "capa": {
+    "capa-your-project-id": {
       "url": "http://localhost:5912/your-project-id/mcp"
     }
   }
 }
 ```
+
+Note the key format is `capa-${projectId}`, allowing multiple CAPA projects in the same client.
 
 ### 5. Use It
 
