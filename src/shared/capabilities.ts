@@ -23,7 +23,7 @@ export function createDefaultCapabilities(): Capabilities {
         id: 'capabilities-manager',
         type: 'github',
         def: {
-          repo: 'infragate/capa@abilities-manager',
+          repo: 'infragate/capa@capabilities-manager',
           description: 'Guide for managing capabilities with capa CLI',
           requires: ['capa_init', 'capa_install', 'find_skills']
         }

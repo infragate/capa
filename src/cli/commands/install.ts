@@ -1,5 +1,7 @@
 import { existsSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { resolve, join } from 'path';
+import { exec } from 'child_process';
+import { promisify } from 'util';
 import { detectCapabilitiesFile, generateProjectId } from '../../shared/paths';
 import { parseCapabilitiesFile } from '../../shared/capabilities';
 import { ensureServer } from '../utils/server-manager';
@@ -10,6 +12,35 @@ import { getAgentConfig, agents } from 'skills/src/agents';
 import type { AgentType } from 'skills/src/types';
 import { VERSION } from '../../version';
 import { registerMCPServer } from '../utils/mcp-client-manager';
+
+const execAsync = promisify(exec);
+
+/**
+ * Open a URL in the user's default browser
+ */
+async function openBrowser(url: string): Promise<boolean> {
+  try {
+    const platform = process.platform;
+    let command: string;
+    
+    if (platform === 'win32') {
+      // Windows
+      command = `start "" "${url}"`;
+    } else if (platform === 'darwin') {
+      // macOS
+      command = `open "${url}"`;
+    } else {
+      // Linux and other Unix-like systems
+      command = `xdg-open "${url}"`;
+    }
+    
+    await execAsync(command);
+    return true;
+  } catch (error) {
+    // Failed to open browser, but this is not critical
+    return false;
+  }
+}
 
 export async function installCommand(): Promise<void> {
   const projectPath = process.cwd();
@@ -82,7 +113,17 @@ export async function installCommand(): Promise<void> {
   // Step 4: Check if credential setup is needed
   if (result.needsCredentials && result.credentialsUrl) {
     console.log('\n🔑 Credentials required!');
-    console.log(`Please open: ${result.credentialsUrl}`);
+    console.log(`Opening browser to configure credentials...`);
+    
+    const opened = await openBrowser(result.credentialsUrl);
+    
+    if (opened) {
+      console.log(`✓ Browser opened: ${result.credentialsUrl}`);
+    } else {
+      console.log(`⚠ Could not open browser automatically.`);
+      console.log(`Please open this URL manually: ${result.credentialsUrl}`);
+    }
+    
     console.log('After saving credentials, the installation will be complete.');
   } else {
     console.log('\n✓ Installation complete!');
