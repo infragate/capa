@@ -168,6 +168,13 @@ export class SessionManager {
   }
 
   /**
+   * Get all project capabilities (for OAuth2Manager integration)
+   */
+  getAllProjectCapabilities(): Map<string, Capabilities> {
+    return this.projectCapabilities;
+  }
+
+  /**
    * Get tool definition
    */
   getToolDefinition(projectId: string, toolId: string): Tool | null {

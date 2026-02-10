@@ -141,6 +141,101 @@
       color: #333;
       margin-bottom: 10px;
     }
+
+    .oauth2-section {
+      margin-top: 40px;
+      padding-top: 30px;
+      border-top: 2px solid #e0e0e0;
+    }
+
+    .oauth2-section h2 {
+      color: #333;
+      margin-bottom: 20px;
+      font-size: 22px;
+    }
+
+    .oauth2-servers {
+      display: flex;
+      flex-direction: column;
+      gap: 15px;
+    }
+
+    .oauth2-card {
+      background: #f8f9fa;
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      padding: 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      transition: box-shadow 0.2s;
+    }
+
+    .oauth2-card:hover {
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    }
+
+    .oauth2-card-info {
+      flex: 1;
+    }
+
+    .oauth2-card-title {
+      font-weight: 600;
+      color: #333;
+      margin-bottom: 5px;
+      font-size: 16px;
+    }
+
+    .oauth2-card-status {
+      font-size: 14px;
+      color: #666;
+    }
+
+    .oauth2-card-status.connected {
+      color: #28a745;
+    }
+
+    .oauth2-card-status.disconnected {
+      color: #dc3545;
+    }
+
+    .btn-oauth {
+      padding: 10px 20px;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+
+    .btn-connect {
+      background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+      color: white;
+    }
+
+    .btn-disconnect {
+      background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
+      color: white;
+    }
+
+    .btn-oauth:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
+    }
+
+    .btn-oauth:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .oauth2-empty {
+      text-align: center;
+      padding: 30px;
+      color: #999;
+      font-size: 14px;
+    }
   </style>
 </head>
 <body>
@@ -165,6 +260,11 @@
         <button type="submit" class="btn" id="save-btn">Save Credentials</button>
       </form>
     </div>
+
+    <div id="oauth2-section" class="oauth2-section" style="display: none;">
+      <h2>🔐 OAuth2 Connections</h2>
+      <div id="oauth2-servers" class="oauth2-servers"></div>
+    </div>
   </div>
 
   <script>
@@ -173,6 +273,22 @@
     const returnUrl = urlParams.get('return');
 
     document.getElementById('project-name').textContent = projectId || 'Unknown';
+
+    // Check for OAuth2 callback results
+    const oauthSuccess = urlParams.get('oauth_success');
+    const oauthError = urlParams.get('oauth_error');
+    const connectedServer = urlParams.get('server');
+
+    if (oauthSuccess) {
+      showMessage(`✓ Successfully connected to ${connectedServer || 'server'}!`, 'success');
+      // Remove URL parameters
+      window.history.replaceState({}, document.title, `/ui?project=${projectId}`);
+      // Reload OAuth2 servers
+      setTimeout(() => loadOAuth2Servers(), 500);
+    } else if (oauthError) {
+      showMessage(`✗ OAuth2 error: ${decodeURIComponent(oauthError)}`, 'error');
+      window.history.replaceState({}, document.title, `/ui?project=${projectId}`);
+    }
 
     async function loadVariables() {
       try {
@@ -267,7 +383,100 @@
       container.appendChild(message);
     }
 
+    async function loadOAuth2Servers() {
+      try {
+        const response = await fetch(`/api/projects/${projectId}/oauth-servers`);
+        const data = await response.json();
+
+        if (!data.servers || data.servers.length === 0) {
+          document.getElementById('oauth2-section').style.display = 'none';
+          return;
+        }
+
+        document.getElementById('oauth2-section').style.display = 'block';
+        const container = document.getElementById('oauth2-servers');
+        container.innerHTML = '';
+
+        for (const server of data.servers) {
+          const card = document.createElement('div');
+          card.className = 'oauth2-card';
+
+          const info = document.createElement('div');
+          info.className = 'oauth2-card-info';
+
+          const title = document.createElement('div');
+          title.className = 'oauth2-card-title';
+          title.textContent = server.displayName || server.serverId;
+
+          const status = document.createElement('div');
+          status.className = `oauth2-card-status ${server.isConnected ? 'connected' : 'disconnected'}`;
+          status.textContent = server.isConnected ? '✓ Connected' : '✗ Not Connected';
+
+          info.appendChild(title);
+          info.appendChild(status);
+
+          const button = document.createElement('button');
+          button.className = `btn-oauth ${server.isConnected ? 'btn-disconnect' : 'btn-connect'}`;
+          button.textContent = server.isConnected ? 'Disconnect' : 'Connect';
+          button.onclick = () => {
+            if (server.isConnected) {
+              disconnectOAuth2(server.serverId);
+            } else {
+              connectOAuth2(server.serverId);
+            }
+          };
+
+          card.appendChild(info);
+          card.appendChild(button);
+          container.appendChild(card);
+        }
+      } catch (error) {
+        console.error('Failed to load OAuth2 servers:', error);
+      }
+    }
+
+    async function connectOAuth2(serverId) {
+      try {
+        const response = await fetch(`/api/projects/${projectId}/oauth/start?server=${serverId}`, {
+          method: 'POST',
+        });
+        const data = await response.json();
+
+        if (data.authorizationUrl) {
+          // Open authorization URL in current window
+          window.location.href = data.authorizationUrl;
+        } else {
+          showMessage('Failed to start OAuth2 flow', 'error');
+        }
+      } catch (error) {
+        showMessage('Failed to start OAuth2 flow: ' + error.message, 'error');
+      }
+    }
+
+    async function disconnectOAuth2(serverId) {
+      if (!confirm(`Are you sure you want to disconnect from ${serverId}?`)) {
+        return;
+      }
+
+      try {
+        const response = await fetch(`/api/projects/${projectId}/oauth/${serverId}`, {
+          method: 'DELETE',
+        });
+        const data = await response.json();
+
+        if (data.success) {
+          showMessage(`✓ Disconnected from ${serverId}`, 'success');
+          loadOAuth2Servers();
+        } else {
+          showMessage('Failed to disconnect', 'error');
+        }
+      } catch (error) {
+        showMessage('Failed to disconnect: ' + error.message, 'error');
+      }
+    }
+
     loadVariables();
+    loadOAuth2Servers();
   </script>
 </body>
 </html>

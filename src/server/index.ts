@@ -7,6 +7,7 @@ import { CapaDatabase } from '../db/database';
 import { SessionManager } from './session-manager';
 import { SubprocessManager } from './subprocess-manager';
 import { CapaMCPServer } from './mcp-handler';
+import { OAuth2Manager } from './oauth-manager';
 import type { Capabilities } from '../types/capabilities';
 import { extractAllVariables } from '../shared/variable-resolver';
 import { VERSION } from '../version';
@@ -15,6 +16,7 @@ class CapaServer {
   private db!: CapaDatabase;
   private sessionManager!: SessionManager;
   private subprocessManager!: SubprocessManager;
+  private oauth2Manager!: OAuth2Manager;
   private httpServer!: HttpServer;
   private settings: any;
   private mcpServers = new Map<string, CapaMCPServer>();
@@ -36,6 +38,10 @@ class CapaServer {
     // Initialize managers
     this.sessionManager = new SessionManager(this.db);
     this.subprocessManager = new SubprocessManager(this.db);
+    this.oauth2Manager = new OAuth2Manager(this.db);
+    
+    // Connect OAuth2Manager with SessionManager for capabilities access
+    this.oauth2Manager.setCapabilitiesProvider(() => this.sessionManager.getAllProjectCapabilities());
 
     // Start HTTP server
     await this.startHttpServer();
@@ -146,6 +152,35 @@ class CapaServer {
       return this.handleSetVariables(projectId, request);
     }
 
+    // Get OAuth2 servers
+    const oauth2ServersMatch = path.match(/^\/api\/projects\/([^/]+)\/oauth-servers$/);
+    if (oauth2ServersMatch && request.method === 'GET') {
+      const projectId = oauth2ServersMatch[1];
+      return this.handleGetOAuth2Servers(projectId);
+    }
+
+    // Start OAuth2 flow
+    const oauth2StartMatch = path.match(/^\/api\/projects\/([^/]+)\/oauth\/start$/);
+    if (oauth2StartMatch && request.method === 'POST') {
+      const projectId = oauth2StartMatch[1];
+      return this.handleOAuth2Start(projectId, request);
+    }
+
+    // OAuth2 callback
+    const oauth2CallbackMatch = path.match(/^\/api\/projects\/([^/]+)\/oauth\/callback$/);
+    if (oauth2CallbackMatch && request.method === 'GET') {
+      const projectId = oauth2CallbackMatch[1];
+      return this.handleOAuth2Callback(projectId, request);
+    }
+
+    // Disconnect OAuth2
+    const oauth2DisconnectMatch = path.match(/^\/api\/projects\/([^/]+)\/oauth\/([^/]+)$/);
+    if (oauth2DisconnectMatch && request.method === 'DELETE') {
+      const projectId = oauth2DisconnectMatch[1];
+      const serverId = oauth2DisconnectMatch[2];
+      return this.handleOAuth2Disconnect(projectId, serverId);
+    }
+
     return new Response('Not Found', { status: 404 });
   }
 
@@ -160,6 +195,32 @@ class CapaServer {
       // Store capabilities
       this.sessionManager.setProjectCapabilities(projectId, capabilities);
 
+      // Detect OAuth2 requirements for HTTP-based MCP servers
+      console.log(`    Detecting OAuth2 requirements...`);
+      const oauth2Servers: any[] = [];
+      for (const server of capabilities.servers) {
+        if (server.def.url) {
+          console.log(`      Checking server: ${server.id}`);
+          const oauth2Config = await this.oauth2Manager.detectOAuth2Requirement(server.def.url);
+          if (oauth2Config) {
+            console.log(`        ✓ OAuth2 required`);
+            // Store OAuth2 config in server definition
+            server.def.oauth2 = oauth2Config;
+            oauth2Servers.push({
+              serverId: server.id,
+              serverUrl: server.def.url,
+              displayName: server.id,
+              isConnected: this.oauth2Manager.isServerConnected(projectId, server.id),
+            });
+          }
+        }
+      }
+
+      // Update stored capabilities with OAuth2 configs
+      if (oauth2Servers.length > 0) {
+        this.sessionManager.setProjectCapabilities(projectId, capabilities);
+      }
+
       // Extract all required variables
       const requiredVars = extractAllVariables(capabilities);
       console.log(`    Required variables: ${requiredVars.join(', ')}`);
@@ -173,8 +234,14 @@ class CapaServer {
         }
       }
 
-      if (missingVars.length > 0) {
+      // Check if OAuth2 servers need connection
+      const needsOAuth2Connection = oauth2Servers.some(s => !s.isConnected);
+
+      if (missingVars.length > 0 || needsOAuth2Connection) {
         console.log(`    ⚠ Missing variables: ${missingVars.join(', ')}`);
+        if (needsOAuth2Connection) {
+          console.log(`    ⚠ OAuth2 connections needed: ${oauth2Servers.filter(s => !s.isConnected).map(s => s.serverId).join(', ')}`);
+        }
         const credentialsUrl = `http://${this.settings.server.host}:${this.settings.server.port}/ui?project=${projectId}`;
         
         return new Response(
@@ -182,6 +249,7 @@ class CapaServer {
             success: false,
             needsCredentials: true,
             missingVariables: missingVars,
+            oauth2Servers: oauth2Servers,
             credentialsUrl,
           }),
           {
@@ -261,6 +329,157 @@ class CapaServer {
           status: 400,
           headers: { 'Content-Type': 'application/json' },
         }
+      );
+    }
+  }
+
+  private async handleGetOAuth2Servers(projectId: string): Promise<Response> {
+    console.log(`  [API] Get OAuth2 servers for project: ${projectId}`);
+    const capabilities = this.sessionManager.getProjectCapabilities(projectId);
+    if (!capabilities) {
+      return new Response(
+        JSON.stringify({ error: 'Project not configured' }),
+        { status: 404, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const oauth2Servers = capabilities.servers
+      .filter((s: any) => s.def.oauth2)
+      .map((s: any) => ({
+        serverId: s.id,
+        serverUrl: s.def.url,
+        displayName: s.id,
+        isConnected: this.oauth2Manager.isServerConnected(projectId, s.id),
+        oauth2Config: s.def.oauth2,
+      }));
+
+    return new Response(
+      JSON.stringify({ servers: oauth2Servers }),
+      { headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+
+  private async handleOAuth2Start(projectId: string, request: Request): Promise<Response> {
+    try {
+      const url = new URL(request.url);
+      const serverId = url.searchParams.get('server');
+      
+      if (!serverId) {
+        return new Response(
+          JSON.stringify({ error: 'Missing server parameter' }),
+          { status: 400, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      console.log(`  [API] Start OAuth2 flow for server: ${serverId}`);
+      
+      const capabilities = this.sessionManager.getProjectCapabilities(projectId);
+      if (!capabilities) {
+        return new Response(
+          JSON.stringify({ error: 'Project not configured' }),
+          { status: 404, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      const server = capabilities.servers.find((s: any) => s.id === serverId);
+      if (!server || !server.def.oauth2) {
+        return new Response(
+          JSON.stringify({ error: 'Server not found or does not require OAuth2' }),
+          { status: 404, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // Generate authorization URL
+      const redirectUri = `http://${this.settings.server.host}:${this.settings.server.port}/api/projects/${projectId}/oauth/callback`;
+      const { url: authUrl, state } = await this.oauth2Manager.generateAuthorizationUrl(
+        projectId,
+        serverId,
+        server.def.oauth2,
+        redirectUri
+      );
+
+      console.log(`    ✓ Authorization URL generated`);
+      return new Response(
+        JSON.stringify({ authorizationUrl: authUrl, state }),
+        { headers: { 'Content-Type': 'application/json' } }
+      );
+    } catch (error: any) {
+      console.error(`    ✗ Error: ${error.message}`);
+      return new Response(
+        JSON.stringify({ error: error.message }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+  }
+
+  private async handleOAuth2Callback(projectId: string, request: Request): Promise<Response> {
+    try {
+      const url = new URL(request.url);
+      const code = url.searchParams.get('code');
+      const state = url.searchParams.get('state');
+      const error = url.searchParams.get('error');
+
+      if (error) {
+        console.log(`  [API] OAuth2 callback error: ${error}`);
+        // Redirect to UI with error
+        const redirectUrl = `http://${this.settings.server.host}:${this.settings.server.port}/ui?project=${projectId}&oauth_error=${encodeURIComponent(error)}`;
+        return new Response(null, {
+          status: 302,
+          headers: { Location: redirectUrl },
+        });
+      }
+
+      if (!code || !state) {
+        return new Response(
+          JSON.stringify({ error: 'Missing code or state parameter' }),
+          { status: 400, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      console.log(`  [API] OAuth2 callback for project: ${projectId}`);
+      
+      const result = await this.oauth2Manager.handleCallback(code, state);
+      
+      if (!result.success) {
+        console.error(`    ✗ Callback failed: ${result.error}`);
+        const redirectUrl = `http://${this.settings.server.host}:${this.settings.server.port}/ui?project=${projectId}&oauth_error=${encodeURIComponent(result.error || 'Unknown error')}`;
+        return new Response(null, {
+          status: 302,
+          headers: { Location: redirectUrl },
+        });
+      }
+
+      console.log(`    ✓ OAuth2 flow completed for server: ${result.serverId}`);
+      
+      // Redirect back to UI with success
+      const redirectUrl = `http://${this.settings.server.host}:${this.settings.server.port}/ui?project=${projectId}&oauth_success=true&server=${result.serverId}`;
+      return new Response(null, {
+        status: 302,
+        headers: { Location: redirectUrl },
+      });
+    } catch (error: any) {
+      console.error(`    ✗ Error: ${error.message}`);
+      const redirectUrl = `http://${this.settings.server.host}:${this.settings.server.port}/ui?project=${projectId}&oauth_error=${encodeURIComponent(error.message)}`;
+      return new Response(null, {
+        status: 302,
+        headers: { Location: redirectUrl },
+      });
+    }
+  }
+
+  private async handleOAuth2Disconnect(projectId: string, serverId: string): Promise<Response> {
+    console.log(`  [API] Disconnect OAuth2 for server: ${serverId}`);
+    try {
+      this.oauth2Manager.disconnect(projectId, serverId);
+      return new Response(
+        JSON.stringify({ success: true }),
+        { headers: { 'Content-Type': 'application/json' } }
+      );
+    } catch (error: any) {
+      console.error(`    ✗ Error: ${error.message}`);
+      return new Response(
+        JSON.stringify({ error: error.message }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } }
       );
     }
   }

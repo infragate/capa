@@ -40,6 +40,8 @@ export interface MCPServerDefinition {
   cmd?: string;
   args?: string[];
   env?: Record<string, string>;
+  // OAuth2 config (auto-detected, not user-specified)
+  oauth2?: any; // OAuth2Config from types/oauth.ts
 }
 
 export interface Tool {

@@ -1,10 +1,13 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
+import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 import type { CapaDatabase } from '../db/database';
 import type { MCPServerDefinition, ToolMCPDefinition } from '../types/capabilities';
 import { SubprocessManager } from './subprocess-manager';
 import { resolveVariablesInObject, hasUnresolvedVariables } from '../shared/variable-resolver';
 import { VERSION } from '../version';
+import { OAuth2Manager } from './oauth-manager';
 
 export interface MCPToolResult {
   success: boolean;
@@ -17,6 +20,7 @@ export class MCPProxy {
   private projectId: string;
   private projectPath: string;
   private subprocessManager: SubprocessManager;
+  private oauth2Manager: OAuth2Manager;
   private clients = new Map<string, Client>();
 
   constructor(db: CapaDatabase, projectId: string, projectPath: string, subprocessManager: SubprocessManager) {
@@ -24,6 +28,7 @@ export class MCPProxy {
     this.projectId = projectId;
     this.projectPath = projectPath;
     this.subprocessManager = subprocessManager;
+    this.oauth2Manager = new OAuth2Manager(db);
   }
 
   /**
@@ -132,12 +137,51 @@ export class MCPProxy {
 
     // For remote HTTP-based servers
     if (serverDefinition.url) {
-      // TODO: Implement HTTP client for remote MCP servers
-      console.warn('          Remote HTTP MCP servers not yet implemented');
-      return null;
+      return await this.createHttpClient(serverId, serverDefinition);
     }
 
     return null;
+  }
+
+  private async createHttpClient(
+    serverId: string,
+    serverDefinition: MCPServerDefinition
+  ): Promise<Client | null> {
+    try {
+      console.log(`          Creating HTTP client for: ${serverId}`);
+      console.log(`            URL: ${serverDefinition.url}`);
+
+      // Create HTTP transport with OAuth2 support
+      const transport = new HttpMCPTransport(
+        serverDefinition.url!,
+        this.projectId,
+        serverId,
+        this.db,
+        this.oauth2Manager,
+        serverDefinition
+      );
+
+      // Create client
+      const client = new Client(
+        {
+          name: `capa-proxy-${serverId}`,
+          version: VERSION,
+        },
+        {
+          capabilities: {},
+        }
+      );
+
+      console.log(`            Connecting client...`);
+      await client.connect(transport);
+
+      this.clients.set(serverId, client);
+      console.log(`            ✓ Client connected`);
+      return client;
+    } catch (error: any) {
+      console.error(`            ✗ Failed to create HTTP client for ${serverId}:`, error);
+      return null;
+    }
   }
 
   private async createStdioClient(
@@ -205,5 +249,134 @@ export class MCPProxy {
       }
     }
     this.clients.clear();
+  }
+}
+
+/**
+ * HTTP Transport for MCP with OAuth2 support
+ */
+class HttpMCPTransport implements Transport {
+  private url: string;
+  private projectId: string;
+  private serverId: string;
+  private db: CapaDatabase;
+  private oauth2Manager: OAuth2Manager;
+  private serverDefinition: MCPServerDefinition;
+  public onclose?: () => void;
+  public onerror?: (error: Error) => void;
+  public onmessage?: (message: JSONRPCMessage) => void;
+
+  constructor(
+    url: string,
+    projectId: string,
+    serverId: string,
+    db: CapaDatabase,
+    oauth2Manager: OAuth2Manager,
+    serverDefinition: MCPServerDefinition
+  ) {
+    this.url = url;
+    this.projectId = projectId;
+    this.serverId = serverId;
+    this.db = db;
+    this.oauth2Manager = oauth2Manager;
+    this.serverDefinition = serverDefinition;
+  }
+
+  async start(): Promise<void> {
+    // Transport is ready immediately for HTTP
+    console.log(`              [HttpTransport] Started for ${this.url}`);
+  }
+
+  async send(message: JSONRPCMessage): Promise<void> {
+    try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+
+      // Add custom headers from server definition
+      if (this.serverDefinition.headers) {
+        Object.assign(headers, this.serverDefinition.headers);
+      }
+
+      // Add OAuth2 token if available
+      if (this.serverDefinition.oauth2) {
+        const accessToken = await this.oauth2Manager.getAccessToken(
+          this.projectId,
+          this.serverId,
+          this.serverDefinition.oauth2
+        );
+        if (accessToken) {
+          headers['Authorization'] = `Bearer ${accessToken}`;
+        }
+      }
+
+      const response = await fetch(this.url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(message),
+      });
+
+      // Handle 401 Unauthorized - token might be expired
+      if (response.status === 401 && this.serverDefinition.oauth2) {
+        console.log(`              [HttpTransport] 401 Unauthorized, attempting token refresh`);
+        
+        // Try to refresh token
+        const refreshed = await this.oauth2Manager.refreshAccessToken(
+          this.projectId,
+          this.serverId,
+          this.serverDefinition.oauth2
+        );
+
+        if (refreshed) {
+          // Retry request with new token
+          const newToken = await this.oauth2Manager.getAccessToken(
+            this.projectId,
+            this.serverId,
+            this.serverDefinition.oauth2
+          );
+          if (newToken) {
+            headers['Authorization'] = `Bearer ${newToken}`;
+            const retryResponse = await fetch(this.url, {
+              method: 'POST',
+              headers,
+              body: JSON.stringify(message),
+            });
+
+            if (retryResponse.ok) {
+              const responseMessage = await retryResponse.json();
+              if (this.onmessage) {
+                this.onmessage(responseMessage);
+              }
+              return;
+            }
+          }
+        }
+
+        // If refresh failed, throw error
+        throw new Error('Authentication failed. Please reconnect OAuth2.');
+      }
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const responseMessage = await response.json();
+      if (this.onmessage) {
+        this.onmessage(responseMessage);
+      }
+    } catch (error: any) {
+      console.error(`              [HttpTransport] Error sending message:`, error);
+      if (this.onerror) {
+        this.onerror(error);
+      }
+      throw error;
+    }
+  }
+
+  async close(): Promise<void> {
+    console.log(`              [HttpTransport] Closed for ${this.url}`);
+    if (this.onclose) {
+      this.onclose();
+    }
   }
 }

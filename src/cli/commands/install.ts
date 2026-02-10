@@ -112,19 +112,42 @@ export async function installCommand(): Promise<void> {
   
   // Step 4: Check if credential setup is needed
   if (result.needsCredentials && result.credentialsUrl) {
-    console.log('\n🔑 Credentials required!');
+    const hasVariables = result.missingVariables && result.missingVariables.length > 0;
+    const hasOAuth2 = result.oauth2Servers && result.oauth2Servers.length > 0;
+    const needsOAuth2Connection = hasOAuth2 && result.oauth2Servers.some((s: any) => !s.isConnected);
+    
+    if (hasVariables && needsOAuth2Connection) {
+      console.log('\n🔐 Credentials and OAuth2 connections required!');
+    } else if (needsOAuth2Connection) {
+      console.log('\n🔐 OAuth2 connections required!');
+    } else {
+      console.log('\n🔑 Credentials required!');
+    }
+    
     console.log(`Opening browser to configure credentials...`);
+    
+    if (hasVariables) {
+      console.log(`  • Missing variables: ${result.missingVariables.join(', ')}`);
+    }
+    if (needsOAuth2Connection) {
+      const disconnectedServers = result.oauth2Servers.filter((s: any) => !s.isConnected);
+      console.log(`  • OAuth2 servers need connection: ${disconnectedServers.map((s: any) => s.serverId).join(', ')}`);
+    }
     
     const opened = await openBrowser(result.credentialsUrl);
     
     if (opened) {
-      console.log(`✓ Browser opened: ${result.credentialsUrl}`);
+      console.log(`\n✓ Browser opened: ${result.credentialsUrl}`);
     } else {
-      console.log(`⚠ Could not open browser automatically.`);
+      console.log(`\n⚠ Could not open browser automatically.`);
       console.log(`Please open this URL manually: ${result.credentialsUrl}`);
     }
     
-    console.log('After saving credentials, the installation will be complete.');
+    if (needsOAuth2Connection) {
+      console.log('\nAfter configuring credentials and connecting OAuth2, the installation will be complete.');
+    } else {
+      console.log('\nAfter saving credentials, the installation will be complete.');
+    }
   } else {
     console.log('\n✓ Installation complete!');
   }
