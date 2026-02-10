@@ -253,7 +253,27 @@ export class MCPProxy {
 }
 
 /**
- * HTTP Transport for MCP with OAuth2 support
+ * Parse Server-Sent Events (SSE) format response
+ * Format: "event: message\ndata: {...}\n\n"
+ */
+function parseSSEResponse(text: string): JSONRPCMessage | null {
+  const lines = text.trim().split('\n');
+  for (const line of lines) {
+    if (line.startsWith('data: ')) {
+      const jsonStr = line.substring(6).trim();
+      try {
+        return JSON.parse(jsonStr);
+      } catch (error) {
+        console.error(`Failed to parse SSE data: ${jsonStr}`);
+        return null;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * HTTP Transport for MCP with OAuth2 support and session management
  */
 class HttpMCPTransport implements Transport {
   private url: string;
@@ -262,6 +282,7 @@ class HttpMCPTransport implements Transport {
   private db: CapaDatabase;
   private oauth2Manager: OAuth2Manager;
   private serverDefinition: MCPServerDefinition;
+  public sessionId?: string;
   public onclose?: () => void;
   public onerror?: (error: Error) => void;
   public onmessage?: (message: JSONRPCMessage) => void;
@@ -289,9 +310,17 @@ class HttpMCPTransport implements Transport {
 
   async send(message: JSONRPCMessage): Promise<void> {
     try {
+      console.log(`              [HttpTransport] Sending message:`, JSON.stringify(message));
+      
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
+        'Accept': 'application/json, text/event-stream',
       };
+
+      // Add session ID if we have one (for Atlassian and other session-based servers)
+      if (this.sessionId) {
+        headers['mcp-session-id'] = this.sessionId;
+      }
 
       // Add custom headers from server definition
       if (this.serverDefinition.headers) {
@@ -343,7 +372,30 @@ class HttpMCPTransport implements Transport {
             });
 
             if (retryResponse.ok) {
-              const responseMessage = await retryResponse.json();
+              // Extract session ID from retry response
+              const sessionId = retryResponse.headers.get('mcp-session-id');
+              if (sessionId && !this.sessionId) {
+                this.sessionId = sessionId;
+                console.log(`              [HttpTransport] Session established: ${sessionId}`);
+              }
+
+              // Check content type to determine response format
+              const contentType = retryResponse.headers.get('content-type') || '';
+              let responseMessage: JSONRPCMessage;
+
+              if (contentType.includes('text/event-stream')) {
+                // Parse SSE format
+                const text = await retryResponse.text();
+                const parsed = parseSSEResponse(text);
+                if (!parsed) {
+                  throw new Error('Failed to parse SSE response');
+                }
+                responseMessage = parsed;
+              } else {
+                // Parse regular JSON
+                responseMessage = await retryResponse.json();
+              }
+
               if (this.onmessage) {
                 this.onmessage(responseMessage);
               }
@@ -357,10 +409,48 @@ class HttpMCPTransport implements Transport {
       }
 
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        // Try to get error details from response body
+        let errorDetails = '';
+        try {
+          const contentType = response.headers.get('content-type') || '';
+          if (contentType.includes('application/json')) {
+            const errorJson = await response.json();
+            errorDetails = `: ${JSON.stringify(errorJson)}`;
+          } else {
+            const errorText = await response.text();
+            errorDetails = errorText ? `: ${errorText}` : '';
+          }
+        } catch (e) {
+          // Ignore parsing errors
+        }
+        console.error(`              [HttpTransport] HTTP ${response.status}: ${response.statusText}${errorDetails}`);
+        throw new Error(`HTTP ${response.status}: ${response.statusText}${errorDetails}`);
       }
 
-      const responseMessage = await response.json();
+      // Extract session ID from response headers (for session-based servers like Atlassian)
+      const sessionId = response.headers.get('mcp-session-id');
+      if (sessionId && !this.sessionId) {
+        this.sessionId = sessionId;
+        console.log(`              [HttpTransport] Session established: ${sessionId}`);
+      }
+
+      // Check content type to determine response format
+      const contentType = response.headers.get('content-type') || '';
+      let responseMessage: JSONRPCMessage;
+
+      if (contentType.includes('text/event-stream')) {
+        // Parse SSE format
+        const text = await response.text();
+        const parsed = parseSSEResponse(text);
+        if (!parsed) {
+          throw new Error('Failed to parse SSE response');
+        }
+        responseMessage = parsed;
+      } else {
+        // Parse regular JSON
+        responseMessage = await response.json();
+      }
+
       if (this.onmessage) {
         this.onmessage(responseMessage);
       }
