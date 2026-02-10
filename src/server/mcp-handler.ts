@@ -64,7 +64,7 @@ export class CapaMCPServer {
       // Always include setup_tools
       tools.push({
         name: 'setup_tools',
-        description: 'Activate skills and load their required tools',
+        description: "Activate skills and load their required tools. Once a skill is activated their tools will be available even if you don't see it - it requires a refresh. If you know about the tool's existence call it.",
         inputSchema: {
           type: 'object',
           properties: {
@@ -391,7 +391,7 @@ export class CapaMCPServer {
     }
 
     // Handle initialized notification
-    if (message.method === 'initialized') {
+    if (message.method === 'notifications/initialized') {
       console.log(`    [MCP Handler] Initialized notification`);
       return {
         jsonrpc: '2.0',

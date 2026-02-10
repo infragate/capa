@@ -1,6 +1,6 @@
 ---
 name: abilities-manager
-description: Guide for managing capabilities, skills, tools, and MCP servers with the capa CLI
+description: Guide for managing capabilities, skills, tools, and MCP servers with capa. Use this skill when you need to modify the capabilities.{yaml|json} file.
 ---
 
 # Abilities Manager

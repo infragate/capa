@@ -209,7 +209,31 @@ async function installSkills(
         continue;
       }
     } else {
+      // Provide detailed error message about what's wrong
       console.error(`  ✗ Invalid skill definition: ${skill.id}`);
+      
+      if (!skill.type || !['inline', 'remote', 'github'].includes(skill.type)) {
+        console.error(`    ⮡ Invalid or missing 'type'. Must be one of: 'inline', 'remote', 'github'`);
+        console.error(`    ⮡ Current value: ${skill.type || '(not set)'}`);
+      } else if (skill.type === 'inline') {
+        console.error(`    ⮡ Type is 'inline' but 'def.content' is missing`);
+        console.error(`    ⮡ For inline skills, provide the SKILL.md content in 'def.content'`);
+      } else if (skill.type === 'github') {
+        console.error(`    ⮡ Type is 'github' but 'def.repo' is missing or invalid`);
+        console.error(`    ⮡ For GitHub skills, provide 'def.repo' in format: 'owner/repo@skill-name'`);
+        if (skill.def.repo) {
+          console.error(`    ⮡ Current value: '${skill.def.repo}'`);
+        }
+      } else if (skill.type === 'remote') {
+        console.error(`    ⮡ Type is 'remote' but 'def.url' is missing`);
+        console.error(`    ⮡ For remote skills, provide the URL to SKILL.md in 'def.url'`);
+      }
+      
+      console.error(`\n    Example configurations:`);
+      console.error(`    - Inline:  { "id": "my-skill", "type": "inline", "def": { "content": "..." } }`);
+      console.error(`    - GitHub:  { "id": "my-skill", "type": "github", "def": { "repo": "owner/repo@skill-name" } }`);
+      console.error(`    - Remote:  { "id": "my-skill", "type": "remote", "def": { "url": "https://..." } }`);
+      
       continue;
     }
     
