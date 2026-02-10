@@ -313,7 +313,6 @@ class CapaServer {
           servers: capabilities.servers.map(s => ({
             id: s.id,
             type: s.type,
-            description: s.def?.description || null,
             url: s.def?.url || null,
           })),
         } : null,
@@ -358,7 +357,7 @@ class CapaServer {
             // Validate existing connection by attempting to get a valid token
             // This will trigger token refresh if needed and delete invalid tokens
             if (isConnected) {
-              const accessToken = await this.oauth2Manager.getAccessToken(projectId, server.id);
+              const accessToken = await this.oauth2Manager.getAccessToken(projectId, server.id, oauth2Config);
               isConnected = !!accessToken;
               if (!isConnected) {
                 console.log(`        ⚠ OAuth2 token invalid/expired`);
@@ -399,7 +398,6 @@ class CapaServer {
       const needsOAuth2Connection = oauth2Servers.some(s => !s.isConnected);
 
       // Validate tools (check if MCP tools exist on remote servers)
-      // Skip validation for OAuth2 servers that aren't connected yet
       console.log(`    Validating tools...`);
       let toolValidationResults: any[] = [];
       try {
