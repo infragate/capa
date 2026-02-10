@@ -385,6 +385,11 @@ export class OAuth2Manager {
       const tokenData = this.db.getOAuthToken(projectId, serverId);
       if (!tokenData || !tokenData.refresh_token) {
         console.error(`      [OAuth2] No refresh token available for ${serverId}`);
+        // Delete incomplete token data
+        if (tokenData) {
+          this.db.deleteOAuthToken(projectId, serverId);
+          console.log(`      [OAuth2] Deleted incomplete token for ${serverId}`);
+        }
         return false;
       }
 
@@ -404,6 +409,9 @@ export class OAuth2Manager {
 
       if (!response.ok) {
         console.error(`      [OAuth2] Token refresh failed: ${response.statusText}`);
+        // Delete invalid token so isServerConnected returns false
+        this.db.deleteOAuthToken(projectId, serverId);
+        console.log(`      [OAuth2] Deleted invalid token for ${serverId}`);
         return false;
       }
 
@@ -427,6 +435,9 @@ export class OAuth2Manager {
       return true;
     } catch (error: any) {
       console.error(`      [OAuth2] ✗ Token refresh error: ${error.message}`);
+      // Delete token that failed to refresh
+      this.db.deleteOAuthToken(projectId, serverId);
+      console.log(`      [OAuth2] Deleted failed token for ${serverId}`);
       return false;
     }
   }

@@ -1070,7 +1070,27 @@
           item.className = 'oauth-item';
 
           const statusClass = server.isConnected ? 'status-connected' : 'status-disconnected';
-          const statusText = server.isConnected ? 'Connected' : 'Not connected';
+          let statusText = server.isConnected ? 'Connected' : 'Not connected';
+          
+          // Add expiration info if connected
+          if (server.isConnected && server.expiresAt) {
+            const expiresDate = new Date(server.expiresAt);
+            const now = new Date();
+            const diffMs = expiresDate.getTime() - now.getTime();
+            const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+            const diffHours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+            
+            if (diffDays > 0) {
+              statusText += ` (expires in ${diffDays} day${diffDays > 1 ? 's' : ''})`;
+            } else if (diffHours > 0) {
+              statusText += ` (expires in ${diffHours} hour${diffHours > 1 ? 's' : ''})`;
+            } else if (diffMs > 0) {
+              const diffMinutes = Math.floor(diffMs / (1000 * 60));
+              statusText += ` (expires in ${diffMinutes} minute${diffMinutes > 1 ? 's' : ''})`;
+            } else {
+              statusText = 'Expired';
+            }
+          }
 
           item.innerHTML = `
             <div class="oauth-info">

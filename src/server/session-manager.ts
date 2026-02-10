@@ -150,6 +150,30 @@ export class SessionManager {
   }
 
   /**
+   * Get all tools required by any skill in a project
+   * Used for 'expose-all' mode to show all available tools upfront
+   */
+  getAllRequiredToolsForProject(projectId: string): string[] {
+    const capabilities = this.projectCapabilities.get(projectId);
+    if (!capabilities) {
+      return [];
+    }
+
+    const requiredTools = new Set<string>();
+
+    // Iterate through all skills and collect their required tools
+    for (const skill of capabilities.skills) {
+      if (skill.def && skill.def.requires) {
+        for (const toolId of skill.def.requires) {
+          requiredTools.add(toolId);
+        }
+      }
+    }
+
+    return Array.from(requiredTools);
+  }
+
+  /**
    * Register capabilities for a project
    */
   setProjectCapabilities(projectId: string, capabilities: Capabilities): void {

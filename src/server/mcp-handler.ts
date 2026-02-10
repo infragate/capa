@@ -16,6 +16,15 @@ import { SubprocessManager } from './subprocess-manager';
 import { extractAllVariables } from '../shared/variable-resolver';
 import { VERSION } from '../version';
 
+export interface ToolValidationResult {
+  toolId: string;
+  success: boolean;
+  error?: string;
+  serverId?: string;
+  remoteTool?: string;
+  pendingAuth?: boolean;  // True if validation was skipped due to pending OAuth2 authentication
+}
+
 export class CapaMCPServer {
   private server: Server;
   private db: CapaDatabase;
@@ -60,30 +69,46 @@ export class CapaMCPServer {
     // List tools handler
     this.server.setRequestHandler(ListToolsRequestSchema, async (request) => {
       const tools: MCPTool[] = [];
+      const capabilities = this.sessionManager.getProjectCapabilities(this.projectId);
 
-      // Always include setup_tools
-      tools.push({
-        name: 'setup_tools',
-        description: "Activate skills and load their required tools. Once a skill is activated their tools will be available even if you don't see it - it requires a refresh. If you know about the tool's existence call it.",
-        inputSchema: {
-          type: 'object',
-          properties: {
-            skills: {
-              type: 'array',
-              items: { type: 'string' },
-              description: 'List of skill IDs to activate',
+      // Determine tool exposure mode (default to 'expose-all')
+      const toolExposureMode = capabilities?.options?.toolExposure || 'expose-all';
+
+      if (toolExposureMode === 'expose-all') {
+        // Expose-all mode: Show all tools from all skills immediately
+        if (capabilities) {
+          const allToolIds = this.sessionManager.getAllRequiredToolsForProject(this.projectId);
+          for (const toolId of allToolIds) {
+            const tool = capabilities.tools.find((t) => t.id === toolId);
+            if (tool) {
+              const mcpTool = await this.convertToolToMCP(tool, capabilities);
+              tools.push(mcpTool);
+            }
+          }
+        }
+        // Note: setup_tools is NOT included in expose-all mode since all tools are already visible
+      } else {
+        // On-demand mode: Current behavior - only show setup_tools initially
+        tools.push({
+          name: 'setup_tools',
+          description: "Activate skills and load their required tools. Once a skill is activated their tools will be available even if you don't see it - it requires a refresh. If you know about the tool's existence call it.",
+          inputSchema: {
+            type: 'object',
+            properties: {
+              skills: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'List of skill IDs to activate',
+              },
             },
+            required: ['skills'],
           },
-          required: ['skills'],
-        },
-      });
+        });
 
-      // If session has active skills, add their tools
-      if (this.sessionId) {
-        const session = this.sessionManager.getSession(this.sessionId);
-        if (session && session.activeSkills.length > 0) {
-          const capabilities = this.sessionManager.getProjectCapabilities(this.projectId);
-          if (capabilities) {
+        // If session has active skills, add their tools
+        if (this.sessionId) {
+          const session = this.sessionManager.getSession(this.sessionId);
+          if (session && session.activeSkills.length > 0 && capabilities) {
             for (const toolId of session.availableTools) {
               const tool = capabilities.tools.find((t) => t.id === toolId);
               if (tool) {
@@ -254,6 +279,75 @@ export class CapaMCPServer {
     }
   }
 
+  /**
+   * Validate tools and return validation results
+   */
+  async validateTools(capabilities: Capabilities): Promise<ToolValidationResult[]> {
+    const results: ToolValidationResult[] = [];
+
+    for (const tool of capabilities.tools) {
+      if (tool.type === 'command') {
+        // Command tools are always valid if they have proper structure
+        results.push({
+          toolId: tool.id,
+          success: true,
+        });
+      } else {
+        // MCP tool - validate against remote server
+        const mcpDef = tool.def as ToolMCPDefinition;
+        const serverId = mcpDef.server.replace('@', '');
+        const serverDef = capabilities.servers.find((s) => s.id === serverId);
+        
+        if (!serverDef) {
+          results.push({
+            toolId: tool.id,
+            success: false,
+            error: `Server not found: ${serverId}`,
+            serverId: serverId,
+          });
+          continue;
+        }
+
+        try {
+          // Use the shared MCP proxy instance to list tools
+          const remoteTools = await this.mcpProxy.listTools(serverId, serverDef.def);
+          
+          // Find the matching tool on the remote server
+          const remoteTool = remoteTools.find((t: any) => t.name === mcpDef.tool);
+          
+          if (remoteTool) {
+            results.push({
+              toolId: tool.id,
+              success: true,
+              serverId: serverId,
+              remoteTool: mcpDef.tool,
+            });
+          } else {
+            // Get list of available tools for better error message
+            const availableTools = remoteTools.map((t: any) => t.name).join(', ');
+            results.push({
+              toolId: tool.id,
+              success: false,
+              error: `Tool "${mcpDef.tool}" not found on server "${serverId}". Available tools: ${availableTools || '(none)'}`,
+              serverId: serverId,
+              remoteTool: mcpDef.tool,
+            });
+          }
+        } catch (error: any) {
+          results.push({
+            toolId: tool.id,
+            success: false,
+            error: `Failed to connect to server "${serverId}": ${error.message}`,
+            serverId: serverId,
+            remoteTool: mcpDef.tool,
+          });
+        }
+      }
+    }
+
+    return results;
+  }
+
   private async convertToolToMCP(tool: Tool, capabilities: Capabilities): Promise<MCPTool> {
     // Check cache first
     if (this.toolSchemaCache.has(tool.id)) {
@@ -403,30 +497,49 @@ export class CapaMCPServer {
     if (message.method === 'tools/list') {
       console.log(`    [MCP Handler] List tools request`);
       const tools: MCPTool[] = [];
+      const capabilities = this.sessionManager.getProjectCapabilities(this.projectId);
 
-      // Always include setup_tools
-      tools.push({
-        name: 'setup_tools',
-        description: 'Activate skills and load their required tools',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            skills: {
-              type: 'array',
-              items: { type: 'string' },
-              description: 'List of skill IDs to activate',
+      // Determine tool exposure mode (default to 'expose-all')
+      const toolExposureMode = capabilities?.options?.toolExposure || 'expose-all';
+      console.log(`      Tool exposure mode: ${toolExposureMode}`);
+
+      if (toolExposureMode === 'expose-all') {
+        // Expose-all mode: Show all tools from all skills immediately
+        if (capabilities) {
+          const allToolIds = this.sessionManager.getAllRequiredToolsForProject(this.projectId);
+          console.log(`      Exposing all ${allToolIds.length} tool(s) from all skills`);
+          for (const toolId of allToolIds) {
+            const tool = capabilities.tools.find((t) => t.id === toolId);
+            if (tool) {
+              const mcpTool = await this.convertToolToMCP(tool, capabilities);
+              tools.push(mcpTool);
+            }
+          }
+        }
+        // Note: setup_tools is NOT included in expose-all mode since all tools are already visible
+      } else {
+        // On-demand mode: Current behavior - only show setup_tools initially
+        tools.push({
+          name: 'setup_tools',
+          description: 'Activate skills and load their required tools',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              skills: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'List of skill IDs to activate',
+              },
             },
+            required: ['skills'],
           },
-          required: ['skills'],
-        },
-      });
+        });
 
-      // If session has active skills, add their tools
-      if (this.sessionId) {
-        const session = this.sessionManager.getSession(this.sessionId);
-        if (session && session.activeSkills.length > 0) {
-          const capabilities = this.sessionManager.getProjectCapabilities(this.projectId);
-          if (capabilities) {
+        // If session has active skills, add their tools
+        if (this.sessionId) {
+          const session = this.sessionManager.getSession(this.sessionId);
+          if (session && session.activeSkills.length > 0 && capabilities) {
+            console.log(`      Adding ${session.availableTools.length} tool(s) from active skills`);
             for (const toolId of session.availableTools) {
               const tool = capabilities.tools.find((t) => t.id === toolId);
               if (tool) {

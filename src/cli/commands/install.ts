@@ -103,6 +103,40 @@ export async function installCommand(): Promise<void> {
   
   const result = await response.json();
   
+  // Display tool validation results
+  if (result.toolValidation && result.toolValidation.length > 0) {
+    const successfulTools = result.toolValidation.filter((t: any) => t.success && !t.pendingAuth);
+    const failedTools = result.toolValidation.filter((t: any) => !t.success && !t.pendingAuth);
+    const pendingAuthTools = result.toolValidation.filter((t: any) => t.pendingAuth);
+    
+    if (failedTools.length > 0) {
+      console.log(`\n⚠️  Tool Validation Results:`);
+      console.log(`   ✓ ${successfulTools.length} of ${result.toolValidation.length} tools validated successfully`);
+      console.log(`   ✗ ${failedTools.length} tool(s) failed validation:\n`);
+      
+      for (const failed of failedTools) {
+        console.log(`   • Tool: ${failed.toolId}`);
+        if (failed.serverId && failed.remoteTool) {
+          console.log(`     ⮡ Upstream tool "${failed.remoteTool}" not found on server "@${failed.serverId}"`);
+        }
+        if (failed.error) {
+          console.log(`     ⮡ ${failed.error}`);
+        }
+        console.log();
+      }
+      
+      console.log(`   💡 Tip: Check your capabilities.json file and verify:`);
+      console.log(`      - Tool names match exactly what the MCP server provides`);
+      console.log(`      - Server IDs are correct (e.g., "@server-name")`);
+      console.log(`      - MCP servers are accessible and properly configured\n`);
+    } else if (pendingAuthTools.length > 0 && pendingAuthTools.length < result.toolValidation.length) {
+      console.log(`\n✓ All ${successfulTools.length} non-OAuth2 tools validated successfully`);
+      console.log(`  ℹ ${pendingAuthTools.length} tool(s) will be validated after OAuth2 authentication`);
+    } else if (pendingAuthTools.length === 0) {
+      console.log(`\n✓ All ${result.toolValidation.length} tools validated successfully`);
+    }
+  }
+  
   // Step 3: Register MCP server with client configurations
   const mcpUrl = `${serverStatus.url}/${projectId}/mcp`;
   console.log('\n🔗 Registering MCP server with clients...');
