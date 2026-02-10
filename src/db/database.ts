@@ -1,4 +1,6 @@
 import { Database } from 'bun:sqlite';
+import { mkdirSync } from 'fs';
+import { dirname } from 'path';
 import type {
   Project,
   Variable,
@@ -12,6 +14,10 @@ export class CapaDatabase {
   private db: Database;
 
   constructor(dbPath: string) {
+    // Ensure parent directory exists before creating database
+    const dbDir = dirname(dbPath);
+    mkdirSync(dbDir, { recursive: true });
+    
     this.db = new Database(dbPath, { create: true });
     this.initSchema();
   }
