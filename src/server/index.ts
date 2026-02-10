@@ -88,7 +88,13 @@ class CapaServer {
       );
     }
 
-    // Web UI for credentials
+    // Home page
+    if (path === '/') {
+      console.log('  → Home page');
+      return this.handleHomePage();
+    }
+
+    // Web UI for credentials and project configuration
     if (path === '/ui' || path.startsWith('/ui/')) {
       console.log('  → Web UI');
       return this.handleWebUI(request);
@@ -112,11 +118,32 @@ class CapaServer {
     return new Response('Not Found', { status: 404 });
   }
 
+  private async handleHomePage(): Promise<Response> {
+    const htmlPath = join(process.cwd(), 'web-ui', 'home.html');
+    const file = Bun.file(htmlPath);
+    
+    if (await file.exists()) {
+      return new Response(file, {
+        headers: { 'Content-Type': 'text/html' },
+      });
+    }
+
+    return new Response('Home page not found', { status: 404 });
+  }
+
   private async handleWebUI(request: Request): Promise<Response> {
     const url = new URL(request.url);
+    const path = url.pathname;
+    
+    // Route to different UI pages
+    let htmlFileName = 'index.html';
+    
+    if (path.startsWith('/ui/project')) {
+      htmlFileName = 'project.html';
+    }
     
     // Serve the HTML file
-    const htmlPath = join(process.cwd(), 'web-ui', 'index.html');
+    const htmlPath = join(process.cwd(), 'web-ui', htmlFileName);
     const file = Bun.file(htmlPath);
     
     if (await file.exists()) {
@@ -131,6 +158,18 @@ class CapaServer {
   private async handleAPI(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname;
+
+    // Get all projects
+    if (path === '/api/projects' && request.method === 'GET') {
+      return this.handleGetProjects();
+    }
+
+    // Get project details
+    const projectGetMatch = path.match(/^\/api\/projects\/([^/]+)$/);
+    if (projectGetMatch && request.method === 'GET') {
+      const projectId = projectGetMatch[1];
+      return this.handleGetProject(projectId);
+    }
 
     // Configure project
     const configMatch = path.match(/^\/api\/projects\/([^/]+)\/configure$/);
@@ -182,6 +221,90 @@ class CapaServer {
     }
 
     return new Response('Not Found', { status: 404 });
+  }
+
+  private async handleGetProjects(): Promise<Response> {
+    console.log(`  [API] Get all projects`);
+    try {
+      const projects = this.db.getAllProjects();
+      
+      // Enrich projects with additional data
+      const enrichedProjects = projects.map((project) => {
+        const capabilities = this.sessionManager.getProjectCapabilities(project.id);
+        return {
+          id: project.id,
+          path: project.path,
+          created_at: project.created_at,
+          updated_at: project.updated_at,
+          skills_count: capabilities?.skills?.length || 0,
+          tools_count: capabilities?.tools?.length || 0,
+          servers_count: capabilities?.servers?.length || 0,
+        };
+      });
+
+      console.log(`    Found ${enrichedProjects.length} project(s)`);
+      return new Response(
+        JSON.stringify({ projects: enrichedProjects }),
+        { headers: { 'Content-Type': 'application/json' } }
+      );
+    } catch (error: any) {
+      console.error(`    ✗ Error: ${error.message}`);
+      return new Response(
+        JSON.stringify({ error: error.message }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+  }
+
+  private async handleGetProject(projectId: string): Promise<Response> {
+    console.log(`  [API] Get project: ${projectId}`);
+    try {
+      const project = this.db.getProject(projectId);
+      if (!project) {
+        return new Response(
+          JSON.stringify({ error: 'Project not found' }),
+          { status: 404, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      const capabilities = this.sessionManager.getProjectCapabilities(projectId);
+      
+      const projectDetails = {
+        id: project.id,
+        path: project.path,
+        created_at: project.created_at,
+        updated_at: project.updated_at,
+        capabilities: capabilities ? {
+          skills: capabilities.skills.map(s => ({
+            id: s.id,
+            type: s.type,
+            description: s.def?.description || null,
+          })),
+          tools: capabilities.tools.map(t => ({
+            id: t.id,
+            type: t.type,
+          })),
+          servers: capabilities.servers.map(s => ({
+            id: s.id,
+            type: s.type,
+            description: s.def?.description || null,
+            url: s.def?.url || null,
+          })),
+        } : null,
+      };
+
+      console.log(`    Project found`);
+      return new Response(
+        JSON.stringify(projectDetails),
+        { headers: { 'Content-Type': 'application/json' } }
+      );
+    } catch (error: any) {
+      console.error(`    ✗ Error: ${error.message}`);
+      return new Response(
+        JSON.stringify({ error: error.message }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
   }
 
   private async handleProjectConfigure(projectId: string, request: Request): Promise<Response> {

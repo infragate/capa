@@ -147,6 +147,10 @@ export class CapaDatabase {
     return this.db.query('SELECT * FROM projects WHERE path = ?').get(path) as Project | null;
   }
 
+  getAllProjects(): Project[] {
+    return this.db.query('SELECT * FROM projects ORDER BY updated_at DESC').all() as Project[];
+  }
+
   // Variable operations
   setVariable(projectId: string, key: string, value: string): void {
     const now = Date.now();

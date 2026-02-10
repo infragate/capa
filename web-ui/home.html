@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Projects - CAPA</title>
+  <style>
+    :root[data-theme="light"] {
+      --bg-primary: #f5f5f5;
+      --bg-secondary: #ffffff;
+      --bg-tertiary: #f8f9fa;
+      --text-primary: #202124;
+      --text-secondary: #5f6368;
+      --text-tertiary: #80868b;
+      --border-primary: #dadce0;
+      --border-secondary: #e0e0e0;
+      --border-tertiary: #f1f3f4;
+      --accent-primary: #1967d2;
+      --accent-hover: #1557b0;
+      --shadow-sm: 0 1px 2px 0 rgba(60,64,67,0.3), 0 1px 3px 1px rgba(60,64,67,0.15);
+      --shadow-md: 0 10px 30px rgba(0, 0, 0, 0.2);
+      --input-bg: #ffffff;
+      --hover-bg: #f8f9fa;
+      --code-bg: #f1f3f4;
+      --error-color: #d93025;
+    }
+
+    :root,
+    :root[data-theme="dark"] {
+      --bg-primary: #202124;
+      --bg-secondary: #292a2d;
+      --bg-tertiary: #35363a;
+      --text-primary: #e8eaed;
+      --text-secondary: #9aa0a6;
+      --text-tertiary: #5f6368;
+      --border-primary: #3c4043;
+      --border-secondary: #3c4043;
+      --border-tertiary: #3c4043;
+      --accent-primary: #8ab4f8;
+      --accent-hover: #aecbfa;
+      --shadow-sm: 0 1px 2px 0 rgba(0,0,0,0.3), 0 1px 3px 1px rgba(0,0,0,0.15);
+      --shadow-md: 0 10px 30px rgba(0, 0, 0, 0.5);
+      --input-bg: #292a2d;
+      --hover-bg: #35363a;
+      --code-bg: #3c4043;
+      --error-color: #f28b82;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      min-height: 100vh;
+    }
+
+    .topbar {
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border-secondary);
+      padding: 0 24px;
+      height: 64px;
+      display: flex;
+      align-items: center;
+      box-shadow: var(--shadow-sm);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .topbar-title {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 22px;
+      font-weight: 400;
+      color: var(--text-secondary);
+      flex: 1;
+    }
+
+    .topbar-logo {
+      font-weight: 500;
+      color: var(--accent-primary);
+      letter-spacing: -0.5px;
+    }
+
+    .theme-toggle {
+      background: transparent;
+      border: 1px solid var(--border-primary);
+      border-radius: 4px;
+      padding: 8px 12px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--text-secondary);
+      font-size: 13px;
+      transition: background-color 0.2s, border-color 0.2s;
+    }
+
+    .theme-toggle:hover {
+      background: var(--hover-bg);
+      border-color: var(--accent-primary);
+    }
+
+    .theme-toggle svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-left: 16px;
+    }
+
+    .nav-link {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 12px;
+      border-radius: 4px;
+      text-decoration: none;
+      color: var(--text-secondary);
+      font-size: 13px;
+      transition: background-color 0.2s, color 0.2s;
+    }
+
+    .nav-link:hover {
+      background: var(--hover-bg);
+      color: var(--text-primary);
+    }
+
+    .nav-link svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    .nav-link-icon-only {
+      padding: 8px;
+    }
+
+    .container {
+      max-width: 1440px;
+      margin: 0 auto;
+      padding: 32px 24px;
+    }
+
+    .page-header {
+      margin-bottom: 24px;
+    }
+
+    .page-title {
+      font-size: 28px;
+      font-weight: 400;
+      color: var(--text-primary);
+      margin-bottom: 8px;
+    }
+
+    .page-subtitle {
+      font-size: 14px;
+      color: var(--text-secondary);
+      font-weight: 400;
+    }
+
+    .search-section {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-primary);
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 24px;
+    }
+
+    .search-input-wrapper {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+
+    .search-icon {
+      position: absolute;
+      left: 12px;
+      color: var(--text-secondary);
+      width: 18px;
+      height: 18px;
+    }
+
+    .search-input {
+      width: 100%;
+      padding: 10px 16px 10px 40px;
+      border: 1px solid var(--border-primary);
+      border-radius: 4px;
+      font-size: 14px;
+      color: var(--text-primary);
+      background: var(--input-bg);
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .search-input:focus {
+      outline: none;
+      border-color: var(--accent-primary);
+      box-shadow: var(--shadow-sm);
+    }
+
+    .projects-list {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-primary);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .projects-header {
+      display: grid;
+      grid-template-columns: 1fr 100px 100px 100px 180px;
+      gap: 16px;
+      padding: 12px 24px;
+      background: var(--bg-tertiary);
+      border-bottom: 1px solid var(--border-primary);
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+
+    .project-row {
+      display: grid;
+      grid-template-columns: 1fr 100px 100px 100px 180px;
+      gap: 16px;
+      padding: 16px 24px;
+      border-bottom: 1px solid var(--border-tertiary);
+      text-decoration: none;
+      color: inherit;
+      transition: background-color 0.15s;
+      align-items: center;
+    }
+
+    .project-row:last-child {
+      border-bottom: none;
+    }
+
+    .project-row:hover {
+      background: var(--hover-bg);
+    }
+
+    .project-info {
+      min-width: 0;
+    }
+
+    .project-name {
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--accent-primary);
+      margin-bottom: 4px;
+      font-family: 'Roboto Mono', monospace;
+    }
+
+    .project-path {
+      font-size: 12px;
+      color: var(--text-secondary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-family: 'Roboto Mono', monospace;
+    }
+
+    .project-stat {
+      font-size: 14px;
+      color: var(--text-primary);
+      text-align: center;
+      font-weight: 400;
+    }
+
+    .project-date {
+      font-size: 13px;
+      color: var(--text-secondary);
+      text-align: right;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 500;
+      background: var(--bg-tertiary);
+      color: var(--accent-primary);
+    }
+
+    .empty-state {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-primary);
+      border-radius: 8px;
+      padding: 80px 40px;
+      text-align: center;
+    }
+
+    .empty-state-icon {
+      width: 64px;
+      height: 64px;
+      margin: 0 auto 24px;
+      opacity: 0.4;
+      color: var(--text-secondary);
+    }
+
+    .empty-state h2 {
+      color: var(--text-primary);
+      margin-bottom: 8px;
+      font-size: 20px;
+      font-weight: 400;
+    }
+
+    .empty-state p {
+      color: var(--text-secondary);
+      font-size: 14px;
+      line-height: 1.6;
+      max-width: 500px;
+      margin: 0 auto;
+    }
+
+    .empty-state code {
+      background: var(--code-bg);
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-family: 'Roboto Mono', monospace;
+      font-size: 13px;
+      color: var(--text-primary);
+    }
+
+    .loading {
+      text-align: center;
+      padding: 80px;
+      color: var(--text-secondary);
+      font-size: 14px;
+    }
+
+    .loading-spinner {
+      display: inline-block;
+      width: 32px;
+      height: 32px;
+      border: 3px solid var(--border-tertiary);
+      border-top-color: var(--accent-primary);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin-bottom: 16px;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .no-results {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-primary);
+      border-radius: 8px;
+      padding: 60px 40px;
+      text-align: center;
+    }
+
+    .no-results h3 {
+      color: var(--text-primary);
+      margin-bottom: 8px;
+      font-size: 18px;
+      font-weight: 400;
+    }
+
+    .no-results p {
+      color: var(--text-secondary);
+      font-size: 14px;
+    }
+
+    @media (max-width: 1024px) {
+      .projects-header,
+      .project-row {
+        grid-template-columns: 1fr 80px 80px 80px;
+      }
+      
+      .projects-header > *:last-child,
+      .project-row > *:last-child {
+        display: none;
+      }
+    }
+
+    @media (max-width: 768px) {
+      .projects-header {
+        display: none;
+      }
+
+      .project-row {
+        display: block;
+        padding: 16px;
+      }
+
+      .project-info {
+        margin-bottom: 12px;
+      }
+
+      .project-stats-mobile {
+        display: flex;
+        gap: 16px;
+        font-size: 12px;
+        color: #5f6368;
+      }
+
+      .project-date {
+        text-align: left;
+        margin-top: 8px;
+        font-size: 12px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="topbar-title">
+      <span class="topbar-logo">CAPA</span>
+      <span>Projects</span>
+    </div>
+    <div class="nav-links">
+      <a href="https://capa.infragate.ai" target="_blank" rel="noopener noreferrer" class="nav-link" title="Documentation">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+          <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+        </svg>
+        <span>Docs</span>
+      </a>
+      <a href="https://github.com/infragate/capa" target="_blank" rel="noopener noreferrer" class="nav-link nav-link-icon-only" title="GitHub Repository">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path>
+        </svg>
+      </a>
+    </div>
+    <button class="theme-toggle" id="theme-toggle" aria-label="Toggle theme">
+      <svg id="theme-icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="5"></circle>
+        <line x1="12" y1="1" x2="12" y2="3"></line>
+        <line x1="12" y1="21" x2="12" y2="23"></line>
+        <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+        <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+        <line x1="1" y1="12" x2="3" y2="12"></line>
+        <line x1="21" y1="12" x2="23" y2="12"></line>
+        <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+        <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+      </svg>
+      <svg id="theme-icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display: none;">
+        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+      </svg>
+      <span id="theme-label">Light</span>
+    </button>
+  </div>
+
+  <div class="container">
+    <div class="page-header">
+      <h1 class="page-title">Projects</h1>
+      <p class="page-subtitle">Manage your CAPA-enabled projects and configurations</p>
+    </div>
+
+    <div class="search-section">
+      <div class="search-input-wrapper">
+        <svg class="search-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="8"></circle>
+          <path d="m21 21-4.35-4.35"></path>
+        </svg>
+        <input 
+          type="text" 
+          class="search-input" 
+          id="search-input" 
+          placeholder="Filter projects by name or path"
+        />
+      </div>
+    </div>
+
+    <div id="loading" class="loading">
+      <div class="loading-spinner"></div>
+      <div>Loading projects...</div>
+    </div>
+
+    <div id="projects-container" style="display: none;">
+      <div id="projects-list" class="projects-list">
+        <div class="projects-header">
+          <div>Project</div>
+          <div style="text-align: center;">Skills</div>
+          <div style="text-align: center;">Tools</div>
+          <div style="text-align: center;">Servers</div>
+          <div style="text-align: right;">Last Updated</div>
+        </div>
+        <div id="projects-body"></div>
+      </div>
+      <div id="no-results" class="no-results" style="display: none;">
+        <h3>No projects found</h3>
+        <p>Try adjusting your search terms</p>
+      </div>
+    </div>
+
+    <div id="empty-state" class="empty-state" style="display: none;">
+      <svg class="empty-state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+      </svg>
+      <h2>No projects configured</h2>
+      <p>
+        Projects are automatically registered when you run <code>capa install</code> in a directory containing a capabilities.json or capabilities.yaml file.
+      </p>
+    </div>
+  </div>
+
+  <script>
+    // Theme management
+    function initTheme() {
+      const savedTheme = localStorage.getItem('capa-theme') || 'dark';
+      setTheme(savedTheme);
+    }
+
+    function setTheme(theme) {
+      document.documentElement.setAttribute('data-theme', theme);
+      localStorage.setItem('capa-theme', theme);
+      
+      const sunIcon = document.getElementById('theme-icon-sun');
+      const moonIcon = document.getElementById('theme-icon-moon');
+      const label = document.getElementById('theme-label');
+      
+      if (theme === 'dark') {
+        sunIcon.style.display = 'block';
+        moonIcon.style.display = 'none';
+        label.textContent = 'Light';
+      } else {
+        sunIcon.style.display = 'none';
+        moonIcon.style.display = 'block';
+        label.textContent = 'Dark';
+      }
+    }
+
+    function toggleTheme() {
+      const currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';
+      const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+      setTheme(newTheme);
+    }
+
+    // Initialize theme before page loads
+    initTheme();
+
+    document.getElementById('theme-toggle').addEventListener('click', toggleTheme);
+
+    let allProjects = [];
+    let filteredProjects = [];
+
+    async function loadProjects() {
+      try {
+        const response = await fetch('/api/projects');
+        const data = await response.json();
+        
+        allProjects = data.projects || [];
+        filteredProjects = allProjects;
+
+        document.getElementById('loading').style.display = 'none';
+        
+        if (allProjects.length === 0) {
+          document.getElementById('empty-state').style.display = 'block';
+        } else {
+          document.getElementById('projects-container').style.display = 'block';
+          renderProjects(filteredProjects);
+        }
+      } catch (error) {
+        console.error('Failed to load projects:', error);
+        document.getElementById('loading').innerHTML = `
+          <div style="color: var(--error-color);">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom: 20px;">
+              <circle cx="12" cy="12" r="10"></circle>
+              <line x1="12" y1="8" x2="12" y2="12"></line>
+              <line x1="12" y1="16" x2="12.01" y2="16"></line>
+            </svg>
+            <div>Failed to load projects</div>
+            <div style="font-size: 14px; margin-top: 10px; opacity: 0.8;">${error.message}</div>
+          </div>
+        `;
+      }
+    }
+
+    function renderProjects(projects) {
+      const container = document.getElementById('projects-body');
+      const projectsList = document.getElementById('projects-list');
+      const noResults = document.getElementById('no-results');
+      
+      if (projects.length === 0) {
+        projectsList.style.display = 'none';
+        noResults.style.display = 'block';
+        return;
+      }
+
+      projectsList.style.display = 'block';
+      noResults.style.display = 'none';
+      container.innerHTML = '';
+
+      for (const project of projects) {
+        const row = createProjectRow(project);
+        container.appendChild(row);
+      }
+    }
+
+    function createProjectRow(project) {
+      const row = document.createElement('a');
+      row.className = 'project-row';
+      row.href = `/ui/project?id=${encodeURIComponent(project.id)}`;
+
+      const lastUpdated = new Date(project.updated_at);
+      const formattedDate = formatDate(lastUpdated);
+
+      row.innerHTML = `
+        <div class="project-info">
+          <div class="project-name">${escapeHtml(project.id)}</div>
+          <div class="project-path" title="${escapeHtml(project.path)}">${escapeHtml(project.path)}</div>
+        </div>
+        <div class="project-stat">${project.skills_count}</div>
+        <div class="project-stat">${project.tools_count}</div>
+        <div class="project-stat">${project.servers_count}</div>
+        <div class="project-date">${formattedDate}</div>
+      `;
+
+      return row;
+    }
+
+    function formatDate(date) {
+      const now = new Date();
+      const diffMs = now - date;
+      const diffMins = Math.floor(diffMs / 60000);
+      const diffHours = Math.floor(diffMs / 3600000);
+      const diffDays = Math.floor(diffMs / 86400000);
+
+      if (diffMins < 1) return 'just now';
+      if (diffMins < 60) return `${diffMins} minute${diffMins === 1 ? '' : 's'} ago`;
+      if (diffHours < 24) return `${diffHours} hour${diffHours === 1 ? '' : 's'} ago`;
+      if (diffDays < 7) return `${diffDays} day${diffDays === 1 ? '' : 's'} ago`;
+      
+      return date.toLocaleDateString();
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    // Search functionality
+    document.getElementById('search-input').addEventListener('input', (e) => {
+      const searchTerm = e.target.value.toLowerCase();
+      
+      if (!searchTerm) {
+        filteredProjects = allProjects;
+      } else {
+        filteredProjects = allProjects.filter(project => 
+          project.id.toLowerCase().includes(searchTerm) ||
+          project.path.toLowerCase().includes(searchTerm)
+        );
+      }
+
+      renderProjects(filteredProjects);
+    });
+
+    // Load projects on page load
+    loadProjects();
+  </script>
+</body>
+</html>
