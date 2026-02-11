@@ -214,14 +214,56 @@ async function installSkills(
           throw new Error('Invalid GitHub repo format. Use: owner/repo@skill-name');
         }
         
-        // Fetch SKILL.md from GitHub raw content
-        const baseUrl = `https://raw.githubusercontent.com/${repoPath}/main/skills/${skillName}`;
-        const skillMdUrl = `${baseUrl}/SKILL.md`;
+        // Try multiple common skill directory locations and branch names
+        const commonSkillDirs = [
+          'skills',
+          'awesome_agent_skills',
+          '.agents/skills',
+          '.cursor/skills',
+          '.claude/skills',
+          '.cline/skills',
+          'agent-skills',
+        ];
         
-        const response = await fetch(skillMdUrl);
-        if (!response.ok) {
-          throw new Error(`Failed to fetch SKILL.md: ${response.statusText}`);
+        const branches = ['main', 'master'];
+        
+        let response: Response | null = null;
+        let successfulPath: string | null = null;
+        
+        // Try each combination of branch and skill directory
+        for (const branch of branches) {
+          for (const skillDir of commonSkillDirs) {
+            const baseUrl = `https://raw.githubusercontent.com/${repoPath}/${branch}/${skillDir}/${skillName}`;
+            const skillMdUrl = `${baseUrl}/SKILL.md`;
+            
+            try {
+              response = await fetch(skillMdUrl);
+              if (response.ok) {
+                successfulPath = skillMdUrl;
+                break;
+              }
+            } catch {
+              // Try next path
+              continue;
+            }
+          }
+          
+          if (response && response.ok) {
+            break;
+          }
         }
+        
+        if (!response || !response.ok || !successfulPath) {
+          throw new Error(
+            `Failed to fetch SKILL.md: Not found in any common directory.\n` +
+            `    Repository: ${repoPath}\n` +
+            `    Skill: ${skillName}\n` +
+            `    Tried branches: ${branches.join(', ')}\n` +
+            `    Tried directories: ${commonSkillDirs.join(', ')}\n` +
+            `    Tip: Verify the skill exists and the repo uses a standard directory structure.`
+          );
+        }
+        
         skillMarkdown = await response.text();
         
         // TODO: Fetch additional files if needed (recursively download directory)
