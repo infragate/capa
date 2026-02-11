@@ -14,7 +14,7 @@ $ErrorActionPreference = "Stop"
 
 # Constants
 $APP_NAME = "capa"
-$APP_VERSION = "1.1.0"
+$APP_VERSION = "1.1.1"
 $GITHUB_REPO = "infragate/capa"
 
 # Environment variable overrides
