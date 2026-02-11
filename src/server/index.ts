@@ -14,6 +14,11 @@ import { extractAllVariables } from '../shared/variable-resolver';
 import { VERSION } from '../version';
 import { logger } from '../shared/logger';
 
+// Import HTML files as text at compile time - this bundles them into the binary
+import homeHtml from '../../web-ui/home.html' with { type: 'text' };
+import indexHtml from '../../web-ui/index.html' with { type: 'text' };
+import projectHtml from '../../web-ui/project.html' with { type: 'text' };
+
 class CapaServer {
   private db!: CapaDatabase;
   private sessionManager!: SessionManager;
@@ -137,16 +142,9 @@ class CapaServer {
   }
 
   private async handleHomePage(): Promise<Response> {
-    const htmlPath = join(process.cwd(), 'web-ui', 'home.html');
-    const file = Bun.file(htmlPath);
-    
-    if (await file.exists()) {
-      return new Response(file, {
-        headers: { 'Content-Type': 'text/html' },
-      });
-    }
-
-    return new Response('Home page not found', { status: 404 });
+    return new Response(homeHtml as unknown as string, {
+      headers: { 'Content-Type': 'text/html' },
+    });
   }
 
   private async handleWebUI(request: Request): Promise<Response> {
@@ -154,23 +152,16 @@ class CapaServer {
     const path = url.pathname;
     
     // Route to different UI pages
-    let htmlFileName = 'index.html';
+    let htmlContent = indexHtml as unknown as string;
     
     if (path.startsWith('/ui/project')) {
-      htmlFileName = 'project.html';
+      htmlContent = projectHtml as unknown as string;
     }
     
-    // Serve the HTML file
-    const htmlPath = join(process.cwd(), 'web-ui', htmlFileName);
-    const file = Bun.file(htmlPath);
-    
-    if (await file.exists()) {
-      return new Response(file, {
-        headers: { 'Content-Type': 'text/html' },
-      });
-    }
-
-    return new Response('Web UI not found', { status: 404 });
+    // Serve the HTML content
+    return new Response(htmlContent, {
+      headers: { 'Content-Type': 'text/html' },
+    });
   }
 
   private async handleAPI(request: Request): Promise<Response> {
