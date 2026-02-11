@@ -1,6 +1,7 @@
 import { nanoid } from 'nanoid';
 import type { CapaDatabase } from '../db/database';
 import type { Capabilities, Tool } from '../types/capabilities';
+import { logger } from '../shared/logger';
 
 export interface SessionInfo {
   sessionId: string;
@@ -15,6 +16,7 @@ export class SessionManager {
   private db: CapaDatabase;
   private sessions = new Map<string, SessionInfo>();
   private projectCapabilities = new Map<string, Capabilities>();
+  private logger = logger.child('SessionManager');
 
   constructor(db: CapaDatabase) {
     this.db = db;
@@ -28,7 +30,7 @@ export class SessionManager {
     const sessionId = nanoid();
     const now = Date.now();
 
-    console.log(`      [SessionManager] Creating session: ${sessionId} for project: ${projectId}`);
+    this.logger.info(`Creating session: ${sessionId} for project: ${projectId}`);
 
     const session: SessionInfo = {
       sessionId,
@@ -91,8 +93,8 @@ export class SessionManager {
    * Setup tools for a session (activate skills)
    */
   setupTools(sessionId: string, skillIds: string[]): string[] {
-    console.log(`      [SessionManager] Setting up tools for session: ${sessionId}`);
-    console.log(`        Skills to activate: ${skillIds.join(', ')}`);
+    this.logger.info(`Setting up tools for session: ${sessionId}`);
+    this.logger.debug(`Skills to activate: ${skillIds.join(', ')}`);
     
     const session = this.sessions.get(sessionId);
     if (!session) {
@@ -118,7 +120,7 @@ export class SessionManager {
     session.availableTools = this.getToolsForSkills(session.projectId, skillIds);
     session.lastActivity = Date.now();
 
-    console.log(`        Available tools: ${session.availableTools.join(', ')}`);
+    this.logger.debug(`Available tools: ${session.availableTools.join(', ')}`);
 
     // Update database
     this.db.updateSessionSkills(sessionId, skillIds);
@@ -177,10 +179,8 @@ export class SessionManager {
    * Register capabilities for a project
    */
   setProjectCapabilities(projectId: string, capabilities: Capabilities): void {
-    console.log(`      [SessionManager] Setting capabilities for project: ${projectId}`);
-    console.log(`        Skills: ${capabilities.skills.length}`);
-    console.log(`        Tools: ${capabilities.tools.length}`);
-    console.log(`        Servers: ${capabilities.servers.length}`);
+    this.logger.info(`Setting capabilities for project: ${projectId}`);
+    this.logger.debug(`Skills: ${capabilities.skills.length}, Tools: ${capabilities.tools.length}, Servers: ${capabilities.servers.length}`);
     this.projectCapabilities.set(projectId, capabilities);
   }
 

@@ -3,6 +3,7 @@
 
 import type { CapaDatabase } from '../db/database';
 import type { OAuth2Manager } from './oauth-manager';
+import { logger } from '../shared/logger';
 
 export interface TokenRefreshSchedulerOptions {
   /**
@@ -30,6 +31,7 @@ export class TokenRefreshScheduler {
   private capabilitiesProvider?: () => Map<string, any>;
   private intervalId?: NodeJS.Timeout;
   private isRunning = false;
+  private logger = logger.child('TokenRefreshScheduler');
   
   private checkInterval: number;
   private refreshThreshold: number;
@@ -188,7 +190,7 @@ export class TokenRefreshScheduler {
         this.log(`Token check complete: ${checkedCount} checked, ${refreshedCount} refreshed, ${failedCount} failed`);
       }
     } catch (error: any) {
-      console.error(`[Token Refresh Scheduler] Error during token check: ${error.message}`);
+      this.logger.error(`Error during token check: ${error.message}`);
     }
   }
 
@@ -219,7 +221,7 @@ export class TokenRefreshScheduler {
    */
   private log(message: string): void {
     if (this.debug) {
-      console.log(`[Token Refresh Scheduler] ${message}`);
+      this.logger.debug(message);
     }
   }
 }

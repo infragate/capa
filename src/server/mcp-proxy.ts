@@ -8,6 +8,7 @@ import { SubprocessManager } from './subprocess-manager';
 import { resolveVariablesInObject, hasUnresolvedVariables } from '../shared/variable-resolver';
 import { VERSION } from '../version';
 import { OAuth2Manager } from './oauth-manager';
+import { logger } from '../shared/logger';
 
 export interface MCPToolResult {
   success: boolean;
@@ -22,6 +23,7 @@ export class MCPProxy {
   private subprocessManager: SubprocessManager;
   private oauth2Manager: OAuth2Manager;
   private clients = new Map<string, Client>();
+  private logger = logger.child('MCPProxy');
 
   constructor(db: CapaDatabase, projectId: string, projectPath: string, subprocessManager: SubprocessManager) {
     this.db = db;
@@ -40,9 +42,8 @@ export class MCPProxy {
     serverDefinition: MCPServerDefinition,
     args: Record<string, any>
   ): Promise<MCPToolResult> {
-    console.log(`        [MCPProxy] Executing tool: ${toolId} on server: ${definition.server}`);
-    console.log(`          Tool name: ${definition.tool}`);
-    console.log(`          Args: ${JSON.stringify(args)}`);
+    this.logger.info(`Executing tool: ${toolId} on server: ${definition.server}`);
+    this.logger.debug(`Tool name: ${definition.tool}, Args: ${JSON.stringify(args)}`);
     
     // Resolve variables in server definition
     const resolvedServerDef = resolveVariablesInObject(
@@ -53,7 +54,7 @@ export class MCPProxy {
 
     // Check for unresolved variables
     if (hasUnresolvedVariables(resolvedServerDef)) {
-      console.error(`          ✗ Unresolved variables in server configuration`);
+      this.logger.failure('Unresolved variables in server configuration');
       return {
         success: false,
         error: 'Server configuration has unresolved variables. Please configure credentials.',
@@ -64,7 +65,7 @@ export class MCPProxy {
     const client = await this.getOrCreateClient(definition.server, resolvedServerDef);
 
     if (!client) {
-      console.error(`          ✗ Failed to get client`);
+      this.logger.failure('Failed to get client');
       return {
         success: false,
         error: `Failed to connect to MCP server: ${definition.server}`,
@@ -72,20 +73,20 @@ export class MCPProxy {
     }
 
     try {
-      console.log(`          Calling tool on MCP server...`);
+      this.logger.debug('Calling tool on MCP server...');
       // Call the tool
       const result = await client.callTool({
         name: definition.tool,
         arguments: args,
       });
 
-      console.log(`          ✓ Tool call succeeded`);
+      this.logger.success('Tool call succeeded');
       return {
         success: true,
         result: result.content,
       };
     } catch (error: any) {
-      console.error(`          ✗ Tool call failed: ${error.message}`);
+      this.logger.failure(`Tool call failed: ${error.message}`);
       return {
         success: false,
         error: error.message || 'Tool execution failed',
@@ -112,7 +113,7 @@ export class MCPProxy {
       const result = await client.listTools();
       return result.tools;
     } catch (error) {
-      console.error(`Failed to list tools from ${serverId}:`, error);
+      this.logger.error(`Failed to list tools from ${serverId}:`, error);
       return [];
     }
   }
@@ -124,11 +125,11 @@ export class MCPProxy {
     // Check if client already exists
     const existing = this.clients.get(serverId);
     if (existing) {
-      console.log(`          Using existing MCP client for server: ${serverId}`);
+      this.logger.debug(`Using existing MCP client for server: ${serverId}`);
       return existing;
     }
 
-    console.log(`          Creating new MCP client for server: ${serverId}`);
+    this.logger.info(`Creating new MCP client for server: ${serverId}`);
 
     // For local subprocess-based servers
     if (serverDefinition.cmd) {
@@ -148,8 +149,8 @@ export class MCPProxy {
     serverDefinition: MCPServerDefinition
   ): Promise<Client | null> {
     try {
-      console.log(`          Creating HTTP client for: ${serverId}`);
-      console.log(`            URL: ${serverDefinition.url}`);
+      this.logger.info(`Creating HTTP client for: ${serverId}`);
+      this.logger.debug(`URL: ${serverDefinition.url}`);
 
       // Create HTTP transport with OAuth2 support
       const transport = new HttpMCPTransport(
@@ -172,14 +173,14 @@ export class MCPProxy {
         }
       );
 
-      console.log(`            Connecting client...`);
+      this.logger.debug('Connecting client...');
       await client.connect(transport);
 
       this.clients.set(serverId, client);
-      console.log(`            ✓ Client connected`);
+      this.logger.success('Client connected');
       return client;
     } catch (error: any) {
-      console.error(`            ✗ Failed to create HTTP client for ${serverId}:`, error);
+      this.logger.failure(`Failed to create HTTP client for ${serverId}:`, error);
       return null;
     }
   }
@@ -189,9 +190,8 @@ export class MCPProxy {
     serverDefinition: MCPServerDefinition
   ): Promise<Client | null> {
     try {
-      console.log(`          Creating stdio client for: ${serverId}`);
-      console.log(`            Command: ${serverDefinition.cmd}`);
-      console.log(`            Args: ${JSON.stringify(serverDefinition.args || [])}`);
+      this.logger.info(`Creating stdio client for: ${serverId}`);
+      this.logger.debug(`Command: ${serverDefinition.cmd}, Args: ${JSON.stringify(serverDefinition.args || [])}`);
       
       // Get or create subprocess
       const subprocess = await this.subprocessManager.getOrCreateSubprocess(
@@ -201,11 +201,11 @@ export class MCPProxy {
       );
 
       if (subprocess.status !== 'running' || !subprocess.process) {
-        console.error(`            ✗ Subprocess ${serverId} is not running (status: ${subprocess.status})`);
+        this.logger.failure(`Subprocess ${serverId} is not running (status: ${subprocess.status})`);
         return null;
       }
 
-      console.log(`            Subprocess running with PID: ${subprocess.process.pid}`);
+      this.logger.debug(`Subprocess running with PID: ${subprocess.process.pid}`);
 
       // Create stdio transport
       const transport = new StdioClientTransport({
@@ -225,14 +225,14 @@ export class MCPProxy {
         }
       );
 
-      console.log(`            Connecting client...`);
+      this.logger.debug('Connecting client...');
       await client.connect(transport);
 
       this.clients.set(serverId, client);
-      console.log(`            ✓ Client connected`);
+      this.logger.success('Client connected');
       return client;
     } catch (error) {
-      console.error(`            ✗ Failed to create MCP client for ${serverId}:`, error);
+      this.logger.failure(`Failed to create MCP client for ${serverId}:`, error);
       return null;
     }
   }
@@ -245,7 +245,7 @@ export class MCPProxy {
       try {
         await client.close();
       } catch (error) {
-        console.error(`Error closing client ${serverId}:`, error);
+        this.logger.error(`Error closing client ${serverId}:`, error);
       }
     }
     this.clients.clear();
@@ -264,7 +264,7 @@ function parseSSEResponse(text: string): JSONRPCMessage | null {
       try {
         return JSON.parse(jsonStr);
       } catch (error) {
-        console.error(`Failed to parse SSE data: ${jsonStr}`);
+        logger.error(`Failed to parse SSE data: ${jsonStr}`);
         return null;
       }
     }
@@ -282,6 +282,7 @@ class HttpMCPTransport implements Transport {
   private db: CapaDatabase;
   private oauth2Manager: OAuth2Manager;
   private serverDefinition: MCPServerDefinition;
+  private logger = logger.child('HttpTransport');
   public sessionId?: string;
   public onclose?: () => void;
   public onerror?: (error: Error) => void;
@@ -305,12 +306,12 @@ class HttpMCPTransport implements Transport {
 
   async start(): Promise<void> {
     // Transport is ready immediately for HTTP
-    console.log(`              [HttpTransport] Started for ${this.url}`);
+    this.logger.debug(`Started for ${this.url}`);
   }
 
   async send(message: JSONRPCMessage): Promise<void> {
     try {
-      console.log(`              [HttpTransport] Sending message:`, JSON.stringify(message));
+      this.logger.debug(`Sending message: ${JSON.stringify(message)}`);
       
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
@@ -347,7 +348,7 @@ class HttpMCPTransport implements Transport {
 
       // Handle 401 Unauthorized - token might be expired
       if (response.status === 401 && this.serverDefinition.oauth2) {
-        console.log(`              [HttpTransport] 401 Unauthorized, attempting token refresh`);
+        this.logger.warn('401 Unauthorized, attempting token refresh');
         
         // Try to refresh token
         const refreshed = await this.oauth2Manager.refreshAccessToken(
@@ -376,7 +377,7 @@ class HttpMCPTransport implements Transport {
               const sessionId = retryResponse.headers.get('mcp-session-id');
               if (sessionId && !this.sessionId) {
                 this.sessionId = sessionId;
-                console.log(`              [HttpTransport] Session established: ${sessionId}`);
+                this.logger.info(`Session established: ${sessionId}`);
               }
 
               // Check content type to determine response format
@@ -423,7 +424,7 @@ class HttpMCPTransport implements Transport {
         } catch (e) {
           // Ignore parsing errors
         }
-        console.error(`              [HttpTransport] HTTP ${response.status}: ${response.statusText}${errorDetails}`);
+        this.logger.error(`HTTP ${response.status}: ${response.statusText}${errorDetails}`);
         throw new Error(`HTTP ${response.status}: ${response.statusText}${errorDetails}`);
       }
 
@@ -431,7 +432,7 @@ class HttpMCPTransport implements Transport {
       const sessionId = response.headers.get('mcp-session-id');
       if (sessionId && !this.sessionId) {
         this.sessionId = sessionId;
-        console.log(`              [HttpTransport] Session established: ${sessionId}`);
+        this.logger.info(`Session established: ${sessionId}`);
       }
 
       // Check content type to determine response format
@@ -455,7 +456,7 @@ class HttpMCPTransport implements Transport {
         this.onmessage(responseMessage);
       }
     } catch (error: any) {
-      console.error(`              [HttpTransport] Error sending message:`, error);
+      this.logger.error('Error sending message:', error);
       if (this.onerror) {
         this.onerror(error);
       }
@@ -464,7 +465,7 @@ class HttpMCPTransport implements Transport {
   }
 
   async close(): Promise<void> {
-    console.log(`              [HttpTransport] Closed for ${this.url}`);
+    this.logger.debug(`Closed for ${this.url}`);
     if (this.onclose) {
       this.onclose();
     }

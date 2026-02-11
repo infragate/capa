@@ -10,11 +10,13 @@ import type {
   ProtectedResourceMetadata,
 } from '../types/oauth';
 import { generateCodeVerifier, generateCodeChallenge, generateState } from '../utils/pkce';
+import { logger } from '../shared/logger';
 
 export class OAuth2Manager {
   private db: CapaDatabase;
   private oauth2ConfigCache = new Map<string, OAuth2Config>();
   private capabilitiesProvider?: () => Map<string, any>;
+  private logger = logger.child('OAuth2Manager');
 
   constructor(db: CapaDatabase) {
     this.db = db;
@@ -33,7 +35,7 @@ export class OAuth2Manager {
    */
   async detectOAuth2Requirement(serverUrl: string): Promise<OAuth2Config | null> {
     try {
-      console.log(`      [OAuth2] Detecting OAuth2 requirement for: ${serverUrl}`);
+      this.logger.info(`Detecting OAuth2 requirement for: ${serverUrl}`);
       
       // Make unauthenticated request to MCP server
       const response = await fetch(serverUrl, {
@@ -55,18 +57,18 @@ export class OAuth2Manager {
 
       // Check for 401 Unauthorized
       if (response.status !== 401) {
-        console.log(`        No OAuth2 required (status: ${response.status})`);
+        this.logger.debug(`No OAuth2 required (status: ${response.status})`);
         return null;
       }
 
       // Parse WWW-Authenticate header
       const wwwAuthenticate = response.headers.get('WWW-Authenticate');
       if (!wwwAuthenticate) {
-        console.log(`        401 but no WWW-Authenticate header`);
+        this.logger.debug('401 but no WWW-Authenticate header');
         return null;
       }
 
-      console.log(`        WWW-Authenticate: ${wwwAuthenticate}`);
+      this.logger.debug(`WWW-Authenticate: ${wwwAuthenticate}`);
 
       // Extract resource metadata URL from WWW-Authenticate header
       // Format: Bearer resource_metadata="https://..."
@@ -75,17 +77,17 @@ export class OAuth2Manager {
       
       if (resourceMetadataMatch) {
         resourceMetadataUrl = resourceMetadataMatch[1];
-        console.log(`        Resource metadata URL: ${resourceMetadataUrl}`);
+        this.logger.debug(`Resource metadata URL: ${resourceMetadataUrl}`);
       } else {
         // Try constructing the well-known URL from the server URL
-        console.log(`        No resource_metadata in WWW-Authenticate, trying standard location`);
+        this.logger.debug('No resource_metadata in WWW-Authenticate, trying standard location');
         try {
           const serverUrlObj = new URL(serverUrl);
           const baseUrl = `${serverUrlObj.protocol}//${serverUrlObj.host}`;
           resourceMetadataUrl = `${baseUrl}/.well-known/oauth-protected-resource`;
-          console.log(`        Trying: ${resourceMetadataUrl}`);
+          this.logger.debug(`Trying: ${resourceMetadataUrl}`);
         } catch (error) {
-          console.log(`        Could not construct well-known URL`);
+          this.logger.debug('Could not construct well-known URL');
           return null;
         }
       }
@@ -93,19 +95,19 @@ export class OAuth2Manager {
       // First, try direct OAuth discovery (many servers like Atlassian use this)
       const serverUrlObj = new URL(serverUrl);
       const baseUrl = `${serverUrlObj.protocol}//${serverUrlObj.host}`;
-      console.log(`        Trying direct OAuth discovery at: ${baseUrl}`);
+      this.logger.debug(`Trying direct OAuth discovery at: ${baseUrl}`);
       
       let authMetadata = await this.fetchAuthServerMetadata(baseUrl);
       
       // If direct discovery failed, try protected resource metadata (RFC 9728)
       if (!authMetadata) {
-        console.log(`        Direct discovery failed, trying RFC 9728...`);
+        this.logger.debug('Direct discovery failed, trying RFC 9728...');
         const resourceMetadata = await this.fetchProtectedResourceMetadata(resourceMetadataUrl);
         
         if (resourceMetadata && resourceMetadata.authorization_servers && resourceMetadata.authorization_servers.length > 0) {
           // Use first authorization server
           const authServerUrl = resourceMetadata.authorization_servers[0];
-          console.log(`        Authorization server: ${authServerUrl}`);
+          this.logger.debug(`Authorization server: ${authServerUrl}`);
 
           // Fetch authorization server metadata
           authMetadata = await this.fetchAuthServerMetadata(authServerUrl);
@@ -113,7 +115,7 @@ export class OAuth2Manager {
       }
       
       if (!authMetadata) {
-        console.log(`        Failed to fetch auth server metadata`);
+        this.logger.warn('Failed to fetch auth server metadata');
         return null;
       }
 
@@ -125,11 +127,11 @@ export class OAuth2Manager {
         scope: authMetadata.scopes_supported?.join(' '),
       };
 
-      console.log(`        ✓ OAuth2 detected`);
+      this.logger.success('OAuth2 detected');
       this.oauth2ConfigCache.set(serverUrl, config);
       return config;
     } catch (error: any) {
-      console.error(`        ✗ Error detecting OAuth2: ${error.message}`);
+      this.logger.failure(`Error detecting OAuth2: ${error.message}`);
       return null;
     }
   }
@@ -159,19 +161,19 @@ export class OAuth2Manager {
       // Construct well-known URL
       const wellKnownUrl = new URL('/.well-known/oauth-authorization-server', authServerUrl).toString();
       
-      console.log(`        Fetching OAuth metadata from: ${wellKnownUrl}`);
+      this.logger.debug(`Fetching OAuth metadata from: ${wellKnownUrl}`);
       const response = await fetch(wellKnownUrl);
       if (!response.ok) {
-        console.log(`        OAuth metadata fetch failed: ${response.status}`);
+        this.logger.warn(`OAuth metadata fetch failed: ${response.status}`);
         return null;
       }
       const metadata = await response.json();
-      console.log(`        ✓ OAuth metadata fetched`);
-      console.log(`          Authorization: ${metadata.authorization_endpoint}`);
-      console.log(`          Token: ${metadata.token_endpoint}`);
+      this.logger.debug('OAuth metadata fetched');
+      this.logger.debug(`Authorization: ${metadata.authorization_endpoint}`);
+      this.logger.debug(`Token: ${metadata.token_endpoint}`);
       return metadata;
     } catch (error: any) {
-      console.log(`        OAuth metadata fetch error: ${error.message}`);
+      this.logger.debug(`OAuth metadata fetch error: ${error.message}`);
       return null;
     }
   }
@@ -194,11 +196,11 @@ export class OAuth2Manager {
     let clientId = 'capa'; // Default fallback
     if (oauth2Config.registrationEndpoint) {
       try {
-        console.log(`      [OAuth2] Attempting dynamic client registration...`);
+        this.logger.info('Attempting dynamic client registration...');
         const registeredClient = await this.registerClient(oauth2Config.registrationEndpoint, redirectUri);
         if (registeredClient && registeredClient.client_id) {
           clientId = registeredClient.client_id;
-          console.log(`        ✓ Registered client: ${clientId}`);
+          this.logger.success(`Registered client: ${clientId}`);
           
           // Store client credentials if provided
           if (registeredClient.client_secret) {
@@ -207,8 +209,8 @@ export class OAuth2Manager {
           }
         }
       } catch (error: any) {
-        console.log(`        ⚠ Dynamic registration failed: ${error.message}`);
-        console.log(`        Using default client_id`);
+        this.logger.warn(`Dynamic registration failed: ${error.message}`);
+        this.logger.info('Using default client_id');
       }
     }
 
@@ -237,7 +239,7 @@ export class OAuth2Manager {
       authUrl.searchParams.set('scope', oauth2Config.scope);
     }
 
-    console.log(`      [OAuth2] Generated authorization URL for ${serverId}`);
+    this.logger.info(`Generated authorization URL for ${serverId}`);
     return { url: authUrl.toString(), state };
   }
 
@@ -322,9 +324,9 @@ export class OAuth2Manager {
       // Get client credentials if stored (from dynamic registration)
       const clientSecret = this.db.getVariable(project_id, `oauth2_client_secret_${server_id}`);
 
-      console.log(`      [OAuth2] Exchanging code for tokens`);
-      console.log(`        client_id: ${client_id}`);
-      console.log(`        token_endpoint: ${oauth2Config.tokenEndpoint}`);
+      this.logger.info('Exchanging code for tokens');
+      this.logger.debug(`client_id: ${client_id}`);
+      this.logger.debug(`token_endpoint: ${oauth2Config.tokenEndpoint}`);
 
       // Exchange authorization code for tokens
       const tokenParams: Record<string, string> = {
@@ -349,7 +351,7 @@ export class OAuth2Manager {
 
       if (!tokenResponse.ok) {
         const errorText = await tokenResponse.text();
-        console.error(`Token exchange failed: ${errorText}`);
+        this.logger.failure(`Token exchange failed: ${errorText}`);
         return { success: false, error: 'Failed to exchange authorization code for tokens' };
       }
 
@@ -369,10 +371,10 @@ export class OAuth2Manager {
         scope: tokenData.scope,
       });
 
-      console.log(`      [OAuth2] ✓ Tokens stored for ${server_id}`);
+      this.logger.success(`Tokens stored for ${server_id}`);
       return { success: true, projectId: project_id, serverId: server_id };
     } catch (error: any) {
-      console.error(`      [OAuth2] ✗ Callback error: ${error.message}`);
+      this.logger.failure(`Callback error: ${error.message}`);
       return { success: false, error: error.message || 'Token exchange failed' };
     }
   }
@@ -384,16 +386,16 @@ export class OAuth2Manager {
     try {
       const tokenData = this.db.getOAuthToken(projectId, serverId);
       if (!tokenData || !tokenData.refresh_token) {
-        console.error(`      [OAuth2] No refresh token available for ${serverId}`);
+        this.logger.failure(`No refresh token available for ${serverId}`);
         // Delete incomplete token data
         if (tokenData) {
           this.db.deleteOAuthToken(projectId, serverId);
-          console.log(`      [OAuth2] Deleted incomplete token for ${serverId}`);
+          this.logger.info(`Deleted incomplete token for ${serverId}`);
         }
         return false;
       }
 
-      console.log(`      [OAuth2] Refreshing access token for ${serverId}`);
+      this.logger.info(`Refreshing access token for ${serverId}`);
 
       const response = await fetch(oauth2Config.tokenEndpoint, {
         method: 'POST',
@@ -408,10 +410,10 @@ export class OAuth2Manager {
       });
 
       if (!response.ok) {
-        console.error(`      [OAuth2] Token refresh failed: ${response.statusText}`);
+        this.logger.failure(`Token refresh failed: ${response.statusText}`);
         // Delete invalid token so isServerConnected returns false
         this.db.deleteOAuthToken(projectId, serverId);
-        console.log(`      [OAuth2] Deleted invalid token for ${serverId}`);
+        this.logger.info(`Deleted invalid token for ${serverId}`);
         return false;
       }
 
@@ -431,13 +433,13 @@ export class OAuth2Manager {
         scope: newTokenData.scope || tokenData.scope,
       });
 
-      console.log(`      [OAuth2] ✓ Access token refreshed for ${serverId}`);
+      this.logger.success(`Access token refreshed for ${serverId}`);
       return true;
     } catch (error: any) {
-      console.error(`      [OAuth2] ✗ Token refresh error: ${error.message}`);
+      this.logger.failure(`Token refresh error: ${error.message}`);
       // Delete token that failed to refresh
       this.db.deleteOAuthToken(projectId, serverId);
-      console.log(`      [OAuth2] Deleted failed token for ${serverId}`);
+        this.logger.info(`Deleted failed token for ${serverId}`);
       return false;
     }
   }
@@ -455,7 +457,7 @@ export class OAuth2Manager {
     if (tokenData.expires_at) {
       const expiresIn = tokenData.expires_at - Date.now();
       if (expiresIn < 5 * 60 * 1000) {
-        console.log(`      [OAuth2] Token expired or expiring soon, refreshing...`);
+        this.logger.info('Token expired or expiring soon, refreshing...');
         const refreshed = await this.refreshAccessToken(projectId, serverId, oauth2Config);
         if (!refreshed) {
           return null;
@@ -482,7 +484,7 @@ export class OAuth2Manager {
    */
   disconnect(projectId: string, serverId: string): void {
     this.db.deleteOAuthToken(projectId, serverId);
-    console.log(`      [OAuth2] Disconnected ${serverId}`);
+    this.logger.info(`Disconnected ${serverId}`);
   }
 
   /**
