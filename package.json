@@ -9,7 +9,8 @@
   "scripts": {
     "dev": "bun run src/cli/index.ts",
     "prebuild": "bun run scripts/generate-version.ts",
-    "build": "bun build src/cli/index.ts --compile --windows-icon=./logo.ico --outfile dist/capa --icon logo.ico",
+    "build": "bun build src/cli/index.ts --compile --outfile dist/capa --icon logo.ico",
+    "build:win": "bun build src/cli/index.ts --compile --windows-icon=./logo.ico --outfile dist/capa --icon logo.ico",
     "server": "bun run src/server/index.ts",
     "test": "bun test",
     "test:coverage": "bun test --coverage"
