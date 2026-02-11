@@ -74,7 +74,13 @@ jobs:
           GITHUB_REF: ${{ github.ref }}
 
       - name: Build
-        run: bun run build
+        run: |
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            bun run build:win
+          else
+            bun run build
+          fi
+        shell: bash
 
       - name: Rename artifact
         shell: bash
