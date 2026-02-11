@@ -5,7 +5,7 @@
 set -u
 
 APP_NAME="capa"
-APP_VERSION="1.0.0"
+APP_VERSION="1.1.0"
 GITHUB_REPO="infragate/capa"
 
 # Customize installation via environment variables
