@@ -9,7 +9,7 @@ export async function cleanCommand(): Promise<void> {
   const projectPath = process.cwd();
   
   // Detect capabilities file
-  const capabilitiesFile = detectCapabilitiesFile(projectPath);
+  const capabilitiesFile = await detectCapabilitiesFile(projectPath);
   if (!capabilitiesFile) {
     console.error('✗ No capabilities file found.');
     process.exit(1);
