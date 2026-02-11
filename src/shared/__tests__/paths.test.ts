@@ -58,9 +58,9 @@ describe('paths', () => {
   });
 
   describe('detectCapabilitiesFile', () => {
-    it('should return null when no capabilities file exists', () => {
+    it('should return null when no capabilities file exists', async () => {
       // Use a path that's more likely to not exist
-      const result = detectCapabilitiesFile('/tmp/nonexistent-' + Date.now());
+      const result = await detectCapabilitiesFile('/tmp/nonexistent-' + Date.now());
       
       // On some systems, Bun.file().size might not throw for non-existent files
       // So we just check that the result is either null or has valid format
@@ -69,9 +69,9 @@ describe('paths', () => {
       }
     });
 
-    it('should detect JSON capabilities file', () => {
+    it('should detect JSON capabilities file', async () => {
       const testPath = import.meta.dir;
-      const result = detectCapabilitiesFile(testPath);
+      const result = await detectCapabilitiesFile(testPath);
       
       // Will be null in most cases unless file exists
       if (result) {
