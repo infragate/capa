@@ -33,26 +33,42 @@ export function getCapabilitiesPath(projectPath: string, format: 'json' | 'yaml'
 }
 
 /**
- * Detect which capabilities file exists in the project
+ * Detect which capabilities file exists in the project.
+ * Throws an error if both capabilities.yaml and capabilities.json exist.
+ * Returns null if no capabilities file is found.
+ * 
+ * @throws Error if both YAML and JSON capabilities files exist
  */
-export function detectCapabilitiesFile(projectPath: string): { path: string; format: 'json' | 'yaml' } | null {
+export async function detectCapabilitiesFile(projectPath: string): Promise<{ path: string; format: 'json' | 'yaml' } | null> {
   const jsonPath = getCapabilitiesPath(projectPath, 'json');
   const yamlPath = getCapabilitiesPath(projectPath, 'yaml');
   
-  if (existsSync(jsonPath)) {
-    return { path: jsonPath, format: 'json' };
+  const jsonExists = await existsAsync(jsonPath);
+  const yamlExists = await existsAsync(yamlPath);
+  
+  // Error if both files exist
+  if (jsonExists && yamlExists) {
+    throw new Error(
+      'Both capabilities.yaml and capabilities.json found. Please keep only one capabilities file.'
+    );
   }
   
-  if (existsSync(yamlPath)) {
+  // Check for YAML first (default format)
+  if (yamlExists) {
     return { path: yamlPath, format: 'yaml' };
+  }
+  
+  // Then check for JSON
+  if (jsonExists) {
+    return { path: jsonPath, format: 'json' };
   }
   
   return null;
 }
 
-function existsSync(path: string): boolean {
+async function existsAsync(path: string): Promise<boolean> {
   try {
-    return Bun.file(path).size >= 0;
+    return await Bun.file(path).exists();
   } catch {
     return false;
   }

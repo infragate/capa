@@ -148,7 +148,7 @@ export async function addCommand(source: string, options: { id?: string }): Prom
   const projectPath = process.cwd();
   
   // Detect capabilities file
-  const capabilitiesFile = detectCapabilitiesFile(projectPath);
+  const capabilitiesFile = await detectCapabilitiesFile(projectPath);
   if (!capabilitiesFile) {
     console.error('✗ No capabilities file found. Run "capa init" first.');
     process.exit(1);
