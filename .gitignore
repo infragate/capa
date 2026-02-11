@@ -80,3 +80,4 @@ pnpm-lock.yaml
 # Project specific
 example-project
 test-capa*
+src/version.ts

@@ -1,4 +1,6 @@
 import { Database } from 'bun:sqlite';
+import { mkdirSync } from 'fs';
+import { dirname } from 'path';
 import type {
   Project,
   Variable,
@@ -12,6 +14,10 @@ export class CapaDatabase {
   private db: Database;
 
   constructor(dbPath: string) {
+    // Ensure parent directory exists before creating database
+    const dbDir = dirname(dbPath);
+    mkdirSync(dbDir, { recursive: true });
+    
     this.db = new Database(dbPath, { create: true });
     this.initSchema();
   }
@@ -84,6 +90,35 @@ export class CapaDatabase {
         FOREIGN KEY (project_id) REFERENCES projects(id)
       )
     `);
+
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS oauth_tokens (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id TEXT NOT NULL,
+        server_id TEXT NOT NULL,
+        access_token TEXT NOT NULL,
+        refresh_token TEXT,
+        token_type TEXT DEFAULT 'Bearer',
+        expires_at INTEGER,
+        scope TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (project_id) REFERENCES projects(id),
+        UNIQUE(project_id, server_id)
+      )
+    `);
+
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS oauth_flow_state (
+        state TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        server_id TEXT NOT NULL,
+        code_verifier TEXT NOT NULL,
+        redirect_uri TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        FOREIGN KEY (project_id) REFERENCES projects(id)
+      )
+    `);
   }
 
   // Project operations
@@ -110,6 +145,10 @@ export class CapaDatabase {
 
   getProjectByPath(path: string): Project | null {
     return this.db.query('SELECT * FROM projects WHERE path = ?').get(path) as Project | null;
+  }
+
+  getAllProjects(): Project[] {
+    return this.db.query('SELECT * FROM projects ORDER BY updated_at DESC').all() as Project[];
   }
 
   // Variable operations
@@ -290,6 +329,85 @@ export class CapaDatabase {
   deleteExpiredSessions(timeoutMinutes: number): void {
     const cutoff = Date.now() - timeoutMinutes * 60 * 1000;
     this.db.run('DELETE FROM sessions WHERE last_activity < ?', [cutoff]);
+  }
+
+  // OAuth2 token operations
+  getOAuthToken(projectId: string, serverId: string): any | null {
+    return this.db.query(
+      'SELECT * FROM oauth_tokens WHERE project_id = ? AND server_id = ?'
+    ).get(projectId, serverId);
+  }
+
+  setOAuthToken(projectId: string, serverId: string, tokenData: {
+    access_token: string;
+    refresh_token?: string;
+    token_type?: string;
+    expires_at?: number;
+    scope?: string;
+  }): void {
+    const now = Date.now();
+    this.db.run(
+      `INSERT INTO oauth_tokens (project_id, server_id, access_token, refresh_token, token_type, expires_at, scope, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(project_id, server_id) DO UPDATE SET
+         access_token = ?,
+         refresh_token = ?,
+         token_type = ?,
+         expires_at = ?,
+         scope = ?,
+         updated_at = ?`,
+      [
+        projectId, serverId, tokenData.access_token, tokenData.refresh_token || null,
+        tokenData.token_type || 'Bearer', tokenData.expires_at || null, tokenData.scope || null,
+        now, now,
+        tokenData.access_token, tokenData.refresh_token || null, tokenData.token_type || 'Bearer',
+        tokenData.expires_at || null, tokenData.scope || null, now
+      ]
+    );
+  }
+
+  deleteOAuthToken(projectId: string, serverId: string): void {
+    this.db.run(
+      'DELETE FROM oauth_tokens WHERE project_id = ? AND server_id = ?',
+      [projectId, serverId]
+    );
+  }
+
+  getAllOAuthTokens(projectId: string): any[] {
+    return this.db.query(
+      'SELECT * FROM oauth_tokens WHERE project_id = ?'
+    ).all(projectId);
+  }
+
+  // OAuth2 flow state operations
+  storeFlowState(state: string, projectId: string, serverId: string, codeVerifier: string, redirectUri: string, clientId?: string): void {
+    const now = Date.now();
+    // Store client_id in the state so we can use it during token exchange
+    const stateData = JSON.stringify({
+      code_verifier: codeVerifier,
+      redirect_uri: redirectUri,
+      client_id: clientId || 'capa',
+    });
+    this.db.run(
+      `INSERT INTO oauth_flow_state (state, project_id, server_id, code_verifier, redirect_uri, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [state, projectId, serverId, stateData, redirectUri, now]
+    );
+  }
+
+  getFlowState(state: string): any | null {
+    return this.db.query(
+      'SELECT * FROM oauth_flow_state WHERE state = ?'
+    ).get(state);
+  }
+
+  deleteFlowState(state: string): void {
+    this.db.run('DELETE FROM oauth_flow_state WHERE state = ?', [state]);
+  }
+
+  deleteExpiredFlowStates(timeoutMinutes: number = 10): void {
+    const cutoff = Date.now() - timeoutMinutes * 60 * 1000;
+    this.db.run('DELETE FROM oauth_flow_state WHERE created_at < ?', [cutoff]);
   }
 
   close(): void {
