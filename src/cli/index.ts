@@ -4,6 +4,7 @@ import { initCommand } from './commands/init';
 import { startCommand } from './commands/start';
 import { stopCommand } from './commands/stop';
 import { restartCommand } from './commands/restart';
+import { statusCommand } from './commands/status';
 import { installCommand } from './commands/install';
 import { cleanCommand } from './commands/clean';
 import { addCommand } from './commands/add';
@@ -28,7 +29,7 @@ program
 program
   .command('init')
   .description('Initialize a new capabilities file')
-  .option('-f, --format <format>', 'File format (json or yaml)', 'json')
+  .option('-f, --format <format>', 'File format (json or yaml)', 'yaml')
   .action(async (options) => {
     const format = options.format === 'json' ? 'json' : 'yaml';
     await initCommand(format);
@@ -44,7 +45,7 @@ program
 program
   .command('add <source>')
   .description('Add a skill from various sources (GitHub, GitLab, Git URL, local path)')
-  .option('--id <id>', 'Custom skill ID (defaults to auto-generated from source)')
+  .option('-i, --id <id>', 'Custom skill ID (defaults to auto-generated from source)')
   .action(async (source: string, options) => {
     await addCommand(source, options);
   });
@@ -76,6 +77,13 @@ program
   .description('Restart the capa server')
   .action(async () => {
     await restartCommand();
+  });
+
+program
+  .command('status')
+  .description('Check the health status of the capa server')
+  .action(async () => {
+    await statusCommand();
   });
 
 program.parse();

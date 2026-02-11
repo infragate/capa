@@ -2,6 +2,7 @@ import { spawn, ChildProcess } from 'child_process';
 import { createHash } from 'crypto';
 import type { CapaDatabase } from '../db/database';
 import type { MCPServerDefinition } from '../types/capabilities';
+import { logger } from '../shared/logger';
 
 export interface MCPSubprocessInfo {
   id: string;
@@ -19,6 +20,7 @@ export class SubprocessManager {
   private readonly MAX_RESTART_ATTEMPTS = 3;
   private readonly RESTART_WINDOW_MS = 60000; // 1 minute
   private readonly BASE_RESTART_DELAY_MS = 1000;
+  private logger = logger.child('SubprocessManager');
 
   constructor(db: CapaDatabase) {
     this.db = db;
@@ -52,7 +54,7 @@ export class SubprocessManager {
     definition: MCPServerDefinition,
     projectPath: string
   ): Promise<MCPSubprocessInfo> {
-    console.log(`            [SubprocessManager] Getting/creating subprocess for: ${serverId}`);
+    this.logger.info(`Getting/creating subprocess for: ${serverId}`);
     
     // Generate hash of server configuration
     const configHash = this.hashConfig(definition);
@@ -60,7 +62,7 @@ export class SubprocessManager {
     // Check if subprocess already exists
     const existing = this.db.getMCPSubprocessByHash(configHash);
     if (existing && existing.pid && this.isProcessRunning(existing.pid)) {
-      console.log(`              Found existing subprocess (PID: ${existing.pid})`);
+      this.logger.debug(`Found existing subprocess (PID: ${existing.pid})`);
       let info = this.subprocesses.get(existing.id);
       if (!info) {
         info = {
@@ -76,7 +78,7 @@ export class SubprocessManager {
     }
 
     // Create new subprocess
-    console.log(`              Creating new subprocess...`);
+    this.logger.info('Creating new subprocess...');
     return await this.createSubprocess(serverId, definition, configHash, projectPath);
   }
 
@@ -90,7 +92,7 @@ export class SubprocessManager {
       throw new Error(`Server ${serverId} is remote and cannot be spawned as subprocess`);
     }
 
-    console.log(`              Spawning subprocess: ${definition.cmd} ${(definition.args || []).join(' ')}`);
+    this.logger.debug(`Spawning subprocess: ${definition.cmd} ${(definition.args || []).join(' ')}`);
 
     const info: MCPSubprocessInfo = {
       id: serverId,
@@ -108,7 +110,7 @@ export class SubprocessManager {
     const args = definition.args || [];
     const env = { ...process.env, ...definition.env };
 
-    console.log(`              Working directory: ${projectPath}`);
+    this.logger.debug(`Working directory: ${projectPath}`);
 
     // Spawn process from the project directory
     const proc = spawn(definition.cmd, args, {
@@ -119,7 +121,7 @@ export class SubprocessManager {
     });
 
     info.process = proc;
-    console.log(`              Subprocess started with PID: ${proc.pid}`);
+    this.logger.debug(`Subprocess started with PID: ${proc.pid}`);
 
     // Store in database
     this.db.upsertMCPSubprocess({
@@ -132,7 +134,7 @@ export class SubprocessManager {
 
     // Set up event handlers
     proc.on('error', (error) => {
-      console.error(`              ✗ MCP subprocess ${serverId} error:`, error);
+      this.logger.failure(`MCP subprocess ${serverId} error:`, error);
       info.status = 'crashed';
       this.db.upsertMCPSubprocess({
         id: serverId,
@@ -144,7 +146,7 @@ export class SubprocessManager {
     });
 
     proc.on('exit', (code, signal) => {
-      console.log(`              MCP subprocess ${serverId} exited with code ${code}, signal ${signal}`);
+      this.logger.info(`MCP subprocess ${serverId} exited with code ${code}, signal ${signal}`);
       info.status = 'stopped';
       
       // Auto-restart on crash (not on clean exit)
@@ -158,14 +160,14 @@ export class SubprocessManager {
         // Reset restart count if outside the restart window
         const now = Date.now();
         if (info.lastRestartTime && (now - info.lastRestartTime) > this.RESTART_WINDOW_MS) {
-          console.log(`              Restart window elapsed, resetting restart count`);
+          this.logger.debug('Restart window elapsed, resetting restart count');
           info.restartCount = 0;
         }
 
         // Check if we've exceeded max restart attempts
         if (info.restartCount >= this.MAX_RESTART_ATTEMPTS) {
-          console.error(`              ✗ Max restart attempts (${this.MAX_RESTART_ATTEMPTS}) reached for ${serverId}`);
-          console.error(`              ✗ Subprocess will not be restarted. Please check configuration and try again.`);
+          this.logger.failure(`Max restart attempts (${this.MAX_RESTART_ATTEMPTS}) reached for ${serverId}`);
+          this.logger.failure('Subprocess will not be restarted. Please check configuration and try again.');
           info.status = 'crashed';
           this.db.upsertMCPSubprocess({
             id: serverId,
@@ -182,10 +184,10 @@ export class SubprocessManager {
         info.lastRestartTime = now;
         const delay = this.BASE_RESTART_DELAY_MS * Math.pow(2, info.restartCount - 1);
         
-        console.log(`              Auto-restarting ${serverId} (attempt ${info.restartCount}/${this.MAX_RESTART_ATTEMPTS}) in ${delay}ms...`);
+        this.logger.info(`Auto-restarting ${serverId} (attempt ${info.restartCount}/${this.MAX_RESTART_ATTEMPTS}) in ${delay}ms...`);
         setTimeout(() => {
           this.createSubprocess(serverId, definition, configHash, projectPath).catch((error) => {
-            console.error(`              ✗ Failed to restart ${serverId}:`, error);
+            this.logger.failure(`Failed to restart ${serverId}:`, error);
           });
         }, delay);
       } else {
@@ -196,11 +198,11 @@ export class SubprocessManager {
 
     // Capture stdout/stderr for logging
     proc.stdout?.on('data', (data) => {
-      console.log(`              [${serverId} stdout] ${data.toString().trim()}`);
+      this.logger.debug(`[${serverId} stdout] ${data.toString().trim()}`);
     });
 
     proc.stderr?.on('data', (data) => {
-      console.error(`              [${serverId} stderr] ${data.toString().trim()}`);
+      this.logger.debug(`[${serverId} stderr] ${data.toString().trim()}`);
     });
 
     // For stdio transport, the subprocess is ready immediately
@@ -213,7 +215,7 @@ export class SubprocessManager {
       status: 'running',
     });
 
-    console.log(`              ✓ Subprocess ready (status: ${info.status})`);
+    this.logger.success(`Subprocess ready (status: ${info.status})`);
     return info;
   }
 
@@ -248,7 +250,7 @@ export class SubprocessManager {
       info.restartCount = 0;
       info.lastRestartTime = Date.now();
       info.status = 'stopped';
-      console.log(`            Reset subprocess ${serverId} - ready for manual restart`);
+      this.logger.info(`Reset subprocess ${serverId} - ready for manual restart`);
     }
   }
 

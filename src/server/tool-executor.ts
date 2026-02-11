@@ -3,6 +3,7 @@ import { resolve } from 'path';
 import type { CapaDatabase } from '../db/database';
 import type { ToolCommandDefinition, CommandSpec } from '../types/capabilities';
 import { resolveVariablesInObject } from '../shared/variable-resolver';
+import { logger } from '../shared/logger';
 
 export interface CommandExecutionResult {
   success: boolean;
@@ -14,6 +15,7 @@ export class CommandToolExecutor {
   private db: CapaDatabase;
   private projectId: string;
   private projectPath: string;
+  private logger = logger.child('CommandExecutor');
 
   constructor(db: CapaDatabase, projectId: string, projectPath: string) {
     this.db = db;
@@ -29,18 +31,18 @@ export class CommandToolExecutor {
     definition: ToolCommandDefinition,
     args: Record<string, any>
   ): Promise<CommandExecutionResult> {
-    console.log(`        [CommandExecutor] Executing tool: ${toolId}`);
-    console.log(`          Args: ${JSON.stringify(args)}`);
+    this.logger.info(`Executing tool: ${toolId}`);
+    this.logger.debug(`Args: ${JSON.stringify(args)}`);
     
     // Check if tool needs initialization
     const initState = this.db.getToolInitState(this.projectId, toolId);
     
     if (definition.init && (!initState || !initState.initialized)) {
-      console.log(`          Initializing tool ${toolId}...`);
+      this.logger.info(`Initializing tool ${toolId}...`);
       const initResult = await this.runCommand(definition.init, {});
       
       if (!initResult.success) {
-        console.error(`          ✗ Init failed: ${initResult.error}`);
+        this.logger.failure(`Init failed: ${initResult.error}`);
         // Store error
         this.db.setToolInitialized(this.projectId, toolId, initResult.error || 'Init failed');
         return {
@@ -49,11 +51,11 @@ export class CommandToolExecutor {
         };
       }
       
-      console.log(`          ✓ Tool initialized`);
+      this.logger.success('Tool initialized');
       // Mark as initialized
       this.db.setToolInitialized(this.projectId, toolId, null);
     } else if (initState && initState.last_error) {
-      console.error(`          ✗ Tool initialization previously failed: ${initState.last_error}`);
+      this.logger.failure(`Tool initialization previously failed: ${initState.last_error}`);
       // Tool initialization previously failed
       return {
         success: false,
@@ -64,9 +66,9 @@ export class CommandToolExecutor {
     // Run the actual command
     const result = await this.runCommand(definition.run, args);
     if (result.success) {
-      console.log(`          ✓ Command succeeded`);
+      this.logger.success('Command succeeded');
     } else {
-      console.error(`          ✗ Command failed: ${result.error}`);
+      this.logger.failure(`Command failed: ${result.error}`);
     }
     return result;
   }

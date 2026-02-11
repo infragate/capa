@@ -2,11 +2,30 @@
 
 export type CapabilitiesFormat = 'json' | 'yaml';
 
+/**
+ * Tool exposure modes for MCP clients
+ * - 'expose-all': All tools from all skills are exposed immediately (default)
+ * - 'on-demand': Tools are only exposed after calling setup_tools
+ */
+export type ToolExposureMode = 'expose-all' | 'on-demand';
+
+/**
+ * Configuration options for capabilities behavior
+ */
+export interface CapabilitiesOptions {
+  /**
+   * Determines how tools are exposed to MCP clients
+   * @default 'expose-all'
+   */
+  toolExposure?: ToolExposureMode;
+}
+
 export interface Capabilities {
   clients: string[];
   skills: Skill[];
   servers: MCPServer[];
   tools: Tool[];
+  options?: CapabilitiesOptions;
 }
 
 export interface Skill {
@@ -40,6 +59,8 @@ export interface MCPServerDefinition {
   cmd?: string;
   args?: string[];
   env?: Record<string, string>;
+  // OAuth2 config (auto-detected, not user-specified)
+  oauth2?: any; // OAuth2Config from types/oauth.ts
 }
 
 export interface Tool {

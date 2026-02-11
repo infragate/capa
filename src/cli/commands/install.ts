@@ -1,5 +1,7 @@
 import { existsSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { resolve, join } from 'path';
+import { exec } from 'child_process';
+import { promisify } from 'util';
 import { detectCapabilitiesFile, generateProjectId } from '../../shared/paths';
 import { parseCapabilitiesFile } from '../../shared/capabilities';
 import { ensureServer } from '../utils/server-manager';
@@ -9,6 +11,36 @@ import type { Skill } from '../../types/capabilities';
 import { getAgentConfig, agents } from 'skills/src/agents';
 import type { AgentType } from 'skills/src/types';
 import { VERSION } from '../../version';
+import { registerMCPServer } from '../utils/mcp-client-manager';
+
+const execAsync = promisify(exec);
+
+/**
+ * Open a URL in the user's default browser
+ */
+async function openBrowser(url: string): Promise<boolean> {
+  try {
+    const platform = process.platform;
+    let command: string;
+    
+    if (platform === 'win32') {
+      // Windows
+      command = `start "" "${url}"`;
+    } else if (platform === 'darwin') {
+      // macOS
+      command = `open "${url}"`;
+    } else {
+      // Linux and other Unix-like systems
+      command = `xdg-open "${url}"`;
+    }
+    
+    await execAsync(command);
+    return true;
+  } catch (error) {
+    // Failed to open browser, but this is not critical
+    return false;
+  }
+}
 
 export async function installCommand(): Promise<void> {
   const projectPath = process.cwd();
@@ -71,20 +103,91 @@ export async function installCommand(): Promise<void> {
   
   const result = await response.json();
   
+  // Display tool validation results
+  if (result.toolValidation && result.toolValidation.length > 0) {
+    const successfulTools = result.toolValidation.filter((t: any) => t.success && !t.pendingAuth);
+    const failedTools = result.toolValidation.filter((t: any) => !t.success && !t.pendingAuth);
+    const pendingAuthTools = result.toolValidation.filter((t: any) => t.pendingAuth);
+    
+    if (failedTools.length > 0) {
+      console.log(`\n⚠️  Tool Validation Results:`);
+      console.log(`   ✓ ${successfulTools.length} of ${result.toolValidation.length} tools validated successfully`);
+      console.log(`   ✗ ${failedTools.length} tool(s) failed validation:\n`);
+      
+      for (const failed of failedTools) {
+        console.log(`   • Tool: ${failed.toolId}`);
+        if (failed.serverId && failed.remoteTool) {
+          console.log(`     ⮡ Upstream tool "${failed.remoteTool}" not found on server "@${failed.serverId}"`);
+        }
+        if (failed.error) {
+          console.log(`     ⮡ ${failed.error}`);
+        }
+        console.log();
+      }
+      
+      console.log(`   💡 Tip: Check your capabilities.json file and verify:`);
+      console.log(`      - Tool names match exactly what the MCP server provides`);
+      console.log(`      - Server IDs are correct (e.g., "@server-name")`);
+      console.log(`      - MCP servers are accessible and properly configured\n`);
+    } else if (pendingAuthTools.length > 0 && pendingAuthTools.length < result.toolValidation.length) {
+      console.log(`\n✓ All ${successfulTools.length} non-OAuth2 tools validated successfully`);
+      console.log(`  ℹ ${pendingAuthTools.length} tool(s) will be validated after OAuth2 authentication`);
+    } else if (pendingAuthTools.length === 0) {
+      console.log(`\n✓ All ${result.toolValidation.length} tools validated successfully`);
+    }
+  }
+  
+  // Step 3: Register MCP server with client configurations
+  const mcpUrl = `${serverStatus.url}/${projectId}/mcp`;
+  console.log('\n🔗 Registering MCP server with clients...');
+  await registerMCPServer(projectPath, projectId, mcpUrl, capabilities.clients);
+  
   db.close();
   
-  // Step 3: Check if credential setup is needed
+  // Step 4: Check if credential setup is needed
   if (result.needsCredentials && result.credentialsUrl) {
-    console.log('\n🔑 Credentials required!');
-    console.log(`Please open: ${result.credentialsUrl}`);
-    console.log('After saving credentials, the installation will be complete.');
+    const hasVariables = result.missingVariables && result.missingVariables.length > 0;
+    const hasOAuth2 = result.oauth2Servers && result.oauth2Servers.length > 0;
+    const needsOAuth2Connection = hasOAuth2 && result.oauth2Servers.some((s: any) => !s.isConnected);
+    
+    if (hasVariables && needsOAuth2Connection) {
+      console.log('\n🔐 Credentials and OAuth2 connections required!');
+    } else if (needsOAuth2Connection) {
+      console.log('\n🔐 OAuth2 connections required!');
+    } else {
+      console.log('\n🔑 Credentials required!');
+    }
+    
+    console.log(`Opening browser to configure credentials...`);
+    
+    if (hasVariables) {
+      console.log(`  • Missing variables: ${result.missingVariables.join(', ')}`);
+    }
+    if (needsOAuth2Connection) {
+      const disconnectedServers = result.oauth2Servers.filter((s: any) => !s.isConnected);
+      console.log(`  • OAuth2 servers need connection: ${disconnectedServers.map((s: any) => s.serverId).join(', ')}`);
+    }
+    
+    const opened = await openBrowser(result.credentialsUrl);
+    
+    if (opened) {
+      console.log(`\n✓ Browser opened: ${result.credentialsUrl}`);
+    } else {
+      console.log(`\n⚠ Could not open browser automatically.`);
+      console.log(`Please open this URL manually: ${result.credentialsUrl}`);
+    }
+    
+    if (needsOAuth2Connection) {
+      console.log('\nAfter configuring credentials and connecting OAuth2, the installation will be complete.');
+    } else {
+      console.log('\nAfter saving credentials, the installation will be complete.');
+    }
   } else {
     console.log('\n✓ Installation complete!');
   }
   
-  // Step 4: Display MCP endpoint
-  console.log(`\n📡 MCP Endpoint: ${serverStatus.url}/${projectId}/mcp`);
-  console.log('\nAdd this endpoint to your MCP client configuration.');
+  // Step 5: Display MCP endpoint
+  console.log(`\n📡 MCP Endpoint: ${mcpUrl}`);
 }
 
 async function installSkills(
@@ -140,7 +243,31 @@ async function installSkills(
         continue;
       }
     } else {
+      // Provide detailed error message about what's wrong
       console.error(`  ✗ Invalid skill definition: ${skill.id}`);
+      
+      if (!skill.type || !['inline', 'remote', 'github'].includes(skill.type)) {
+        console.error(`    ⮡ Invalid or missing 'type'. Must be one of: 'inline', 'remote', 'github'`);
+        console.error(`    ⮡ Current value: ${skill.type || '(not set)'}`);
+      } else if (skill.type === 'inline') {
+        console.error(`    ⮡ Type is 'inline' but 'def.content' is missing`);
+        console.error(`    ⮡ For inline skills, provide the SKILL.md content in 'def.content'`);
+      } else if (skill.type === 'github') {
+        console.error(`    ⮡ Type is 'github' but 'def.repo' is missing or invalid`);
+        console.error(`    ⮡ For GitHub skills, provide 'def.repo' in format: 'owner/repo@skill-name'`);
+        if (skill.def.repo) {
+          console.error(`    ⮡ Current value: '${skill.def.repo}'`);
+        }
+      } else if (skill.type === 'remote') {
+        console.error(`    ⮡ Type is 'remote' but 'def.url' is missing`);
+        console.error(`    ⮡ For remote skills, provide the URL to SKILL.md in 'def.url'`);
+      }
+      
+      console.error(`\n    Example configurations:`);
+      console.error(`    - Inline:  { "id": "my-skill", "type": "inline", "def": { "content": "..." } }`);
+      console.error(`    - GitHub:  { "id": "my-skill", "type": "github", "def": { "repo": "owner/repo@skill-name" } }`);
+      console.error(`    - Remote:  { "id": "my-skill", "type": "remote", "def": { "url": "https://..." } }`);
+      
       continue;
     }
     

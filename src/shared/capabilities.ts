@@ -18,12 +18,15 @@ export async function parseCapabilitiesFile(
 export function createDefaultCapabilities(): Capabilities {
   return {
     clients: ['cursor', 'claude-code'],
+    options: {
+      toolExposure: 'expose-all'
+    },
     skills: [
       {
         id: 'capabilities-manager',
         type: 'github',
         def: {
-          repo: 'infragate/capa@abilities-manager',
+          repo: 'infragate/capa@capabilities-manager',
           description: 'Guide for managing capabilities with capa CLI',
           requires: ['capa_init', 'capa_install', 'find_skills']
         }
