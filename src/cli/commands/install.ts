@@ -366,7 +366,7 @@ export async function installCommand(envFile?: string | boolean): Promise<void> 
   
   // Step 1: Install skills (copy to client directories)
   console.log('\n📦 Installing skills...');
-  await installSkills(projectPath, projectId, capabilities.skills, capabilities.clients, db, settings);
+  await installSkills(projectPath, projectId, capabilities.skills, capabilities.providers, db, settings);
   
   // Step 2: Submit capabilities to server
   console.log('\n🔧 Configuring tools...');
@@ -424,7 +424,7 @@ export async function installCommand(envFile?: string | boolean): Promise<void> 
   // Step 3: Register MCP server with client configurations
   const mcpUrl = `${serverStatus.url}/${projectId}/mcp`;
   console.log('\n🔗 Registering MCP server with clients...');
-  await registerMCPServer(projectPath, projectId, mcpUrl, capabilities.clients);
+  await registerMCPServer(projectPath, projectId, mcpUrl, capabilities.providers);
   
   db.close();
   

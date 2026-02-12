@@ -21,7 +21,7 @@ export interface CapabilitiesOptions {
 }
 
 export interface Capabilities {
-  clients: string[];
+  providers: string[];
   skills: Skill[];
   servers: MCPServer[];
   tools: Tool[];

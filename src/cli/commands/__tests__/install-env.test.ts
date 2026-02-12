@@ -28,7 +28,7 @@ describe('installCommand with env flag', () => {
   it('should detect capabilities file with variables', () => {
     // Create a capabilities file with variables
     const capabilities = `
-clients:
+providers:
   - cursor
 
 servers:
