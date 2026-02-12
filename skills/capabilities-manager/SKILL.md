@@ -24,7 +24,7 @@ Use this skill when:
 ### Capabilities File
 The `capabilities.yaml` (or `capabilities.json`) file defines everything an agent can do. It contains five main sections:
 
-1. **clients**: List of MCP clients where skills should be installed (e.g., `cursor`, `claude-code`)
+1. **providers**: List of MCP clients where skills should be installed (e.g., `cursor`, `claude-code`)
 2. **options**: Configuration for tool exposure behavior (`toolExposure`: `expose-all` or `on-demand`)
 3. **skills**: Modular knowledge packages that teach agents when and how to use tools
 4. **servers**: MCP servers that provide tools (local subprocesses or remote HTTP servers)
@@ -124,7 +124,7 @@ capa status             # Check server health and uptime
 ### Basic Structure (YAML)
 
 ```yaml
-clients:
+providers:
   - cursor
   - claude-code
 
@@ -422,7 +422,7 @@ Check the skills.sh ecosystem before creating custom skills. Community skills ar
 
 **capabilities.yaml:**
 ```yaml
-clients:
+providers:
   - cursor
 
 skills:
@@ -470,7 +470,7 @@ capa install  # Will prompt for BraveApiKey via web UI
 
 **capabilities.yaml:**
 ```yaml
-clients:
+providers:
   - cursor
   - claude-code
 
@@ -518,7 +518,7 @@ tools:
 
 **capabilities.yaml:**
 ```yaml
-clients:
+providers:
   - cursor
 
 options:
@@ -568,7 +568,7 @@ tools:
 
 **capabilities.yaml:**
 ```yaml
-clients:
+providers:
   - cursor
 
 options:

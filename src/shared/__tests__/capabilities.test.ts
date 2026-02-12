@@ -25,12 +25,12 @@ describe('capabilities', () => {
       const capabilities = createDefaultCapabilities();
       
       expect(capabilities).toBeDefined();
-      expect(capabilities.clients).toBeArray();
+      expect(capabilities.providers).toBeArray();
       expect(capabilities.skills).toBeArray();
       expect(capabilities.servers).toBeArray();
       expect(capabilities.tools).toBeArray();
-      expect(capabilities.clients).toContain('cursor');
-      expect(capabilities.clients).toContain('claude-code');
+      expect(capabilities.providers).toContain('cursor');
+      expect(capabilities.providers).toContain('claude-code');
     });
 
     it('should include default skills', () => {
@@ -74,7 +74,7 @@ describe('capabilities', () => {
 
     it('should write JSON with proper formatting', async () => {
       const capabilities: Capabilities = {
-        clients: ['test-client'],
+        providers: ['test-client'],
         skills: [],
         servers: [],
         tools: [],
@@ -84,7 +84,7 @@ describe('capabilities', () => {
       await writeCapabilitiesFile(filePath, 'json', capabilities);
       const content = await Bun.file(filePath).text();
       
-      expect(content).toContain('"clients"');
+      expect(content).toContain('"providers"');
       expect(content).toContain('"test-client"');
       // Check for proper indentation
       expect(content).toContain('  ');
@@ -92,7 +92,7 @@ describe('capabilities', () => {
 
     it('should handle custom capabilities', async () => {
       const capabilities: Capabilities = {
-        clients: ['custom-client'],
+        providers: ['custom-client'],
         skills: [
           {
             id: 'custom-skill',
