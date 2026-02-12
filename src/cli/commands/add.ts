@@ -6,7 +6,7 @@ import { resolve, basename } from 'path';
 
 interface ParsedSkillSource {
   id: string;
-  type: 'inline' | 'remote' | 'github';
+  type: 'inline' | 'remote' | 'github' | 'gitlab';
   def: {
     repo?: string;
     url?: string;
@@ -63,9 +63,9 @@ function parseSkillSource(source: string): ParsedSkillSource {
     const id = extractIdFromGithubRepo(repo); // Same logic works for GitLab
     return {
       id,
-      type: 'remote',
+      type: 'gitlab',
       def: {
-        url: `https://gitlab.com/${repo}/-/raw/main/SKILL.md`
+        repo: `${repo}@${id}`
       }
     };
   }

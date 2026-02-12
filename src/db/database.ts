@@ -8,6 +8,7 @@ import type {
   ToolInitState,
   MCPSubprocess,
   Session,
+  GitIntegration,
 } from '../types/database';
 
 export class CapaDatabase {
@@ -117,6 +118,21 @@ export class CapaDatabase {
         redirect_uri TEXT NOT NULL,
         created_at INTEGER NOT NULL,
         FOREIGN KEY (project_id) REFERENCES projects(id)
+      )
+    `);
+
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS git_integrations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        platform TEXT NOT NULL,
+        host TEXT,
+        access_token TEXT NOT NULL,
+        refresh_token TEXT,
+        token_type TEXT DEFAULT 'Bearer',
+        expires_at INTEGER,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        UNIQUE(platform, host)
       )
     `);
   }
@@ -408,6 +424,107 @@ export class CapaDatabase {
   deleteExpiredFlowStates(timeoutMinutes: number = 10): void {
     const cutoff = Date.now() - timeoutMinutes * 60 * 1000;
     this.db.run('DELETE FROM oauth_flow_state WHERE created_at < ?', [cutoff]);
+  }
+
+  // Git integration operations
+  getGitIntegration(platform: string, host: string | null = null): GitIntegration | null {
+    return this.db.query(
+      'SELECT * FROM git_integrations WHERE platform = ? AND (host = ? OR (host IS NULL AND ? IS NULL))'
+    ).get(platform, host, host) as GitIntegration | null;
+  }
+
+  setGitIntegration(
+    platform: 'github' | 'gitlab' | 'github-enterprise' | 'gitlab-self-managed',
+    tokenData: {
+      host?: string | null;
+      access_token: string;
+      refresh_token?: string | null;
+      token_type?: string;
+      expires_at?: number | null;
+    }
+  ): void {
+    const now = Date.now();
+    const host = tokenData.host || null;
+    
+    this.db.run(
+      `INSERT INTO git_integrations (platform, host, access_token, refresh_token, token_type, expires_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(platform, host) DO UPDATE SET
+         access_token = ?,
+         refresh_token = ?,
+         token_type = ?,
+         expires_at = ?,
+         updated_at = ?`,
+      [
+        platform, host, tokenData.access_token, tokenData.refresh_token || null,
+        tokenData.token_type || 'Bearer', tokenData.expires_at || null,
+        now, now,
+        tokenData.access_token, tokenData.refresh_token || null, tokenData.token_type || 'Bearer',
+        tokenData.expires_at || null, now
+      ]
+    );
+  }
+
+  deleteGitIntegration(platform: string, host: string | null = null): void {
+    this.db.run(
+      'DELETE FROM git_integrations WHERE platform = ? AND (host = ? OR (host IS NULL AND ? IS NULL))',
+      [platform, host, host]
+    );
+  }
+
+  getAllGitIntegrations(): GitIntegration[] {
+    return this.db.query('SELECT * FROM git_integrations ORDER BY created_at DESC').all() as GitIntegration[];
+  }
+
+  // Convenience methods for CLI git client (uses provider string format like "github.com" or "gitlab.com")
+  getGitOAuthToken(provider: string): GitIntegration | null {
+    // Map provider string to platform
+    const platformMap: Record<string, 'github' | 'gitlab'> = {
+      'github.com': 'github',
+      'gitlab.com': 'gitlab',
+    };
+    
+    const platform = platformMap[provider];
+    if (!platform) {
+      return null;
+    }
+    
+    return this.getGitIntegration(platform, null);
+  }
+
+  setGitOAuthToken(
+    provider: string,
+    tokenData: {
+      access_token: string;
+      refresh_token?: string | null;
+      token_type?: string;
+      expires_at?: number | null;
+    }
+  ): void {
+    // Map provider string to platform
+    const platformMap: Record<string, 'github' | 'gitlab'> = {
+      'github.com': 'github',
+      'gitlab.com': 'gitlab',
+    };
+    
+    const platform = platformMap[provider];
+    if (!platform) {
+      throw new Error(`Unknown provider: ${provider}`);
+    }
+    
+    this.setGitIntegration(platform, tokenData);
+  }
+
+  getAllGitOAuthTokens(): Array<GitIntegration & { provider: string }> {
+    const integrations = this.getAllGitIntegrations();
+    
+    // Map platforms back to provider strings and filter for OAuth providers
+    return integrations
+      .filter(i => i.platform === 'github' || i.platform === 'gitlab')
+      .map(integration => ({
+        ...integration,
+        provider: integration.platform === 'github' ? 'github.com' : 'gitlab.com',
+      }));
   }
 
   close(): void {

@@ -3,6 +3,7 @@
 
 import type { CapaDatabase } from '../db/database';
 import type { OAuth2Manager } from './oauth-manager';
+import type { GitIntegrationManager } from './git-integration-manager';
 import { logger } from '../shared/logger';
 
 export interface TokenRefreshSchedulerOptions {
@@ -28,6 +29,7 @@ export interface TokenRefreshSchedulerOptions {
 export class TokenRefreshScheduler {
   private db: CapaDatabase;
   private oauth2Manager: OAuth2Manager;
+  private gitIntegrationManager?: GitIntegrationManager;
   private capabilitiesProvider?: () => Map<string, any>;
   private intervalId?: NodeJS.Timeout;
   private isRunning = false;
@@ -47,6 +49,13 @@ export class TokenRefreshScheduler {
     this.checkInterval = options.checkInterval || 60000; // 1 minute
     this.refreshThreshold = options.refreshThreshold || 600000; // 10 minutes
     this.debug = options.debug || false;
+  }
+
+  /**
+   * Set the Git Integration Manager (optional, for Git OAuth token refresh)
+   */
+  setGitIntegrationManager(manager: GitIntegrationManager): void {
+    this.gitIntegrationManager = manager;
   }
 
   /**
@@ -98,12 +107,6 @@ export class TokenRefreshScheduler {
    */
   private async checkAndRefreshTokens(): Promise<void> {
     try {
-      if (!this.capabilitiesProvider) {
-        this.log('No capabilities provider set, skipping token check');
-        return;
-      }
-
-      const capabilities = this.capabilitiesProvider();
       const now = Date.now();
       let checkedCount = 0;
       let refreshedCount = 0;
@@ -111,75 +114,138 @@ export class TokenRefreshScheduler {
 
       this.log('Checking tokens for expiration...');
 
-      // Iterate through all projects
-      for (const [projectId, projectCapabilities] of capabilities) {
-        if (!projectCapabilities?.servers) {
-          continue;
-        }
+      // Check MCP OAuth2 tokens
+      if (this.capabilitiesProvider) {
+        const capabilities = this.capabilitiesProvider();
 
-        // Check each server in the project
-        for (const server of projectCapabilities.servers) {
-          const serverId = server.id;
-          
-          // Skip if not an OAuth2 server
-          if (!server.def?.oauth2) {
+        // Iterate through all projects
+        for (const [projectId, projectCapabilities] of capabilities) {
+          if (!projectCapabilities?.servers) {
             continue;
           }
 
-          const oauth2Config = server.def.oauth2;
+          // Check each server in the project
+          for (const server of projectCapabilities.servers) {
+            const serverId = server.id;
+            
+            // Skip if not an OAuth2 server
+            if (!server.def?.oauth2) {
+              continue;
+            }
 
-          // Get token data
-          const tokenData = this.db.getOAuthToken(projectId, serverId);
-          if (!tokenData) {
-            // No token stored, skip
+            const oauth2Config = server.def.oauth2;
+
+            // Get token data
+            const tokenData = this.db.getOAuthToken(projectId, serverId);
+            if (!tokenData) {
+              // No token stored, skip
+              continue;
+            }
+
+            checkedCount++;
+
+            // Check if token has refresh_token
+            if (!tokenData.refresh_token) {
+              this.log(`  ⚠ Token for ${projectId}/${serverId} has no refresh_token, skipping`);
+              continue;
+            }
+
+            // Check if token has expiration
+            if (!tokenData.expires_at) {
+              this.log(`  ℹ Token for ${projectId}/${serverId} has no expiration, skipping`);
+              continue;
+            }
+
+            // Calculate time until expiration
+            const timeUntilExpiry = tokenData.expires_at - now;
+            
+            // If token expires within threshold, refresh it
+            if (timeUntilExpiry < this.refreshThreshold) {
+              const expiryMinutes = Math.floor(timeUntilExpiry / 60000);
+              const thresholdMinutes = Math.floor(this.refreshThreshold / 60000);
+              
+              this.log(`  🔄 Token for ${projectId}/${serverId} expires in ${expiryMinutes}m (threshold: ${thresholdMinutes}m), refreshing...`);
+              
+              try {
+                const success = await this.oauth2Manager.refreshAccessToken(
+                  projectId,
+                  serverId,
+                  oauth2Config
+                );
+
+                if (success) {
+                  refreshedCount++;
+                  this.log(`    ✓ Successfully refreshed token for ${projectId}/${serverId}`);
+                } else {
+                  failedCount++;
+                  this.log(`    ✗ Failed to refresh token for ${projectId}/${serverId}`);
+                }
+              } catch (error: any) {
+                failedCount++;
+                this.log(`    ✗ Error refreshing token for ${projectId}/${serverId}: ${error.message}`);
+              }
+            } else {
+              const expiryMinutes = Math.floor(timeUntilExpiry / 60000);
+              this.log(`  ✓ Token for ${projectId}/${serverId} valid for ${expiryMinutes}m`);
+            }
+          }
+        }
+      }
+
+      // Check Git integration tokens
+      if (this.gitIntegrationManager) {
+        const gitIntegrations = this.db.getAllGitIntegrations();
+        
+        for (const integration of gitIntegrations) {
+          // Only check GitHub and GitLab OAuth tokens (not PATs)
+          if (integration.platform !== 'github' && integration.platform !== 'gitlab') {
+            continue;
+          }
+
+          // Skip if no refresh token
+          if (!integration.refresh_token) {
+            this.log(`  ⚠ Git integration ${integration.platform} has no refresh_token, skipping`);
+            continue;
+          }
+
+          // Skip if no expiration
+          if (!integration.expires_at) {
+            this.log(`  ℹ Git integration ${integration.platform} has no expiration, skipping`);
             continue;
           }
 
           checkedCount++;
 
-          // Check if token has refresh_token
-          if (!tokenData.refresh_token) {
-            this.log(`  ⚠ Token for ${projectId}/${serverId} has no refresh_token, skipping`);
-            continue;
-          }
-
-          // Check if token has expiration
-          if (!tokenData.expires_at) {
-            this.log(`  ℹ Token for ${projectId}/${serverId} has no expiration, skipping`);
-            continue;
-          }
-
           // Calculate time until expiration
-          const timeUntilExpiry = tokenData.expires_at - now;
+          const timeUntilExpiry = integration.expires_at - now;
           
           // If token expires within threshold, refresh it
           if (timeUntilExpiry < this.refreshThreshold) {
             const expiryMinutes = Math.floor(timeUntilExpiry / 60000);
             const thresholdMinutes = Math.floor(this.refreshThreshold / 60000);
             
-            this.log(`  🔄 Token for ${projectId}/${serverId} expires in ${expiryMinutes}m (threshold: ${thresholdMinutes}m), refreshing...`);
+            this.log(`  🔄 Git integration ${integration.platform} expires in ${expiryMinutes}m (threshold: ${thresholdMinutes}m), refreshing...`);
             
             try {
-              const success = await this.oauth2Manager.refreshAccessToken(
-                projectId,
-                serverId,
-                oauth2Config
+              const success = await this.gitIntegrationManager.refreshAccessToken(
+                integration.platform,
+                integration.host || undefined
               );
 
               if (success) {
                 refreshedCount++;
-                this.log(`    ✓ Successfully refreshed token for ${projectId}/${serverId}`);
+                this.log(`    ✓ Successfully refreshed Git integration ${integration.platform}`);
               } else {
                 failedCount++;
-                this.log(`    ✗ Failed to refresh token for ${projectId}/${serverId}`);
+                this.log(`    ✗ Failed to refresh Git integration ${integration.platform}`);
               }
             } catch (error: any) {
               failedCount++;
-              this.log(`    ✗ Error refreshing token for ${projectId}/${serverId}: ${error.message}`);
+              this.log(`    ✗ Error refreshing Git integration ${integration.platform}: ${error.message}`);
             }
           } else {
             const expiryMinutes = Math.floor(timeUntilExpiry / 60000);
-            this.log(`  ✓ Token for ${projectId}/${serverId} valid for ${expiryMinutes}m`);
+            this.log(`  ✓ Git integration ${integration.platform} valid for ${expiryMinutes}m`);
           }
         }
       }
