@@ -1,13 +1,16 @@
-import { existsSync, mkdirSync, writeFileSync, rmSync } from 'fs';
-import { resolve, join } from 'path';
+import { existsSync, mkdirSync, writeFileSync, rmSync, readdirSync, statSync, readFileSync } from 'fs';
+import { resolve, join, dirname, basename } from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { tmpdir } from 'os';
 import { detectCapabilitiesFile, generateProjectId } from '../../shared/paths';
 import { parseCapabilitiesFile } from '../../shared/capabilities';
 import { ensureServer } from '../utils/server-manager';
 import { loadSettings, getDatabasePath } from '../../shared/config';
 import { CapaDatabase } from '../../db/database';
 import type { Skill } from '../../types/capabilities';
+import { createAuthenticatedFetch, AuthenticatedFetch } from '../../shared/authenticated-fetch';
+import { displayIntegrationPrompt, getIntegrationsUrl, parseRepoUrl } from '../utils/integration-helper';
 import { getAgentConfig, agents } from 'skills/src/agents';
 import type { AgentType } from 'skills/src/types';
 import { VERSION } from '../../version';
@@ -40,6 +43,215 @@ async function openBrowser(url: string): Promise<boolean> {
     // Failed to open browser, but this is not critical
     return false;
   }
+}
+
+/**
+ * Check if git is installed
+ */
+async function checkGitInstalled(): Promise<boolean> {
+  try {
+    await execAsync('git --version');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Clone a git repository to a temporary directory
+ */
+async function cloneRepository(
+  platform: 'github' | 'gitlab',
+  repoPath: string,
+  authFetch: AuthenticatedFetch
+): Promise<string> {
+  const tempDir = join(tmpdir(), 'capa-skills', `${platform}-${repoPath.replace(/\//g, '-')}-${Date.now()}`);
+  mkdirSync(tempDir, { recursive: true });
+
+  // Construct repo URL with authentication if available
+  let repoUrl: string;
+  const hasAuth = authFetch.hasAuth(`https://${platform}.com/${repoPath}`);
+  
+  if (platform === 'github') {
+    if (hasAuth) {
+      const token = authFetch.getTokenForUrl(`https://github.com/${repoPath}`);
+      repoUrl = `https://oauth2:${token}@github.com/${repoPath}.git`;
+    } else {
+      repoUrl = `https://github.com/${repoPath}.git`;
+    }
+  } else { // gitlab
+    if (hasAuth) {
+      const token = authFetch.getTokenForUrl(`https://gitlab.com/${repoPath}`);
+      repoUrl = `https://oauth2:${token}@gitlab.com/${repoPath}.git`;
+    } else {
+      repoUrl = `https://gitlab.com/${repoPath}.git`;
+    }
+  }
+
+  try {
+    // Clone with minimal depth for efficiency
+    await execAsync(`git clone --depth 1 "${repoUrl}" "${tempDir}"`);
+    return tempDir;
+  } catch (error: any) {
+    // Clean up on failure
+    try {
+      rmSync(tempDir, { recursive: true, force: true });
+    } catch {}
+    
+    // Parse error message to provide friendly feedback
+    const errorMessage = error.stderr || error.message || '';
+    
+    // Git not installed
+    if (errorMessage.includes('git: command not found') || 
+        errorMessage.includes("'git' is not recognized") ||
+        errorMessage.includes('git: not found') ||
+        error.code === 'ENOENT') {
+      throw new Error(
+        `Git is not installed on your system.\n\n` +
+        `    CAPA requires Git to clone repositories and install skills.\n\n` +
+        `    Please install Git:\n` +
+        `    • Windows: https://git-scm.com/download/win\n` +
+        `    • macOS:   brew install git  (or download from https://git-scm.com)\n` +
+        `    • Linux:   sudo apt install git  (Ubuntu/Debian)\n` +
+        `               sudo yum install git  (CentOS/RHEL)\n\n` +
+        `    After installing Git, run: capa install`
+      );
+    }
+    
+    // Repository not found or permission denied
+    if (errorMessage.includes('could not be found') || 
+        errorMessage.includes('not found') || 
+        errorMessage.includes("don't have permission")) {
+      
+      const platformName = platform === 'github' ? 'GitHub' : 'GitLab';
+      const repoUrl = `https://${platform}.com/${repoPath}`;
+      
+      let friendlyMessage = `Repository not accessible: ${repoPath}\n\n`;
+      
+      if (hasAuth) {
+        // User is authenticated but still can't access
+        friendlyMessage += `    Possible reasons:\n`;
+        friendlyMessage += `    • Repository doesn't exist at ${repoUrl}\n`;
+        friendlyMessage += `    • Repository path is misspelled (check owner/repo)\n`;
+        friendlyMessage += `    • Your ${platformName} token doesn't have access to this repository\n`;
+        friendlyMessage += `    • Repository is in a different ${platformName} instance (use self-managed for enterprise)\n\n`;
+        friendlyMessage += `    Please verify:\n`;
+        friendlyMessage += `    1. The repository exists and the path is correct\n`;
+        friendlyMessage += `    2. Your ${platformName} account has access to the repository\n`;
+        friendlyMessage += `    3. The repository is on ${platform}.com (not a self-managed instance)`;
+      } else {
+        // User is not authenticated
+        friendlyMessage += `    This repository appears to be private or doesn't exist.\n\n`;
+        friendlyMessage += `    If this is a private repository:\n`;
+        friendlyMessage += `    1. Run: capa start\n`;
+        friendlyMessage += `    2. Open the integrations page in your browser\n`;
+        friendlyMessage += `    3. Connect your ${platformName} account\n`;
+        friendlyMessage += `    4. Run: capa install (again)\n\n`;
+        friendlyMessage += `    If this is a public repository:\n`;
+        friendlyMessage += `    • Verify the repository path: ${repoUrl}`;
+      }
+      
+      throw new Error(friendlyMessage);
+    }
+    
+    // Authentication failed
+    if (errorMessage.includes('Authentication failed') || 
+        errorMessage.includes('could not read Username')) {
+      throw new Error(
+        `Authentication failed for ${platform}.com\n\n` +
+        `    Your access token may have expired or been revoked.\n` +
+        `    Please reconnect your ${platform === 'github' ? 'GitHub' : 'GitLab'} account in the integrations page.`
+      );
+    }
+    
+    // Network or other error
+    if (errorMessage.includes('unable to access') || 
+        errorMessage.includes('Could not resolve host')) {
+      throw new Error(
+        `Network error: Unable to connect to ${platform}.com\n\n` +
+        `    Please check your internet connection and try again.`
+      );
+    }
+    
+    // Generic git error - provide a sanitized message
+    throw new Error(
+      `Failed to clone repository: ${repoPath}\n\n` +
+      `    Git error: ${errorMessage.split('\n').find((line: string) => line.includes('fatal:') || line.includes('error:')) || 'Unknown error'}\n` +
+      `    Repository: https://${platform}.com/${repoPath}`
+    );
+  }
+}
+
+/**
+ * Recursively find all SKILL.md files in a directory
+ * Returns a map of skill name (directory name) to the SKILL.md file path
+ */
+function findSkillsInDirectory(dir: string): Map<string, string> {
+  const skills = new Map<string, string>();
+  
+  function searchDir(currentDir: string) {
+    try {
+      const entries = readdirSync(currentDir, { withFileTypes: true });
+      
+      for (const entry of entries) {
+        const fullPath = join(currentDir, entry.name);
+        
+        // Skip hidden directories and common non-skill directories
+        if (entry.name.startsWith('.') && entry.name !== '.agents' && entry.name !== '.cursor' && entry.name !== '.claude' && entry.name !== '.cline') {
+          continue;
+        }
+        if (entry.name === 'node_modules' || entry.name === '.git') {
+          continue;
+        }
+        
+        if (entry.isDirectory()) {
+          // Check if this directory contains SKILL.md
+          const skillMdPath = join(fullPath, 'SKILL.md');
+          if (existsSync(skillMdPath)) {
+            // Use directory name as skill identifier
+            const skillName = entry.name;
+            skills.set(skillName, skillMdPath);
+          }
+          
+          // Continue searching subdirectories
+          searchDir(fullPath);
+        }
+      }
+    } catch (error) {
+      // Skip directories we can't read
+    }
+  }
+  
+  searchDir(dir);
+  return skills;
+}
+
+/**
+ * Read a skill and its additional files from a directory
+ */
+function readSkillFromDirectory(skillMdPath: string): { 
+  markdown: string; 
+  additionalFiles: Map<string, string> 
+} {
+  const markdown = readFileSync(skillMdPath, 'utf-8');
+  const skillDir = dirname(skillMdPath);
+  const additionalFiles = new Map<string, string>();
+  
+  // Read all files in the skill directory (except SKILL.md itself)
+  try {
+    const entries = readdirSync(skillDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isFile() && entry.name !== 'SKILL.md') {
+        const filePath = join(skillDir, entry.name);
+        const content = readFileSync(filePath, 'utf-8');
+        additionalFiles.set(entry.name, content);
+      }
+    }
+  } catch (error) {
+    // No additional files or can't read directory
+  }
+  
+  return { markdown, additionalFiles };
 }
 
 export async function installCommand(): Promise<void> {
@@ -82,7 +294,7 @@ export async function installCommand(): Promise<void> {
   
   // Step 1: Install skills (copy to client directories)
   console.log('\n📦 Installing skills...');
-  await installSkills(projectPath, projectId, capabilities.skills, capabilities.clients, db);
+  await installSkills(projectPath, projectId, capabilities.skills, capabilities.clients, db, settings);
   
   // Step 2: Submit capabilities to server
   console.log('\n🔧 Configuring tools...');
@@ -195,10 +407,40 @@ async function installSkills(
   projectId: string,
   skills: Skill[],
   clients: string[],
-  db: CapaDatabase
+  db: CapaDatabase,
+  settings: any
 ): Promise<void> {
-  for (const skill of skills) {
-    console.log(`  Installing skill: ${skill.id}`);
+  const authFetch = createAuthenticatedFetch(db);
+  
+  // Check if any skills require git (github or gitlab type)
+  const needsGit = skills.some(skill => skill.type === 'github' || skill.type === 'gitlab');
+  
+  if (needsGit) {
+    // Check if git is installed before attempting to clone
+    const gitInstalled = await checkGitInstalled();
+    if (!gitInstalled) {
+      console.error('\n✗ Git is not installed on your system.');
+      console.error('\n  CAPA requires Git to install skills from GitHub and GitLab.');
+      console.error('\n  Please install Git:');
+      console.error('  • Windows: https://git-scm.com/download/win');
+      console.error('  • macOS:   brew install git  (or download from https://git-scm.com)');
+      console.error('  • Linux:   sudo apt install git  (Ubuntu/Debian)');
+      console.error('             sudo yum install git  (CentOS/RHEL)');
+      console.error('\n  After installing Git, run: capa install');
+      process.exit(1);
+    }
+  }
+  
+  // Track cloned repositories to avoid cloning the same repo multiple times
+  // Key: "platform:repoPath", Value: cloned directory path
+  const clonedRepos = new Map<string, string>();
+  
+  // Track all temp directories for cleanup
+  const tempDirs: string[] = [];
+  
+  try {
+    for (const skill of skills) {
+      console.log(`  Installing skill: ${skill.id}`);
     
     let skillMarkdown: string;
     let additionalFiles: Map<string, string> = new Map();
@@ -207,89 +449,142 @@ async function installSkills(
       // Inline skill - use provided SKILL.md content
       skillMarkdown = skill.def.content;
     } else if (skill.type === 'github' && skill.def.repo) {
-      // GitHub skill - fetch from repository (e.g., "vercel-labs/agent-skills@find-skills")
+      // GitHub skill - clone repository and search for skill
       try {
         const [repoPath, skillName] = skill.def.repo.split('@');
         if (!repoPath || !skillName) {
           throw new Error('Invalid GitHub repo format. Use: owner/repo@skill-name');
         }
         
-        // Try multiple common skill directory locations and branch names
-        const commonSkillDirs = [
-          'skills',
-          'awesome_agent_skills',
-          '.agents/skills',
-          '.cursor/skills',
-          '.claude/skills',
-          '.cline/skills',
-          'agent-skills',
-        ];
+        // Check if we've already cloned this repo
+        const repoKey = `github:${repoPath}`;
+        let repoDir = clonedRepos.get(repoKey);
         
-        const branches = ['main', 'master'];
-        
-        let response: Response | null = null;
-        let successfulPath: string | null = null;
-        
-        // Try each combination of branch and skill directory
-        for (const branch of branches) {
-          for (const skillDir of commonSkillDirs) {
-            const baseUrl = `https://raw.githubusercontent.com/${repoPath}/${branch}/${skillDir}/${skillName}`;
-            const skillMdUrl = `${baseUrl}/SKILL.md`;
-            
-            try {
-              response = await fetch(skillMdUrl);
-              if (response.ok) {
-                successfulPath = skillMdUrl;
-                break;
-              }
-            } catch {
-              // Try next path
-              continue;
+        if (!repoDir) {
+          // Clone the repository
+          console.log(`    Cloning repository: ${repoPath}...`);
+          try {
+            repoDir = await cloneRepository('github', repoPath, authFetch);
+            clonedRepos.set(repoKey, repoDir);
+            tempDirs.push(repoDir);
+          } catch (error: any) {
+            if (error.message.includes('Unable to clone repository') && !authFetch.hasAuth(`https://github.com/${repoPath}`)) {
+              const integrationsUrl = getIntegrationsUrl(settings.server.host, settings.server.port);
+              console.error(`\n  ✗ ${error.message}`);
+              displayIntegrationPrompt('GitHub', integrationsUrl);
+              process.exit(1);
             }
-          }
-          
-          if (response && response.ok) {
-            break;
+            throw error;
           }
         }
         
-        if (!response || !response.ok || !successfulPath) {
+        // Search for skills in the cloned repository
+        const foundSkills = findSkillsInDirectory(repoDir);
+        
+        if (!foundSkills.has(skillName)) {
           throw new Error(
-            `Failed to fetch SKILL.md: Not found in any common directory.\n` +
+            `Skill "${skillName}" not found in repository.\n` +
             `    Repository: ${repoPath}\n` +
-            `    Skill: ${skillName}\n` +
-            `    Tried branches: ${branches.join(', ')}\n` +
-            `    Tried directories: ${commonSkillDirs.join(', ')}\n` +
-            `    Tip: Verify the skill exists and the repo uses a standard directory structure.`
+            `    Available skills: ${Array.from(foundSkills.keys()).join(', ') || 'none'}\n` +
+            `    Tip: Check the skill name matches a directory containing SKILL.md`
           );
         }
         
-        skillMarkdown = await response.text();
+        // Read the skill and its additional files
+        const skillMdPath = foundSkills.get(skillName)!;
+        const skillData = readSkillFromDirectory(skillMdPath);
+        skillMarkdown = skillData.markdown;
+        additionalFiles = skillData.additionalFiles;
         
-        // TODO: Fetch additional files if needed (recursively download directory)
-        // For now, we just install SKILL.md
-      } catch (error) {
-        console.error(`  ✗ Failed to fetch skill from GitHub:`, error);
+      } catch (error: any) {
+        console.error(`  ✗ Failed to install skill from GitHub:`);
+        console.error(`    ${error.message || error}`);
+        continue;
+      }
+    } else if (skill.type === 'gitlab' && skill.def.repo) {
+      // GitLab skill - clone repository and search for skill
+      try {
+        const [repoPath, skillName] = skill.def.repo.split('@');
+        if (!repoPath || !skillName) {
+          throw new Error('Invalid GitLab repo format. Use: owner/repo@skill-name');
+        }
+        
+        // Check if we've already cloned this repo
+        const repoKey = `gitlab:${repoPath}`;
+        let repoDir = clonedRepos.get(repoKey);
+        
+        if (!repoDir) {
+          // Clone the repository
+          console.log(`    Cloning repository: ${repoPath}...`);
+          try {
+            repoDir = await cloneRepository('gitlab', repoPath, authFetch);
+            clonedRepos.set(repoKey, repoDir);
+            tempDirs.push(repoDir);
+          } catch (error: any) {
+            if (error.message.includes('Unable to clone repository') && !authFetch.hasAuth(`https://gitlab.com/${repoPath}`)) {
+              const integrationsUrl = getIntegrationsUrl(settings.server.host, settings.server.port);
+              console.error(`\n  ✗ ${error.message}`);
+              displayIntegrationPrompt('GitLab', integrationsUrl);
+              process.exit(1);
+            }
+            throw error;
+          }
+        }
+        
+        // Search for skills in the cloned repository
+        const foundSkills = findSkillsInDirectory(repoDir);
+        
+        if (!foundSkills.has(skillName)) {
+          throw new Error(
+            `Skill "${skillName}" not found in repository.\n` +
+            `    Repository: ${repoPath}\n` +
+            `    Available skills: ${Array.from(foundSkills.keys()).join(', ') || 'none'}\n` +
+            `    Tip: Check the skill name matches a directory containing SKILL.md`
+          );
+        }
+        
+        // Read the skill and its additional files
+        const skillMdPath = foundSkills.get(skillName)!;
+        const skillData = readSkillFromDirectory(skillMdPath);
+        skillMarkdown = skillData.markdown;
+        additionalFiles = skillData.additionalFiles;
+        
+      } catch (error: any) {
+        console.error(`  ✗ Failed to install skill from GitLab:`);
+        console.error(`    ${error.message || error}`);
         continue;
       }
     } else if (skill.type === 'remote' && skill.def.url) {
       // Remote skill - fetch SKILL.md from URL
       try {
-        const response = await fetch(skill.def.url);
+        // Use authenticated fetch
+        const response = await authFetch.fetch(skill.def.url);
+        
         if (!response.ok) {
+          // Check if this is a private repo error
+          if (AuthenticatedFetch.isPrivateRepoError(response) && !authFetch.hasAuth(skill.def.url)) {
+            const repoInfo = parseRepoUrl(skill.def.url);
+            if (repoInfo && repoInfo.platform) {
+              const integrationsUrl = getIntegrationsUrl(settings.server.host, settings.server.port);
+              console.error(`\n  ✗ Unable to access URL (it may require authentication)`);
+              displayIntegrationPrompt(repoInfo.platform === 'github' ? 'GitHub' : 'GitLab', integrationsUrl);
+              process.exit(1);
+            }
+          }
           throw new Error(`Failed to fetch: ${response.statusText}`);
         }
         skillMarkdown = await response.text();
-      } catch (error) {
-        console.error(`  ✗ Failed to fetch skill ${skill.id}:`, error);
+      } catch (error: any) {
+        console.error(`  ✗ Failed to fetch skill ${skill.id}:`);
+        console.error(`    ${error.message || error}`);
         continue;
       }
     } else {
       // Provide detailed error message about what's wrong
       console.error(`  ✗ Invalid skill definition: ${skill.id}`);
       
-      if (!skill.type || !['inline', 'remote', 'github'].includes(skill.type)) {
-        console.error(`    ⮡ Invalid or missing 'type'. Must be one of: 'inline', 'remote', 'github'`);
+      if (!skill.type || !['inline', 'remote', 'github', 'gitlab'].includes(skill.type)) {
+        console.error(`    ⮡ Invalid or missing 'type'. Must be one of: 'inline', 'remote', 'github', 'gitlab'`);
         console.error(`    ⮡ Current value: ${skill.type || '(not set)'}`);
       } else if (skill.type === 'inline') {
         console.error(`    ⮡ Type is 'inline' but 'def.content' is missing`);
@@ -297,6 +592,12 @@ async function installSkills(
       } else if (skill.type === 'github') {
         console.error(`    ⮡ Type is 'github' but 'def.repo' is missing or invalid`);
         console.error(`    ⮡ For GitHub skills, provide 'def.repo' in format: 'owner/repo@skill-name'`);
+        if (skill.def.repo) {
+          console.error(`    ⮡ Current value: '${skill.def.repo}'`);
+        }
+      } else if (skill.type === 'gitlab') {
+        console.error(`    ⮡ Type is 'gitlab' but 'def.repo' is missing or invalid`);
+        console.error(`    ⮡ For GitLab skills, provide 'def.repo' in format: 'owner/repo@skill-name'`);
         if (skill.def.repo) {
           console.error(`    ⮡ Current value: '${skill.def.repo}'`);
         }
@@ -308,6 +609,7 @@ async function installSkills(
       console.error(`\n    Example configurations:`);
       console.error(`    - Inline:  { "id": "my-skill", "type": "inline", "def": { "content": "..." } }`);
       console.error(`    - GitHub:  { "id": "my-skill", "type": "github", "def": { "repo": "owner/repo@skill-name" } }`);
+      console.error(`    - GitLab:  { "id": "my-skill", "type": "gitlab", "def": { "repo": "owner/repo@skill-name" } }`);
       console.error(`    - Remote:  { "id": "my-skill", "type": "remote", "def": { "url": "https://..." } }`);
       
       continue;
@@ -376,6 +678,19 @@ async function installSkills(
       db.addManagedFile(projectId, skillDir);
       
       console.log(`    ✓ Installed to ${skillDir}`);
+    }
+  }
+  } finally {
+    // Clean up all cloned repositories
+    if (tempDirs.length > 0) {
+      console.log(`\n🧹 Cleaning up ${tempDirs.length} temporary ${tempDirs.length === 1 ? 'directory' : 'directories'}...`);
+      for (const dir of tempDirs) {
+        try {
+          rmSync(dir, { recursive: true, force: true });
+        } catch (error) {
+          // Ignore cleanup errors
+        }
+      }
     }
   }
 }

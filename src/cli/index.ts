@@ -8,6 +8,7 @@ import { statusCommand } from './commands/status';
 import { installCommand } from './commands/install';
 import { cleanCommand } from './commands/clean';
 import { addCommand } from './commands/add';
+import { authCommand } from './commands/auth';
 import { VERSION } from '../version';
 
 // Check if running as server
@@ -84,6 +85,13 @@ program
   .description('Check the health status of the capa server')
   .action(async () => {
     await statusCommand();
+  });
+
+program
+  .command('auth [provider]')
+  .description('Authenticate with Git providers (github.com, gitlab.com, etc.)')
+  .action(async (provider?: string) => {
+    await authCommand(provider);
   });
 
 program.parse();

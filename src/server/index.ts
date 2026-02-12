@@ -8,6 +8,7 @@ import { SessionManager } from './session-manager';
 import { SubprocessManager } from './subprocess-manager';
 import { CapaMCPServer } from './mcp-handler';
 import { OAuth2Manager } from './oauth-manager';
+import { GitIntegrationManager } from './git-integration-manager';
 import { TokenRefreshScheduler } from './token-refresh-scheduler';
 import type { Capabilities } from '../types/capabilities';
 import { extractAllVariables } from '../shared/variable-resolver';
@@ -18,12 +19,14 @@ import { logger } from '../shared/logger';
 import homeHtml from '../../web-ui/home.html' with { type: 'text' };
 import indexHtml from '../../web-ui/index.html' with { type: 'text' };
 import projectHtml from '../../web-ui/project.html' with { type: 'text' };
+import integrationsHtml from '../../web-ui/integrations.html' with { type: 'text' };
 
 class CapaServer {
   private db!: CapaDatabase;
   private sessionManager!: SessionManager;
   private subprocessManager!: SubprocessManager;
   private oauth2Manager!: OAuth2Manager;
+  private gitIntegrationManager!: GitIntegrationManager;
   private tokenRefreshScheduler!: TokenRefreshScheduler;
   private httpServer!: HttpServer;
   private settings: any;
@@ -48,6 +51,7 @@ class CapaServer {
     this.sessionManager = new SessionManager(this.db);
     this.subprocessManager = new SubprocessManager(this.db);
     this.oauth2Manager = new OAuth2Manager(this.db);
+    this.gitIntegrationManager = new GitIntegrationManager(this.db);
     
     // Connect OAuth2Manager with SessionManager for capabilities access
     this.oauth2Manager.setCapabilitiesProvider(() => this.sessionManager.getAllProjectCapabilities());
@@ -63,16 +67,20 @@ class CapaServer {
       }
     );
     this.tokenRefreshScheduler.setCapabilitiesProvider(() => this.sessionManager.getAllProjectCapabilities());
+    this.tokenRefreshScheduler.setGitIntegrationManager(this.gitIntegrationManager);
     this.tokenRefreshScheduler.start();
     this.logger.success('Token refresh scheduler started');
 
     // Start HTTP server
     await this.startHttpServer();
 
+    // Note: OAuth redirect server is started on-demand during OAuth flows
+
     // Write PID file
     this.writePidFile();
 
     this.logger.success(`CAPA server running at http://${this.settings.server.host}:${this.settings.server.port}`);
+    this.logger.info(`OAuth redirect server will start on-demand at http://${this.settings.server.host}:${this.settings.oauth_redirect_port || 3100}`);
     this.logger.info(`Version: ${VERSION}`);
   }
 
@@ -90,6 +98,7 @@ class CapaServer {
 
     this.logger.info(`HTTP server listening on ${host}:${port}`);
   }
+
 
   private async handleRequest(request: Request, server: any): Promise<Response> {
     const url = new URL(request.url);
@@ -109,6 +118,11 @@ class CapaServer {
         }),
         { headers: { 'Content-Type': 'application/json' } }
       );
+    }
+
+    // Serve icon files
+    if (path.startsWith('/icons/')) {
+      return this.handleIconRequest(path);
     }
 
     // Home page
@@ -147,6 +161,37 @@ class CapaServer {
     });
   }
 
+  private async handleIconRequest(path: string): Promise<Response> {
+    try {
+      const iconName = path.split('/').pop();
+      if (!iconName) {
+        return new Response('Not Found', { status: 404 });
+      }
+
+      // Only allow specific icon files
+      const allowedIcons = ['github.png', 'gitlab.png'];
+      if (!allowedIcons.includes(iconName)) {
+        return new Response('Not Found', { status: 404 });
+      }
+
+      const iconPath = join(process.cwd(), 'icons', iconName);
+      const file = Bun.file(iconPath);
+      
+      if (!(await file.exists())) {
+        return new Response('Not Found', { status: 404 });
+      }
+
+      return new Response(file, {
+        headers: {
+          'Content-Type': 'image/png',
+          'Cache-Control': 'public, max-age=86400', // Cache for 1 day
+        },
+      });
+    } catch (error) {
+      return new Response('Not Found', { status: 404 });
+    }
+  }
+
   private async handleWebUI(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname;
@@ -156,6 +201,8 @@ class CapaServer {
     
     if (path.startsWith('/ui/project')) {
       htmlContent = projectHtml as unknown as string;
+    } else if (path.startsWith('/ui/integrations')) {
+      htmlContent = integrationsHtml as unknown as string;
     }
     
     // Serve the HTML content
@@ -237,6 +284,58 @@ class CapaServer {
     // Force token refresh check
     if (path === '/api/token-refresh/check' && request.method === 'POST') {
       return this.handleForceTokenRefresh();
+    }
+
+    // Git integrations endpoints
+    if (path === '/api/integrations' && request.method === 'GET') {
+      return this.handleGetIntegrations();
+    }
+
+    // GitHub OAuth flow
+    const githubOAuthStartMatch = path.match(/^\/api\/integrations\/github\/oauth\/start$/);
+    if (githubOAuthStartMatch && request.method === 'POST') {
+      return this.handleGitHubOAuthStart(request);
+    }
+    
+    const githubOAuthCallbackMatch = path.match(/^\/api\/integrations\/github\/oauth\/callback$/);
+    if (githubOAuthCallbackMatch && request.method === 'GET') {
+      return this.handleGitHubOAuthCallback(request);
+    }
+
+    // GitLab OAuth flow
+    const gitlabOAuthStartMatch = path.match(/^\/api\/integrations\/gitlab\/oauth\/start$/);
+    if (gitlabOAuthStartMatch && request.method === 'POST') {
+      return this.handleGitLabOAuthStart(request);
+    }
+
+    const gitlabOAuthCallbackMatch = path.match(/^\/api\/integrations\/gitlab\/oauth\/callback$/);
+    if (gitlabOAuthCallbackMatch && request.method === 'GET') {
+      return this.handleGitLabOAuthCallback(request);
+    }
+
+    // Git integration token refresh
+    const gitTokenRefreshMatch = path.match(/^\/api\/integrations\/(github|gitlab)\/refresh$/);
+    if (gitTokenRefreshMatch && request.method === 'POST') {
+      const platform = gitTokenRefreshMatch[1] as 'github' | 'gitlab';
+      return this.handleGitTokenRefresh(platform);
+    }
+
+    // GitHub Enterprise PAT
+    if (path === '/api/integrations/github-enterprise' && request.method === 'POST') {
+      return this.handleGitHubEnterprisePAT(request);
+    }
+
+    // GitLab Self-Managed PAT
+    if (path === '/api/integrations/gitlab-self-managed' && request.method === 'POST') {
+      return this.handleGitLabSelfManagedPAT(request);
+    }
+
+    // Disconnect integration
+    const disconnectMatch = path.match(/^\/api\/integrations\/([^/]+)(?:\/([^/]+))?$/);
+    if (disconnectMatch && request.method === 'DELETE') {
+      const platform = disconnectMatch[1];
+      const host = disconnectMatch[2];
+      return this.handleDisconnectIntegration(platform, host);
     }
 
     return new Response('Not Found', { status: 404 });
@@ -737,6 +836,314 @@ class CapaServer {
       await this.tokenRefreshScheduler.forceCheck();
       return new Response(
         JSON.stringify({ success: true, message: 'Token refresh check completed' }),
+        { headers: { 'Content-Type': 'application/json' } }
+      );
+    } catch (error: any) {
+      apiLogger.failure(`Error: ${error.message}`);
+      return new Response(
+        JSON.stringify({ error: error.message }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+  }
+
+  // Git Integration handlers
+
+  private async handleGetIntegrations(): Promise<Response> {
+    const apiLogger = this.logger.child('API');
+    apiLogger.info('Get all integrations');
+    try {
+      const integrations = this.gitIntegrationManager.getAllIntegrations();
+      return new Response(
+        JSON.stringify({ integrations }),
+        { headers: { 'Content-Type': 'application/json' } }
+      );
+    } catch (error: any) {
+      apiLogger.failure(`Error: ${error.message}`);
+      return new Response(
+        JSON.stringify({ error: error.message }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+  }
+
+  private async handleGitHubOAuthStart(request: Request): Promise<Response> {
+    const apiLogger = this.logger.child('API');
+    apiLogger.info('Start GitHub OAuth flow');
+    try {
+      // Cloud OAuth endpoint will handle the entire OAuth flow
+      // and redirect back to our local callback with the access token
+      const localCallbackUri = `http://${this.settings.server.host}:${this.settings.server.port}/api/integrations/github/oauth/callback`;
+      
+      const { url: authUrl, flowId } = await this.gitIntegrationManager.generateAuthorizationUrl(
+        'github',
+        localCallbackUri
+      );
+
+      apiLogger.success('GitHub authorization URL generated (via cloud)');
+      return new Response(
+        JSON.stringify({ authorizationUrl: authUrl, flowId }),
+        { headers: { 'Content-Type': 'application/json' } }
+      );
+    } catch (error: any) {
+      apiLogger.failure(`Error: ${error.message}`);
+      return new Response(
+        JSON.stringify({ error: error.message }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+  }
+
+  private async handleGitHubOAuthCallback(request: Request): Promise<Response> {
+    const apiLogger = this.logger.child('API');
+    try {
+      const url = new URL(request.url);
+      const accessToken = url.searchParams.get('access_token');
+      const refreshToken = url.searchParams.get('refresh_token');
+      const expiresIn = url.searchParams.get('expires_in');
+      const provider = url.searchParams.get('provider');
+      const error = url.searchParams.get('error');
+
+      if (error) {
+        apiLogger.error(`GitHub OAuth callback error: ${error}`);
+        const redirectUrl = `http://${this.settings.server.host}:${this.settings.server.port}/ui/integrations?error=${encodeURIComponent(error)}`;
+        return new Response(null, {
+          status: 302,
+          headers: { Location: redirectUrl },
+        });
+      }
+
+      if (!accessToken) {
+        return new Response(
+          JSON.stringify({ error: 'Missing access_token parameter' }),
+          { status: 400, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      apiLogger.info('GitHub OAuth callback (from cloud)');
+      // Pass 'github' as the platform since this is the GitHub callback endpoint
+      const result = await this.gitIntegrationManager.handleCallback(
+        accessToken,
+        'github',
+        refreshToken || undefined,
+        expiresIn ? parseInt(expiresIn, 10) : undefined
+      );
+
+      if (!result.success) {
+        apiLogger.failure(`Callback failed: ${result.error}`);
+        const redirectUrl = `http://${this.settings.server.host}:${this.settings.server.port}/ui/integrations?error=${encodeURIComponent(result.error || 'Unknown error')}`;
+        return new Response(null, {
+          status: 302,
+          headers: { Location: redirectUrl },
+        });
+      }
+
+      apiLogger.success('GitHub OAuth flow completed');
+      const redirectUrl = `http://${this.settings.server.host}:${this.settings.server.port}/ui/integrations?success=github`;
+      return new Response(null, {
+        status: 302,
+        headers: { Location: redirectUrl },
+      });
+    } catch (error: any) {
+      apiLogger.failure(`Error: ${error.message}`);
+      const redirectUrl = `http://${this.settings.server.host}:${this.settings.server.port}/ui/integrations?error=${encodeURIComponent(error.message)}`;
+      return new Response(null, {
+        status: 302,
+        headers: { Location: redirectUrl },
+      });
+    }
+  }
+
+  private async handleGitLabOAuthStart(request: Request): Promise<Response> {
+    const apiLogger = this.logger.child('API');
+    apiLogger.info('Start GitLab OAuth flow');
+    try {
+      // Cloud OAuth endpoint will handle the entire OAuth flow
+      // and redirect back to our local callback with the access token
+      const localCallbackUri = `http://${this.settings.server.host}:${this.settings.server.port}/api/integrations/gitlab/oauth/callback`;
+      
+      const { url: authUrl, flowId } = await this.gitIntegrationManager.generateAuthorizationUrl(
+        'gitlab',
+        localCallbackUri
+      );
+
+      apiLogger.success('GitLab authorization URL generated (via cloud)');
+      return new Response(
+        JSON.stringify({ authorizationUrl: authUrl, flowId }),
+        { headers: { 'Content-Type': 'application/json' } }
+      );
+    } catch (error: any) {
+      apiLogger.failure(`Error: ${error.message}`);
+      return new Response(
+        JSON.stringify({ error: error.message }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+  }
+
+  private async handleGitLabOAuthCallback(request: Request): Promise<Response> {
+    const apiLogger = this.logger.child('API');
+    try {
+      const url = new URL(request.url);
+      const accessToken = url.searchParams.get('access_token');
+      const refreshToken = url.searchParams.get('refresh_token');
+      const expiresIn = url.searchParams.get('expires_in');
+      const provider = url.searchParams.get('provider');
+      const error = url.searchParams.get('error');
+
+      if (error) {
+        apiLogger.error(`GitLab OAuth callback error: ${error}`);
+        const redirectUrl = `http://${this.settings.server.host}:${this.settings.server.port}/ui/integrations?error=${encodeURIComponent(error)}`;
+        return new Response(null, {
+          status: 302,
+          headers: { Location: redirectUrl },
+        });
+      }
+
+      if (!accessToken) {
+        return new Response(
+          JSON.stringify({ error: 'Missing access_token parameter' }),
+          { status: 400, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      apiLogger.info('GitLab OAuth callback (from cloud)');
+      // Pass 'gitlab' as the platform since this is the GitLab callback endpoint
+      const result = await this.gitIntegrationManager.handleCallback(
+        accessToken,
+        'gitlab',
+        refreshToken || undefined,
+        expiresIn ? parseInt(expiresIn, 10) : undefined
+      );
+
+      if (!result.success) {
+        apiLogger.failure(`Callback failed: ${result.error}`);
+        const redirectUrl = `http://${this.settings.server.host}:${this.settings.server.port}/ui/integrations?error=${encodeURIComponent(result.error || 'Unknown error')}`;
+        return new Response(null, {
+          status: 302,
+          headers: { Location: redirectUrl },
+        });
+      }
+
+      apiLogger.success('GitLab OAuth flow completed');
+      const redirectUrl = `http://${this.settings.server.host}:${this.settings.server.port}/ui/integrations?success=gitlab`;
+      return new Response(null, {
+        status: 302,
+        headers: { Location: redirectUrl },
+      });
+    } catch (error: any) {
+      apiLogger.failure(`Error: ${error.message}`);
+      const redirectUrl = `http://${this.settings.server.host}:${this.settings.server.port}/ui/integrations?error=${encodeURIComponent(error.message)}`;
+      return new Response(null, {
+        status: 302,
+        headers: { Location: redirectUrl },
+      });
+    }
+  }
+
+  private async handleGitTokenRefresh(platform: 'github' | 'gitlab'): Promise<Response> {
+    const apiLogger = this.logger.child('API');
+    apiLogger.info(`Refresh ${platform} token`);
+    try {
+      const success = await this.gitIntegrationManager.refreshAccessToken(platform);
+
+      if (!success) {
+        apiLogger.failure('Token refresh failed');
+        return new Response(
+          JSON.stringify({ success: false, error: 'Token refresh failed. Re-authentication may be required.' }),
+          { status: 400, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      apiLogger.success(`${platform} token refreshed successfully`);
+      return new Response(
+        JSON.stringify({ success: true }),
+        { headers: { 'Content-Type': 'application/json' } }
+      );
+    } catch (error: any) {
+      apiLogger.failure(`Error: ${error.message}`);
+      return new Response(
+        JSON.stringify({ success: false, error: error.message }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+  }
+
+  private async handleGitHubEnterprisePAT(request: Request): Promise<Response> {
+    const apiLogger = this.logger.child('API');
+    apiLogger.info('Store GitHub Enterprise PAT');
+    try {
+      const body = await request.json();
+      const { host, token } = body;
+
+      if (!host || !token) {
+        return new Response(
+          JSON.stringify({ error: 'Missing host or token' }),
+          { status: 400, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      await this.gitIntegrationManager.storePAT({
+        platform: 'github-enterprise',
+        host,
+        token,
+      });
+
+      apiLogger.success(`GitHub Enterprise PAT stored for ${host}`);
+      return new Response(
+        JSON.stringify({ success: true }),
+        { headers: { 'Content-Type': 'application/json' } }
+      );
+    } catch (error: any) {
+      apiLogger.failure(`Error: ${error.message}`);
+      return new Response(
+        JSON.stringify({ error: error.message }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+  }
+
+  private async handleGitLabSelfManagedPAT(request: Request): Promise<Response> {
+    const apiLogger = this.logger.child('API');
+    apiLogger.info('Store GitLab Self-Managed PAT');
+    try {
+      const body = await request.json();
+      const { host, token } = body;
+
+      if (!host || !token) {
+        return new Response(
+          JSON.stringify({ error: 'Missing host or token' }),
+          { status: 400, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      await this.gitIntegrationManager.storePAT({
+        platform: 'gitlab-self-managed',
+        host,
+        token,
+      });
+
+      apiLogger.success(`GitLab Self-Managed PAT stored for ${host}`);
+      return new Response(
+        JSON.stringify({ success: true }),
+        { headers: { 'Content-Type': 'application/json' } }
+      );
+    } catch (error: any) {
+      apiLogger.failure(`Error: ${error.message}`);
+      return new Response(
+        JSON.stringify({ error: error.message }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+  }
+
+  private async handleDisconnectIntegration(platform: string, host?: string): Promise<Response> {
+    const apiLogger = this.logger.child('API');
+    apiLogger.info(`Disconnect integration: ${platform}${host ? ` at ${host}` : ''}`);
+    try {
+      this.gitIntegrationManager.disconnect(platform as any, host);
+      return new Response(
+        JSON.stringify({ success: true }),
         { headers: { 'Content-Type': 'application/json' } }
       );
     } catch (error: any) {

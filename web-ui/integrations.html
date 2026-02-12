@@ -1,0 +1,934 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Git Integrations - CAPA</title>
+  <style>
+    :root[data-theme="light"] {
+      --bg-primary: #f5f5f5;
+      --bg-secondary: #ffffff;
+      --bg-tertiary: #f8f9fa;
+      --text-primary: #202124;
+      --text-secondary: #5f6368;
+      --text-tertiary: #80868b;
+      --border-primary: #dadce0;
+      --border-secondary: #e0e0e0;
+      --border-tertiary: #f1f3f4;
+      --accent-primary: #1967d2;
+      --accent-hover: #1557b0;
+      --accent-active: #185abc;
+      --btn-disabled-bg: #f1f3f4;
+      --btn-disabled-text: #80868b;
+      --shadow-sm: 0 1px 2px 0 rgba(60,64,67,0.3), 0 1px 3px 1px rgba(60,64,67,0.15);
+      --input-bg: #ffffff;
+      --hover-bg: #f8f9fa;
+      --code-bg: #f1f3f4;
+      --success-bg: #e6f4ea;
+      --success-text: #137333;
+      --success-border: #aecbfa;
+      --success-btn: #1e8e3e;
+      --success-btn-hover: #188038;
+      --error-bg: #fce8e6;
+      --error-text: #d93025;
+      --error-border: #f6aea9;
+      --error-btn: #d93025;
+      --error-btn-hover: #c5221f;
+      --info-bg: #e8f0fe;
+      --info-text: #1967d2;
+      --info-border: #aecbfa;
+      --status-connected: #137333;
+      --status-connected-dot: #34a853;
+    }
+
+    :root,
+    :root[data-theme="dark"] {
+      --bg-primary: #202124;
+      --bg-secondary: #292a2d;
+      --bg-tertiary: #35363a;
+      --text-primary: #e8eaed;
+      --text-secondary: #9aa0a6;
+      --text-tertiary: #5f6368;
+      --border-primary: #3c4043;
+      --border-secondary: #3c4043;
+      --border-tertiary: #3c4043;
+      --accent-primary: #8ab4f8;
+      --accent-hover: #aecbfa;
+      --accent-active: #c6dafc;
+      --btn-disabled-bg: #3c4043;
+      --btn-disabled-text: #5f6368;
+      --shadow-sm: 0 1px 2px 0 rgba(0,0,0,0.3), 0 1px 3px 1px rgba(0,0,0,0.15);
+      --input-bg: #292a2d;
+      --hover-bg: #35363a;
+      --code-bg: #3c4043;
+      --success-bg: #1e3a2a;
+      --success-text: #81c995;
+      --success-border: #3c4043;
+      --success-btn: #81c995;
+      --success-btn-hover: #9fdb9f;
+      --error-bg: #3d2621;
+      --error-text: #f28b82;
+      --error-border: #3c4043;
+      --error-btn: #f28b82;
+      --error-btn-hover: #f6aea9;
+      --info-bg: #1e3144;
+      --info-text: #8ab4f8;
+      --info-border: #3c4043;
+      --status-connected: #81c995;
+      --status-connected-dot: #81c995;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      min-height: 100vh;
+    }
+
+    .topbar {
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border-secondary);
+      padding: 0 24px;
+      height: 64px;
+      display: flex;
+      align-items: center;
+      box-shadow: var(--shadow-sm);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .topbar-content {
+      display: flex;
+      align-items: center;
+      width: 100%;
+      gap: 16px;
+    }
+
+    .back-button {
+      color: var(--text-secondary);
+      text-decoration: none;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 14px;
+      padding: 8px 12px;
+      border-radius: 4px;
+      transition: background-color 0.2s;
+    }
+
+    .back-button:hover {
+      background: var(--hover-bg);
+    }
+
+    .topbar-title {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 18px;
+      font-weight: 400;
+      color: var(--text-secondary);
+    }
+
+    .topbar-logo {
+      font-weight: 500;
+      color: var(--accent-primary);
+    }
+
+    .theme-toggle {
+      background: transparent;
+      border: 1px solid var(--border-primary);
+      border-radius: 4px;
+      padding: 8px 12px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--text-secondary);
+      font-size: 13px;
+      transition: background-color 0.2s, border-color 0.2s;
+      margin-left: auto;
+    }
+
+    .theme-toggle:hover {
+      background: var(--hover-bg);
+      border-color: var(--accent-primary);
+    }
+
+    .theme-toggle svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 32px 24px;
+    }
+
+    .page-header {
+      margin-bottom: 24px;
+    }
+
+    .page-title {
+      font-size: 28px;
+      font-weight: 400;
+      color: var(--text-primary);
+      margin-bottom: 8px;
+    }
+
+    .page-subtitle {
+      font-size: 14px;
+      color: var(--text-secondary);
+      font-weight: 400;
+    }
+
+    .section {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-primary);
+      border-radius: 8px;
+      padding: 24px;
+      margin-bottom: 24px;
+    }
+
+    .section-header {
+      display: flex;
+      align-items: center;
+      margin-bottom: 16px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--border-secondary);
+    }
+
+    .section-title {
+      font-size: 16px;
+      font-weight: 500;
+      color: var(--text-primary);
+      flex: 1;
+    }
+
+    .section-description {
+      font-size: 13px;
+      color: var(--text-secondary);
+      line-height: 1.6;
+      margin-bottom: 24px;
+    }
+
+    .integration-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      gap: 16px;
+    }
+
+    .integration-card {
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-secondary);
+      border-radius: 4px;
+      padding: 20px;
+      transition: box-shadow 0.2s;
+    }
+
+    .integration-card:hover {
+      box-shadow: var(--shadow-sm);
+    }
+
+    .integration-card-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .integration-icon {
+      width: 40px;
+      height: 40px;
+      border-radius: 6px;
+      background: var(--bg-secondary);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      border: 1px solid var(--border-tertiary);
+    }
+
+    .integration-icon img {
+      width: 32px;
+      height: 32px;
+      object-fit: contain;
+    }
+
+    .integration-name {
+      font-size: 16px;
+      font-weight: 500;
+      color: var(--text-primary);
+    }
+
+    .integration-status {
+      font-size: 12px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 16px;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+
+    .status-connected {
+      color: var(--status-connected);
+    }
+
+    .status-connected .status-dot {
+      background: var(--status-connected-dot);
+    }
+
+    .status-disconnected {
+      color: var(--text-secondary);
+    }
+
+    .status-disconnected .status-dot {
+      background: var(--text-tertiary);
+    }
+
+    .integration-form {
+      margin-top: 16px;
+      padding-top: 16px;
+      border-top: 1px solid var(--border-tertiary);
+    }
+
+    .form-group {
+      margin-bottom: 16px;
+    }
+
+    .form-group:last-child {
+      margin-bottom: 0;
+    }
+
+    label {
+      display: block;
+      color: var(--text-primary);
+      font-size: 13px;
+      font-weight: 500;
+      margin-bottom: 8px;
+    }
+
+    input[type="text"],
+    input[type="password"] {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid var(--border-primary);
+      border-radius: 4px;
+      font-size: 14px;
+      color: var(--text-primary);
+      background: var(--input-bg);
+      transition: border-color 0.2s, box-shadow 0.2s;
+      font-family: 'Roboto Mono', monospace;
+    }
+
+    input[type="text"]:focus,
+    input[type="password"]:focus {
+      outline: none;
+      border-color: var(--accent-primary);
+      box-shadow: var(--shadow-sm);
+    }
+
+    .btn {
+      background: var(--accent-primary);
+      color: white;
+      border: none;
+      padding: 10px 24px;
+      border-radius: 4px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background-color 0.2s, box-shadow 0.2s;
+      text-transform: none;
+      width: 100%;
+    }
+
+    .btn:hover {
+      background: var(--accent-hover);
+      box-shadow: var(--shadow-sm);
+    }
+
+    .btn:active {
+      background: var(--accent-active);
+    }
+
+    .btn:disabled {
+      background: var(--btn-disabled-bg);
+      color: var(--btn-disabled-text);
+      cursor: not-allowed;
+      box-shadow: none;
+    }
+
+    .btn-danger {
+      background: var(--error-btn);
+      color: white;
+    }
+
+    .btn-danger:hover {
+      background: var(--error-btn-hover);
+    }
+
+    .btn-success {
+      background: var(--success-btn);
+      color: white;
+    }
+
+    .btn-success:hover {
+      background: var(--success-btn-hover);
+    }
+
+    .alert {
+      padding: 12px 16px;
+      border-radius: 4px;
+      margin-bottom: 20px;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .alert svg {
+      flex-shrink: 0;
+    }
+
+    .alert-error {
+      background: var(--error-bg);
+      color: var(--error-text);
+      border: 1px solid var(--error-border);
+    }
+
+    .alert-success {
+      background: var(--success-bg);
+      color: var(--success-text);
+      border: 1px solid var(--success-border);
+    }
+
+    .alert-info {
+      background: var(--info-bg);
+      color: var(--info-text);
+      border: 1px solid var(--info-border);
+    }
+
+    .loading-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: var(--bg-primary);
+      opacity: 0.9;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+
+    .loading-spinner {
+      width: 32px;
+      height: 32px;
+      border: 3px solid var(--border-tertiary);
+      border-top-color: var(--accent-primary);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    @media (max-width: 768px) {
+      .container {
+        padding: 16px;
+      }
+
+      .section {
+        padding: 16px;
+      }
+
+      .integration-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="topbar-content">
+      <a href="/" class="back-button">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="19" y1="12" x2="5" y2="12"></line>
+          <polyline points="12 19 5 12 12 5"></polyline>
+        </svg>
+        <span>Back</span>
+      </a>
+      <div class="topbar-title">
+        <span class="topbar-logo">CAPA</span>
+        <span>›</span>
+        <span>Git Integrations</span>
+      </div>
+      <button class="theme-toggle" id="theme-toggle" aria-label="Toggle theme">
+        <svg id="theme-icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="5"></circle>
+          <line x1="12" y1="1" x2="12" y2="3"></line>
+          <line x1="12" y1="21" x2="12" y2="23"></line>
+          <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+          <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+          <line x1="1" y1="12" x2="3" y2="12"></line>
+          <line x1="21" y1="12" x2="23" y2="12"></line>
+          <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+          <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+        </svg>
+        <svg id="theme-icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display: none;">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+        </svg>
+        <span id="theme-label">Light</span>
+      </button>
+    </div>
+  </div>
+
+  <div class="container">
+    <div class="page-header">
+      <h1 class="page-title">Git Integrations</h1>
+      <p class="page-subtitle">Connect to GitHub and GitLab to access private repositories</p>
+    </div>
+
+    <div id="message-container"></div>
+
+    <div class="section">
+      <div class="section-header">
+        <div class="section-title">Cloud Platforms</div>
+      </div>
+      <div class="section-description">
+        Connect to GitHub and GitLab using OAuth2 authentication. This allows CAPA to access your private repositories.
+      </div>
+      
+      <div class="integration-grid">
+        <!-- GitHub -->
+        <div class="integration-card" id="github-card">
+          <div class="integration-card-header">
+            <div class="integration-icon">
+              <img src="/icons/github.png" alt="GitHub">
+            </div>
+            <div class="integration-name">GitHub</div>
+          </div>
+          <div class="integration-status status-disconnected" id="github-status">
+            <span class="status-dot"></span>
+            <span>Not connected</span>
+          </div>
+          <button class="btn btn-success" id="github-connect" onclick="connectGitHub()">Connect with GitHub</button>
+          <button class="btn btn-danger" id="github-disconnect" onclick="disconnectGitHub()" style="display: none;">Disconnect</button>
+        </div>
+
+        <!-- GitLab -->
+        <div class="integration-card" id="gitlab-card">
+          <div class="integration-card-header">
+            <div class="integration-icon">
+              <img src="/icons/gitlab.png" alt="GitLab">
+            </div>
+            <div class="integration-name">GitLab</div>
+          </div>
+          <div class="integration-status status-disconnected" id="gitlab-status">
+            <span class="status-dot"></span>
+            <span>Not connected</span>
+          </div>
+          <button class="btn btn-success" id="gitlab-connect" onclick="connectGitLab()">Connect with GitLab</button>
+          <button class="btn btn-danger" id="gitlab-disconnect" onclick="disconnectGitLab()" style="display: none;">Disconnect</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-header">
+        <div class="section-title">Self-Managed Instances</div>
+      </div>
+      <div class="section-description">
+        Connect to GitHub Enterprise or GitLab Self-Managed using Personal Access Tokens (PAT).
+      </div>
+      
+      <div class="integration-grid">
+        <!-- GitHub Enterprise -->
+        <div class="integration-card" id="github-enterprise-card">
+          <div class="integration-card-header">
+            <div class="integration-icon">
+              <img src="/icons/github.png" alt="GitHub Enterprise">
+            </div>
+            <div class="integration-name">GitHub Enterprise</div>
+          </div>
+          <div class="integration-status status-disconnected" id="github-enterprise-status">
+            <span class="status-dot"></span>
+            <span>Not connected</span>
+          </div>
+          
+          <div class="integration-form" id="github-enterprise-form">
+            <div class="form-group">
+              <label for="github-enterprise-host">Host</label>
+              <input type="text" id="github-enterprise-host" placeholder="github.mycompany.com" />
+            </div>
+            <div class="form-group">
+              <label for="github-enterprise-token">Personal Access Token</label>
+              <input type="password" id="github-enterprise-token" placeholder="ghp_..." />
+            </div>
+            <button class="btn btn-success" onclick="connectGitHubEnterprise()">Connect</button>
+          </div>
+          <button class="btn btn-danger" id="github-enterprise-disconnect" onclick="disconnectGitHubEnterprise()" style="display: none;">Disconnect</button>
+        </div>
+
+        <!-- GitLab Self-Managed -->
+        <div class="integration-card" id="gitlab-self-managed-card">
+          <div class="integration-card-header">
+            <div class="integration-icon">
+              <img src="/icons/gitlab.png" alt="GitLab Self-Managed">
+            </div>
+            <div class="integration-name">GitLab Self-Managed</div>
+          </div>
+          <div class="integration-status status-disconnected" id="gitlab-self-managed-status">
+            <span class="status-dot"></span>
+            <span>Not connected</span>
+          </div>
+          
+          <div class="integration-form" id="gitlab-self-managed-form">
+            <div class="form-group">
+              <label for="gitlab-self-managed-host">Host</label>
+              <input type="text" id="gitlab-self-managed-host" placeholder="gitlab.mycompany.com" />
+            </div>
+            <div class="form-group">
+              <label for="gitlab-self-managed-token">Personal Access Token</label>
+              <input type="password" id="gitlab-self-managed-token" placeholder="glpat-..." />
+            </div>
+            <button class="btn btn-success" onclick="connectGitLabSelfManaged()">Connect</button>
+          </div>
+          <button class="btn btn-danger" id="gitlab-self-managed-disconnect" onclick="disconnectGitLabSelfManaged()" style="display: none;">Disconnect</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Theme management
+    function initTheme() {
+      const savedTheme = localStorage.getItem('capa-theme') || 'dark';
+      setTheme(savedTheme);
+    }
+
+    function setTheme(theme) {
+      document.documentElement.setAttribute('data-theme', theme);
+      localStorage.setItem('capa-theme', theme);
+      
+      const sunIcon = document.getElementById('theme-icon-sun');
+      const moonIcon = document.getElementById('theme-icon-moon');
+      const label = document.getElementById('theme-label');
+      
+      if (theme === 'dark') {
+        sunIcon.style.display = 'block';
+        moonIcon.style.display = 'none';
+        label.textContent = 'Light';
+      } else {
+        sunIcon.style.display = 'none';
+        moonIcon.style.display = 'block';
+        label.textContent = 'Dark';
+      }
+    }
+
+    function toggleTheme() {
+      const currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';
+      const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+      setTheme(newTheme);
+    }
+
+    initTheme();
+    document.getElementById('theme-toggle').addEventListener('click', toggleTheme);
+
+    // Check for OAuth callback results
+    const urlParams = new URLSearchParams(window.location.search);
+    const success = urlParams.get('success');
+    const error = urlParams.get('error');
+
+    if (success) {
+      showMessage(`Successfully connected to ${success}`, 'success');
+      window.history.replaceState({}, document.title, '/ui/integrations');
+      setTimeout(() => loadIntegrations(), 500);
+    } else if (error) {
+      showMessage(`Error: ${decodeURIComponent(error)}`, 'error');
+      window.history.replaceState({}, document.title, '/ui/integrations');
+    }
+
+    function showMessage(text, type) {
+      const container = document.getElementById('message-container');
+      const message = document.createElement('div');
+      message.className = `alert alert-${type}`;
+      
+      const icons = {
+        'error': '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>',
+        'success': '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>',
+        'info': '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>'
+      };
+      
+      message.innerHTML = `
+        <span>${icons[type] || ''}</span>
+        <span>${text}</span>
+      `;
+      
+      container.innerHTML = '';
+      container.appendChild(message);
+      
+      if (type === 'success') {
+        setTimeout(() => {
+          message.remove();
+        }, 3000);
+      }
+    }
+
+    async function loadIntegrations() {
+      try {
+        const response = await fetch('/api/integrations');
+        if (!response.ok) {
+          throw new Error('Failed to load integrations');
+        }
+
+        const data = await response.json();
+        const { integrations } = data;
+
+        // Update UI for each integration
+        for (const integration of integrations) {
+          updateIntegrationStatus(integration);
+        }
+      } catch (error) {
+        console.error('Error loading integrations:', error);
+      }
+    }
+
+    function updateIntegrationStatus(integration) {
+      const { platform, host, displayName, isConnected, expiresAt } = integration;
+      
+      const statusElement = document.getElementById(`${platform}-status`);
+      const connectButton = document.getElementById(`${platform}-connect`);
+      const disconnectButton = document.getElementById(`${platform}-disconnect`);
+      const formElement = document.getElementById(`${platform}-form`);
+
+      if (isConnected) {
+        statusElement.className = 'integration-status status-connected';
+        let statusText = 'Connected';
+        
+        if (expiresAt) {
+          const expiresDate = new Date(expiresAt);
+          const now = new Date();
+          const diffMs = expiresDate.getTime() - now.getTime();
+          const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+          
+          if (diffDays > 0) {
+            statusText += ` (expires in ${diffDays} day${diffDays > 1 ? 's' : ''})`;
+          }
+        }
+        
+        if (host) {
+          statusText += ` - ${host}`;
+        }
+        
+        statusElement.innerHTML = `<span class="status-dot"></span><span>${statusText}</span>`;
+        
+        if (connectButton) connectButton.style.display = 'none';
+        if (disconnectButton) disconnectButton.style.display = 'block';
+        if (formElement) formElement.style.display = 'none';
+      } else {
+        statusElement.className = 'integration-status status-disconnected';
+        statusElement.innerHTML = '<span class="status-dot"></span><span>Not connected</span>';
+        
+        if (connectButton) connectButton.style.display = 'block';
+        if (disconnectButton) disconnectButton.style.display = 'none';
+        if (formElement) formElement.style.display = 'block';
+      }
+    }
+
+    async function connectGitHub() {
+      try {
+        const response = await fetch('/api/integrations/github/oauth/start', {
+          method: 'POST',
+        });
+        const data = await response.json();
+
+        if (data.authorizationUrl) {
+          window.location.href = data.authorizationUrl;
+        } else {
+          showMessage(data.error || 'Failed to start OAuth flow', 'error');
+        }
+      } catch (error) {
+        showMessage('Failed to start OAuth flow: ' + error.message, 'error');
+      }
+    }
+
+    async function connectGitLab() {
+      try {
+        const response = await fetch('/api/integrations/gitlab/oauth/start', {
+          method: 'POST',
+        });
+        const data = await response.json();
+
+        if (data.authorizationUrl) {
+          window.location.href = data.authorizationUrl;
+        } else {
+          showMessage(data.error || 'Failed to start OAuth flow', 'error');
+        }
+      } catch (error) {
+        showMessage('Failed to start OAuth flow: ' + error.message, 'error');
+      }
+    }
+
+    async function connectGitHubEnterprise() {
+      const host = document.getElementById('github-enterprise-host').value.trim();
+      const token = document.getElementById('github-enterprise-token').value.trim();
+
+      if (!host || !token) {
+        showMessage('Please enter both host and token', 'error');
+        return;
+      }
+
+      try {
+        const response = await fetch('/api/integrations/github-enterprise', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ host, token }),
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+          showMessage('GitHub Enterprise connected successfully', 'success');
+          document.getElementById('github-enterprise-host').value = '';
+          document.getElementById('github-enterprise-token').value = '';
+          setTimeout(() => loadIntegrations(), 500);
+        } else {
+          showMessage(data.error || 'Failed to connect', 'error');
+        }
+      } catch (error) {
+        showMessage('Failed to connect: ' + error.message, 'error');
+      }
+    }
+
+    async function connectGitLabSelfManaged() {
+      const host = document.getElementById('gitlab-self-managed-host').value.trim();
+      const token = document.getElementById('gitlab-self-managed-token').value.trim();
+
+      if (!host || !token) {
+        showMessage('Please enter both host and token', 'error');
+        return;
+      }
+
+      try {
+        const response = await fetch('/api/integrations/gitlab-self-managed', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ host, token }),
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+          showMessage('GitLab Self-Managed connected successfully', 'success');
+          document.getElementById('gitlab-self-managed-host').value = '';
+          document.getElementById('gitlab-self-managed-token').value = '';
+          setTimeout(() => loadIntegrations(), 500);
+        } else {
+          showMessage(data.error || 'Failed to connect', 'error');
+        }
+      } catch (error) {
+        showMessage('Failed to connect: ' + error.message, 'error');
+      }
+    }
+
+    async function disconnectGitHub() {
+      if (!confirm('Disconnect from GitHub?')) return;
+
+      try {
+        const response = await fetch('/api/integrations/github', {
+          method: 'DELETE',
+        });
+        const data = await response.json();
+
+        if (data.success) {
+          showMessage('Disconnected from GitHub', 'success');
+          loadIntegrations();
+        } else {
+          showMessage('Failed to disconnect', 'error');
+        }
+      } catch (error) {
+        showMessage('Failed to disconnect: ' + error.message, 'error');
+      }
+    }
+
+    async function disconnectGitLab() {
+      if (!confirm('Disconnect from GitLab?')) return;
+
+      try {
+        const response = await fetch('/api/integrations/gitlab', {
+          method: 'DELETE',
+        });
+        const data = await response.json();
+
+        if (data.success) {
+          showMessage('Disconnected from GitLab', 'success');
+          loadIntegrations();
+        } else {
+          showMessage('Failed to disconnect', 'error');
+        }
+      } catch (error) {
+        showMessage('Failed to disconnect: ' + error.message, 'error');
+      }
+    }
+
+    async function disconnectGitHubEnterprise() {
+      if (!confirm('Disconnect GitHub Enterprise?')) return;
+
+      try {
+        const response = await fetch('/api/integrations/github-enterprise', {
+          method: 'DELETE',
+        });
+        const data = await response.json();
+
+        if (data.success) {
+          showMessage('Disconnected from GitHub Enterprise', 'success');
+          loadIntegrations();
+        } else {
+          showMessage('Failed to disconnect', 'error');
+        }
+      } catch (error) {
+        showMessage('Failed to disconnect: ' + error.message, 'error');
+      }
+    }
+
+    async function disconnectGitLabSelfManaged() {
+      if (!confirm('Disconnect GitLab Self-Managed?')) return;
+
+      try {
+        const response = await fetch('/api/integrations/gitlab-self-managed', {
+          method: 'DELETE',
+        });
+        const data = await response.json();
+
+        if (data.success) {
+          showMessage('Disconnected from GitLab Self-Managed', 'success');
+          loadIntegrations();
+        } else {
+          showMessage('Failed to disconnect', 'error');
+        }
+      } catch (error) {
+        showMessage('Failed to disconnect: ' + error.message, 'error');
+      }
+    }
+
+    // Load integrations on page load
+    loadIntegrations();
+  </script>
+</body>
+</html>

@@ -30,7 +30,7 @@ export interface Capabilities {
 
 export interface Skill {
   id: string;
-  type: 'inline' | 'remote' | 'github';
+  type: 'inline' | 'remote' | 'github' | 'gitlab';
   def: SkillDefinition;
 }
 
@@ -40,6 +40,7 @@ export interface SkillDefinition {
   // For remote skills (raw SKILL.md URL)
   url?: string;
   // For GitHub skills (e.g., "vercel-labs/agent-skills@find-skills")
+  // For GitLab skills (e.g., "group/project@skill-name")
   repo?: string;
   // For inline skills (SKILL.md content as string)
   content?: string;
