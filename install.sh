@@ -5,8 +5,33 @@
 set -u
 
 APP_NAME="capa"
-APP_VERSION="1.1.1"
 GITHUB_REPO="infragate/capa"
+FALLBACK_VERSION="1.1.1"  # Fallback version if API request fails
+
+# Fetch latest release version from GitHub
+get_latest_version() {
+    local _version
+    
+    say_verbose "Fetching latest release version from GitHub..."
+    
+    # Try to fetch from GitHub API
+    if check_cmd curl; then
+        _version=$(curl -sSfL "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' | sed 's/^v//')
+    elif check_cmd wget; then
+        _version=$(wget -qO- "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' | sed 's/^v//')
+    fi
+    
+    # Validate we got a version
+    if [ -z "$_version" ] || [ "$_version" = "null" ]; then
+        warn "Failed to fetch latest version from GitHub API"
+        warn "Falling back to version ${FALLBACK_VERSION}"
+        _version="${FALLBACK_VERSION}"
+    else
+        say_verbose "Latest version: $_version"
+    fi
+    
+    RETVAL="$_version"
+}
 
 # Customize installation via environment variables
 CAPA_INSTALL_DIR="${CAPA_INSTALL_DIR:-}"
@@ -30,7 +55,7 @@ usage() {
     cat <<EOF
 capa-installer.sh
 
-The installer for CAPA (Capabilities Package Manager) ${APP_VERSION}
+The installer for CAPA (Capabilities Package Manager)
 
 This script detects your platform and installs the appropriate binary to:
     \$CAPA_INSTALL_DIR (if set)
@@ -253,6 +278,10 @@ EOF
 
 # Main installation function
 install_capa() {
+    # Fetch the latest version first
+    get_latest_version
+    APP_VERSION="$RETVAL"
+    
     say ""
     say "${GREEN}╔═══════════════════════════════════════╗${RESET}"
     say "${GREEN}║  CAPA Installer v${APP_VERSION}           ║${RESET}"
