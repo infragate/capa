@@ -15,6 +15,8 @@ import { getAgentConfig, agents } from 'skills/src/agents';
 import type { AgentType } from 'skills/src/types';
 import { VERSION } from '../../version';
 import { registerMCPServer } from '../utils/mcp-client-manager';
+import { parseEnvFile } from '../../shared/env-parser';
+import { extractAllVariables } from '../../shared/variable-resolver';
 
 const execAsync = promisify(exec);
 
@@ -254,7 +256,7 @@ function readSkillFromDirectory(skillMdPath: string): {
   return { markdown, additionalFiles };
 }
 
-export async function installCommand(): Promise<void> {
+export async function installCommand(envFile?: string | boolean): Promise<void> {
   const projectPath = process.cwd();
   
   // Detect capabilities file
@@ -291,6 +293,76 @@ export async function installCommand(): Promise<void> {
   
   // Register project
   db.upsertProject({ id: projectId, path: projectPath });
+  
+  // Handle .env file if provided
+  if (envFile !== undefined) {
+    // Determine the env file path
+    let envFilePath: string;
+    if (typeof envFile === 'boolean' && envFile) {
+      // -e flag without filename, use .env
+      envFilePath = resolve(projectPath, '.env');
+    } else if (typeof envFile === 'string') {
+      // -e with filename
+      envFilePath = resolve(projectPath, envFile);
+    } else {
+      // This shouldn't happen, but handle it gracefully
+      envFilePath = resolve(projectPath, '.env');
+    }
+    
+    // Check if env file exists
+    if (!existsSync(envFilePath)) {
+      console.error(`✗ Environment file not found: ${envFilePath}`);
+      console.error('\n  When using -e or --env flag, the specified .env file must exist.');
+      console.error('  Please create the file or run without the flag to use the web UI.\n');
+      db.close();
+      process.exit(1);
+    }
+    
+    // Parse the env file
+    console.log(`\n📄 Loading variables from ${envFilePath}...`);
+    let envVariables: Record<string, string>;
+    try {
+      envVariables = parseEnvFile(envFilePath);
+      console.log(`   Found ${Object.keys(envVariables).length} variable(s) in env file`);
+    } catch (error: any) {
+      console.error(`✗ Failed to parse env file: ${error.message}`);
+      db.close();
+      process.exit(1);
+    }
+    
+    // Extract all required variables from capabilities
+    const requiredVars = extractAllVariables(capabilities);
+    console.log(`   Capabilities require ${requiredVars.length} variable(s): ${requiredVars.join(', ')}`);
+    
+    // Store the variables in the database
+    for (const varName of requiredVars) {
+      if (envVariables[varName]) {
+        db.setVariable(projectId, varName, envVariables[varName]);
+        console.log(`   ✓ Set ${varName}`);
+      } else {
+        console.warn(`   ⚠  Variable ${varName} not found in env file`);
+      }
+    }
+    
+    // Check if any required variables are still missing
+    const missingVars: string[] = [];
+    for (const varName of requiredVars) {
+      const value = db.getVariable(projectId, varName);
+      if (!value) {
+        missingVars.push(varName);
+      }
+    }
+    
+    if (missingVars.length > 0) {
+      console.error(`\n✗ Missing required variables: ${missingVars.join(', ')}`);
+      console.error('  These variables are required but were not found in the env file.');
+      console.error('  Please add them to your env file and try again.\n');
+      db.close();
+      process.exit(1);
+    }
+    
+    console.log('   ✓ All required variables loaded from env file');
+  }
   
   // Step 1: Install skills (copy to client directories)
   console.log('\n📦 Installing skills...');

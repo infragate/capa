@@ -39,8 +39,9 @@ program
 program
   .command('install')
   .description('Install skills and configure tools')
-  .action(async () => {
-    await installCommand();
+  .option('-e, --env [file]', 'Load variables from .env file (defaults to .env if no file specified)')
+  .action(async (options) => {
+    await installCommand(options.env);
   });
 
 program

@@ -51,14 +51,43 @@ Creates a new capabilities file with default configuration. Defaults to YAML for
 ### Install Capabilities
 ```bash
 capa install
+capa install -e             # Load variables from .env file
+capa install -e .prod.env   # Load variables from custom env file
+capa install --env          # Alternative syntax for -e
 ```
 Reads the capabilities file and:
 1. Installs all skills to configured MCP clients (creates skill directories in `.cursor/skills/` and/or `~/Library/Application Support/Claude/skills/`)
 2. Configures the CAPA server with your tools and servers
-3. Prompts for any required credentials via web UI
+3. Prompts for any required credentials via web UI (unless `-e` flag is used)
 4. Registers the project's MCP endpoint in client config files
 
+**Flags**:
+- `-e, --env [file]`: Load variables from a `.env` file instead of using the web UI
+  - Without filename: Uses `.env` in the project directory
+  - With filename: Uses the specified file (e.g., `.prod.env`, `.staging.env`)
+  - The env file must exist, or the command will fail with an error
+  - All required variables must be present in the env file
+
 **When to use**: After modifying the capabilities file or adding new skills.
+
+**Using .env files**:
+When your capabilities contain variables like `${BraveApiKey}`, you can provide them via a `.env` file:
+
+```bash
+# Create .env file
+echo "BraveApiKey=your-api-key" > .env
+
+# Install with env file
+capa install -e
+```
+
+The env file format:
+```
+# Comments are supported
+BraveApiKey=your-api-key-here
+GitHubToken=ghp_token123
+DatabaseUrl=postgresql://localhost:5432/db
+```
 
 ### Add Skills
 ```bash

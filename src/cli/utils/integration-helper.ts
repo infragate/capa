@@ -5,7 +5,7 @@
  * to set up Git integrations when accessing private repositories.
  */
 
-import type { CapaDatabase } from '../db/database';
+import type { CapaDatabase } from '../../db/database';
 
 /**
  * Extract platform and repo info from a GitHub or GitLab URL
