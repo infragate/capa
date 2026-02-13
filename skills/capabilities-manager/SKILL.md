@@ -24,7 +24,7 @@ Use this skill when:
 ### Capabilities File
 The `capabilities.yaml` (or `capabilities.json`) file defines everything an agent can do. It contains five main sections:
 
-1. **clients**: List of MCP clients where skills should be installed (e.g., `cursor`, `claude-code`)
+1. **providers**: List of MCP clients where skills should be installed (e.g., `cursor`, `claude-code`)
 2. **options**: Configuration for tool exposure behavior (`toolExposure`: `expose-all` or `on-demand`)
 3. **skills**: Modular knowledge packages that teach agents when and how to use tools
 4. **servers**: MCP servers that provide tools (local subprocesses or remote HTTP servers)
@@ -51,14 +51,43 @@ Creates a new capabilities file with default configuration. Defaults to YAML for
 ### Install Capabilities
 ```bash
 capa install
+capa install -e             # Load variables from .env file
+capa install -e .prod.env   # Load variables from custom env file
+capa install --env          # Alternative syntax for -e
 ```
 Reads the capabilities file and:
 1. Installs all skills to configured MCP clients (creates skill directories in `.cursor/skills/` and/or `~/Library/Application Support/Claude/skills/`)
 2. Configures the CAPA server with your tools and servers
-3. Prompts for any required credentials via web UI
+3. Prompts for any required credentials via web UI (unless `-e` flag is used)
 4. Registers the project's MCP endpoint in client config files
 
+**Flags**:
+- `-e, --env [file]`: Load variables from a `.env` file instead of using the web UI
+  - Without filename: Uses `.env` in the project directory
+  - With filename: Uses the specified file (e.g., `.prod.env`, `.staging.env`)
+  - The env file must exist, or the command will fail with an error
+  - All required variables must be present in the env file
+
 **When to use**: After modifying the capabilities file or adding new skills.
+
+**Using .env files**:
+When your capabilities contain variables like `${BraveApiKey}`, you can provide them via a `.env` file:
+
+```bash
+# Create .env file
+echo "BraveApiKey=your-api-key" > .env
+
+# Install with env file
+capa install -e
+```
+
+The env file format:
+```
+# Comments are supported
+BraveApiKey=your-api-key-here
+GitHubToken=ghp_token123
+DatabaseUrl=postgresql://localhost:5432/db
+```
 
 ### Add Skills
 ```bash
@@ -95,7 +124,7 @@ capa status             # Check server health and uptime
 ### Basic Structure (YAML)
 
 ```yaml
-clients:
+providers:
   - cursor
   - claude-code
 
@@ -393,7 +422,7 @@ Check the skills.sh ecosystem before creating custom skills. Community skills ar
 
 **capabilities.yaml:**
 ```yaml
-clients:
+providers:
   - cursor
 
 skills:
@@ -441,7 +470,7 @@ capa install  # Will prompt for BraveApiKey via web UI
 
 **capabilities.yaml:**
 ```yaml
-clients:
+providers:
   - cursor
   - claude-code
 
@@ -489,7 +518,7 @@ tools:
 
 **capabilities.yaml:**
 ```yaml
-clients:
+providers:
   - cursor
 
 options:
@@ -539,7 +568,7 @@ tools:
 
 **capabilities.yaml:**
 ```yaml
-clients:
+providers:
   - cursor
 
 options:

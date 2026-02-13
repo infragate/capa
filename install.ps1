@@ -14,8 +14,8 @@ $ErrorActionPreference = "Stop"
 
 # Constants
 $APP_NAME = "capa"
-$APP_VERSION = "1.1.1"
 $GITHUB_REPO = "infragate/capa"
+$FALLBACK_VERSION = "1.1.1"  # Fallback version if API request fails
 
 # Environment variable overrides
 if ($env:CAPA_INSTALL_DIR) {
@@ -45,7 +45,7 @@ function Show-Usage {
     Write-Host @"
 capa-installer.ps1
 
-The installer for CAPA (Capabilities Package Manager) $APP_VERSION
+The installer for CAPA (Capabilities Package Manager)
 
 This script installs the CAPA binary to:
     `$env:CAPA_INSTALL_DIR (if set)
@@ -130,6 +130,28 @@ function Write-Verbose-Custom {
     }
 }
 
+function Get-LatestVersion {
+    try {
+        if ($Verbose) {
+            Write-Host "Fetching latest release version from GitHub..."
+        }
+        $apiUrl = "https://api.github.com/repos/$GITHUB_REPO/releases/latest"
+        $response = Invoke-RestMethod -Uri $apiUrl -UseBasicParsing -ErrorAction Stop
+        $version = $response.tag_name -replace '^v', ''
+        if ($Verbose) {
+            Write-Host "Latest version: $version"
+        }
+        return $version
+    }
+    catch {
+        if (-not $Quiet) {
+            Write-Host "${ColorYellow}WARN${ColorReset}: Failed to fetch latest version from GitHub API" -ForegroundColor Yellow
+            Write-Host "${ColorYellow}WARN${ColorReset}: Falling back to version $FALLBACK_VERSION" -ForegroundColor Yellow
+        }
+        return $FALLBACK_VERSION
+    }
+}
+
 function Get-Architecture {
     $arch = $env:PROCESSOR_ARCHITECTURE
     $arch64 = $env:PROCESSOR_ARCHITEW6432
@@ -209,6 +231,9 @@ function Add-ToPath {
 }
 
 function Install-Capa {
+    # Fetch the latest version
+    $APP_VERSION = Get-LatestVersion
+    
     Write-Host ""
     Write-Host "${ColorGreen}╔═══════════════════════════════════════╗${ColorReset}"
     Write-Host "${ColorGreen}║  CAPA Installer v$APP_VERSION           ║${ColorReset}"
