@@ -81,3 +81,5 @@ pnpm-lock.yaml
 example-project
 test-capa*
 src/version.ts
+
+capa-docs
