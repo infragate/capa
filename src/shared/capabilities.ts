@@ -17,7 +17,7 @@ export async function parseCapabilitiesFile(
 
 export function createDefaultCapabilities(): Capabilities {
   return {
-    clients: ['cursor', 'claude-code'],
+    providers: ['cursor', 'claude-code'],
     options: {
       toolExposure: 'expose-all'
     },

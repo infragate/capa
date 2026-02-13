@@ -15,7 +15,7 @@ export async function cleanCommand(): Promise<void> {
     process.exit(1);
   }
   
-  // Parse capabilities file to get clients list
+  // Parse capabilities file to get providers list
   const capabilities = await parseCapabilitiesFile(
     capabilitiesFile.path,
     capabilitiesFile.format
@@ -65,7 +65,7 @@ export async function cleanCommand(): Promise<void> {
   
   // Unregister MCP server from client configurations
   console.log('\n🔗 Unregistering MCP server from clients...');
-  await unregisterMCPServer(projectPath, projectId, capabilities.clients);
+  await unregisterMCPServer(projectPath, projectId, capabilities.providers);
   
   db.close();
   console.log('\n✓ Cleanup complete!');

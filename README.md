@@ -287,14 +287,16 @@ capa add vercel-labs/agent-skills --id my-skill
 ## CLI Reference
 
 ```bash
-capa init              # Create capabilities.yaml
-capa install           # Install skills and start server
-capa add <source>      # Add skill from GitHub/GitLab/URL
-capa clean             # Remove installed skills
-capa start             # Start CAPA server
-capa stop              # Stop CAPA server
-capa restart           # Restart CAPA server
-capa status            # Check server health status
+capa init                    # Create capabilities.yaml
+capa install                 # Install skills and start server
+capa install -e              # Install with variables from .env file
+capa install -e .prod.env    # Install with variables from custom env file
+capa add <source>            # Add skill from GitHub/GitLab/URL
+capa clean                   # Remove installed skills
+capa start                   # Start CAPA server
+capa stop                    # Stop CAPA server
+capa restart                 # Restart CAPA server
+capa status                  # Check server health status
 ```
 
 ## Secure Credentials
@@ -311,7 +313,27 @@ servers:
         BRAVE_API_KEY: ${BraveApiKey}
 ```
 
+### Option 1: Web UI (Default)
 CAPA will prompt you with a web UI to enter these values securely. They're stored in a local database, never in the config file.
+
+### Option 2: Environment File
+You can also provide credentials via a `.env` file during installation:
+
+```bash
+# Create a .env file
+echo "BraveApiKey=your-api-key-here" > .env
+
+# Install with environment variables
+capa install -e
+```
+
+Or use a custom env file name:
+
+```bash
+capa install -e .prod.env
+```
+
+**Note:** If you use the `-e` or `--env` flag, the specified env file must exist, or installation will fail with a clear error message.
 
 ## Learn More
 

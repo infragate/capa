@@ -49,6 +49,18 @@ export interface Session {
   last_activity: number;
 }
 
+export interface GitIntegration {
+  id: number;
+  platform: 'github' | 'gitlab' | 'github-enterprise' | 'gitlab-self-managed';
+  host: string | null; // For self-managed instances
+  access_token: string;
+  refresh_token: string | null;
+  token_type: string;
+  expires_at: number | null;
+  created_at: number;
+  updated_at: number;
+}
+
 export interface ServerSettings {
   version: string;
   server: {

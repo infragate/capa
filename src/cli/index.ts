@@ -8,6 +8,7 @@ import { statusCommand } from './commands/status';
 import { installCommand } from './commands/install';
 import { cleanCommand } from './commands/clean';
 import { addCommand } from './commands/add';
+import { authCommand } from './commands/auth';
 import { VERSION } from '../version';
 
 // Check if running as server
@@ -38,8 +39,9 @@ program
 program
   .command('install')
   .description('Install skills and configure tools')
-  .action(async () => {
-    await installCommand();
+  .option('-e, --env [file]', 'Load variables from .env file (defaults to .env if no file specified)')
+  .action(async (options) => {
+    await installCommand(options.env);
   });
 
 program
@@ -84,6 +86,13 @@ program
   .description('Check the health status of the capa server')
   .action(async () => {
     await statusCommand();
+  });
+
+program
+  .command('auth [provider]')
+  .description('Authenticate with Git providers (github.com, gitlab.com, etc.)')
+  .action(async (provider?: string) => {
+    await authCommand(provider);
   });
 
 program.parse();
