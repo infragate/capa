@@ -87,6 +87,45 @@ export async function authCommand(provider?: string): Promise<void> {
     process.exit(1);
   }
 
+  // Check if already authenticated with a valid token
+  const existingToken = db.getGitOAuthToken(provider);
+  if (existingToken) {
+    // Check if token is expired
+    let isExpired = false;
+    if (existingToken.expires_at) {
+      const expiresAt = new Date(existingToken.expires_at);
+      const now = new Date();
+      isExpired = expiresAt.getTime() <= now.getTime();
+    }
+
+    if (!isExpired) {
+      console.log(`✓ Already authenticated with ${provider}`);
+      
+      if (existingToken.expires_at) {
+        const expiresAt = new Date(existingToken.expires_at);
+        const now = new Date();
+        const hoursUntilExpiry = Math.floor((expiresAt.getTime() - now.getTime()) / (1000 * 60 * 60));
+        
+        console.log(`📅 Token expires: ${expiresAt.toLocaleString()}`);
+        console.log(`   (in approximately ${hoursUntilExpiry} hours)`);
+        
+        if (existingToken.refresh_token) {
+          console.log(`✓ Refresh token available - will auto-refresh before expiration`);
+        }
+      } else {
+        console.log(`✓ Token has no expiration`);
+      }
+      
+      console.log('\nTo re-authenticate, first disconnect from the provider:');
+      console.log(`  Visit: ${serverStatus.url}/ui/integrations`);
+      
+      db.close();
+      return;
+    } else {
+      console.log(`⚠️  Existing token is expired, re-authenticating...\n`);
+    }
+  }
+
   console.log(`Authenticating with: ${provider}\n`);
 
   try {
