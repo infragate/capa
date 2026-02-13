@@ -1,7 +1,5 @@
 import { writeFileSync } from 'fs';
-import { join } from 'path';
 import { Server as HttpServer } from 'http';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { loadSettings, getDatabasePath, getPidFilePath, ensureCapaDir } from '../shared/config';
 import { CapaDatabase } from '../db/database';
 import { SessionManager } from './session-manager';
@@ -20,10 +18,6 @@ import homeHtml from '../../web-ui/home.html' with { type: 'text' };
 import indexHtml from '../../web-ui/index.html' with { type: 'text' };
 import projectHtml from '../../web-ui/project.html' with { type: 'text' };
 import integrationsHtml from '../../web-ui/integrations.html' with { type: 'text' };
-
-// Import favicon as binary at compile time - this bundles it into the binary
-// @ts-expect-error - Bun supports importing files with type: 'file'
-import faviconFile from '../../web-ui/favicon.ico' with { type: 'file' };
 
 class CapaServer {
   private db!: CapaDatabase;
@@ -124,10 +118,6 @@ class CapaServer {
       );
     }
 
-    // Serve favicon
-    if (path === '/favicon.ico') {
-      return this.handleFaviconRequest();
-    }
 
     // Home page
     if (path === '/') {
@@ -165,14 +155,7 @@ class CapaServer {
     });
   }
 
-  private async handleFaviconRequest(): Promise<Response> {
-    return new Response(await faviconFile.arrayBuffer(), {
-      headers: {
-        'Content-Type': 'image/x-icon',
-        'Cache-Control': 'public, max-age=86400', // Cache for 1 day
-      },
-    });
-  }
+
 
   private async handleWebUI(request: Request): Promise<Response> {
     const url = new URL(request.url);
