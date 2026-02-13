@@ -55,7 +55,7 @@ This creates a `capabilities.yaml` file where you define your agent's tools and 
 Here's a minimal example with web search:
 
 ```yaml
-clients:
+providers:
   - cursor
 
 skills:
@@ -159,7 +159,7 @@ CAPA acts as an intelligent proxy between your MCP client and multiple tool sour
 ### Example 1: Web Research
 
 ```yaml
-clients:
+providers:
   - cursor
 
 skills:
@@ -204,7 +204,7 @@ tools:
 ### Example 2: Multiple Profiles
 
 ```yaml
-clients:
+providers:
   - cursor
 
 skills:

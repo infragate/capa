@@ -21,6 +21,10 @@ import indexHtml from '../../web-ui/index.html' with { type: 'text' };
 import projectHtml from '../../web-ui/project.html' with { type: 'text' };
 import integrationsHtml from '../../web-ui/integrations.html' with { type: 'text' };
 
+// Import favicon as binary at compile time - this bundles it into the binary
+// @ts-expect-error - Bun supports importing files with type: 'file'
+import faviconFile from '../../web-ui/favicon.ico' with { type: 'file' };
+
 class CapaServer {
   private db!: CapaDatabase;
   private sessionManager!: SessionManager;
@@ -120,9 +124,9 @@ class CapaServer {
       );
     }
 
-    // Serve icon files
-    if (path.startsWith('/icons/')) {
-      return this.handleIconRequest(path);
+    // Serve favicon
+    if (path === '/favicon.ico') {
+      return this.handleFaviconRequest();
     }
 
     // Home page
@@ -161,35 +165,13 @@ class CapaServer {
     });
   }
 
-  private async handleIconRequest(path: string): Promise<Response> {
-    try {
-      const iconName = path.split('/').pop();
-      if (!iconName) {
-        return new Response('Not Found', { status: 404 });
-      }
-
-      // Only allow specific icon files
-      const allowedIcons = ['github.png', 'gitlab.png'];
-      if (!allowedIcons.includes(iconName)) {
-        return new Response('Not Found', { status: 404 });
-      }
-
-      const iconPath = join(process.cwd(), 'icons', iconName);
-      const file = Bun.file(iconPath);
-      
-      if (!(await file.exists())) {
-        return new Response('Not Found', { status: 404 });
-      }
-
-      return new Response(file, {
-        headers: {
-          'Content-Type': 'image/png',
-          'Cache-Control': 'public, max-age=86400', // Cache for 1 day
-        },
-      });
-    } catch (error) {
-      return new Response('Not Found', { status: 404 });
-    }
+  private async handleFaviconRequest(): Promise<Response> {
+    return new Response(await faviconFile.arrayBuffer(), {
+      headers: {
+        'Content-Type': 'image/x-icon',
+        'Cache-Control': 'public, max-age=86400', // Cache for 1 day
+      },
+    });
   }
 
   private async handleWebUI(request: Request): Promise<Response> {
