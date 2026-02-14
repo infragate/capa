@@ -17,6 +17,10 @@ const DEFAULT_SETTINGS: ServerSettings = {
   session: {
     timeout_minutes: 60,
   },
+  token_refresh: {
+    check_interval_seconds: 60,
+    refresh_threshold_seconds: 600,
+  },
 };
 
 export function getCapaDir(): string {

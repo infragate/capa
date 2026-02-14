@@ -73,4 +73,8 @@ export interface ServerSettings {
   session: {
     timeout_minutes: number;
   };
+  token_refresh?: {
+    check_interval_seconds?: number;
+    refresh_threshold_seconds?: number;
+  };
 }

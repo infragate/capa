@@ -328,6 +328,9 @@ export class OAuth2Manager {
       this.logger.debug(`client_id: ${client_id}`);
       this.logger.debug(`token_endpoint: ${oauth2Config.tokenEndpoint}`);
 
+      // Store client_id for future token refresh operations
+      this.db.setVariable(project_id, `oauth2_client_id_${server_id}`, client_id);
+
       // Exchange authorization code for tokens
       const tokenParams: Record<string, string> = {
         grant_type: 'authorization_code',
@@ -397,16 +400,28 @@ export class OAuth2Manager {
 
       this.logger.info(`Refreshing access token for ${serverId}`);
 
+      // Get client credentials if stored (from dynamic registration)
+      const clientId = this.db.getVariable(projectId, `oauth2_client_id_${serverId}`) || 'capa';
+      const clientSecret = this.db.getVariable(projectId, `oauth2_client_secret_${serverId}`);
+
+      // Build token refresh request parameters
+      const tokenParams: Record<string, string> = {
+        grant_type: 'refresh_token',
+        refresh_token: tokenData.refresh_token,
+        client_id: clientId,
+      };
+
+      // Include client_secret if available (required by most OAuth providers)
+      if (clientSecret) {
+        tokenParams.client_secret = clientSecret;
+      }
+
       const response = await fetch(oauth2Config.tokenEndpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
         },
-        body: new URLSearchParams({
-          grant_type: 'refresh_token',
-          refresh_token: tokenData.refresh_token,
-          client_id: 'capa', // TODO: Support dynamic client registration
-        }).toString(),
+        body: new URLSearchParams(tokenParams).toString(),
       });
 
       if (!response.ok) {
