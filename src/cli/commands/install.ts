@@ -364,7 +364,11 @@ export async function installCommand(envFile?: string | boolean): Promise<void> 
     console.log('   ✓ All required variables loaded from env file');
   }
   
-  // Step 1: Install skills (copy to client directories)
+  // Step 1: Clean up removed skills
+  console.log('\n🧹 Checking for removed skills...');
+  await cleanupRemovedSkills(projectPath, projectId, capabilities.skills, capabilities.providers, db);
+  
+  // Step 2: Install skills (copy to client directories)
   console.log('\n📦 Installing skills...');
   await installSkills(projectPath, projectId, capabilities.skills, capabilities.providers, db, settings);
   
@@ -472,6 +476,67 @@ export async function installCommand(envFile?: string | boolean): Promise<void> 
   
   // Step 5: Display MCP endpoint
   console.log(`\n📡 MCP Endpoint: ${mcpUrl}`);
+}
+
+/**
+ * Clean up skill directories for skills that have been removed from capabilities
+ */
+async function cleanupRemovedSkills(
+  projectPath: string,
+  projectId: string,
+  skills: Skill[],
+  clients: string[],
+  db: CapaDatabase
+): Promise<void> {
+  // Get all managed files/directories for this project
+  const managedFiles = db.getManagedFiles(projectId);
+  
+  if (managedFiles.length === 0) {
+    console.log('  No managed skills to clean up');
+    return;
+  }
+  
+  // Build a set of skill IDs from the current capabilities
+  const currentSkillIds = new Set(skills.map(s => s.id));
+  
+  // Track directories to remove
+  const dirsToRemove: string[] = [];
+  
+  // Check each managed directory
+  for (const managedPath of managedFiles) {
+    // Extract the skill ID from the managed path
+    // Managed paths are typically: /path/to/project/.agents/skills/skill-id
+    const skillId = basename(managedPath);
+    
+    // Check if this skill is still in the capabilities file
+    if (!currentSkillIds.has(skillId)) {
+      // Skill has been removed, mark for cleanup
+      dirsToRemove.push(managedPath);
+    }
+  }
+  
+  if (dirsToRemove.length === 0) {
+    console.log('  No removed skills found');
+    return;
+  }
+  
+  // Remove the directories
+  for (const dir of dirsToRemove) {
+    if (existsSync(dir)) {
+      try {
+        rmSync(dir, { recursive: true, force: true });
+        console.log(`  ✓ Removed: ${dir}`);
+      } catch (error: any) {
+        console.error(`  ✗ Failed to remove ${dir}: ${error.message}`);
+        continue;
+      }
+    }
+    
+    // Remove from managed files tracking
+    db.removeManagedFile(projectId, dir);
+  }
+  
+  console.log(`  Cleaned up ${dirsToRemove.length} removed skill(s)`);
 }
 
 async function installSkills(

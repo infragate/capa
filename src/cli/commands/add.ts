@@ -2,7 +2,9 @@ import { detectCapabilitiesFile } from '../../shared/paths';
 import { parseCapabilitiesFile, writeCapabilitiesFile } from '../../shared/capabilities';
 import { installCommand } from './install';
 import type { Skill } from '../../types/capabilities';
-import { resolve, basename } from 'path';
+import { resolve, basename, join } from 'path';
+import { readFile, access } from 'fs/promises';
+import { constants } from 'fs';
 
 interface ParsedSkillSource {
   id: string;
@@ -17,21 +19,23 @@ interface ParsedSkillSource {
 /**
  * Parse a skill source URL/path and convert it to a skill definition
  */
-function parseSkillSource(source: string): ParsedSkillSource {
-  // GitHub short syntax: vercel-labs/agent-skills
-  if (/^[\w-]+\/[\w.-]+$/.test(source)) {
+async function parseSkillSource(source: string): Promise<ParsedSkillSource> {
+  // GitHub short syntax with skill name: vercel-labs/agent-skills@skill-name
+  const githubAtMatch = source.match(/^([\w.-]+\/[\w.-]+)@([\w-]+)$/);
+  if (githubAtMatch) {
+    const [, repo, skillName] = githubAtMatch;
     return {
-      id: extractIdFromGithubRepo(source),
+      id: skillName,
       type: 'github',
       def: {
-        repo: `${source}@${extractIdFromGithubRepo(source)}`
+        repo: `${repo}@${skillName}`
       }
     };
   }
   
   // Full GitHub URL with specific skill path
   // https://github.com/vercel-labs/agent-skills/tree/main/skills/web-design-guidelines
-  const githubPathMatch = source.match(/^https?:\/\/github\.com\/([\w-]+\/[\w.-]+)\/tree\/[\w.-]+\/skills\/([\w-]+)/);
+  const githubPathMatch = source.match(/^https?:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/tree\/[\w.-]+\/skills\/([\w-]+)/);
   if (githubPathMatch) {
     const [, repo, skillName] = githubPathMatch;
     return {
@@ -43,57 +47,31 @@ function parseSkillSource(source: string): ParsedSkillSource {
     };
   }
   
-  // Full GitHub URL (repo root): https://github.com/vercel-labs/agent-skills
-  const githubMatch = source.match(/^https?:\/\/github\.com\/([\w-]+\/[\w.-]+?)(?:\.git)?$/);
-  if (githubMatch) {
-    const repo = githubMatch[1];
+  // GitLab prefix syntax with skill name: gitlab:group/repo@skill-name
+  const gitlabAtMatch = source.match(/^gitlab:([\w.-]+\/[\w.-]+)@([\w-]+)$/);
+  if (gitlabAtMatch) {
+    const [, repo, skillName] = gitlabAtMatch;
     return {
-      id: extractIdFromGithubRepo(repo),
-      type: 'github',
-      def: {
-        repo: `${repo}@${extractIdFromGithubRepo(repo)}`
-      }
-    };
-  }
-  
-  // GitLab URL: https://gitlab.com/org/repo
-  const gitlabMatch = source.match(/^https?:\/\/gitlab\.com\/([\w-]+\/[\w.-]+)/);
-  if (gitlabMatch) {
-    const repo = gitlabMatch[1];
-    const id = extractIdFromGithubRepo(repo); // Same logic works for GitLab
-    return {
-      id,
+      id: skillName,
       type: 'gitlab',
       def: {
-        repo: `${repo}@${id}`
+        repo: `${repo}@${skillName}`
       }
     };
   }
   
-  // Git SSH URL: git@github.com:vercel-labs/agent-skills.git
-  const gitSshMatch = source.match(/^git@([\w.]+):([\w-]+\/[\w.-]+?)(?:\.git)?$/);
-  if (gitSshMatch) {
-    const [, host, repo] = gitSshMatch;
-    const id = extractIdFromGithubRepo(repo);
-    
-    if (host === 'github.com') {
-      return {
-        id,
-        type: 'github',
-        def: {
-          repo: `${repo}@${id}`
-        }
-      };
-    } else {
-      // For non-GitHub git hosts, use raw URL approach
-      return {
-        id,
-        type: 'remote',
-        def: {
-          url: `https://${host}/${repo}/-/raw/main/SKILL.md`
-        }
-      };
-    }
+  // GitLab URL with specific skill path
+  // https://gitlab.com/tony.z.1711/example-skills/-/tree/main/skills/example-skill
+  const gitlabPathMatch = source.match(/^https?:\/\/gitlab\.com\/([\w.-]+\/[\w.-]+)\/-\/tree\/[\w.-]+\/skills\/([\w-]+)/);
+  if (gitlabPathMatch) {
+    const [, repo, skillName] = gitlabPathMatch;
+    return {
+      id: skillName,
+      type: 'gitlab',
+      def: {
+        repo: `${repo}@${skillName}`
+      }
+    };
   }
   
   // Local path: ./my-local-skills or /absolute/path
@@ -101,11 +79,19 @@ function parseSkillSource(source: string): ParsedSkillSource {
     const absPath = resolve(process.cwd(), source);
     const id = basename(absPath);
     
-    return {
-      id,
-      type: 'inline',
-      def: {
-        content: `---
+    // Try to read SKILL.md from the local path
+    const skillMdPath = join(absPath, 'SKILL.md');
+    let content: string;
+    
+    try {
+      // Check if SKILL.md exists
+      await access(skillMdPath, constants.R_OK);
+      content = await readFile(skillMdPath, 'utf-8');
+      console.log(`✓ Found SKILL.md at ${skillMdPath}`);
+    } catch {
+      // SKILL.md doesn't exist, generate placeholder
+      console.warn(`⚠ No SKILL.md found at ${skillMdPath}, creating placeholder`);
+      content = `---
 name: ${id}
 description: Local skill from ${source}
 ---
@@ -115,7 +101,14 @@ description: Local skill from ${source}
 This is a local skill imported from: ${source}
 
 Please update this SKILL.md file with proper documentation.
-`
+`;
+    }
+    
+    return {
+      id,
+      type: 'inline',
+      def: {
+        content
       }
     };
   }
@@ -133,7 +126,7 @@ Please update this SKILL.md file with proper documentation.
   }
   
   // Fallback - treat as invalid
-  throw new Error(`Unable to parse skill source: ${source}\n\nSupported formats:\n  - GitHub short: vercel-labs/agent-skills\n  - GitHub URL: https://github.com/vercel-labs/agent-skills\n  - GitHub skill path: https://github.com/vercel-labs/agent-skills/tree/main/skills/web-design-guidelines\n  - GitLab URL: https://gitlab.com/org/repo\n  - Git SSH: git@github.com:vercel-labs/agent-skills.git\n  - Local path: ./my-local-skills\n  - Remote URL: https://example.com/SKILL.md`);
+  throw new Error(`Unable to parse skill source: ${source}\n\nSupported formats:\n  - GitHub with skill: owner/repo@skill-name\n  - GitHub skill URL: https://github.com/owner/repo/tree/main/skills/skill-name\n  - GitLab with skill: gitlab:owner/repo@skill-name\n  - GitLab skill URL: https://gitlab.com/owner/repo/-/tree/main/skills/skill-name\n  - Local path: ./my-local-skills (must contain SKILL.md)\n  - Remote SKILL.md URL: https://example.com/path/to/SKILL.md\n\nNote: Repository URLs require @skill-name to specify which skill to install.\nExample: capa add vercel-labs/agent-skills@web-researcher`);
 }
 
 /**
@@ -165,7 +158,7 @@ export async function addCommand(source: string, options: { id?: string }): Prom
   // Parse the skill source
   let skillDef: ParsedSkillSource;
   try {
-    skillDef = parseSkillSource(source);
+    skillDef = await parseSkillSource(source);
   } catch (error) {
     console.error(`✗ ${error instanceof Error ? error.message : String(error)}`);
     process.exit(1);
