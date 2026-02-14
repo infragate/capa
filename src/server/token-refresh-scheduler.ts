@@ -18,12 +18,6 @@ export interface TokenRefreshSchedulerOptions {
    * Default: 600000 (10 minutes)
    */
   refreshThreshold?: number;
-
-  /**
-   * Enable debug logging
-   * Default: false
-   */
-  debug?: boolean;
 }
 
 export class TokenRefreshScheduler {
@@ -37,7 +31,6 @@ export class TokenRefreshScheduler {
   
   private checkInterval: number;
   private refreshThreshold: number;
-  private debug: boolean;
 
   constructor(
     db: CapaDatabase,
@@ -48,7 +41,6 @@ export class TokenRefreshScheduler {
     this.oauth2Manager = oauth2Manager;
     this.checkInterval = options.checkInterval || 60000; // 1 minute
     this.refreshThreshold = options.refreshThreshold || 600000; // 10 minutes
-    this.debug = options.debug || false;
   }
 
   /**
@@ -70,11 +62,11 @@ export class TokenRefreshScheduler {
    */
   start(): void {
     if (this.isRunning) {
-      this.log('Token refresh scheduler already running');
+      this.logger.info('Token refresh scheduler already running');
       return;
     }
 
-    this.log(`Starting token refresh scheduler (check every ${this.checkInterval / 1000}s, refresh threshold ${this.refreshThreshold / 1000}s)`);
+    this.logger.info(`Starting token refresh scheduler (check every ${this.checkInterval / 1000}s, refresh threshold ${this.refreshThreshold / 1000}s)`);
     this.isRunning = true;
 
     // Run immediately on start
@@ -94,7 +86,7 @@ export class TokenRefreshScheduler {
       return;
     }
 
-    this.log('Stopping token refresh scheduler');
+    this.logger.info('Stopping token refresh scheduler');
     if (this.intervalId) {
       clearInterval(this.intervalId);
       this.intervalId = undefined;
@@ -111,8 +103,6 @@ export class TokenRefreshScheduler {
       let checkedCount = 0;
       let refreshedCount = 0;
       let failedCount = 0;
-
-      this.log('Checking tokens for expiration...');
 
       // Check MCP OAuth2 tokens
       if (this.capabilitiesProvider) {
@@ -146,13 +136,11 @@ export class TokenRefreshScheduler {
 
             // Check if token has refresh_token
             if (!tokenData.refresh_token) {
-              this.log(`  ⚠ Token for ${projectId}/${serverId} has no refresh_token, skipping`);
               continue;
             }
 
             // Check if token has expiration
             if (!tokenData.expires_at) {
-              this.log(`  ℹ Token for ${projectId}/${serverId} has no expiration, skipping`);
               continue;
             }
 
@@ -162,9 +150,8 @@ export class TokenRefreshScheduler {
             // If token expires within threshold, refresh it
             if (timeUntilExpiry < this.refreshThreshold) {
               const expiryMinutes = Math.floor(timeUntilExpiry / 60000);
-              const thresholdMinutes = Math.floor(this.refreshThreshold / 60000);
               
-              this.log(`  🔄 Token for ${projectId}/${serverId} expires in ${expiryMinutes}m (threshold: ${thresholdMinutes}m), refreshing...`);
+              this.logger.info(`Refreshing MCP token for ${projectId}/${serverId} (expires in ${expiryMinutes} minutes)`);
               
               try {
                 const success = await this.oauth2Manager.refreshAccessToken(
@@ -175,18 +162,15 @@ export class TokenRefreshScheduler {
 
                 if (success) {
                   refreshedCount++;
-                  this.log(`    ✓ Successfully refreshed token for ${projectId}/${serverId}`);
+                  this.logger.success(`Successfully refreshed MCP token for ${projectId}/${serverId}`);
                 } else {
                   failedCount++;
-                  this.log(`    ✗ Failed to refresh token for ${projectId}/${serverId}`);
+                  this.logger.failure(`Failed to refresh MCP token for ${projectId}/${serverId}`);
                 }
               } catch (error: any) {
                 failedCount++;
-                this.log(`    ✗ Error refreshing token for ${projectId}/${serverId}: ${error.message}`);
+                this.logger.failure(`Error refreshing MCP token for ${projectId}/${serverId}: ${error.message}`);
               }
-            } else {
-              const expiryMinutes = Math.floor(timeUntilExpiry / 60000);
-              this.log(`  ✓ Token for ${projectId}/${serverId} valid for ${expiryMinutes}m`);
             }
           }
         }
@@ -204,13 +188,11 @@ export class TokenRefreshScheduler {
 
           // Skip if no refresh token
           if (!integration.refresh_token) {
-            this.log(`  ⚠ Git integration ${integration.platform} has no refresh_token, skipping`);
             continue;
           }
 
           // Skip if no expiration
           if (!integration.expires_at) {
-            this.log(`  ℹ Git integration ${integration.platform} has no expiration, skipping`);
             continue;
           }
 
@@ -222,9 +204,8 @@ export class TokenRefreshScheduler {
           // If token expires within threshold, refresh it
           if (timeUntilExpiry < this.refreshThreshold) {
             const expiryMinutes = Math.floor(timeUntilExpiry / 60000);
-            const thresholdMinutes = Math.floor(this.refreshThreshold / 60000);
             
-            this.log(`  🔄 Git integration ${integration.platform} expires in ${expiryMinutes}m (threshold: ${thresholdMinutes}m), refreshing...`);
+            this.logger.info(`Refreshing Git integration token for ${integration.platform} (expires in ${expiryMinutes} minutes)`);
             
             try {
               const success = await this.gitIntegrationManager.refreshAccessToken(
@@ -234,26 +215,22 @@ export class TokenRefreshScheduler {
 
               if (success) {
                 refreshedCount++;
-                this.log(`    ✓ Successfully refreshed Git integration ${integration.platform}`);
+                this.logger.success(`Successfully refreshed Git integration token for ${integration.platform}`);
               } else {
                 failedCount++;
-                this.log(`    ✗ Failed to refresh Git integration ${integration.platform}`);
+                this.logger.failure(`Failed to refresh Git integration token for ${integration.platform}`);
               }
             } catch (error: any) {
               failedCount++;
-              this.log(`    ✗ Error refreshing Git integration ${integration.platform}: ${error.message}`);
+              this.logger.failure(`Error refreshing Git integration token for ${integration.platform}: ${error.message}`);
             }
-          } else {
-            const expiryMinutes = Math.floor(timeUntilExpiry / 60000);
-            this.log(`  ✓ Git integration ${integration.platform} valid for ${expiryMinutes}m`);
           }
         }
       }
 
-      if (checkedCount === 0) {
-        this.log('No OAuth2 tokens to check');
-      } else {
-        this.log(`Token check complete: ${checkedCount} checked, ${refreshedCount} refreshed, ${failedCount} failed`);
+      // Only log summary if tokens were refreshed or failed
+      if (refreshedCount > 0 || failedCount > 0) {
+        this.logger.info(`Token refresh check: ${checkedCount} checked, ${refreshedCount} refreshed, ${failedCount} failed`);
       }
     } catch (error: any) {
       this.logger.error(`Error during token check: ${error.message}`);
@@ -280,14 +257,5 @@ export class TokenRefreshScheduler {
       checkInterval: this.checkInterval,
       refreshThreshold: this.refreshThreshold,
     };
-  }
-
-  /**
-   * Log message (only if debug is enabled)
-   */
-  private log(message: string): void {
-    if (this.debug) {
-      this.logger.debug(message);
-    }
   }
 }

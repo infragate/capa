@@ -42,7 +42,10 @@ export class MCPProxy {
     serverDefinition: MCPServerDefinition,
     args: Record<string, any>
   ): Promise<MCPToolResult> {
-    this.logger.info(`Executing tool: ${toolId} on server: ${definition.server}`);
+    // Strip @ prefix from server ID if present
+    const serverId = definition.server.replace('@', '');
+    
+    this.logger.info(`Executing tool: ${toolId} on server: ${serverId}`);
     this.logger.debug(`Tool name: ${definition.tool}, Args: ${JSON.stringify(args)}`);
     
     // Resolve variables in server definition
@@ -62,13 +65,13 @@ export class MCPProxy {
     }
 
     // Get or create MCP client
-    const client = await this.getOrCreateClient(definition.server, resolvedServerDef);
+    const client = await this.getOrCreateClient(serverId, resolvedServerDef);
 
     if (!client) {
       this.logger.failure('Failed to get client');
       return {
         success: false,
-        error: `Failed to connect to MCP server: ${definition.server}`,
+        error: `Failed to connect to MCP server: ${serverId}`,
       };
     }
 
@@ -98,13 +101,16 @@ export class MCPProxy {
    * List tools available on an MCP server
    */
   async listTools(serverId: string, serverDefinition: MCPServerDefinition): Promise<any[]> {
+    // Strip @ prefix from server ID if present
+    const cleanServerId = serverId.replace('@', '');
+    
     const resolvedServerDef = resolveVariablesInObject(
       serverDefinition,
       this.projectId,
       this.db
     );
 
-    const client = await this.getOrCreateClient(serverId, resolvedServerDef);
+    const client = await this.getOrCreateClient(cleanServerId, resolvedServerDef);
     if (!client) {
       return [];
     }
@@ -113,7 +119,7 @@ export class MCPProxy {
       const result = await client.listTools();
       return result.tools;
     } catch (error) {
-      this.logger.error(`Failed to list tools from ${serverId}:`, error);
+      this.logger.error(`Failed to list tools from ${cleanServerId}:`, error);
       return [];
     }
   }
