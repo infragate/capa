@@ -55,13 +55,15 @@ class CapaServer {
     this.oauth2Manager.setCapabilitiesProvider(() => this.sessionManager.getAllProjectCapabilities());
 
     // Initialize and start token refresh scheduler
+    const checkInterval = (this.settings.token_refresh?.check_interval_seconds ?? 60) * 1000;
+    const refreshThreshold = (this.settings.token_refresh?.refresh_threshold_seconds ?? 600) * 1000;
+    
     this.tokenRefreshScheduler = new TokenRefreshScheduler(
       this.db,
       this.oauth2Manager,
       {
-        checkInterval: 60000,      // Check every 1 minute
-        refreshThreshold: 600000,  // Refresh tokens expiring within 10 minutes
-        debug: false,              // Set to true to see detailed logs
+        checkInterval,
+        refreshThreshold,
       }
     );
     this.tokenRefreshScheduler.setCapabilitiesProvider(() => this.sessionManager.getAllProjectCapabilities());

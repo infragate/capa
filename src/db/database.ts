@@ -446,23 +446,47 @@ export class CapaDatabase {
     const now = Date.now();
     const host = tokenData.host || null;
     
-    this.db.run(
-      `INSERT INTO git_integrations (platform, host, access_token, refresh_token, token_type, expires_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(platform, host) DO UPDATE SET
-         access_token = ?,
-         refresh_token = ?,
-         token_type = ?,
-         expires_at = ?,
-         updated_at = ?`,
-      [
-        platform, host, tokenData.access_token, tokenData.refresh_token || null,
-        tokenData.token_type || 'Bearer', tokenData.expires_at || null,
-        now, now,
-        tokenData.access_token, tokenData.refresh_token || null, tokenData.token_type || 'Bearer',
-        tokenData.expires_at || null, now
-      ]
-    );
+    // Check if an entry already exists
+    const existing = this.getGitIntegration(platform, host);
+    
+    if (existing) {
+      // Update existing entry
+      this.db.run(
+        `UPDATE git_integrations SET
+          access_token = ?,
+          refresh_token = ?,
+          token_type = ?,
+          expires_at = ?,
+          updated_at = ?
+         WHERE platform = ? AND (host = ? OR (host IS NULL AND ? IS NULL))`,
+        [
+          tokenData.access_token,
+          tokenData.refresh_token || null,
+          tokenData.token_type || 'Bearer',
+          tokenData.expires_at || null,
+          now,
+          platform,
+          host,
+          host
+        ]
+      );
+    } else {
+      // Insert new entry
+      this.db.run(
+        `INSERT INTO git_integrations (platform, host, access_token, refresh_token, token_type, expires_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          platform,
+          host,
+          tokenData.access_token,
+          tokenData.refresh_token || null,
+          tokenData.token_type || 'Bearer',
+          tokenData.expires_at || null,
+          now,
+          now
+        ]
+      );
+    }
   }
 
   deleteGitIntegration(platform: string, host: string | null = null): void {
