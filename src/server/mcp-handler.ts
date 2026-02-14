@@ -90,10 +90,10 @@ export class CapaMCPServer {
         }
         // Note: setup_tools is NOT included in expose-all mode since all tools are already visible
       } else {
-        // On-demand mode: Current behavior - only show setup_tools initially
+        // On-demand mode: Only expose meta-tools (setup_tools and call_tool)
         tools.push({
           name: 'setup_tools',
-          description: "Activate skills and load their required tools. Once a skill is activated their tools will be available even if you don't see it - it requires a refresh. If you know about the tool's existence call it.",
+          description: 'Activate skills and load their required tools. Returns the full list of available tools with their schemas for your reference.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -107,19 +107,24 @@ export class CapaMCPServer {
           },
         });
 
-        // If session has active skills, add their tools
-        if (this.sessionId) {
-          const session = this.sessionManager.getSession(this.sessionId);
-          if (session && session.activeSkills.length > 0 && capabilities) {
-            for (const toolId of session.availableTools) {
-              const tool = capabilities.tools.find((t) => t.id === toolId);
-              if (tool) {
-                const mcpTool = await this.convertToolToMCP(tool, capabilities);
-                tools.push(mcpTool);
-              }
-            }
-          }
-        }
+        tools.push({
+          name: 'call_tool',
+          description: 'Call any activated tool by name. Use setup_tools first to see available tools and their schemas.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              name: {
+                type: 'string',
+                description: 'The name of the tool to call',
+              },
+              data: {
+                type: 'object',
+                description: 'The input data for the tool',
+              },
+            },
+            required: ['name', 'data'],
+          },
+        });
       }
 
       return { tools };
@@ -134,6 +139,26 @@ export class CapaMCPServer {
       // Handle setup_tools
       if (name === 'setup_tools' && toolExposureMode === 'on-demand') {
         return await this.handleSetupTools(args as { skills: string[] });
+      }
+
+      // Handle call_tool in on-demand mode
+      if (name === 'call_tool' && toolExposureMode === 'on-demand') {
+        return await this.handleCallTool(args as { name: string; data: object });
+      }
+
+      // Prevent meta-tools from being called in expose-all mode
+      if ((name === 'setup_tools' || name === 'call_tool') && toolExposureMode === 'expose-all') {
+        this.logger.warn(`Meta-tool ${name} called in expose-all mode`);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                error: `The meta-tool "${name}" is only available in on-demand mode. Your project is configured for expose-all mode.`,
+              }),
+            },
+          ],
+        };
       }
 
       // Handle other tools
@@ -244,7 +269,22 @@ export class CapaMCPServer {
       // Setup tools
       const toolIds = this.sessionManager.setupTools(this.sessionId, args.skills);
 
-      // Send tools/list_changed notification
+      // Get capabilities to fetch tool schemas
+      const capabilities = this.sessionManager.getProjectCapabilities(this.projectId);
+      const toolSchemas: MCPTool[] = [];
+
+      if (capabilities) {
+        // Fetch full schemas for all activated tools
+        for (const toolId of toolIds) {
+          const tool = capabilities.tools.find((t) => t.id === toolId);
+          if (tool) {
+            const mcpTool = await this.convertToolToMCP(tool, capabilities);
+            toolSchemas.push(mcpTool);
+          }
+        }
+      }
+
+      // Send tools/list_changed notification (for backward compatibility)
       await this.server.notification({
         method: 'notifications/tools/list_changed',
         params: {},
@@ -256,9 +296,9 @@ export class CapaMCPServer {
             type: 'text',
             text: JSON.stringify({
               success: true,
-              message: `Activated ${args.skills.length} skill(s)`,
+              message: `Activated ${args.skills.length} skill(s) with ${toolIds.length} tool(s)`,
               skills: args.skills,
-              tools: toolIds,
+              tools: toolSchemas,
             }),
           },
         ],
@@ -280,6 +320,148 @@ export class CapaMCPServer {
             type: 'text',
             text: JSON.stringify({
               error: errorMessage,
+            }),
+          },
+        ],
+      };
+    }
+  }
+
+  private async handleCallTool(args: { name: string; data: object }): Promise<any> {
+    try {
+      // Validate session exists
+      if (!this.sessionId) {
+        this.logger.warn('No active session');
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                error: 'No active session. Call setup_tools first.',
+              }),
+            },
+          ],
+        };
+      }
+
+      const session = this.sessionManager.getSession(this.sessionId);
+      if (!session) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({ error: 'Session not found' }),
+            },
+          ],
+        };
+      }
+
+      // Extract tool name and data
+      const toolName = args.name;
+      const toolData = args.data || {};
+
+      this.logger.info(`Calling tool via call_tool: ${toolName}`);
+      this.logger.debug(`Tool data: ${JSON.stringify(toolData)}`);
+
+      // Update activity
+      this.sessionManager.updateActivity(this.sessionId);
+
+      // Find tool definition
+      const toolDef = this.sessionManager.getToolDefinition(this.projectId, toolName);
+      if (!toolDef) {
+        this.logger.warn(`Tool not found: ${toolName}`);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                error: `Tool not found: ${toolName}. Make sure you've called setup_tools to activate the required skills.`,
+              }),
+            },
+          ],
+        };
+      }
+
+      // Check if tool is in available tools for the session
+      if (!session.availableTools.includes(toolName)) {
+        this.logger.warn(`Tool not activated: ${toolName}`);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                error: `Tool "${toolName}" is not activated. Call setup_tools with the appropriate skills first.`,
+              }),
+            },
+          ],
+        };
+      }
+
+      this.logger.debug(`Tool type: ${toolDef.type}`);
+
+      // Execute tool based on type
+      let result: any;
+      if (toolDef.type === 'command') {
+        this.logger.debug('Executing command tool...');
+        const executor = new CommandToolExecutor(this.db, this.projectId, this.projectPath);
+        result = await executor.execute(
+          toolName,
+          toolDef.def as ToolCommandDefinition,
+          toolData as Record<string, any>
+        );
+        this.logger.debug(`Command executed, success: ${result.success}`);
+      } else if (toolDef.type === 'mcp') {
+        this.logger.debug('Executing MCP tool...');
+        const mcpDef = toolDef.def as ToolMCPDefinition;
+        const capabilities = this.sessionManager.getProjectCapabilities(this.projectId);
+        if (!capabilities) {
+          this.logger.warn('Project capabilities not found');
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({ error: 'Project capabilities not found' }),
+              },
+            ],
+          };
+        }
+
+        // Find server definition
+        const serverId = mcpDef.server.replace('@', '');
+        const serverDef = capabilities.servers.find((s) => s.id === serverId);
+        if (!serverDef) {
+          this.logger.warn(`Server not found: ${serverId}`);
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({ error: `Server not found: ${serverId}` }),
+              },
+            ],
+          };
+        }
+
+        this.logger.debug(`Using MCP server: ${serverId}`);
+        result = await this.mcpProxy.executeTool(toolName, mcpDef, serverDef.def, toolData as Record<string, any>);
+        this.logger.debug('MCP tool executed');
+      }
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result),
+          },
+        ],
+      };
+    } catch (error: any) {
+      this.logger.failure(`call_tool execution error: ${error.message}`);
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({
+              error: error.message || 'Tool execution failed',
             }),
           },
         ],
@@ -526,10 +708,10 @@ export class CapaMCPServer {
         }
         // Note: setup_tools is NOT included in expose-all mode since all tools are already visible
       } else {
-        // On-demand mode: Current behavior - only show setup_tools initially
+        // On-demand mode: Only expose meta-tools (setup_tools and call_tool)
         tools.push({
           name: 'setup_tools',
-          description: 'Activate skills and load their required tools',
+          description: 'Activate skills and load their required tools. Returns the full list of available tools with their schemas for your reference.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -543,20 +725,24 @@ export class CapaMCPServer {
           },
         });
 
-        // If session has active skills, add their tools
-        if (this.sessionId) {
-          const session = this.sessionManager.getSession(this.sessionId);
-          if (session && session.activeSkills.length > 0 && capabilities) {
-            this.logger.debug(`Adding ${session.availableTools.length} tool(s) from active skills`);
-            for (const toolId of session.availableTools) {
-              const tool = capabilities.tools.find((t) => t.id === toolId);
-              if (tool) {
-                const mcpTool = await this.convertToolToMCP(tool, capabilities);
-                tools.push(mcpTool);
-              }
-            }
-          }
-        }
+        tools.push({
+          name: 'call_tool',
+          description: 'Call any activated tool by name. Use setup_tools first to see available tools and their schemas.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              name: {
+                type: 'string',
+                description: 'The name of the tool to call',
+              },
+              data: {
+                type: 'object',
+                description: 'The input data for the tool',
+              },
+            },
+            required: ['name', 'data'],
+          },
+        });
       }
 
       this.logger.info(`Returning ${tools.length} tool(s): ${tools.map(t => t.name).join(', ')}`);
@@ -590,6 +776,21 @@ export class CapaMCPServer {
           const toolIds = this.sessionManager.setupTools(this.sessionId, args.skills);
           this.logger.success(`Loaded ${toolIds.length} tool(s): ${toolIds.join(', ')}`);
 
+          // Get capabilities to fetch tool schemas
+          const capabilities = this.sessionManager.getProjectCapabilities(this.projectId);
+          const toolSchemas: MCPTool[] = [];
+
+          if (capabilities) {
+            // Fetch full schemas for all activated tools
+            for (const toolId of toolIds) {
+              const tool = capabilities.tools.find((t) => t.id === toolId);
+              if (tool) {
+                const mcpTool = await this.convertToolToMCP(tool, capabilities);
+                toolSchemas.push(mcpTool);
+              }
+            }
+          }
+
           return {
             jsonrpc: '2.0',
             id: message.id,
@@ -599,9 +800,9 @@ export class CapaMCPServer {
                   type: 'text',
                   text: JSON.stringify({
                     success: true,
-                    message: `Activated ${args.skills.length} skill(s)`,
+                    message: `Activated ${args.skills.length} skill(s) with ${toolIds.length} tool(s)`,
                     skills: args.skills,
-                    tools: toolIds,
+                    tools: toolSchemas,
                   }),
                 },
               ],
@@ -626,6 +827,178 @@ export class CapaMCPServer {
             error: {
               code: -32603,
               message: errorMessage,
+            },
+          };
+        }
+      }
+
+      // Handle call_tool
+      if (name === 'call_tool') {
+        const capabilities = this.sessionManager.getProjectCapabilities(this.projectId);
+        const toolExposureMode = capabilities?.options?.toolExposure || 'expose-all';
+
+        if (toolExposureMode !== 'on-demand') {
+          this.logger.warn('call_tool is only available in on-demand mode');
+          return {
+            jsonrpc: '2.0',
+            id: message.id,
+            error: {
+              code: -32601,
+              message: 'call_tool is only available in on-demand mode',
+            },
+          };
+        }
+
+        try {
+          // Validate session exists
+          if (!this.sessionId) {
+            this.logger.warn('No active session');
+            return {
+              jsonrpc: '2.0',
+              id: message.id,
+              error: {
+                code: -32603,
+                message: 'No active session. Call setup_tools first.',
+              },
+            };
+          }
+
+          const session = this.sessionManager.getSession(this.sessionId);
+          if (!session) {
+            this.logger.warn('Session not found');
+            return {
+              jsonrpc: '2.0',
+              id: message.id,
+              error: {
+                code: -32603,
+                message: 'Session not found',
+              },
+            };
+          }
+
+          // Extract tool name and data
+          const toolName = args.name;
+          const toolData = args.data || {};
+
+          this.logger.info(`Calling tool via call_tool: ${toolName}`);
+          this.logger.debug(`Tool data: ${JSON.stringify(toolData)}`);
+
+          // Update activity
+          this.sessionManager.updateActivity(this.sessionId);
+
+          // Find tool definition
+          const toolDef = this.sessionManager.getToolDefinition(this.projectId, toolName);
+          if (!toolDef) {
+            this.logger.warn(`Tool not found: ${toolName}`);
+            return {
+              jsonrpc: '2.0',
+              id: message.id,
+              error: {
+                code: -32601,
+                message: `Tool not found: ${toolName}. Make sure you've called setup_tools to activate the required skills.`,
+              },
+            };
+          }
+
+          // Check if tool is in available tools for the session
+          if (!session.availableTools.includes(toolName)) {
+            this.logger.warn(`Tool not activated: ${toolName}`);
+            return {
+              jsonrpc: '2.0',
+              id: message.id,
+              error: {
+                code: -32603,
+                message: `Tool "${toolName}" is not activated. Call setup_tools with the appropriate skills first.`,
+              },
+            };
+          }
+
+          this.logger.debug(`Tool type: ${toolDef.type}`);
+
+          // Execute tool based on type
+          let result: any;
+          if (toolDef.type === 'command') {
+            this.logger.debug('Executing command tool...');
+            const executor = new CommandToolExecutor(this.db, this.projectId, this.projectPath);
+            result = await executor.execute(
+              toolName,
+              toolDef.def as ToolCommandDefinition,
+              toolData as Record<string, any>
+            );
+            this.logger.debug(`Command executed, success: ${result.success}`);
+          } else if (toolDef.type === 'mcp') {
+            this.logger.debug('Executing MCP tool...');
+            const mcpDef = toolDef.def as ToolMCPDefinition;
+            if (!capabilities) {
+              this.logger.warn('Project capabilities not found');
+              return {
+                jsonrpc: '2.0',
+                id: message.id,
+                error: {
+                  code: -32603,
+                  message: 'Project capabilities not found',
+                },
+              };
+            }
+
+            // Find server definition
+            const serverId = mcpDef.server.replace('@', '');
+            const serverDef = capabilities.servers.find((s) => s.id === serverId);
+            if (!serverDef) {
+              this.logger.warn(`Server not found: ${serverId}`);
+              return {
+                jsonrpc: '2.0',
+                id: message.id,
+                error: {
+                  code: -32603,
+                  message: `Server not found: ${serverId}`,
+                },
+              };
+            }
+
+            this.logger.debug(`Using MCP server: ${serverId}`);
+            result = await this.mcpProxy.executeTool(toolName, mcpDef, serverDef.def, toolData as Record<string, any>);
+            this.logger.debug('MCP tool executed');
+          }
+
+          return {
+            jsonrpc: '2.0',
+            id: message.id,
+            result: {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify(result),
+                },
+              ],
+            },
+          };
+        } catch (error: any) {
+          this.logger.failure(`call_tool execution error: ${error.message}`);
+          return {
+            jsonrpc: '2.0',
+            id: message.id,
+            error: {
+              code: -32603,
+              message: error.message || 'Tool execution failed',
+            },
+          };
+        }
+      }
+
+      // Prevent meta-tools from being called in expose-all mode
+      if (name === 'setup_tools' || name === 'call_tool') {
+        const capabilities = this.sessionManager.getProjectCapabilities(this.projectId);
+        const toolExposureMode = capabilities?.options?.toolExposure || 'expose-all';
+        
+        if (toolExposureMode === 'expose-all') {
+          this.logger.warn(`Meta-tool ${name} called in expose-all mode`);
+          return {
+            jsonrpc: '2.0',
+            id: message.id,
+            error: {
+              code: -32601,
+              message: `The meta-tool "${name}" is only available in on-demand mode. Your project is configured for expose-all mode.`,
             },
           };
         }
