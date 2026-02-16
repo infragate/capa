@@ -65,7 +65,9 @@ async function checkGitInstalled(): Promise<boolean> {
 async function cloneRepository(
   platform: 'github' | 'gitlab',
   repoPath: string,
-  authFetch: AuthenticatedFetch
+  authFetch: AuthenticatedFetch,
+  version?: string,    // Tag or version to checkout (e.g., "1.2.1" or "v1.2.1")
+  ref?: string         // Commit SHA to checkout (e.g., "abc123def456...")
 ): Promise<string> {
   const tempDir = join(tmpdir(), 'capa-skills', `${platform}-${repoPath.replace(/\//g, '-')}-${Date.now()}`);
   mkdirSync(tempDir, { recursive: true });
@@ -91,8 +93,48 @@ async function cloneRepository(
   }
 
   try {
-    // Clone with minimal depth for efficiency
-    await execAsync(`git clone --depth 1 "${repoUrl}" "${tempDir}"`);
+    if (ref) {
+      // Clone full repo when checking out specific commit SHA
+      // (can't use --depth 1 because we need the specific commit)
+      await execAsync(`git clone "${repoUrl}" "${tempDir}"`);
+      await execAsync(`git -C "${tempDir}" checkout ${ref}`);
+    } else if (version) {
+      // Clone with branch/tag specified
+      await execAsync(`git clone --depth 1 --branch "${version}" "${repoUrl}" "${tempDir}"`);
+    } else {
+      // Default: clone with depth 1
+      await execAsync(`git clone --depth 1 "${repoUrl}" "${tempDir}"`);
+      
+      // Try to get latest tag and checkout if available
+      try {
+        const { stdout: tags } = await execAsync(`git -C "${tempDir}" ls-remote --tags origin`);
+        if (tags.trim()) {
+          // Parse tags and find latest semantic version
+          const tagLines = tags.trim().split('\n');
+          const versionTags = tagLines
+            .map(line => {
+              const match = line.match(/refs\/tags\/(v?\d+\.\d+\.\d+)(?:\^\{\})?$/);
+              return match ? match[1] : null;
+            })
+            .filter((tag): tag is string => tag !== null);
+          
+          if (versionTags.length > 0) {
+            // Sort by semantic version and get the latest
+            const latestTag = versionTags.sort((a, b) => {
+              const parseVer = (v: string) => v.replace(/^v/, '').split('.').map(Number);
+              const [aMaj, aMin, aPat] = parseVer(a);
+              const [bMaj, bMin, bPat] = parseVer(b);
+              return (bMaj - aMaj) || (bMin - aMin) || (bPat - aPat);
+            })[0];
+            
+            await execAsync(`git -C "${tempDir}" fetch --depth 1 origin tag "${latestTag}"`);
+            await execAsync(`git -C "${tempDir}" checkout "${latestTag}"`);
+          }
+        }
+      } catch {
+        // No tags or error fetching, use current HEAD (default branch)
+      }
+    }
     return tempDir;
   } catch (error: any) {
     // Clean up on failure
@@ -588,20 +630,27 @@ async function installSkills(
     } else if (skill.type === 'github' && skill.def.repo) {
       // GitHub skill - clone repository and search for skill
       try {
-        const [repoPath, skillName] = skill.def.repo.split('@');
+        // Parse repo string: "owner/repo@skill" or "owner/repo@skill:version" or "owner/repo@skill#sha"
+        const repoWithoutVersionOrRef = skill.def.repo.split(/[:#]/)[0];
+        const [repoPath, skillName] = repoWithoutVersionOrRef.split('@');
         if (!repoPath || !skillName) {
           throw new Error('Invalid GitHub repo format. Use: owner/repo@skill-name');
         }
         
-        // Check if we've already cloned this repo
-        const repoKey = `github:${repoPath}`;
+        // Extract version or ref from skill.def
+        const version = skill.def.version;
+        const ref = skill.def.ref;
+        
+        // Check if we've already cloned this repo (with same version/ref)
+        const repoKey = `github:${repoPath}${version ? ':' + version : ''}${ref ? '#' + ref : ''}`;
         let repoDir = clonedRepos.get(repoKey);
         
         if (!repoDir) {
           // Clone the repository
-          console.log(`    Cloning repository: ${repoPath}...`);
+          const versionInfo = version ? ` (version: ${version})` : ref ? ` (commit: ${ref})` : '';
+          console.log(`    Cloning repository: ${repoPath}${versionInfo}...`);
           try {
-            repoDir = await cloneRepository('github', repoPath, authFetch);
+            repoDir = await cloneRepository('github', repoPath, authFetch, version, ref);
             clonedRepos.set(repoKey, repoDir);
             tempDirs.push(repoDir);
           } catch (error: any) {
@@ -641,20 +690,27 @@ async function installSkills(
     } else if (skill.type === 'gitlab' && skill.def.repo) {
       // GitLab skill - clone repository and search for skill
       try {
-        const [repoPath, skillName] = skill.def.repo.split('@');
+        // Parse repo string: "group/repo@skill" or "group/repo@skill:version" or "group/repo@skill#sha"
+        const repoWithoutVersionOrRef = skill.def.repo.split(/[:#]/)[0];
+        const [repoPath, skillName] = repoWithoutVersionOrRef.split('@');
         if (!repoPath || !skillName) {
           throw new Error('Invalid GitLab repo format. Use: owner/repo@skill-name');
         }
         
-        // Check if we've already cloned this repo
-        const repoKey = `gitlab:${repoPath}`;
+        // Extract version or ref from skill.def
+        const version = skill.def.version;
+        const ref = skill.def.ref;
+        
+        // Check if we've already cloned this repo (with same version/ref)
+        const repoKey = `gitlab:${repoPath}${version ? ':' + version : ''}${ref ? '#' + ref : ''}`;
         let repoDir = clonedRepos.get(repoKey);
         
         if (!repoDir) {
           // Clone the repository
-          console.log(`    Cloning repository: ${repoPath}...`);
+          const versionInfo = version ? ` (version: ${version})` : ref ? ` (commit: ${ref})` : '';
+          console.log(`    Cloning repository: ${repoPath}${versionInfo}...`);
           try {
-            repoDir = await cloneRepository('gitlab', repoPath, authFetch);
+            repoDir = await cloneRepository('gitlab', repoPath, authFetch, version, ref);
             clonedRepos.set(repoKey, repoDir);
             tempDirs.push(repoDir);
           } catch (error: any) {
