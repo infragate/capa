@@ -13,63 +13,90 @@ interface ParsedSkillSource {
     repo?: string;
     url?: string;
     content?: string;
+    version?: string;  // Tag or version like "1.2.1" or "v1.2.1"
+    ref?: string;      // Commit SHA
   };
 }
 
 /**
  * Parse a skill source URL/path and convert it to a skill definition
+ * @internal Exported for testing purposes
  */
-async function parseSkillSource(source: string): Promise<ParsedSkillSource> {
+export async function parseSkillSource(source: string): Promise<ParsedSkillSource> {
   // GitHub short syntax with skill name: vercel-labs/agent-skills@skill-name
-  const githubAtMatch = source.match(/^([\w.-]+\/[\w.-]+)@([\w-]+)$/);
+  // With optional version: owner/repo@skill:1.2.1 or commit: owner/repo@skill#abc123
+  // Note: GitHub doesn't support nested paths, only owner/repo structure
+  const githubAtMatch = source.match(/^([\w.-]+\/[\w.-]+)@([\w-]+)(?::([\w.-]+)|#([a-f0-9]{7,40}))?$/i);
   if (githubAtMatch) {
-    const [, repo, skillName] = githubAtMatch;
+    const [, repo, skillName, version, ref] = githubAtMatch;
     return {
       id: skillName,
       type: 'github',
       def: {
-        repo: `${repo}@${skillName}`
+        repo: `${repo}@${skillName}${version ? ':' + version : ''}${ref ? '#' + ref : ''}`,
+        ...(version && { version }),
+        ...(ref && { ref })
       }
     };
   }
   
   // Full GitHub URL with specific skill path
   // https://github.com/vercel-labs/agent-skills/tree/main/skills/web-design-guidelines
-  const githubPathMatch = source.match(/^https?:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/tree\/[\w.-]+\/skills\/([\w-]+)/);
+  // https://github.com/owner/repo/tree/v1.2.1/skills/skill-name (with version)
+  // https://github.com/owner/repo/tree/abc123/skills/skill-name (with SHA)
+  const githubPathMatch = source.match(/^https?:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/tree\/([\w.-]+)\/skills\/([\w-]+)/);
   if (githubPathMatch) {
-    const [, repo, skillName] = githubPathMatch;
+    const [, repo, branchOrRef, skillName] = githubPathMatch;
+    const isShaRef = /^[a-f0-9]{7,40}$/i.test(branchOrRef);
+    const isVersionRef = /^v?\d+\.\d+/.test(branchOrRef);
+    
     return {
       id: skillName,
       type: 'github',
       def: {
-        repo: `${repo}@${skillName}`
+        repo: `${repo}@${skillName}${isShaRef ? '#' + branchOrRef : isVersionRef ? ':' + branchOrRef : ''}`,
+        ...(isShaRef && { ref: branchOrRef }),
+        ...(isVersionRef && { version: branchOrRef })
       }
     };
   }
   
-  // GitLab prefix syntax with skill name: gitlab:group/repo@skill-name
-  const gitlabAtMatch = source.match(/^gitlab:([\w.-]+\/[\w.-]+)@([\w-]+)$/);
+  // GitLab prefix syntax with skill name: gitlab:group/subgroup/repo@skill-name
+  // With optional version: gitlab:group/repo@skill:1.2.1 or commit: gitlab:group/repo@skill#abc123
+  // GitLab supports nested groups, so we match one or more path segments
+  const gitlabAtMatch = source.match(/^gitlab:([\w.-]+(?:\/[\w.-]+)+)@([\w-]+)(?::([\w.-]+)|#([a-f0-9]{7,40}))?$/i);
   if (gitlabAtMatch) {
-    const [, repo, skillName] = gitlabAtMatch;
+    const [, repo, skillName, version, ref] = gitlabAtMatch;
     return {
       id: skillName,
       type: 'gitlab',
       def: {
-        repo: `${repo}@${skillName}`
+        repo: `${repo}@${skillName}${version ? ':' + version : ''}${ref ? '#' + ref : ''}`,
+        ...(version && { version }),
+        ...(ref && { ref })
       }
     };
   }
   
   // GitLab URL with specific skill path
   // https://gitlab.com/tony.z.1711/example-skills/-/tree/main/skills/example-skill
-  const gitlabPathMatch = source.match(/^https?:\/\/gitlab\.com\/([\w.-]+\/[\w.-]+)\/-\/tree\/[\w.-]+\/skills\/([\w-]+)/);
+  // https://gitlab.com/group/subgroup/project/-/tree/main/skills/example-skill
+  // https://gitlab.com/group/repo/-/tree/v1.2.1/skills/skill-name (with version)
+  // https://gitlab.com/group/repo/-/tree/abc123/skills/skill-name (with SHA)
+  // GitLab supports nested groups, so we match one or more path segments
+  const gitlabPathMatch = source.match(/^https?:\/\/gitlab\.com\/([\w.-]+(?:\/[\w.-]+)+)\/-\/tree\/([\w.-]+)\/skills\/([\w-]+)/);
   if (gitlabPathMatch) {
-    const [, repo, skillName] = gitlabPathMatch;
+    const [, repo, branchOrRef, skillName] = gitlabPathMatch;
+    const isShaRef = /^[a-f0-9]{7,40}$/i.test(branchOrRef);
+    const isVersionRef = /^v?\d+\.\d+/.test(branchOrRef);
+    
     return {
       id: skillName,
       type: 'gitlab',
       def: {
-        repo: `${repo}@${skillName}`
+        repo: `${repo}@${skillName}${isShaRef ? '#' + branchOrRef : isVersionRef ? ':' + branchOrRef : ''}`,
+        ...(isShaRef && { ref: branchOrRef }),
+        ...(isVersionRef && { version: branchOrRef })
       }
     };
   }
@@ -126,7 +153,7 @@ Please update this SKILL.md file with proper documentation.
   }
   
   // Fallback - treat as invalid
-  throw new Error(`Unable to parse skill source: ${source}\n\nSupported formats:\n  - GitHub with skill: owner/repo@skill-name\n  - GitHub skill URL: https://github.com/owner/repo/tree/main/skills/skill-name\n  - GitLab with skill: gitlab:owner/repo@skill-name\n  - GitLab skill URL: https://gitlab.com/owner/repo/-/tree/main/skills/skill-name\n  - Local path: ./my-local-skills (must contain SKILL.md)\n  - Remote SKILL.md URL: https://example.com/path/to/SKILL.md\n\nNote: Repository URLs require @skill-name to specify which skill to install.\nExample: capa add vercel-labs/agent-skills@web-researcher`);
+  throw new Error(`Unable to parse skill source: ${source}\n\nSupported formats:\n  - GitHub with skill: owner/repo@skill-name\n  - GitHub with version: owner/repo@skill-name:1.2.1\n  - GitHub with commit: owner/repo@skill-name#abc123\n  - GitHub skill URL: https://github.com/owner/repo/tree/main/skills/skill-name\n  - GitLab with skill: gitlab:owner/repo@skill-name\n  - GitLab with version: gitlab:owner/repo@skill-name:1.2.1\n  - GitLab with commit: gitlab:owner/repo@skill-name#abc123\n  - GitLab skill URL: https://gitlab.com/owner/repo/-/tree/main/skills/skill-name\n  - Local path: ./my-local-skills (must contain SKILL.md)\n  - Remote SKILL.md URL: https://example.com/path/to/SKILL.md\n\nVersion/commit examples:\n  - Pin to version: capa add owner/repo@skill:v1.2.3\n  - Pin to commit: capa add gitlab:group/repo@skill#abc123def\n  - Latest (default): capa add owner/repo@skill`);
 }
 
 /**
