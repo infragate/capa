@@ -41,9 +41,14 @@ export interface SkillDefinition {
   url?: string;
   // For GitHub skills (e.g., "vercel-labs/agent-skills@find-skills")
   // For GitLab skills (e.g., "group/project@skill-name")
+  // Enhanced format: "owner/repo@skill" or "owner/repo@skill:version" or "owner/repo@skill#sha"
   repo?: string;
   // For inline skills (SKILL.md content as string)
   content?: string;
+  // Version or tag to checkout (e.g., "1.2.1" or "v1.2.1")
+  version?: string;
+  // Commit SHA to checkout (e.g., "abc123def456...")
+  ref?: string;
 }
 
 export interface MCPServer {
