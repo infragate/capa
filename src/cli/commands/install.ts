@@ -627,6 +627,22 @@ async function installSkills(
     if (skill.type === 'inline' && skill.def.content) {
       // Inline skill - use provided SKILL.md content
       skillMarkdown = skill.def.content;
+    } else if (skill.type === 'local' && skill.def.path) {
+      // Local skill - read SKILL.md from path (relative to project root or absolute)
+      try {
+        const skillDir = resolve(projectPath, skill.def.path);
+        const skillMdPath = join(skillDir, 'SKILL.md');
+        if (!existsSync(skillMdPath)) {
+          throw new Error(`SKILL.md not found at ${skillMdPath}`);
+        }
+        const skillData = readSkillFromDirectory(skillMdPath);
+        skillMarkdown = skillData.markdown;
+        additionalFiles = skillData.additionalFiles;
+      } catch (error: any) {
+        console.error(`  ✗ Failed to install local skill ${skill.id}:`);
+        console.error(`    ${error.message || error}`);
+        continue;
+      }
     } else if (skill.type === 'github' && skill.def.repo) {
       // GitHub skill - clone repository and search for skill
       try {
@@ -776,12 +792,15 @@ async function installSkills(
       // Provide detailed error message about what's wrong
       console.error(`  ✗ Invalid skill definition: ${skill.id}`);
       
-      if (!skill.type || !['inline', 'remote', 'github', 'gitlab'].includes(skill.type)) {
-        console.error(`    ⮡ Invalid or missing 'type'. Must be one of: 'inline', 'remote', 'github', 'gitlab'`);
+      if (!skill.type || !['inline', 'remote', 'github', 'gitlab', 'local'].includes(skill.type)) {
+        console.error(`    ⮡ Invalid or missing 'type'. Must be one of: 'inline', 'remote', 'github', 'gitlab', 'local'`);
         console.error(`    ⮡ Current value: ${skill.type || '(not set)'}`);
       } else if (skill.type === 'inline') {
         console.error(`    ⮡ Type is 'inline' but 'def.content' is missing`);
         console.error(`    ⮡ For inline skills, provide the SKILL.md content in 'def.content'`);
+      } else if (skill.type === 'local') {
+        console.error(`    ⮡ Type is 'local' but 'def.path' is missing`);
+        console.error(`    ⮡ For local skills, provide the path to the directory containing SKILL.md in 'def.path'`);
       } else if (skill.type === 'github') {
         console.error(`    ⮡ Type is 'github' but 'def.repo' is missing or invalid`);
         console.error(`    ⮡ For GitHub skills, provide 'def.repo' in format: 'owner/repo@skill-name'`);
@@ -804,6 +823,7 @@ async function installSkills(
       console.error(`    - GitHub:  { "id": "my-skill", "type": "github", "def": { "repo": "owner/repo@skill-name" } }`);
       console.error(`    - GitLab:  { "id": "my-skill", "type": "gitlab", "def": { "repo": "owner/repo@skill-name" } }`);
       console.error(`    - Remote:  { "id": "my-skill", "type": "remote", "def": { "url": "https://..." } }`);
+      console.error(`    - Local:   { "id": "my-skill", "type": "local", "def": { "path": "./my-skill" } }`);
       
       continue;
     }

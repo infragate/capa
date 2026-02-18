@@ -200,8 +200,9 @@ describe('parseSkillSource', () => {
         const result = await parseSkillSource(relativePath);
         
         expect(result.id).toBe('my-skill');
-        expect(result.type).toBe('inline');
-        expect(result.def.content).toContain('Test Skill');
+        expect(result.type).toBe('local');
+        expect(result.def.path).toBe('my-skill');
+        expect(result.def.content).toBeUndefined();
       } finally {
         // Restore original working directory
         process.chdir(originalCwd);
@@ -220,20 +221,17 @@ describe('parseSkillSource', () => {
       const result = await parseSkillSource(skillDir);
       
       expect(result.id).toBe('abs-skill');
-      expect(result.type).toBe('inline');
-      expect(result.def.content).toContain('Absolute Skill');
+      expect(result.type).toBe('local');
+      expect(result.def.path).toBeDefined();
+      expect(result.def.path).toContain('abs-skill');
+      expect(result.def.content).toBeUndefined();
     });
 
-    it('should generate placeholder content when SKILL.md is missing', async () => {
+    it('should throw when SKILL.md is missing', async () => {
       const skillDir = join(tempDir, 'no-skill-md');
       mkdirSync(skillDir, { recursive: true });
       
-      const result = await parseSkillSource(skillDir);
-      
-      expect(result.id).toBe('no-skill-md');
-      expect(result.type).toBe('inline');
-      expect(result.def.content).toContain('no-skill-md');
-      expect(result.def.content).toContain('Please update this SKILL.md');
+      await expect(parseSkillSource(skillDir)).rejects.toThrow(/No SKILL.md found/);
     });
 
     it('should handle Windows-style absolute paths', async () => {

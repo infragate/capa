@@ -30,7 +30,7 @@ export interface Capabilities {
 
 export interface Skill {
   id: string;
-  type: 'inline' | 'remote' | 'github' | 'gitlab';
+  type: 'inline' | 'remote' | 'github' | 'gitlab' | 'local';
   def: SkillDefinition;
 }
 
@@ -45,6 +45,8 @@ export interface SkillDefinition {
   repo?: string;
   // For inline skills (SKILL.md content as string)
   content?: string;
+  // For local skills: path to directory containing SKILL.md (relative to project root or absolute)
+  path?: string;
   // Version or tag to checkout (e.g., "1.2.1" or "v1.2.1")
   version?: string;
   // Commit SHA to checkout (e.g., "abc123def456...")
