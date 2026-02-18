@@ -2,17 +2,18 @@ import { detectCapabilitiesFile } from '../../shared/paths';
 import { parseCapabilitiesFile, writeCapabilitiesFile } from '../../shared/capabilities';
 import { installCommand } from './install';
 import type { Skill } from '../../types/capabilities';
-import { resolve, basename, join } from 'path';
+import { resolve, basename, join, relative } from 'path';
 import { readFile, access } from 'fs/promises';
 import { constants } from 'fs';
 
 interface ParsedSkillSource {
   id: string;
-  type: 'inline' | 'remote' | 'github' | 'gitlab';
+  type: 'inline' | 'remote' | 'github' | 'gitlab' | 'local';
   def: {
     repo?: string;
     url?: string;
     content?: string;
+    path?: string;     // For local skills: path to directory containing SKILL.md
     version?: string;  // Tag or version like "1.2.1" or "v1.2.1"
     ref?: string;      // Commit SHA
   };
@@ -101,41 +102,33 @@ export async function parseSkillSource(source: string): Promise<ParsedSkillSourc
     };
   }
   
-  // Local path: ./my-local-skills or /absolute/path
+  // Local path: ./my-local-skills or /absolute/path (references local file; path stored for install)
   if (source.startsWith('./') || source.startsWith('../') || source.startsWith('/') || /^[A-Za-z]:/.test(source)) {
     const absPath = resolve(process.cwd(), source);
     const id = basename(absPath);
-    
-    // Try to read SKILL.md from the local path
     const skillMdPath = join(absPath, 'SKILL.md');
-    let content: string;
-    
+
     try {
-      // Check if SKILL.md exists
       await access(skillMdPath, constants.R_OK);
-      content = await readFile(skillMdPath, 'utf-8');
       console.log(`✓ Found SKILL.md at ${skillMdPath}`);
     } catch {
-      // SKILL.md doesn't exist, generate placeholder
-      console.warn(`⚠ No SKILL.md found at ${skillMdPath}, creating placeholder`);
-      content = `---
-name: ${id}
-description: Local skill from ${source}
----
-
-# ${id}
-
-This is a local skill imported from: ${source}
-
-Please update this SKILL.md file with proper documentation.
-`;
+      throw new Error(
+        `No SKILL.md found at ${skillMdPath}.\n` +
+        `Local skills must point to a directory that contains a SKILL.md file.`
+      );
     }
-    
+
+    // Store path relative to project root (cwd) for portability when possible
+    const projectRoot = process.cwd();
+    const pathToStore = absPath.startsWith(projectRoot)
+      ? relative(projectRoot, absPath)
+      : absPath;
+
     return {
       id,
-      type: 'inline',
+      type: 'local',
       def: {
-        content
+        path: pathToStore
       }
     };
   }
@@ -153,7 +146,7 @@ Please update this SKILL.md file with proper documentation.
   }
   
   // Fallback - treat as invalid
-  throw new Error(`Unable to parse skill source: ${source}\n\nSupported formats:\n  - GitHub with skill: owner/repo@skill-name\n  - GitHub with version: owner/repo@skill-name:1.2.1\n  - GitHub with commit: owner/repo@skill-name#abc123\n  - GitHub skill URL: https://github.com/owner/repo/tree/main/skills/skill-name\n  - GitLab with skill: gitlab:owner/repo@skill-name\n  - GitLab with version: gitlab:owner/repo@skill-name:1.2.1\n  - GitLab with commit: gitlab:owner/repo@skill-name#abc123\n  - GitLab skill URL: https://gitlab.com/owner/repo/-/tree/main/skills/skill-name\n  - Local path: ./my-local-skills (must contain SKILL.md)\n  - Remote SKILL.md URL: https://example.com/path/to/SKILL.md\n\nVersion/commit examples:\n  - Pin to version: capa add owner/repo@skill:v1.2.3\n  - Pin to commit: capa add gitlab:group/repo@skill#abc123def\n  - Latest (default): capa add owner/repo@skill`);
+  throw new Error(`Unable to parse skill source: ${source}\n\nSupported formats:\n  - GitHub with skill: owner/repo@skill-name\n  - GitHub with version: owner/repo@skill-name:1.2.1\n  - GitHub with commit: owner/repo@skill-name#abc123\n  - GitHub skill URL: https://github.com/owner/repo/tree/main/skills/skill-name\n  - GitLab with skill: gitlab:owner/repo@skill-name\n  - GitLab with version: gitlab:owner/repo@skill-name:1.2.1\n  - GitLab with commit: gitlab:owner/repo@skill-name#abc123\n  - GitLab skill URL: https://gitlab.com/owner/repo/-/tree/main/skills/skill-name\n  - Local path: ./my-local-skills (directory containing SKILL.md)\n  - Remote SKILL.md URL: https://example.com/path/to/SKILL.md\n\nVersion/commit examples:\n  - Pin to version: capa add owner/repo@skill:v1.2.3\n  - Pin to commit: capa add gitlab:group/repo@skill#abc123def\n  - Latest (default): capa add owner/repo@skill`);
 }
 
 /**
@@ -226,8 +219,10 @@ export async function addCommand(source: string, options: { id?: string }): Prom
     console.log(`  Repo: ${skillDef.def.repo}`);
   } else if (skillDef.def.url) {
     console.log(`  URL: ${skillDef.def.url}`);
+  } else if (skillDef.def.path) {
+    console.log(`  Path: ${skillDef.def.path}`);
   } else if (skillDef.def.content) {
-    console.log(`  Source: inline/local`);
+    console.log(`  Source: inline`);
   }
   
   // Run install
