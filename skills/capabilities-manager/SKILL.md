@@ -94,10 +94,10 @@ DatabaseUrl=postgresql://localhost:5432/db
 capa add <source> [--id <custom-id>]
 ```
 Add a skill from various sources:
-- GitHub: `capa add vercel-labs/agent-skills`
-- GitLab: `capa add gitlab:group/repo`
-- Git URL: `capa add https://github.com/user/repo.git`
-- Local path: `capa add ./path/to/skill`
+- **GitHub**: `capa add owner/repo@skill-name` (e.g. `capa add vercel-labs/agent-skills@web-researcher`)
+- **GitLab**: `capa add gitlab:group/repo@skill-name`
+- **Remote URL**: `capa add https://example.com/path/to/SKILL.md`
+- **Local path**: `capa add ./path/to/skill` — directory must contain `SKILL.md`; stored as type `local` so the file is read on each install
 
 **When to use**: Quickly adding community skills without manually editing the capabilities file.
 
@@ -133,7 +133,7 @@ options:
 
 skills:
   - id: skill-id
-    type: inline|remote|github
+    type: inline|remote|github|gitlab|local
     def:
       # skill definition
 
@@ -152,7 +152,7 @@ tools:
 
 ### Skills Section
 
-Skills can be defined in three ways:
+Skills can be defined in five ways:
 
 #### 1. Inline Skills
 Embed SKILL.md content directly in the capabilities file:
@@ -192,11 +192,28 @@ skills:
         - npx_skills_find
 ```
 
-**Format**: `owner/repo@skill-name` (where `skill-name` is a subdirectory in the repo)
+**Format**: `owner/repo@skill-name` (where `skill-name` is a subdirectory in the repo). Optional `:version` or `#sha` for pinning.
 
 **Best for**: Well-maintained community skills from skills.sh or other GitHub repositories.
 
-#### 3. Remote Skills
+#### 3. GitLab Skills
+Fetch skills from a GitLab repository:
+
+```yaml
+skills:
+  - id: my-skill
+    type: gitlab
+    def:
+      repo: group/subgroup/repo@skill-name
+      description: Skill from GitLab
+      requires: []
+```
+
+**Format**: `group/subgroup/repo@skill-name`. Optional `:version` or `#sha` for pinning.
+
+**Best for**: Private or self-hosted GitLab repositories.
+
+#### 4. Remote Skills
 Fetch SKILL.md from any URL:
 
 ```yaml
@@ -212,6 +229,23 @@ skills:
 ```
 
 **Best for**: Private or custom skills hosted elsewhere.
+
+#### 5. Local Skills
+Reference a skill from a local directory (path relative to project root or absolute). The SKILL.md is read on each `capa install`, so edits are picked up without re-adding.
+
+```yaml
+skills:
+  - id: my-local-skill
+    type: local
+    def:
+      path: ./skills/my-skill   # or absolute path
+      description: Skill from a local directory
+      requires: []
+```
+
+**Requirements**: The path must point to a directory that contains a `SKILL.md` file.
+
+**Best for**: Project-local skills you edit in the repo, or shared skills in a monorepo subdirectory.
 
 ### Servers Section
 
@@ -335,7 +369,28 @@ skills:
 capa install
 ```
 
-### 3. Creating a Custom Skill
+### 3. Adding a Local Skill (file reference)
+
+When the skill lives in the project (e.g. `./my-skill/SKILL.md`), add it by path so it is stored as type `local` and re-read on every install:
+
+```bash
+# Add by path (directory must contain SKILL.md)
+capa add ./my-skill
+
+# Or manually in capabilities.yaml:
+skills:
+  - id: my-skill
+    type: local
+    def:
+      path: my-skill    # relative to project root
+      description: Local skill from this repo
+
+capa install
+```
+
+Edits to `my-skill/SKILL.md` are picked up on the next `capa install`; no need to re-add the skill.
+
+### 4. Creating a Custom Skill (inline)
 
 Add an inline skill to your `capabilities.yaml`:
 
@@ -365,7 +420,7 @@ skills:
 capa install
 ```
 
-### 4. Managing Server Lifecycle
+### 5. Managing Server Lifecycle
 
 ```bash
 # Check server status
