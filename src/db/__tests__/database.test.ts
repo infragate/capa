@@ -236,6 +236,56 @@ describe('CapaDatabase', () => {
     });
   });
 
+  describe('Project capabilities operations', () => {
+    beforeEach(() => {
+      db.upsertProject({ id: 'test-proj', path: '/test/path' });
+    });
+
+    it('should set and get project capabilities (round-trip JSON)', () => {
+      const capabilitiesJson = JSON.stringify({
+        providers: ['cursor'],
+        skills: [{ id: 'skill-1', type: 'inline', def: { description: 'Test', requires: ['tool-1'] } }],
+        tools: [{ id: 'tool-1', type: 'mcp', def: { server: '@s1', tool: 'run' } }],
+        servers: [{ id: 's1', type: 'mcp', def: { cmd: 'node', args: ['server.js'] } }],
+      });
+      db.setProjectCapabilities('test-proj', capabilitiesJson);
+
+      const retrieved = db.getProjectCapabilities('test-proj');
+      expect(retrieved).not.toBeNull();
+      expect(retrieved).toBe(capabilitiesJson);
+      const parsed = JSON.parse(retrieved!);
+      expect(parsed.skills).toHaveLength(1);
+      expect(parsed.skills[0].id).toBe('skill-1');
+      expect(parsed.tools).toHaveLength(1);
+      expect(parsed.servers).toHaveLength(1);
+    });
+
+    it('should return null for project with no capabilities', () => {
+      const retrieved = db.getProjectCapabilities('test-proj');
+      expect(retrieved).toBeNull();
+    });
+
+    it('should return null for non-existent project', () => {
+      const retrieved = db.getProjectCapabilities('non-existent');
+      expect(retrieved).toBeNull();
+    });
+
+    it('should update existing project capabilities', () => {
+      db.setProjectCapabilities('test-proj', JSON.stringify({ providers: [], skills: [], tools: [], servers: [] }));
+      db.setProjectCapabilities('test-proj', JSON.stringify({
+        providers: ['cursor'],
+        skills: [{ id: 'updated', type: 'inline', def: {} }],
+        tools: [],
+        servers: [],
+      }));
+
+      const retrieved = db.getProjectCapabilities('test-proj');
+      const parsed = JSON.parse(retrieved!);
+      expect(parsed.skills).toHaveLength(1);
+      expect(parsed.skills[0].id).toBe('updated');
+    });
+  });
+
   describe('Session operations', () => {
     beforeEach(() => {
       db.upsertProject({ id: 'test-proj', path: '/test/path' });

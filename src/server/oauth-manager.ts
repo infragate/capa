@@ -61,61 +61,65 @@ export class OAuth2Manager {
         return null;
       }
 
-      // Parse WWW-Authenticate header
-      const wwwAuthenticate = response.headers.get('WWW-Authenticate');
-      if (!wwwAuthenticate) {
-        this.logger.debug('401 but no WWW-Authenticate header');
-        return null;
-      }
-
-      this.logger.debug(`WWW-Authenticate: ${wwwAuthenticate}`);
-
-      // Extract resource metadata URL from WWW-Authenticate header
-      // Format: Bearer resource_metadata="https://..."
-      let resourceMetadataUrl: string | null = null;
-      const resourceMetadataMatch = wwwAuthenticate.match(/resource_metadata="([^"]+)"/);
-      
-      if (resourceMetadataMatch) {
-        resourceMetadataUrl = resourceMetadataMatch[1];
-        this.logger.debug(`Resource metadata URL: ${resourceMetadataUrl}`);
-      } else {
-        // Try constructing the well-known URL from the server URL
-        this.logger.debug('No resource_metadata in WWW-Authenticate, trying standard location');
-        try {
-          const serverUrlObj = new URL(serverUrl);
-          const baseUrl = `${serverUrlObj.protocol}//${serverUrlObj.host}`;
-          resourceMetadataUrl = `${baseUrl}/.well-known/oauth-protected-resource`;
-          this.logger.debug(`Trying: ${resourceMetadataUrl}`);
-        } catch (error) {
-          this.logger.debug('Could not construct well-known URL');
-          return null;
-        }
-      }
-
-      // First, try direct OAuth discovery (many servers like Atlassian use this)
       const serverUrlObj = new URL(serverUrl);
       const baseUrl = `${serverUrlObj.protocol}//${serverUrlObj.host}`;
-      this.logger.debug(`Trying direct OAuth discovery at: ${baseUrl}`);
-      
-      let authMetadata = await this.fetchAuthServerMetadata(baseUrl);
-      
-      // If direct discovery failed, try protected resource metadata (RFC 9728)
-      if (!authMetadata) {
-        this.logger.debug('Direct discovery failed, trying RFC 9728...');
-        const resourceMetadata = await this.fetchProtectedResourceMetadata(resourceMetadataUrl);
-        
-        if (resourceMetadata && resourceMetadata.authorization_servers && resourceMetadata.authorization_servers.length > 0) {
-          // Use first authorization server
-          const authServerUrl = resourceMetadata.authorization_servers[0];
-          this.logger.debug(`Authorization server: ${authServerUrl}`);
 
-          // Fetch authorization server metadata
-          authMetadata = await this.fetchAuthServerMetadata(authServerUrl);
+      // Parse WWW-Authenticate header (optional; some servers like Atlassian omit it)
+      const wwwAuthenticate = response.headers.get('WWW-Authenticate');
+      let authMetadata: OAuth2Metadata | null = null;
+
+      if (wwwAuthenticate) {
+        this.logger.debug(`WWW-Authenticate: ${wwwAuthenticate}`);
+
+        // Extract resource metadata URL from WWW-Authenticate header
+        // Format: Bearer resource_metadata="https://..."
+        let resourceMetadataUrl: string | null = null;
+        const resourceMetadataMatch = wwwAuthenticate.match(/resource_metadata="([^"]+)"/);
+        
+        if (resourceMetadataMatch) {
+          resourceMetadataUrl = resourceMetadataMatch[1];
+          this.logger.debug(`Resource metadata URL: ${resourceMetadataUrl}`);
+        } else {
+          this.logger.debug('No resource_metadata in WWW-Authenticate, trying standard location');
+          resourceMetadataUrl = `${baseUrl}/.well-known/oauth-protected-resource`;
+          this.logger.debug(`Trying: ${resourceMetadataUrl}`);
         }
+
+        // First, try direct OAuth discovery (many servers use this)
+        this.logger.debug(`Trying direct OAuth discovery at: ${baseUrl}`);
+        authMetadata = await this.fetchAuthServerMetadata(baseUrl);
+        
+        // If direct discovery failed, try protected resource metadata (RFC 9728)
+        if (!authMetadata) {
+          this.logger.debug('Direct discovery failed, trying RFC 9728...');
+          const resourceMetadata = await this.fetchProtectedResourceMetadata(resourceMetadataUrl);
+          
+          if (resourceMetadata && resourceMetadata.authorization_servers && resourceMetadata.authorization_servers.length > 0) {
+            const authServerUrl = resourceMetadata.authorization_servers[0];
+            this.logger.debug(`Authorization server: ${authServerUrl}`);
+            authMetadata = await this.fetchAuthServerMetadata(authServerUrl);
+          }
+        }
+      } else {
+        // Fallback: 401 without WWW-Authenticate — try well-known OAuth authorization server at base URL
+        this.logger.debug('401 but no WWW-Authenticate header; trying /.well-known/oauth-authorization-server');
+        authMetadata = await this.fetchAuthServerMetadata(baseUrl);
       }
       
       if (!authMetadata) {
         this.logger.warn('Failed to fetch auth server metadata');
+        return null;
+      }
+
+      // Require authorization code flow support when advertised
+      const grantTypes = authMetadata.grant_types_supported;
+      if (Array.isArray(grantTypes) && !grantTypes.includes('authorization_code')) {
+        this.logger.debug('Auth server does not support authorization_code grant');
+        return null;
+      }
+      const responseTypes = authMetadata.response_types_supported;
+      if (Array.isArray(responseTypes) && !responseTypes.includes('code')) {
+        this.logger.debug('Auth server does not support response_type=code');
         return null;
       }
 
@@ -192,9 +196,9 @@ export class OAuth2Manager {
     const codeChallenge = generateCodeChallenge(codeVerifier);
     const state = generateState();
 
-    // Try dynamic client registration if supported
-    let clientId = 'capa'; // Default fallback
-    if (oauth2Config.registrationEndpoint) {
+    // Use embedded client_id from plugin/MCP config first (e.g. Slack app), then dynamic registration, else fallback
+    let clientId = oauth2Config.client_id ?? 'capa';
+    if (!oauth2Config.client_id && oauth2Config.registrationEndpoint) {
       try {
         this.logger.info('Attempting dynamic client registration...');
         const registeredClient = await this.registerClient(oauth2Config.registrationEndpoint, redirectUri);
@@ -212,6 +216,8 @@ export class OAuth2Manager {
         this.logger.warn(`Dynamic registration failed: ${error.message}`);
         this.logger.info('Using default client_id');
       }
+    } else if (oauth2Config.client_id) {
+      this.logger.debug(`Using embedded client_id from server config`);
     }
 
     // Store flow state in database (including client_id for token exchange)

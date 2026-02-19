@@ -294,6 +294,45 @@
       box-shadow: var(--shadow-sm);
     }
 
+    .password-input-wrapper {
+      position: relative;
+      width: 100%;
+    }
+
+    .password-input-wrapper input {
+      padding-right: 40px;
+    }
+
+    .password-toggle-btn {
+      position: absolute;
+      right: 8px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 28px;
+      height: 28px;
+      padding: 0;
+      border: none;
+      background: none;
+      cursor: pointer;
+      color: var(--text-secondary);
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: color 0.2s, background-color 0.2s;
+    }
+
+    .password-toggle-btn:hover {
+      color: var(--text-primary);
+      background: var(--border-primary);
+    }
+
+    .password-toggle-btn svg {
+      width: 18px;
+      height: 18px;
+      flex-shrink: 0;
+    }
+
     .btn {
       background: var(--accent-primary);
       color: white;
@@ -960,8 +999,27 @@
           input.placeholder = `Enter ${varName}`;
           input.required = true;
 
+          const wrapper = document.createElement('div');
+          wrapper.className = 'password-input-wrapper';
+
+          const toggleBtn = document.createElement('button');
+          toggleBtn.type = 'button';
+          toggleBtn.className = 'password-toggle-btn';
+          toggleBtn.setAttribute('aria-label', 'Show password');
+          toggleBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`;
+          toggleBtn.addEventListener('click', () => {
+            const isPassword = input.type === 'password';
+            input.type = isPassword ? 'text' : 'password';
+            toggleBtn.setAttribute('aria-label', isPassword ? 'Hide password' : 'Show password');
+            toggleBtn.innerHTML = isPassword
+              ? `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>`
+              : `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`;
+          });
+
+          wrapper.appendChild(input);
+          wrapper.appendChild(toggleBtn);
           formGroup.appendChild(label);
-          formGroup.appendChild(input);
+          formGroup.appendChild(wrapper);
           container.appendChild(formGroup);
         }
 
@@ -1102,7 +1160,7 @@
             </div>
             <div class="oauth-actions">
               ${server.isConnected 
-                ? `<button class="btn btn-danger" onclick="disconnectOAuth2('${escapeHtml(server.serverId)}')">Disconnect</button>`
+                ? `<button class="btn btn-danger" onclick="disconnectOAuth2('${escapeHtml(server.serverId)}', '${escapeHtml(server.displayName || server.serverId).replace(/'/g, '&#39;')}')">Disconnect</button>`
                 : `<button class="btn btn-success" onclick="connectOAuth2('${escapeHtml(server.serverId)}')">Connect</button>`
               }
             </div>
@@ -1135,8 +1193,9 @@
       }
     }
 
-    async function disconnectOAuth2(serverId) {
-      if (!confirm(`Disconnect from ${serverId}?`)) {
+    async function disconnectOAuth2(serverId, displayName) {
+      const name = displayName || serverId;
+      if (!confirm(`Disconnect from ${name}?`)) {
         return;
       }
 
@@ -1147,7 +1206,7 @@
         const data = await response.json();
 
         if (data.success) {
-          showMessage(`Disconnected from ${serverId}`, 'success');
+          showMessage(`Disconnected from ${name}`, 'success');
           loadOAuth2Servers();
         } else {
           showMessage('Failed to disconnect', 'error');

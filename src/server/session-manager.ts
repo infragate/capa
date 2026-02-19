@@ -62,14 +62,14 @@ export class SessionManager {
       return null;
     }
 
+    const skillIds = JSON.parse(dbSession.skill_ids);
+    const skillTools = this.getToolsForSkills(dbSession.project_id, skillIds);
+    const pluginToolIds = this.getPluginToolIds(dbSession.project_id);
     const sessionInfo: SessionInfo = {
       sessionId: dbSession.session_id,
       projectId: dbSession.project_id,
-      activeSkills: JSON.parse(dbSession.skill_ids),
-      availableTools: this.getToolsForSkills(
-        dbSession.project_id,
-        JSON.parse(dbSession.skill_ids)
-      ),
+      activeSkills: skillIds,
+      availableTools: [...new Set([...skillTools, ...pluginToolIds])],
       createdAt: dbSession.created_at,
       lastActivity: dbSession.last_activity,
     };
@@ -102,7 +102,7 @@ export class SessionManager {
     }
 
     // Get capabilities for this project
-    const capabilities = this.projectCapabilities.get(session.projectId);
+    const capabilities = this.getProjectCapabilities(session.projectId);
     if (!capabilities) {
       throw new Error(`No capabilities configured for project: ${session.projectId}`);
     }
@@ -115,9 +115,11 @@ export class SessionManager {
       }
     }
 
-    // Update active skills
+    // Update active skills; available tools = skill-required tools + all plugin MCP tools
     session.activeSkills = skillIds;
-    session.availableTools = this.getToolsForSkills(session.projectId, skillIds);
+    const skillTools = this.getToolsForSkills(session.projectId, skillIds);
+    const pluginToolIds = this.getPluginToolIds(session.projectId);
+    session.availableTools = [...new Set([...skillTools, ...pluginToolIds])];
     session.lastActivity = Date.now();
 
     this.logger.debug(`Available tools: ${session.availableTools.join(', ')}`);
@@ -132,7 +134,7 @@ export class SessionManager {
    * Get tools required by skills
    */
   private getToolsForSkills(projectId: string, skillIds: string[]): string[] {
-    const capabilities = this.projectCapabilities.get(projectId);
+    const capabilities = this.getProjectCapabilities(projectId);
     if (!capabilities) {
       return [];
     }
@@ -152,11 +154,11 @@ export class SessionManager {
   }
 
   /**
-   * Get all tools required by any skill in a project
-   * Used for 'expose-all' mode to show all available tools upfront
+   * Get all tools required by any skill in a project, plus all plugin MCP tool ids.
+   * Used for 'expose-all' mode to show all available tools upfront.
    */
   getAllRequiredToolsForProject(projectId: string): string[] {
-    const capabilities = this.projectCapabilities.get(projectId);
+    const capabilities = this.getProjectCapabilities(projectId);
     if (!capabilities) {
       return [];
     }
@@ -172,7 +174,21 @@ export class SessionManager {
       }
     }
 
+    // Include all tools from plugin MCP servers (plugins don't declare which tools skills use)
+    for (const id of this.getPluginToolIds(projectId)) {
+      requiredTools.add(id);
+    }
+
     return Array.from(requiredTools);
+  }
+
+  /**
+   * Get tool ids for all tools that came from plugins (sourcePlugin set).
+   */
+  getPluginToolIds(projectId: string): string[] {
+    const capabilities = this.getProjectCapabilities(projectId);
+    if (!capabilities) return [];
+    return capabilities.tools.filter((t) => t.sourcePlugin).map((t) => t.id);
   }
 
   /**
@@ -182,13 +198,24 @@ export class SessionManager {
     this.logger.info(`Setting capabilities for project: ${projectId}`);
     this.logger.debug(`Skills: ${capabilities.skills.length}, Tools: ${capabilities.tools.length}, Servers: ${capabilities.servers.length}`);
     this.projectCapabilities.set(projectId, capabilities);
+    this.db.setProjectCapabilities(projectId, JSON.stringify(capabilities));
   }
 
   /**
-   * Get capabilities for a project
+   * Get capabilities for a project (loads from DB on cache miss, e.g. after server restart)
    */
   getProjectCapabilities(projectId: string): Capabilities | null {
-    return this.projectCapabilities.get(projectId) || null;
+    const cached = this.projectCapabilities.get(projectId);
+    if (cached) {
+      return cached;
+    }
+    const raw = this.db.getProjectCapabilities(projectId);
+    if (!raw) {
+      return null;
+    }
+    const capabilities = JSON.parse(raw) as Capabilities;
+    this.projectCapabilities.set(projectId, capabilities);
+    return capabilities;
   }
 
   /**
@@ -202,7 +229,7 @@ export class SessionManager {
    * Get tool definition
    */
   getToolDefinition(projectId: string, toolId: string): Tool | null {
-    const capabilities = this.projectCapabilities.get(projectId);
+    const capabilities = this.getProjectCapabilities(projectId);
     if (!capabilities) {
       return null;
     }

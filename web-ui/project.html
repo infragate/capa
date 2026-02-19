@@ -294,6 +294,45 @@
       box-shadow: var(--shadow-sm);
     }
 
+    .password-input-wrapper {
+      position: relative;
+      width: 100%;
+    }
+
+    .password-input-wrapper input {
+      padding-right: 40px;
+    }
+
+    .password-toggle-btn {
+      position: absolute;
+      right: 8px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 28px;
+      height: 28px;
+      padding: 0;
+      border: none;
+      background: none;
+      cursor: pointer;
+      color: var(--text-secondary);
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: color 0.2s, background-color 0.2s;
+    }
+
+    .password-toggle-btn:hover {
+      color: var(--text-primary);
+      background: var(--border-primary);
+    }
+
+    .password-toggle-btn svg {
+      width: 18px;
+      height: 18px;
+      flex-shrink: 0;
+    }
+
     .btn {
       background: var(--accent-primary);
       color: white;
@@ -589,6 +628,67 @@
       line-height: 1.4;
     }
 
+    .capability-item-from {
+      font-size: 11px;
+      color: var(--text-tertiary);
+      margin-top: 2px;
+    }
+
+    .plugin-badge {
+      font-size: 10px;
+      text-transform: uppercase;
+      font-weight: 500;
+      padding: 2px 6px;
+      border-radius: 3px;
+      background: var(--bg-tertiary);
+      color: var(--text-secondary);
+    }
+
+    .plugin-card {
+      border: 1px solid var(--border-secondary);
+      border-radius: 4px;
+      padding: 16px;
+      background: var(--bg-secondary);
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .plugin-card-name {
+      font-size: 15px;
+      font-weight: 500;
+      color: var(--text-primary);
+    }
+
+    .plugin-card-meta {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    .plugin-card-repo-link {
+      display: inline-flex;
+      align-items: center;
+      padding: 6px;
+      border-radius: 4px;
+      color: var(--text-secondary);
+      transition: background-color 0.2s, color 0.2s;
+      margin-left: auto;
+    }
+
+    .plugin-card-repo-link:hover {
+      background: var(--hover-bg);
+      color: var(--text-primary);
+    }
+
+    .plugin-card-repo-link svg {
+      width: 20px;
+      height: 20px;
+    }
+
     .capability-empty {
       padding: 24px 16px;
       text-align: center;
@@ -681,6 +781,16 @@
     </div>
 
     <div id="message-container"></div>
+
+    <div id="plugins-section" class="section" style="display: none;">
+      <div class="section-header">
+        <div class="section-title">Plugins</div>
+      </div>
+      <div class="section-description">
+        Installed from remote repositories. Skills and servers from these plugins appear in the sections below with "from &lt;plugin name&gt;".
+      </div>
+      <div id="plugins-list" class="capabilities-grid"></div>
+    </div>
 
     <div id="capabilities-section" class="section" style="display: none;">
       <div class="section-header">
@@ -822,9 +932,44 @@
 
         const { skills, tools, servers } = data.capabilities;
 
+        const resolvedPlugins = (data.capabilities && data.capabilities.resolvedPlugins) ? data.capabilities.resolvedPlugins : [];
+        const isGitHub = (url) => (url || '').indexOf('github.com') !== -1;
+
+        if (resolvedPlugins.length > 0) {
+          document.getElementById('plugins-section').style.display = 'block';
+          const pluginsList = document.getElementById('plugins-list');
+          pluginsList.innerHTML = '';
+          resolvedPlugins.forEach(plugin => {
+            const providerLabel = plugin.provider === 'cursor' ? 'Cursor' : plugin.provider === 'claude' ? 'Claude Code' : plugin.provider || '';
+            const repoUrl = plugin.repository || '#';
+            const useGitHub = isGitHub(repoUrl);
+            const iconSvg = useGitHub
+              ? '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>'
+              : '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M23.955 13.587l-1.342-4.135-2.664-8.189a.455.455 0 00-.867 0L16.418 9.45H7.582L4.919 1.263C4.783.84 4.261 0 3.7 0a.455.455 0 00-.432.263L.955 13.587a.924.924 0 00.331 1.023L12 21.054l10.715-6.444a.92.92 0 00.33-1.023"/></svg>';
+            const card = document.createElement('div');
+            card.className = 'plugin-card';
+            card.innerHTML = `
+              <div>
+                <div class="plugin-card-name">${escapeHtml(plugin.name)}</div>
+                <div class="plugin-card-meta">
+                  ${providerLabel ? `<span class="plugin-badge">${escapeHtml(providerLabel)}</span>` : ''}
+                  ${plugin.version ? `<span>${escapeHtml(plugin.version)}</span>` : ''}
+                </div>
+              </div>
+              <a href="${escapeHtml(repoUrl)}" target="_blank" rel="noopener noreferrer" class="plugin-card-repo-link" title="${escapeHtml(useGitHub ? 'Open on GitHub' : 'Open on GitLab')}">${iconSvg}</a>
+            `;
+            pluginsList.appendChild(card);
+          });
+        }
+
         // Show section if there are any capabilities
         if ((skills && skills.length > 0) || (tools && tools.length > 0) || (servers && servers.length > 0)) {
           document.getElementById('capabilities-section').style.display = 'block';
+        }
+
+        function fromPluginLine(sourcePlugin) {
+          if (!sourcePlugin || !sourcePlugin.name) return '';
+          return `<div class="capability-item-from">from ${escapeHtml(sourcePlugin.name)}</div>`;
         }
 
         // Display skills
@@ -842,6 +987,7 @@
                 <span class="capability-badge">${escapeHtml(skill.type)}</span>
               </div>
               ${skill.description ? `<div class="capability-item-description">${escapeHtml(skill.description)}</div>` : ''}
+              ${fromPluginLine(skill.sourcePlugin)}
             `;
             skillsList.appendChild(item);
           });
@@ -863,6 +1009,7 @@
               <div class="capability-item-meta">
                 <span class="capability-badge">${escapeHtml(tool.type)}</span>
               </div>
+              ${fromPluginLine(tool.sourcePlugin)}
             `;
             toolsList.appendChild(item);
           });
@@ -886,6 +1033,7 @@
                 ${server.url ? `<span>•</span><span style="font-family: 'Roboto Mono', monospace; font-size: 11px;">${escapeHtml(server.url)}</span>` : ''}
               </div>
               ${server.description ? `<div class="capability-item-description">${escapeHtml(server.description)}</div>` : ''}
+              ${fromPluginLine(server.sourcePlugin)}
             `;
             serversList.appendChild(item);
           });
@@ -960,8 +1108,27 @@
           input.placeholder = `Enter ${varName}`;
           input.required = true;
 
+          const wrapper = document.createElement('div');
+          wrapper.className = 'password-input-wrapper';
+
+          const toggleBtn = document.createElement('button');
+          toggleBtn.type = 'button';
+          toggleBtn.className = 'password-toggle-btn';
+          toggleBtn.setAttribute('aria-label', 'Show password');
+          toggleBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`;
+          toggleBtn.addEventListener('click', () => {
+            const isPassword = input.type === 'password';
+            input.type = isPassword ? 'text' : 'password';
+            toggleBtn.setAttribute('aria-label', isPassword ? 'Hide password' : 'Show password');
+            toggleBtn.innerHTML = isPassword
+              ? `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>`
+              : `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`;
+          });
+
+          wrapper.appendChild(input);
+          wrapper.appendChild(toggleBtn);
           formGroup.appendChild(label);
-          formGroup.appendChild(input);
+          formGroup.appendChild(wrapper);
           container.appendChild(formGroup);
         }
 
@@ -1102,7 +1269,7 @@
             </div>
             <div class="oauth-actions">
               ${server.isConnected 
-                ? `<button class="btn btn-danger" onclick="disconnectOAuth2('${escapeHtml(server.serverId)}')">Disconnect</button>`
+                ? `<button class="btn btn-danger" onclick="disconnectOAuth2('${escapeHtml(server.serverId)}', '${escapeHtml(server.displayName || server.serverId).replace(/'/g, '&#39;')}')">Disconnect</button>`
                 : `<button class="btn btn-success" onclick="connectOAuth2('${escapeHtml(server.serverId)}')">Connect</button>`
               }
             </div>
@@ -1135,8 +1302,9 @@
       }
     }
 
-    async function disconnectOAuth2(serverId) {
-      if (!confirm(`Disconnect from ${serverId}?`)) {
+    async function disconnectOAuth2(serverId, displayName) {
+      const name = displayName || serverId;
+      if (!confirm(`Disconnect from ${name}?`)) {
         return;
       }
 
@@ -1147,7 +1315,7 @@
         const data = await response.json();
 
         if (data.success) {
-          showMessage(`Disconnected from ${serverId}`, 'success');
+          showMessage(`Disconnected from ${name}`, 'success');
           loadOAuth2Servers();
         } else {
           showMessage('Failed to disconnect', 'error');
