@@ -17,6 +17,7 @@ import { VERSION } from '../../version';
 import { registerMCPServer } from '../utils/mcp-client-manager';
 import { parseEnvFile } from '../../shared/env-parser';
 import { extractAllVariables } from '../../shared/variable-resolver';
+import { resolvePlugins } from './plugin-install';
 
 const execAsync = promisify(exec);
 
@@ -335,6 +336,34 @@ export async function installCommand(envFile?: string | boolean): Promise<void> 
   
   // Register project
   db.upsertProject({ id: projectId, path: projectPath });
+
+  // Resolve plugins first so merged capabilities (including plugin servers/tools) are used for env and configure
+  let capabilitiesToUse = capabilities;
+  if (capabilities.plugins && capabilities.plugins.length > 0) {
+    console.log('\n🔌 Resolving plugins...');
+    const authFetch = createAuthenticatedFetch(db);
+    try {
+      const { mergedCapabilities, tempDirsToCleanup } = await resolvePlugins(
+        capabilities,
+        projectPath,
+        projectId,
+        authFetch,
+        db,
+        (platform, repoPath, auth, version?, ref?) =>
+          cloneRepository(platform, repoPath, auth, version, ref)
+      );
+      capabilitiesToUse = mergedCapabilities;
+      for (const dir of tempDirsToCleanup) {
+        try {
+          rmSync(dir, { recursive: true, force: true });
+        } catch {}
+      }
+    } catch (err: any) {
+      console.error(`✗ Plugin resolution failed: ${err.message}`);
+      db.close();
+      process.exit(1);
+    }
+  }
   
   // Handle .env file if provided
   if (envFile !== undefined) {
@@ -372,8 +401,8 @@ export async function installCommand(envFile?: string | boolean): Promise<void> 
       process.exit(1);
     }
     
-    // Extract all required variables from capabilities
-    const requiredVars = extractAllVariables(capabilities);
+    // Extract all required variables from capabilities (merged with plugins when present)
+    const requiredVars = extractAllVariables(capabilitiesToUse);
     console.log(`   Capabilities require ${requiredVars.length} variable(s): ${requiredVars.join(', ')}`);
     
     // Store the variables in the database
@@ -408,20 +437,20 @@ export async function installCommand(envFile?: string | boolean): Promise<void> 
   
   // Step 1: Clean up removed skills
   console.log('\n🧹 Checking for removed skills...');
-  await cleanupRemovedSkills(projectPath, projectId, capabilities.skills, capabilities.providers, db);
+  await cleanupRemovedSkills(projectPath, projectId, capabilitiesToUse.skills, capabilitiesToUse.providers, db);
   
-  // Step 2: Install skills (copy to client directories)
+  // Step 2: Install skills (copy to client directories) — only base skills from file; plugin skills already installed in resolvePlugins
   console.log('\n📦 Installing skills...');
-  await installSkills(projectPath, projectId, capabilities.skills, capabilities.providers, db, settings);
+  await installSkills(projectPath, projectId, capabilities.skills, capabilitiesToUse.providers, db, settings);
   
-  // Step 2: Submit capabilities to server
+  // Step 3: Submit capabilities to server (merged, including plugin-derived)
   console.log('\n🔧 Configuring tools...');
   const response = await fetch(`${serverStatus.url}/api/projects/${projectId}/configure`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify(capabilities),
+    body: JSON.stringify(capabilitiesToUse),
   });
   
   if (!response.ok) {
@@ -467,10 +496,10 @@ export async function installCommand(envFile?: string | boolean): Promise<void> 
     }
   }
   
-  // Step 3: Register MCP server with client configurations
+  // Step 4: Register MCP server with client configurations
   const mcpUrl = `${serverStatus.url}/${projectId}/mcp`;
   console.log('\n🔗 Registering MCP server with clients...');
-  await registerMCPServer(projectPath, projectId, mcpUrl, capabilities.providers);
+  await registerMCPServer(projectPath, projectId, mcpUrl, capabilitiesToUse.providers);
   
   db.close();
   

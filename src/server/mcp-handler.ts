@@ -470,6 +470,38 @@ export class CapaMCPServer {
   }
 
   /**
+   * Enrich capabilities with tools from plugin MCP servers (servers with sourcePlugin).
+   * Lists tools from each plugin server and adds them to capabilities.tools.
+   */
+  async enrichCapabilitiesWithPluginTools(capabilities: Capabilities): Promise<Capabilities> {
+    const pluginTools: Tool[] = [];
+    for (const server of capabilities.servers) {
+      if (!server.sourcePlugin || !server.def.cmd) continue;
+      try {
+        const remoteTools = await this.mcpProxy.listTools(server.id, server.def);
+        for (const t of remoteTools) {
+          const name = typeof t.name === 'string' ? t.name : '';
+          if (!name) continue;
+          const toolId = `${server.id}-${name}`;
+          pluginTools.push({
+            id: toolId,
+            type: 'mcp',
+            def: { server: `@${server.id}`, tool: name },
+            sourcePlugin: server.sourcePlugin,
+          });
+        }
+      } catch {
+        // Skip failed plugin servers
+      }
+    }
+    if (pluginTools.length === 0) return capabilities;
+    return {
+      ...capabilities,
+      tools: [...capabilities.tools, ...pluginTools],
+    };
+  }
+
+  /**
    * Validate tools and return validation results
    */
   async validateTools(capabilities: Capabilities): Promise<ToolValidationResult[]> {

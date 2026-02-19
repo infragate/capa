@@ -1102,7 +1102,7 @@
             </div>
             <div class="oauth-actions">
               ${server.isConnected 
-                ? `<button class="btn btn-danger" onclick="disconnectOAuth2('${escapeHtml(server.serverId)}')">Disconnect</button>`
+                ? `<button class="btn btn-danger" onclick="disconnectOAuth2('${escapeHtml(server.serverId)}', '${escapeHtml(server.displayName || server.serverId).replace(/'/g, '&#39;')}')">Disconnect</button>`
                 : `<button class="btn btn-success" onclick="connectOAuth2('${escapeHtml(server.serverId)}')">Connect</button>`
               }
             </div>
@@ -1135,8 +1135,9 @@
       }
     }
 
-    async function disconnectOAuth2(serverId) {
-      if (!confirm(`Disconnect from ${serverId}?`)) {
+    async function disconnectOAuth2(serverId, displayName) {
+      const name = displayName || serverId;
+      if (!confirm(`Disconnect from ${name}?`)) {
         return;
       }
 
@@ -1147,7 +1148,7 @@
         const data = await response.json();
 
         if (data.success) {
-          showMessage(`Disconnected from ${serverId}`, 'success');
+          showMessage(`Disconnected from ${name}`, 'success');
           loadOAuth2Servers();
         } else {
           showMessage('Failed to disconnect', 'error');
