@@ -8,7 +8,7 @@ import { parseCapabilitiesFile } from '../../shared/capabilities';
 import { ensureServer } from '../utils/server-manager';
 import { loadSettings, getDatabasePath } from '../../shared/config';
 import { CapaDatabase } from '../../db/database';
-import type { Skill } from '../../types/capabilities';
+import type { Capabilities, Skill } from '../../types/capabilities';
 import { createAuthenticatedFetch, AuthenticatedFetch } from '../../shared/authenticated-fetch';
 import { displayIntegrationPrompt, getIntegrationsUrl, parseRepoUrl } from '../utils/integration-helper';
 import { getAgentConfig, agents } from 'skills/src/agents';
@@ -20,6 +20,29 @@ import { extractAllVariables } from '../../shared/variable-resolver';
 import { resolvePlugins } from './plugin-install';
 
 const execAsync = promisify(exec);
+
+/**
+ * Get tool IDs that are not exposed to MCP clients because no skill requires them.
+ * In both expose-all and on-demand modes, only tools required by at least one skill
+ * (or from a plugin) are exposed.
+ */
+function getUnexposedToolIds(capabilities: Capabilities): string[] {
+  const requiredBySkills = new Set<string>();
+  for (const skill of capabilities.skills) {
+    if (skill.def?.requires) {
+      for (const toolId of skill.def.requires) {
+        requiredBySkills.add(toolId);
+      }
+    }
+  }
+  const pluginToolIds = new Set(
+    capabilities.tools.filter((t) => t.sourcePlugin).map((t) => t.id)
+  );
+  const exposed = new Set([...requiredBySkills, ...pluginToolIds]);
+  return capabilities.tools
+    .map((t) => t.id)
+    .filter((id) => !exposed.has(id));
+}
 
 /**
  * Open a URL in the user's default browser
@@ -494,6 +517,18 @@ export async function installCommand(envFile?: string | boolean): Promise<void> 
     } else if (pendingAuthTools.length === 0) {
       console.log(`\n✓ All ${result.toolValidation.length} tools validated successfully`);
     }
+  }
+
+  // Warn about tools not exposed (not required by any skill)
+  const unexposedToolIds = getUnexposedToolIds(capabilitiesToUse);
+  if (unexposedToolIds.length > 0) {
+    console.warn('\n⚠️  Tools not exposed to MCP clients:');
+    console.warn('   The following tools are not required by any skill, so they will not be exposed');
+    console.warn('   (in both expose-all and on-demand mode only skill-required tools are available):');
+    for (const id of unexposedToolIds.sort()) {
+      console.warn(`   • ${id}`);
+    }
+    console.warn('\n   To expose a tool, add it to the "requires" list of at least one skill in your capabilities.\n');
   }
   
   // Step 4: Register MCP server with client configurations
