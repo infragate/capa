@@ -155,6 +155,12 @@ export class MCPProxy {
     serverDefinition: MCPServerDefinition
   ): Promise<Client | null> {
     try {
+      // Skip connecting to OAuth2 servers until the user has connected (avoids 401 during install/validation)
+      if (serverDefinition.oauth2 && !this.oauth2Manager.isServerConnected(this.projectId, serverId)) {
+        this.logger.debug(`Skipping HTTP client for ${serverId} (OAuth2 required, not connected)`);
+        return null;
+      }
+
       this.logger.info(`Creating HTTP client for: ${serverId}`);
       this.logger.debug(`URL: ${serverDefinition.url}`);
 

@@ -6,6 +6,10 @@ export interface OAuth2Config {
   resourceServer: string;
   registrationEndpoint?: string;
   scope?: string;
+  /** Client ID when provided by plugin/MCP config (e.g. Slack app client_id) */
+  client_id?: string;
+  /** Callback port from plugin .mcp.json (Claude-style): use http://127.0.0.1:port/callback as redirect_uri */
+  callback_port?: number;
 }
 
 export interface OAuth2Token {

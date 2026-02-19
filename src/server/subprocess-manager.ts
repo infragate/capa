@@ -109,15 +109,16 @@ export class SubprocessManager {
     // Parse command
     const args = definition.args || [];
     const env = { ...process.env, ...definition.env };
+    const cwd = definition.cwd ?? projectPath;
 
-    this.logger.debug(`Working directory: ${projectPath}`);
+    this.logger.debug(`Working directory: ${cwd}`);
 
-    // Spawn process from the project directory
+    // Spawn process from the project directory (or plugin cwd when set)
     const proc = spawn(definition.cmd, args, {
       env,
       stdio: ['pipe', 'pipe', 'pipe'],
       detached: false,
-      cwd: projectPath,
+      cwd,
     });
 
     info.process = proc;

@@ -1,5 +1,5 @@
 import { writeFileSync } from 'fs';
-import { Server as HttpServer } from 'http';
+import { createServer, Server as HttpServer } from 'http';
 import { loadSettings, getDatabasePath, getPidFilePath, ensureCapaDir } from '../shared/config';
 import { CapaDatabase } from '../db/database';
 import { SessionManager } from './session-manager';
@@ -8,7 +8,7 @@ import { CapaMCPServer } from './mcp-handler';
 import { OAuth2Manager } from './oauth-manager';
 import { GitIntegrationManager } from './git-integration-manager';
 import { TokenRefreshScheduler } from './token-refresh-scheduler';
-import type { Capabilities } from '../types/capabilities';
+import type { Capabilities, MCPServer } from '../types/capabilities';
 import { extractAllVariables } from '../shared/variable-resolver';
 import { VERSION } from '../version';
 import { logger } from '../shared/logger';
@@ -29,6 +29,8 @@ class CapaServer {
   private httpServer!: HttpServer;
   private settings: any;
   private mcpServers = new Map<string, CapaMCPServer>();
+  /** Claude-style OAuth callback servers: port -> { server, idleTimer }; closed after completion or 5 min idle */
+  private oauthCallbackServers = new Map<number, { server: HttpServer; idleTimer: ReturnType<typeof setTimeout> }>();
   private startTime: number = Date.now();
   private logger = logger.child('CapaServer');
 
@@ -366,16 +368,20 @@ class CapaServer {
             id: s.id,
             type: s.type,
             description: s.def?.description || null,
+            sourcePlugin: s.sourcePlugin || null,
           })),
           tools: capabilities.tools.map(t => ({
             id: t.id,
             type: t.type,
+            sourcePlugin: t.sourcePlugin || null,
           })),
           servers: capabilities.servers.map(s => ({
             id: s.id,
             type: s.type,
             url: s.def?.url || null,
+            sourcePlugin: s.sourcePlugin || null,
           })),
+          resolvedPlugins: capabilities.resolvedPlugins || null,
         } : null,
       };
 
@@ -405,12 +411,35 @@ class CapaServer {
       // Store capabilities
       this.sessionManager.setProjectCapabilities(projectId, capabilities);
 
+      // Enrich with tools from plugin MCP servers (list tools from each server with sourcePlugin)
+      let capabilitiesToUse = capabilities;
+      const pluginServers = capabilities.servers.filter((s) => s.sourcePlugin);
+      if (pluginServers.length > 0) {
+        try {
+          const project = this.db.getProject(projectId);
+          if (project) {
+            const tempMcpServer = new CapaMCPServer(
+              this.db,
+              this.sessionManager,
+              this.subprocessManager,
+              projectId,
+              project.path
+            );
+            capabilitiesToUse = await tempMcpServer.enrichCapabilitiesWithPluginTools(capabilities);
+            this.sessionManager.setProjectCapabilities(projectId, capabilitiesToUse);
+          }
+        } catch (error: any) {
+          apiLogger.warn(`Plugin tool discovery failed: ${error.message}`);
+        }
+      }
+
       // Detect OAuth2 requirements for HTTP-based MCP servers
       apiLogger.info('Detecting OAuth2 requirements...');
       const oauth2Servers: any[] = [];
-      for (const server of capabilities.servers) {
+      for (const server of capabilitiesToUse.servers) {
         if (server.def.url) {
           apiLogger.debug(`Checking server: ${server.id}`);
+          const existingOAuth = server.def.oauth2;
           const oauth2Config = await this.oauth2Manager.detectOAuth2Requirement(server.def.url);
           if (oauth2Config) {
             apiLogger.debug(`OAuth2 required for ${server.id}`);
@@ -426,12 +455,23 @@ class CapaServer {
               }
             }
             
-            // Store OAuth2 config in server definition
+            // Merge: preserve client_id and callback_port from plugin/MCP config (e.g. Slack .mcp.json)
+            const embeddedClientId =
+              existingOAuth?.client_id ??
+              (existingOAuth as any)?.clientId ??
+              (existingOAuth?.oauth as any)?.clientId;
+            if (embeddedClientId) {
+              oauth2Config.client_id = embeddedClientId;
+            }
+            const callbackPort = (existingOAuth as any)?.callback_port ?? (existingOAuth as any)?.callbackPort;
+            if (typeof callbackPort === 'number' && callbackPort > 0) {
+              oauth2Config.callback_port = callbackPort;
+            }
             server.def.oauth2 = oauth2Config;
             oauth2Servers.push({
               serverId: server.id,
               serverUrl: server.def.url,
-              displayName: server.id,
+              displayName: server.displayName ?? server.id,
               isConnected: isConnected,
             });
           }
@@ -440,11 +480,11 @@ class CapaServer {
 
       // Update stored capabilities with OAuth2 configs
       if (oauth2Servers.length > 0) {
-        this.sessionManager.setProjectCapabilities(projectId, capabilities);
+        this.sessionManager.setProjectCapabilities(projectId, capabilitiesToUse);
       }
 
       // Extract all required variables
-      const requiredVars = extractAllVariables(capabilities);
+      const requiredVars = extractAllVariables(capabilitiesToUse);
       apiLogger.info(`Required variables: ${requiredVars.join(', ')}`);
 
       // Check if all variables are set
@@ -466,7 +506,7 @@ class CapaServer {
         // Create a temporary MCP server instance for validation
         const mcpServer = this.mcpServers.get(projectId);
         if (mcpServer) {
-          toolValidationResults = await mcpServer.validateTools(capabilities);
+          toolValidationResults = await mcpServer.validateTools(capabilitiesToUse);
         } else {
           // Create temporary instance just for validation
           const project = this.db.getProject(projectId);
@@ -478,7 +518,7 @@ class CapaServer {
               projectId,
               project.path
             );
-            toolValidationResults = await tempMcpServer.validateTools(capabilities);
+            toolValidationResults = await tempMcpServer.validateTools(capabilitiesToUse);
           }
         }
         
@@ -622,9 +662,25 @@ class CapaServer {
       );
     }
 
+    // Ensure URL-based servers that require OAuth have def.oauth2 set (on-demand detection)
+    let capabilitiesUpdated = false;
+    for (const server of capabilities.servers) {
+      if (server.def.url && !server.def.oauth2) {
+        const oauth2Config = await this.oauth2Manager.detectOAuth2Requirement(server.def.url);
+        if (oauth2Config) {
+          apiLogger.debug(`OAuth2 detected for ${server.id} (on-demand)`);
+          server.def.oauth2 = oauth2Config;
+          capabilitiesUpdated = true;
+        }
+      }
+    }
+    if (capabilitiesUpdated) {
+      this.sessionManager.setProjectCapabilities(projectId, capabilities);
+    }
+
     const oauth2Servers = capabilities.servers
       .filter((s: any) => s.def.oauth2)
-      .map((s: any) => {
+      .map((s: MCPServer) => {
         const isConnected = this.oauth2Manager.isServerConnected(projectId, s.id);
         let expiresAt: number | undefined;
         
@@ -636,7 +692,7 @@ class CapaServer {
         return {
           serverId: s.id,
           serverUrl: s.def.url,
-          displayName: s.id,
+          displayName: s.displayName ?? s.id,
           isConnected: isConnected,
           expiresAt: expiresAt,
           oauth2Config: s.def.oauth2,
@@ -647,6 +703,110 @@ class CapaServer {
       JSON.stringify({ servers: oauth2Servers }),
       { headers: { 'Content-Type': 'application/json' } }
     );
+  }
+
+  /** Close and remove the callback server for a port (after completion or idle timeout). */
+  private closeOAuthCallbackServer(port: number): void {
+    const entry = this.oauthCallbackServers.get(port);
+    if (!entry) return;
+    clearTimeout(entry.idleTimer);
+    entry.server.close();
+    this.oauthCallbackServers.delete(port);
+    this.logger.debug(`OAuth callback server on port ${port} closed`);
+  }
+
+  /**
+   * Ensure a Claude-style OAuth callback server is listening on the given port.
+   * Serves GET /callback?code=...&state=... and redirects to main UI after token exchange.
+   * Closed after completion or after 5 minutes idle. Used when a plugin provides client_id + callbackPort in .mcp.json (e.g. Slack).
+   */
+  private ensureOAuthCallbackServer(port: number): void {
+    if (this.oauthCallbackServers.has(port)) return;
+    const self = this;
+    const IDLE_MS = 5 * 60 * 1000; // 5 minutes
+    const mainBase = `http://${this.settings.server.host}:${this.settings.server.port}`;
+    const server = createServer((req, res) => {
+      if (req.method !== 'GET' || !req.url) {
+        res.writeHead(405);
+        res.end();
+        return;
+      }
+      const reqUrl = new URL(req.url, `http://127.0.0.1:${port}`);
+      if (reqUrl.pathname !== '/callback') {
+        res.writeHead(404);
+        res.end();
+        return;
+      }
+      // Clear idle timer and close server after we send the response (clean up after completion)
+      const entry = self.oauthCallbackServers.get(port);
+      if (entry) clearTimeout(entry.idleTimer);
+      const closeWhenDone = () => {
+        res.on('finish', () => self.closeOAuthCallbackServer(port));
+      };
+
+      const code = reqUrl.searchParams.get('code');
+      const state = reqUrl.searchParams.get('state');
+      const error = reqUrl.searchParams.get('error');
+      const apiLogger = self.logger.child('API');
+
+      const redirectToUi = (projectId: string | undefined, success: boolean, message?: string) => {
+        closeWhenDone(); // register before sending so 'finish' fires reliably
+        const q = new URLSearchParams();
+        if (projectId) q.set('project', projectId);
+        q.set(success ? 'oauth_success' : 'oauth_error', message ?? (success ? 'true' : 'Unknown error'));
+        const loc = `${mainBase}/ui?${q.toString()}`;
+        res.writeHead(302, { Location: loc });
+        res.end();
+      };
+
+      if (error) {
+        apiLogger.error(`OAuth2 callback error: ${error}`);
+        let projectId: string | undefined;
+        if (state) {
+          const flow = self.db.getFlowState(state);
+          projectId = flow?.project_id;
+        }
+        redirectToUi(projectId, false, error);
+        return;
+      }
+
+      if (!code || !state) {
+        redirectToUi(undefined, false, 'Missing code or state');
+        return;
+      }
+
+      apiLogger.info('OAuth2 callback (Claude-style) received');
+      self.oauth2Manager.handleCallback(code, state).then((result) => {
+        if (!result.success) {
+          apiLogger.failure(`Callback failed: ${result.error}`);
+          redirectToUi(result.projectId, false, result.error ?? 'Token exchange failed');
+          return;
+        }
+        apiLogger.success(`OAuth2 flow completed for server: ${result.serverId}`);
+        closeWhenDone(); // register before sending so 'finish' fires reliably
+        const q = new URLSearchParams();
+        if (result.projectId) q.set('project', result.projectId);
+        q.set('oauth_success', 'true');
+        if (result.serverId) q.set('server', result.serverId);
+        res.writeHead(302, { Location: `${mainBase}/ui?${q.toString()}` });
+        res.end();
+      }).catch((err: any) => {
+        apiLogger.failure(`Callback error: ${err.message}`);
+        redirectToUi(undefined, false, err.message ?? 'Token exchange failed');
+      });
+    });
+    server.listen(port, '127.0.0.1', () => {
+      self.logger.info(`OAuth callback server (Claude-style) listening on http://localhost:${port}/callback`);
+    });
+    server.on('error', (err: any) => {
+      self.logger.failure(`OAuth callback server on port ${port}: ${err.message}`);
+      self.oauthCallbackServers.delete(port);
+    });
+    const idleTimer = setTimeout(() => {
+      self.logger.debug(`OAuth callback server on port ${port} idle for 5 min, closing`);
+      self.closeOAuthCallbackServer(port);
+    }, IDLE_MS);
+    this.oauthCallbackServers.set(port, { server, idleTimer });
   }
 
   private async handleOAuth2Start(projectId: string, request: Request): Promise<Response> {
@@ -680,8 +840,21 @@ class CapaServer {
         );
       }
 
-      // Generate authorization URL
-      const redirectUri = `http://${this.settings.server.host}:${this.settings.server.port}/api/projects/${projectId}/oauth/callback`;
+      const oauth2 = server.def.oauth2 as { client_id?: string; callback_port?: number; registrationEndpoint?: string; [k: string]: any };
+      // Claude-style only when dynamic client registration is not supported and .mcp.json provides client_id + callbackPort (e.g. Slack)
+      const useClaudeCallback =
+        oauth2.client_id &&
+        typeof oauth2.callback_port === 'number' &&
+        oauth2.callback_port > 0 &&
+        !oauth2.registrationEndpoint;
+      const redirectUri = useClaudeCallback
+        ? `http://localhost:${oauth2.callback_port}/callback`
+        : `http://${this.settings.server.host}:${this.settings.server.port}/api/projects/${projectId}/oauth/callback`;
+
+      if (useClaudeCallback && oauth2.callback_port != null) {
+        this.ensureOAuthCallbackServer(oauth2.callback_port);
+      }
+
       const { url: authUrl, state } = await this.oauth2Manager.generateAuthorizationUrl(
         projectId,
         serverId,
@@ -1227,6 +1400,14 @@ class CapaServer {
 
     // Stop all subprocesses
     this.subprocessManager.stopAll();
+
+    // Close Claude-style OAuth callback servers
+    for (const [port, entry] of this.oauthCallbackServers) {
+      clearTimeout(entry.idleTimer);
+      entry.server.close();
+      this.logger.debug(`Closed OAuth callback server on port ${port}`);
+    }
+    this.oauthCallbackServers.clear();
 
     // Close database
     this.db.close();
