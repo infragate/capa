@@ -1,6 +1,9 @@
 // Capabilities file types
 
+import type { Plugin, SourcePlugin, ResolvedPluginInfo } from './plugin';
+
 export type CapabilitiesFormat = 'json' | 'yaml';
+export type { Plugin, SourcePlugin, ResolvedPluginInfo } from './plugin';
 
 /**
  * Tool exposure modes for MCP clients
@@ -25,6 +28,9 @@ export interface Capabilities {
   skills: Skill[];
   servers: MCPServer[];
   tools: Tool[];
+  plugins?: Plugin[];
+  /** Resolved plugin metadata (name, version, provider, repository) for display */
+  resolvedPlugins?: ResolvedPluginInfo[];
   options?: CapabilitiesOptions;
 }
 
@@ -32,6 +38,7 @@ export interface Skill {
   id: string;
   type: 'inline' | 'remote' | 'github' | 'gitlab' | 'local';
   def: SkillDefinition;
+  sourcePlugin?: SourcePlugin;
 }
 
 export interface SkillDefinition {
@@ -57,6 +64,9 @@ export interface MCPServer {
   id: string;
   type: 'mcp';
   def: MCPServerDefinition;
+  sourcePlugin?: SourcePlugin;
+  /** User-facing name (e.g. "slack-server" for plugin servers); falls back to id if unset */
+  displayName?: string;
 }
 
 export interface MCPServerDefinition {
@@ -67,6 +77,8 @@ export interface MCPServerDefinition {
   cmd?: string;
   args?: string[];
   env?: Record<string, string>;
+  /** Working directory for subprocess (e.g. plugin root) */
+  cwd?: string;
   // OAuth2 config (auto-detected, not user-specified)
   oauth2?: any; // OAuth2Config from types/oauth.ts
 }
@@ -75,6 +87,7 @@ export interface Tool {
   id: string;
   type: 'mcp' | 'command';
   def: ToolMCPDefinition | ToolCommandDefinition;
+  sourcePlugin?: SourcePlugin;
 }
 
 export interface ToolMCPDefinition {
