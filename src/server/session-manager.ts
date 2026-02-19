@@ -102,7 +102,7 @@ export class SessionManager {
     }
 
     // Get capabilities for this project
-    const capabilities = this.projectCapabilities.get(session.projectId);
+    const capabilities = this.getProjectCapabilities(session.projectId);
     if (!capabilities) {
       throw new Error(`No capabilities configured for project: ${session.projectId}`);
     }
@@ -134,7 +134,7 @@ export class SessionManager {
    * Get tools required by skills
    */
   private getToolsForSkills(projectId: string, skillIds: string[]): string[] {
-    const capabilities = this.projectCapabilities.get(projectId);
+    const capabilities = this.getProjectCapabilities(projectId);
     if (!capabilities) {
       return [];
     }
@@ -158,7 +158,7 @@ export class SessionManager {
    * Used for 'expose-all' mode to show all available tools upfront.
    */
   getAllRequiredToolsForProject(projectId: string): string[] {
-    const capabilities = this.projectCapabilities.get(projectId);
+    const capabilities = this.getProjectCapabilities(projectId);
     if (!capabilities) {
       return [];
     }
@@ -186,7 +186,7 @@ export class SessionManager {
    * Get tool ids for all tools that came from plugins (sourcePlugin set).
    */
   getPluginToolIds(projectId: string): string[] {
-    const capabilities = this.projectCapabilities.get(projectId);
+    const capabilities = this.getProjectCapabilities(projectId);
     if (!capabilities) return [];
     return capabilities.tools.filter((t) => t.sourcePlugin).map((t) => t.id);
   }
@@ -198,13 +198,24 @@ export class SessionManager {
     this.logger.info(`Setting capabilities for project: ${projectId}`);
     this.logger.debug(`Skills: ${capabilities.skills.length}, Tools: ${capabilities.tools.length}, Servers: ${capabilities.servers.length}`);
     this.projectCapabilities.set(projectId, capabilities);
+    this.db.setProjectCapabilities(projectId, JSON.stringify(capabilities));
   }
 
   /**
-   * Get capabilities for a project
+   * Get capabilities for a project (loads from DB on cache miss, e.g. after server restart)
    */
   getProjectCapabilities(projectId: string): Capabilities | null {
-    return this.projectCapabilities.get(projectId) || null;
+    const cached = this.projectCapabilities.get(projectId);
+    if (cached) {
+      return cached;
+    }
+    const raw = this.db.getProjectCapabilities(projectId);
+    if (!raw) {
+      return null;
+    }
+    const capabilities = JSON.parse(raw) as Capabilities;
+    this.projectCapabilities.set(projectId, capabilities);
+    return capabilities;
   }
 
   /**
@@ -218,7 +229,7 @@ export class SessionManager {
    * Get tool definition
    */
   getToolDefinition(projectId: string, toolId: string): Tool | null {
-    const capabilities = this.projectCapabilities.get(projectId);
+    const capabilities = this.getProjectCapabilities(projectId);
     if (!capabilities) {
       return null;
     }

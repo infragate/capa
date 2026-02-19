@@ -135,6 +135,15 @@ export class CapaDatabase {
         UNIQUE(platform, host)
       )
     `);
+
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS project_capabilities (
+        project_id TEXT PRIMARY KEY,
+        capabilities_json TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+      )
+    `);
   }
 
   // Project operations
@@ -165,6 +174,23 @@ export class CapaDatabase {
 
   getAllProjects(): Project[] {
     return this.db.query('SELECT * FROM projects ORDER BY updated_at DESC').all() as Project[];
+  }
+
+  setProjectCapabilities(projectId: string, capabilitiesJson: string): void {
+    const now = Date.now();
+    this.db.run(
+      `INSERT INTO project_capabilities (project_id, capabilities_json, updated_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT(project_id) DO UPDATE SET capabilities_json = ?, updated_at = ?`,
+      [projectId, capabilitiesJson, now, capabilitiesJson, now]
+    );
+  }
+
+  getProjectCapabilities(projectId: string): string | null {
+    const row = this.db.query(
+      'SELECT capabilities_json FROM project_capabilities WHERE project_id = ?'
+    ).get(projectId) as { capabilities_json: string } | null;
+    return row?.capabilities_json ?? null;
   }
 
   // Variable operations
