@@ -129,22 +129,3 @@ class Logger {
 
 // Default logger instance
 export const logger = new Logger();
-
-// Helper to get log level from environment
-export function getLogLevelFromEnv(): LogLevel {
-  const level = process.env.LOG_LEVEL?.toUpperCase();
-  switch (level) {
-    case 'DEBUG':
-      return LogLevel.DEBUG;
-    case 'INFO':
-      return LogLevel.INFO;
-    case 'WARN':
-      return LogLevel.WARN;
-    case 'ERROR':
-      return LogLevel.ERROR;
-    case 'SILENT':
-      return LogLevel.SILENT;
-    default:
-      return LogLevel.INFO;
-  }
-}
