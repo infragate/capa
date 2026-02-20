@@ -5,8 +5,6 @@
  * to set up Git integrations when accessing private repositories.
  */
 
-import type { CapaDatabase } from '../../db/database';
-
 /**
  * Extract platform and repo info from a GitHub or GitLab URL
  */
@@ -56,38 +54,6 @@ export function parseRepoUrl(url: string): {
 }
 
 /**
- * Check if a repo URL requires authentication
- * @param url Repository URL
- * @param db Database instance to check for existing integrations
- * @returns true if authentication is needed but not configured
- */
-export async function requiresAuthentication(url: string, db: CapaDatabase): Promise<boolean> {
-  const parsed = parseRepoUrl(url);
-  if (!parsed) {
-    return false;
-  }
-
-  const { platform, host } = parsed;
-  
-  // Check if we have authentication configured
-  if (platform) {
-    const integration = db.getGitIntegration(platform, host);
-    if (integration) {
-      return false; // We have auth, no need to prompt
-    }
-  }
-
-  // Try to fetch without auth first
-  try {
-    const response = await fetch(url, { method: 'HEAD' });
-    return response.status === 401 || response.status === 403 || response.status === 404;
-  } catch (error) {
-    // Network error, can't determine
-    return false;
-  }
-}
-
-/**
  * Get the URL for setting up integrations
  * @param serverHost The CAPA server host
  * @param serverPort The CAPA server port
@@ -120,12 +86,3 @@ export function displayIntegrationPrompt(platform: string, integrationsUrl: stri
   console.log('');
 }
 
-/**
- * Display a success message after setting up authentication
- */
-export function displayIntegrationSuccess(platform: string): void {
-  console.log('');
-  console.log(`✓ Successfully connected to ${platform}`);
-  console.log('  You can now access private repositories.');
-  console.log('');
-}

@@ -149,14 +149,6 @@ export async function parseSkillSource(source: string): Promise<ParsedSkillSourc
   throw new Error(`Unable to parse skill source: ${source}\n\nSupported formats:\n  - GitHub with skill: owner/repo@skill-name\n  - GitHub with version: owner/repo@skill-name:1.2.1\n  - GitHub with commit: owner/repo@skill-name#abc123\n  - GitHub skill URL: https://github.com/owner/repo/tree/main/skills/skill-name\n  - GitLab with skill: gitlab:owner/repo@skill-name\n  - GitLab with version: gitlab:owner/repo@skill-name:1.2.1\n  - GitLab with commit: gitlab:owner/repo@skill-name#abc123\n  - GitLab skill URL: https://gitlab.com/owner/repo/-/tree/main/skills/skill-name\n  - Local path: ./my-local-skills (directory containing SKILL.md)\n  - Remote SKILL.md URL: https://example.com/path/to/SKILL.md\n\nVersion/commit examples:\n  - Pin to version: capa add owner/repo@skill:v1.2.3\n  - Pin to commit: capa add gitlab:group/repo@skill#abc123def\n  - Latest (default): capa add owner/repo@skill`);
 }
 
-/**
- * Extract a skill ID from a GitHub repository path
- */
-function extractIdFromGithubRepo(repo: string): string {
-  const parts = repo.split('/');
-  return parts[parts.length - 1].replace(/\.git$/, '');
-}
-
 export async function addCommand(source: string, options: { id?: string }): Promise<void> {
   const projectPath = process.cwd();
   
