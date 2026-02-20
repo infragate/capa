@@ -1041,7 +1041,6 @@ class CapaServer {
       const accessToken = url.searchParams.get('access_token');
       const refreshToken = url.searchParams.get('refresh_token');
       const expiresIn = url.searchParams.get('expires_in');
-      const provider = url.searchParams.get('provider');
       const error = url.searchParams.get('error');
 
       if (error) {
@@ -1128,7 +1127,6 @@ class CapaServer {
       const accessToken = url.searchParams.get('access_token');
       const refreshToken = url.searchParams.get('refresh_token');
       const expiresIn = url.searchParams.get('expires_in');
-      const provider = url.searchParams.get('provider');
       const error = url.searchParams.get('error');
 
       if (error) {
