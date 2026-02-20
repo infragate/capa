@@ -1,6 +1,5 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
-import { homedir } from 'os';
 
 /**
  * Configuration for different MCP clients
