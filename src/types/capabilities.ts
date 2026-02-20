@@ -13,6 +13,28 @@ export type { Plugin, SourcePlugin, ResolvedPluginInfo } from './plugin';
 export type ToolExposureMode = 'expose-all' | 'on-demand';
 
 /**
+ * Security options for skill installation.
+ * Omit a property (or comment it out) to disable that feature. Only present properties are applied.
+ */
+export interface SecurityOptions {
+  /**
+   * Block skill installation if any file contains these phrases.
+   * Configure inline as string array or via file reference.
+   * Omit or comment out to disable.
+   */
+  blockedPhrases?: string[] | { file: string };
+  /**
+   * Extra regex character class content for characters to allow BEYOND the hardcoded baseline.
+   * The baseline (tab, LF, CR, all printable ASCII U+0020–U+007E) is always preserved, so
+   * markdown-critical characters like `-`, `:`, `"`, `'`, and newlines are never stripped.
+   * Use this to permit additional Unicode ranges (e.g. `[\\u00A0-\\uFFFF]` for all Unicode).
+   * Set to an empty string `""` to apply baseline-only sanitization (strips non-ASCII Unicode).
+   * Omit or comment out to disable sanitization entirely.
+   */
+  allowedCharacters?: string;
+}
+
+/**
  * Configuration options for capabilities behavior
  */
 export interface CapabilitiesOptions {
@@ -21,6 +43,10 @@ export interface CapabilitiesOptions {
    * @default 'expose-all'
    */
   toolExposure?: ToolExposureMode;
+  /**
+   * Security options for skill installation (blocked phrases, character sanitization)
+   */
+  security?: SecurityOptions;
 }
 
 export interface Capabilities {

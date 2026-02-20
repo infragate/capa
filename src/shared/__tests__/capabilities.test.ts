@@ -49,6 +49,14 @@ describe('capabilities', () => {
       expect(capabilities.tools.some(t => t.id === 'capa_install')).toBe(true);
       expect(capabilities.tools.some(t => t.id === 'find_skills')).toBe(true);
     });
+
+    it('should include security options template', () => {
+      const capabilities = createDefaultCapabilities();
+      
+      expect(capabilities.options?.security).toBeDefined();
+      expect(Array.isArray(capabilities.options?.security?.blockedPhrases)).toBe(true);
+      expect(capabilities.options?.security?.allowedCharacters).toBeDefined();
+    });
   });
 
   describe('writeCapabilitiesFile and parseCapabilitiesFile', () => {

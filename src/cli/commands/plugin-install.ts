@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync, cpSync } from 'fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync, cpSync, statSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 import type { Capabilities, Skill, MCPServer, SourcePlugin, ResolvedPluginInfo } from '../../types/capabilities';
@@ -8,6 +8,16 @@ import { parsePluginUri, getRepoPath, getPluginInstallId } from '../../shared/pl
 import { detectAndParseManifest, resolvePluginServerDef } from '../../shared/plugin-manifest';
 import { getAgentConfig } from 'skills/src/agents';
 import type { AgentType } from 'skills/src/types';
+import {
+  loadBlockedPhrases,
+  checkBlockedPhrases,
+  sanitizeContent,
+  getAllowedCharacters,
+  isTextFile,
+  isBlockedPhrasesEnabled,
+  isCharacterSanitizationEnabled,
+  BlockedPhraseError,
+} from '../../shared/skill-security';
 
 /** Base under system temp for extracted plugin content (MCP cwd). Per-project so projects don't clash. */
 function getPluginsTempBase(projectId: string): string {
@@ -41,6 +51,68 @@ function copyPluginToStable(tempDir: string, pluginStablePath: string): void {
   }
 }
 
+/**
+ * Copy a skill directory with security checks: blocked phrases and character sanitization.
+ * Throws BlockedPhraseError if any text file contains a blocked phrase.
+ * @param allowedCharacters - null to skip sanitization
+ */
+function copySkillDirWithSecurity(
+  srcSkillDir: string,
+  destSkillDir: string,
+  skillId: string,
+  blockedPhrases: string[],
+  allowedCharacters: string | null,
+  pluginName?: string
+): void {
+  mkdirSync(destSkillDir, { recursive: true });
+
+  function processEntry(relPath: string): void {
+    const srcPath = join(srcSkillDir, relPath);
+    const destPath = join(destSkillDir, relPath);
+    const stat = statSync(srcPath);
+
+    if (stat.isDirectory()) {
+      mkdirSync(destPath, { recursive: true });
+      for (const e of readdirSync(srcPath, { withFileTypes: true })) {
+        processEntry(join(relPath, e.name).replace(/\\/g, '/'));
+      }
+    } else {
+      mkdirSync(resolve(destPath, '..'), { recursive: true });
+      const filename = relPath.split(/[/\\]/).pop() ?? '';
+
+      if (isTextFile(filename)) {
+        let content: string;
+        try {
+          content = readFileSync(srcPath, 'utf-8');
+        } catch {
+          writeFileSync(destPath, readFileSync(srcPath));
+          return;
+        }
+        const check = checkBlockedPhrases(content, blockedPhrases);
+        if (check.blocked) {
+          throw new BlockedPhraseError(
+            `Skill "${skillId}" blocked: file "${relPath}" contains forbidden phrase "${check.phrase}"`,
+            skillId,
+            relPath,
+            check.phrase!,
+            pluginName
+          );
+        }
+        const output = allowedCharacters !== null
+          ? sanitizeContent(content, allowedCharacters)
+          : content;
+        writeFileSync(destPath, output, 'utf-8');
+      } else {
+        writeFileSync(destPath, readFileSync(srcPath));
+      }
+    }
+  }
+
+  for (const e of readdirSync(srcSkillDir, { withFileTypes: true })) {
+    processEntry(e.name);
+  }
+}
+
 export interface ResolvePluginsResult {
   mergedCapabilities: Capabilities;
   tempDirsToCleanup: string[];
@@ -49,6 +121,7 @@ export interface ResolvePluginsResult {
 /**
  * Resolve all plugins from capabilities: clone, unpack, parse manifest, install skills and build merged capabilities.
  * Caller is responsible for cleaning up tempDirsToCleanup.
+ * @param capabilitiesFilePath - Path to capabilities file (for resolving blocked phrases file)
  */
 export async function resolvePlugins(
   capabilities: Capabilities,
@@ -62,7 +135,8 @@ export async function resolvePlugins(
     authFetch: AuthenticatedFetch,
     version?: string,
     ref?: string
-  ) => Promise<string>
+  ) => Promise<string>,
+  capabilitiesFilePath: string
 ): Promise<ResolvePluginsResult> {
   const plugins = capabilities.plugins ?? [];
   const mergedSkills: Skill[] = Array.isArray(capabilities.skills) ? [...capabilities.skills] : [];
@@ -142,6 +216,13 @@ export async function resolvePlugins(
       repository,
     });
 
+    const security = capabilities.options?.security;
+    const blockPhrasesEnabled = isBlockedPhrasesEnabled(security);
+    const sanitizeEnabled = isCharacterSanitizationEnabled(security);
+    const hasSecurity = blockPhrasesEnabled || sanitizeEnabled;
+    const blockedPhrases = blockPhrasesEnabled ? loadBlockedPhrases(security, capabilitiesFilePath) : [];
+    const allowedCharacters = sanitizeEnabled ? getAllowedCharacters(security) : null;
+
     for (const entry of manifest.skillEntries) {
       const srcSkillDir = join(pluginStablePath, entry.relativePath);
       if (!existsSync(join(srcSkillDir, 'SKILL.md'))) continue;
@@ -154,13 +235,27 @@ export async function resolvePlugins(
         try {
           if (existsSync(destSkillDir)) rmSync(destSkillDir, { recursive: true, force: true });
           mkdirSync(resolve(destSkillDir, '..'), { recursive: true });
-          try {
-            cpSync(srcSkillDir, destSkillDir, { recursive: true });
-          } catch {
-            copyDirRecursive(srcSkillDir, destSkillDir);
+          if (hasSecurity) {
+            copySkillDirWithSecurity(
+              srcSkillDir,
+              destSkillDir,
+              entry.id,
+              blockedPhrases,
+              allowedCharacters,
+              manifest.name
+            );
+          } else {
+            try {
+              cpSync(srcSkillDir, destSkillDir, { recursive: true });
+            } catch {
+              copyDirRecursive(srcSkillDir, destSkillDir);
+            }
           }
           db.addManagedFile(projectId, destSkillDir);
         } catch (err: any) {
+          if (err instanceof BlockedPhraseError) {
+            throw err;
+          }
           console.warn(`  ⚠ Failed to install skill ${entry.id} for ${client}: ${err.message}`);
         }
       }
