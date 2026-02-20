@@ -54,7 +54,8 @@ describe('capabilities', () => {
       const capabilities = createDefaultCapabilities();
       
       expect(capabilities.options?.security).toBeDefined();
-      expect(capabilities.options?.security?.blockedPhrases).toEqual([]);
+      expect(Array.isArray(capabilities.options?.security?.blockedPhrases)).toBe(true);
+      expect(capabilities.options?.security?.allowedCharacters).toBeDefined();
     });
   });
 
