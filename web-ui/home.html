@@ -100,6 +100,7 @@
       color: var(--text-secondary);
       font-size: 13px;
       transition: background-color 0.2s, border-color 0.2s;
+      margin-left: 16px;
     }
 
     .theme-toggle:hover {
@@ -610,6 +611,12 @@
       }
     }
 
+    function projectDisplayName(path, fallback) {
+      if (!path) return fallback || 'Unknown';
+      const parts = path.replace(/[/\\]$/, '').split(/[/\\]/);
+      return parts.filter(Boolean).pop() || fallback || 'Unknown';
+    }
+
     function createProjectRow(project) {
       const row = document.createElement('a');
       row.className = 'project-row';
@@ -617,10 +624,11 @@
 
       const lastUpdated = new Date(project.updated_at);
       const formattedDate = formatDate(lastUpdated);
+      const displayName = projectDisplayName(project.path, project.id);
 
       row.innerHTML = `
         <div class="project-info">
-          <div class="project-name">${escapeHtml(project.id)}</div>
+          <div class="project-name">${escapeHtml(displayName)}</div>
           <div class="project-path" title="${escapeHtml(project.path)}">${escapeHtml(project.path)}</div>
         </div>
         <div class="project-stat">${project.skills_count}</div>

@@ -19,7 +19,11 @@ export function createDefaultCapabilities(): Capabilities {
   return {
     providers: ['cursor', 'claude-code'],
     options: {
-      toolExposure: 'expose-all'
+      toolExposure: 'expose-all',
+      security: {
+        blockedPhrases: ["eval(", "exec(", "execSync("],
+        allowedCharacters: "[\\u00A0-\\uFFFF]"  // allow all printable Unicode; strips only control chars
+      }
     },
     skills: [
       {

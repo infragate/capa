@@ -1,6 +1,6 @@
 ---
 name: capabilities-manager
-description: Guide for managing capabilities, skills, tools, and MCP servers with capa. Use this skill when you need to modify the capabilities.yaml or capabilities.json file.
+description: Guide for managing capabilities, skills, tools, and MCP servers with capa. Use this skill when you need to modify the capabilities.yaml or capabilities.json file. Includes security options (blocked phrases, character sanitization).
 ---
 
 # Capabilities Manager
@@ -18,6 +18,7 @@ Use this skill when:
 - User wants to find available skills from the skills.sh ecosystem
 - User needs to manage the CAPA server (start/stop/restart/status)
 - User wants to understand tool exposure modes (on-demand vs expose-all)
+- User needs to configure security (blocked phrases, character sanitization)
 
 ## Core Concepts
 
@@ -25,7 +26,7 @@ Use this skill when:
 The `capabilities.yaml` (or `capabilities.json`) file defines everything an agent can do. It contains five main sections:
 
 1. **providers**: List of MCP clients where skills should be installed (e.g., `cursor`, `claude-code`)
-2. **options**: Configuration for tool exposure behavior (`toolExposure`: `expose-all` or `on-demand`)
+2. **options**: Configuration for tool exposure (`toolExposure`) and security (`security`)
 3. **skills**: Modular knowledge packages that teach agents when and how to use tools
 4. **servers**: MCP servers that provide tools (local subprocesses or remote HTTP servers)
 5. **tools**: Executable capabilities (MCP tools or shell commands)
@@ -37,6 +38,15 @@ The `capabilities.yaml` (or `capabilities.json`) file defines everything an agen
 ### Tool Exposure Modes
 - **expose-all** (default): All tools from all skills are exposed immediately when the MCP client connects
 - **on-demand**: Tools are only exposed after the agent calls `setup_tools(["skill-id"])`, keeping the initial context clean
+
+### Security Options
+Under `options.security` you can configure:
+- **blockedPhrases**: Block skill installation if any skill file contains these phrases. Configure inline as a list or via a `.txt` file reference. Omit or comment out to disable.
+- **allowedCharacters**: Additional regex character class for characters to allow **beyond** the always-preserved baseline. The baseline (tab, LF, CR, all printable ASCII U+0020–U+007E) is hardcoded and never stripped, so `-`, `:`, `"`, `'`, newlines, and all keyboard symbols are always safe. Use this to permit extra Unicode ranges (e.g. `[\\u00A0-\\uFFFF]` for all Unicode, including emoji). Set to an empty string to apply baseline-only sanitization. Omit or comment out to disable entirely.
+
+Both features can be disabled independently by removing or commenting out each property. Omit the `security` block entirely to disable both. Only properties that are present are applied.
+
+When a blocked phrase is detected during `capa install`, the installation stops immediately and displays which skill (or plugin skill) contains the phrase and what the phrase is. No skills are installed until the issue is resolved.
 
 ## Available Commands
 
@@ -60,6 +70,8 @@ Reads the capabilities file and:
 2. Configures the CAPA server with your tools and servers
 3. Prompts for any required credentials via web UI (unless `-e` flag is used)
 4. Registers the project's MCP endpoint in client config files
+
+**Security**: If `options.security` is configured with <code>blockedPhrases</code> or <code>allowedCharacters</code>, the corresponding checks run during installation. Omit or comment out each property to disable it. If a blocked phrase is found, installation stops immediately and reports which skill and phrase caused the block. When <code>allowedCharacters</code> is present, character sanitization runs: the baseline (printable ASCII + standard whitespace) is always preserved, and the value specifies extra Unicode ranges to keep on top of that.
 
 **Flags**:
 - `-e, --env [file]`: Load variables from a `.env` file instead of using the web UI
@@ -130,6 +142,11 @@ providers:
 
 options:
   toolExposure: expose-all  # or 'on-demand'
+  # Optional security (blocked phrases, character sanitization)
+  # security:
+  #   blockedPhrases: []
+  #   # Or load from file: blockedPhrases: { file: "./blocked-phrases.txt" }
+  #   allowedCharacters: ""  # "" = baseline only (strips non-ASCII); "[\\u00A0-\\uFFFF]" = allow all Unicode
 
 skills:
   - id: skill-id
@@ -278,6 +295,53 @@ servers:
 ```
 
 **Variable Substitution**: Use `${VarName}` for credentials. CAPA will prompt for these securely via a web UI.
+
+### Security Options
+
+Under `options.security`, you can enforce safety during skill installation:
+
+#### Blocked Phrases
+Block installation if any skill file (SKILL.md or additional files) contains a forbidden phrase. Omit or comment out to disable. Configure either inline or via file:
+
+**Inline phrases:**
+```yaml
+options:
+  security:
+    blockedPhrases:
+      - "some-dangerous-command"
+```
+
+**Phrases from file (one phrase per line):**
+```yaml
+options:
+  security:
+    blockedPhrases:
+      file: "./blocked-phrases.txt"
+```
+
+The file path is relative to the capabilities file directory. Empty lines are ignored.
+
+#### Character Sanitization
+Replace disallowed characters with spaces during installation. Omit or comment out to disable. Useful to restrict skills to safe character sets.
+
+```yaml
+options:
+  security:
+    allowedCharacters: ""              # baseline only: strips non-ASCII Unicode (emoji, etc.)
+    # allowedCharacters: "[\\u00A0-\\uFFFF]"  # allow all printable Unicode including emoji
+```
+
+**How it works:** A hardcoded baseline—tab, LF, CR, and all printable ASCII (U+0020–U+007E)—is **always preserved** no matter what. Characters like `-`, `:`, `"`, `'`, `\n`, and every keyboard symbol are in the baseline and will never be stripped. The `allowedCharacters` field extends the baseline by specifying **additional** Unicode ranges to keep. Characters outside both the baseline and the extra allowance are replaced with a space.
+
+Only text files (`.md`, `.txt`, `.ts`, `.js`, `.json`, `.yaml`, etc.) are sanitized; other files are copied as-is. Omit or comment out `allowedCharacters` to disable sanitization entirely.
+
+#### Blocked Phrase Detection
+When `capa install` detects a blocked phrase, it **stops immediately** and reports:
+- Which skill (or skill in plugin) contains it
+- The file path
+- The forbidden phrase
+
+No further skills are installed until you remove the phrase from the skill or update your security configuration.
 
 ### Tools Section
 
@@ -734,6 +798,12 @@ cat .cursor/mcp.json
 - Ensure required environment variables are set
 - Test server command manually outside CAPA
 - Check if port 5912 is available
+
+### Installation Blocked: Forbidden Phrase Detected
+When you see a red "Installation blocked" message during `capa install`:
+- A skill (or skill in a plugin) contains a phrase from your `options.security.blockedPhrases` list
+- The message shows the skill ID, file path, and the forbidden phrase
+- **Resolution**: Remove the phrase from the skill's files, or remove/comment out <code>blockedPhrases</code> (or change the restriction) in your capabilities file, then run <code>capa install</code> again
 
 ### Tool Not Found Errors
 - Verify tool ID matches between skill `requires` and tools section

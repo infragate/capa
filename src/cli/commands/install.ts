@@ -18,6 +18,17 @@ import { registerMCPServer } from '../utils/mcp-client-manager';
 import { parseEnvFile } from '../../shared/env-parser';
 import { extractAllVariables } from '../../shared/variable-resolver';
 import { resolvePlugins } from './plugin-install';
+import {
+  loadBlockedPhrases,
+  checkBlockedPhrases,
+  sanitizeContent,
+  getAllowedCharacters,
+  isTextFile,
+  isBlockedPhrasesEnabled,
+  isCharacterSanitizationEnabled,
+  BlockedPhraseError,
+  reportBlockedPhraseAndExit,
+} from '../../shared/skill-security';
 
 const execAsync = promisify(exec);
 
@@ -373,7 +384,8 @@ export async function installCommand(envFile?: string | boolean): Promise<void> 
         authFetch,
         db,
         (platform, repoPath, auth, version?, ref?) =>
-          cloneRepository(platform, repoPath, auth, version, ref)
+          cloneRepository(platform, repoPath, auth, version, ref),
+        capabilitiesFile.path
       );
       capabilitiesToUse = mergedCapabilities;
       for (const dir of tempDirsToCleanup) {
@@ -382,6 +394,15 @@ export async function installCommand(envFile?: string | boolean): Promise<void> 
         } catch {}
       }
     } catch (err: any) {
+      if (err instanceof BlockedPhraseError) {
+        db.close();
+        reportBlockedPhraseAndExit(
+          err.skillId,
+          err.filePath,
+          err.phrase,
+          err.pluginName
+        );
+      }
       console.error(`✗ Plugin resolution failed: ${err.message}`);
       db.close();
       process.exit(1);
@@ -464,7 +485,16 @@ export async function installCommand(envFile?: string | boolean): Promise<void> 
   
   // Step 2: Install skills (copy to client directories) — only base skills from file; plugin skills already installed in resolvePlugins
   console.log('\n📦 Installing skills...');
-  await installSkills(projectPath, projectId, capabilities.skills, capabilitiesToUse.providers, db, settings);
+  await installSkills(
+    projectPath,
+    projectId,
+    capabilities.skills,
+    capabilitiesToUse.providers,
+    db,
+    settings,
+    capabilitiesToUse,
+    capabilitiesFile.path
+  );
   
   // Step 3: Submit capabilities to server (merged, including plugin-derived)
   console.log('\n🔧 Configuring tools...');
@@ -651,7 +681,9 @@ async function installSkills(
   skills: Skill[],
   clients: string[],
   db: CapaDatabase,
-  settings: any
+  settings: any,
+  capabilities: Capabilities,
+  capabilitiesFilePath: string
 ): Promise<void> {
   const authFetch = createAuthenticatedFetch(db);
   
@@ -891,7 +923,48 @@ async function installSkills(
       
       continue;
     }
-    
+
+    // Security: blocked phrases and character sanitization (each can be disabled independently)
+    const security = capabilities.options?.security;
+    const blockPhrasesEnabled = isBlockedPhrasesEnabled(security);
+    const sanitizeEnabled = isCharacterSanitizationEnabled(security);
+
+    if (blockPhrasesEnabled) {
+      let blockedPhrases: string[];
+      try {
+        blockedPhrases = loadBlockedPhrases(security, capabilitiesFilePath);
+      } catch (err: any) {
+        console.error(`  ✗ Failed to load blocked phrases for skill ${skill.id}: ${err.message}`);
+        continue;
+      }
+      const mdCheck = checkBlockedPhrases(skillMarkdown, blockedPhrases);
+      if (mdCheck.blocked) {
+        reportBlockedPhraseAndExit(skill.id, 'SKILL.md', mdCheck.phrase!);
+      }
+      for (const [filename, content] of additionalFiles) {
+        if (!isTextFile(filename)) continue;
+        const check = checkBlockedPhrases(content, blockedPhrases);
+        if (check.blocked) {
+          reportBlockedPhraseAndExit(skill.id, filename, check.phrase!);
+        }
+      }
+    }
+
+    if (sanitizeEnabled) {
+      const allowedCharacters = getAllowedCharacters(security);
+      if (allowedCharacters !== null) {
+        skillMarkdown = sanitizeContent(skillMarkdown, allowedCharacters);
+        const sanitizedAdditional = new Map<string, string>();
+        for (const [filename, content] of additionalFiles) {
+          sanitizedAdditional.set(
+            filename,
+            isTextFile(filename) ? sanitizeContent(content, allowedCharacters) : content
+          );
+        }
+        additionalFiles = sanitizedAdditional;
+      }
+    }
+
     // Install skill for each client
     for (const client of clients) {
       // Get the agent configuration from the skills package

@@ -159,7 +159,7 @@
       color: var(--text-secondary);
       font-size: 13px;
       transition: background-color 0.2s, border-color 0.2s;
-      margin-left: auto;
+      margin-left: 16px;
     }
 
     .theme-toggle:hover {
@@ -176,7 +176,7 @@
       display: flex;
       align-items: center;
       gap: 8px;
-      margin-left: 16px;
+      margin-left: auto;
     }
 
     .nav-link {
@@ -741,6 +741,15 @@
         <span class="project-id" id="project-name">Loading...</span>
       </div>
       <div class="nav-links">
+        <a href="/ui/integrations" class="nav-link" title="Git Integrations">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="18" cy="18" r="3"></circle>
+            <circle cx="6" cy="6" r="3"></circle>
+            <path d="M13 6h3a2 2 0 0 1 2 2v7"></path>
+            <line x1="6" y1="9" x2="6" y2="21"></line>
+          </svg>
+          <span>Integrations</span>
+        </a>
         <a href="https://capa.infragate.ai" target="_blank" rel="noopener noreferrer" class="nav-link" title="Documentation">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
@@ -913,6 +922,12 @@
     const projectId = urlParams.get('id') || urlParams.get('project');
     const returnUrl = urlParams.get('return');
 
+    function projectDisplayName(path) {
+      if (!path) return projectId || 'Unknown';
+      const parts = path.replace(/[/\\]$/, '').split(/[/\\]/);
+      return parts.filter(Boolean).pop() || projectId || 'Unknown';
+    }
+
     document.getElementById('project-name').textContent = projectId || 'Unknown';
 
     async function loadProjectCapabilities() {
@@ -925,6 +940,10 @@
         }
 
         const data = await response.json();
+
+        if (data && data.path) {
+          document.getElementById('project-name').textContent = projectDisplayName(data.path);
+        }
 
         if (!data || !data.capabilities) {
           return;
