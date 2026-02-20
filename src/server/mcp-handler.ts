@@ -13,7 +13,6 @@ import { SessionManager } from './session-manager';
 import { CommandToolExecutor } from './tool-executor';
 import { MCPProxy } from './mcp-proxy';
 import { SubprocessManager } from './subprocess-manager';
-import { extractAllVariables } from '../shared/variable-resolver';
 import { VERSION } from '../version';
 import { logger } from '../shared/logger';
 
@@ -93,7 +92,7 @@ export class CapaMCPServer {
         // On-demand mode: Only expose meta-tools (setup_tools and call_tool)
         tools.push({
           name: 'setup_tools',
-          description: 'Activate skills and load their required tools. Returns the full list of available tools with their schemas for your reference.',
+          description: 'Activate skills and load their required tools. This tool should always be called when the agent learns (loads) a skill. Returns the full list of available tools with their schemas for your reference.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -743,7 +742,7 @@ export class CapaMCPServer {
         // On-demand mode: Only expose meta-tools (setup_tools and call_tool)
         tools.push({
           name: 'setup_tools',
-          description: 'Activate skills and load their required tools. Returns the full list of available tools with their schemas for your reference.',
+          description: 'Activate skills and load their required tools. This tool should always be called when the agent learns (loads) a skill. Returns the full list of available tools with their schemas for your reference.',
           inputSchema: {
             type: 'object',
             properties: {
