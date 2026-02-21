@@ -440,7 +440,18 @@ class CapaServer {
         if (server.def.url) {
           apiLogger.debug(`Checking server: ${server.id}`);
           const existingOAuth = server.def.oauth2;
-          const oauth2Config = await this.oauth2Manager.detectOAuth2Requirement(server.def.url);
+
+          // Skip OAuth2 detection for servers that already have explicit auth headers —
+          // probing them with an unauthenticated request is unnecessary and can interfere
+          // with token-based connections (e.g. Databricks 401 probe, GitLab TLS errors).
+          const hasExplicitAuth = server.def.headers &&
+            Object.keys(server.def.headers).some(k => k.toLowerCase() === 'authorization');
+          if (hasExplicitAuth) {
+            apiLogger.debug(`Skipping OAuth2 detection for ${server.id} (explicit auth header configured)`);
+            continue;
+          }
+
+          const oauth2Config = await this.oauth2Manager.detectOAuth2Requirement(server.def.url, { tlsSkipVerify: server.def.tlsSkipVerify });
           if (oauth2Config) {
             apiLogger.debug(`OAuth2 required for ${server.id}`);
             let isConnected = this.oauth2Manager.isServerConnected(projectId, server.id);
@@ -665,8 +676,10 @@ class CapaServer {
     // Ensure URL-based servers that require OAuth have def.oauth2 set (on-demand detection)
     let capabilitiesUpdated = false;
     for (const server of capabilities.servers) {
-      if (server.def.url && !server.def.oauth2) {
-        const oauth2Config = await this.oauth2Manager.detectOAuth2Requirement(server.def.url);
+      const hasExplicitAuthOnDemand = server.def.headers &&
+        Object.keys(server.def.headers).some(k => k.toLowerCase() === 'authorization');
+      if (server.def.url && !server.def.oauth2 && !hasExplicitAuthOnDemand) {
+        const oauth2Config = await this.oauth2Manager.detectOAuth2Requirement(server.def.url, { tlsSkipVerify: server.def.tlsSkipVerify });
         if (oauth2Config) {
           apiLogger.debug(`OAuth2 detected for ${server.id} (on-demand)`);
           server.def.oauth2 = oauth2Config;
