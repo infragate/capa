@@ -99,6 +99,8 @@ export interface MCPServerDefinition {
   // For remote MCP servers
   url?: string;
   headers?: Record<string, string>;
+  /** Skip TLS certificate verification (e.g. for self-signed certs on internal servers) */
+  tlsSkipVerify?: boolean;
   // For local MCP servers (subprocess)
   cmd?: string;
   args?: string[];

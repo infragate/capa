@@ -294,7 +294,22 @@ servers:
         Authorization: Bearer ${Token}
 ```
 
+For servers that use a self-signed TLS certificate, add `tlsSkipVerify: true` to bypass certificate verification:
+
+```yaml
+servers:
+  - id: internal-server
+    type: mcp
+    def:
+      url: https://internal.company.com/mcp
+      tlsSkipVerify: true
+      headers:
+        Authorization: Bearer ${InternalToken}
+```
+
 **Variable Substitution**: Use `${VarName}` for credentials. CAPA will prompt for these securely via a web UI.
+
+**OAuth2 detection**: At startup, CAPA probes each HTTP server to auto-detect whether it requires OAuth2. This probe is automatically **skipped** for any server that already has an `Authorization` header configured — no unauthenticated request is ever sent to token-authenticated servers. Servers without an `Authorization` header (e.g. Atlassian, Glean) are probed normally so OAuth2 flows can be set up.
 
 ### Security Options
 
@@ -805,6 +820,18 @@ When you see a red "Installation blocked" message during `capa install`:
 - The message shows the skill ID, file path, and the forbidden phrase
 - **Resolution**: Remove the phrase from the skill's files, or remove/comment out <code>blockedPhrases</code> (or change the restriction) in your capabilities file, then run <code>capa install</code> again
 
+### MCP Server: Self-Signed Certificate Error
+If you see `SELF_SIGNED_CERT_IN_CHAIN` errors when connecting to an internal server:
+- Add `tlsSkipVerify: true` to the server's `def` block in `capabilities.yaml`
+- Run `capa install` then `capa restart`
+- Only use this for trusted internal servers
+
+### MCP Server: Token Auth Returns Errors During Startup
+If a server that uses Bearer token auth (e.g. Databricks, a self-hosted GitLab MCP) reports connection errors at startup:
+- Ensure the `Authorization` header is present in `def.headers` — CAPA skips the OAuth2 probe for these servers automatically
+- Verify the token stored for `${VarName}` is valid for the specific server URL (wrong-workspace tokens are a common cause of 403 errors)
+- Re-set the token with `capa vars set VarName <new-token>` or re-run `capa install -e` with an updated `.env` file
+
 ### Tool Not Found Errors
 - Verify tool ID matches between skill `requires` and tools section
 - Check that server ID in tool definition uses `@` prefix (e.g., `@server-id`)
@@ -837,3 +864,5 @@ This skill requires these tools to function:
 - Default format is YAML (though JSON is also supported)
 - Credentials are securely stored in a local SQLite database at `~/.capa/capa.db`
 - Server automatically monitors and restarts crashed MCP subprocesses
+- OAuth2 auto-detection is skipped for servers that already have an `Authorization` header — token-based servers are never probed with unauthenticated requests
+- Use `tlsSkipVerify: true` on remote server definitions to connect to servers with self-signed TLS certificates
