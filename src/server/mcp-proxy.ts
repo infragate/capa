@@ -352,11 +352,16 @@ class HttpMCPTransport implements Transport {
         }
       }
 
+      const tlsOptions = this.serverDefinition.tlsSkipVerify
+        ? ({ tls: { rejectUnauthorized: false } } as object)
+        : {};
+
       const response = await fetch(this.url, {
         method: 'POST',
         headers,
         body: JSON.stringify(message),
-      });
+        ...tlsOptions,
+      } as RequestInit);
 
       // Handle 401 Unauthorized - token might be expired
       if (response.status === 401 && this.serverDefinition.oauth2) {
@@ -382,7 +387,8 @@ class HttpMCPTransport implements Transport {
               method: 'POST',
               headers,
               body: JSON.stringify(message),
-            });
+              ...tlsOptions,
+            } as RequestInit);
 
             if (retryResponse.ok) {
               // Extract session ID from retry response
