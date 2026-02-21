@@ -33,7 +33,12 @@ export class OAuth2Manager {
    * Detect if an MCP server requires OAuth2 authentication
    * Per MCP spec: Make unauthenticated request, check for 401 + WWW-Authenticate header
    */
-  async detectOAuth2Requirement(serverUrl: string): Promise<OAuth2Config | null> {
+  private tlsFetchOptions(tlsSkipVerify?: boolean): object {
+    return tlsSkipVerify ? { tls: { rejectUnauthorized: false } } : {};
+  }
+
+  async detectOAuth2Requirement(serverUrl: string, options?: { tlsSkipVerify?: boolean }): Promise<OAuth2Config | null> {
+    const tlsSkipVerify = options?.tlsSkipVerify;
     try {
       this.logger.info(`Detecting OAuth2 requirement for: ${serverUrl}`);
       
@@ -53,7 +58,8 @@ export class OAuth2Manager {
             clientInfo: { name: 'capa-oauth-detection', version: '1.0.0' },
           },
         }),
-      });
+        ...this.tlsFetchOptions(tlsSkipVerify),
+      } as RequestInit);
 
       // Check for 401 Unauthorized
       if (response.status !== 401) {
@@ -87,23 +93,23 @@ export class OAuth2Manager {
 
         // First, try direct OAuth discovery (many servers use this)
         this.logger.debug(`Trying direct OAuth discovery at: ${baseUrl}`);
-        authMetadata = await this.fetchAuthServerMetadata(baseUrl);
+        authMetadata = await this.fetchAuthServerMetadata(baseUrl, tlsSkipVerify);
         
         // If direct discovery failed, try protected resource metadata (RFC 9728)
         if (!authMetadata) {
           this.logger.debug('Direct discovery failed, trying RFC 9728...');
-          const resourceMetadata = await this.fetchProtectedResourceMetadata(resourceMetadataUrl);
+          const resourceMetadata = await this.fetchProtectedResourceMetadata(resourceMetadataUrl, tlsSkipVerify);
           
           if (resourceMetadata && resourceMetadata.authorization_servers && resourceMetadata.authorization_servers.length > 0) {
             const authServerUrl = resourceMetadata.authorization_servers[0];
             this.logger.debug(`Authorization server: ${authServerUrl}`);
-            authMetadata = await this.fetchAuthServerMetadata(authServerUrl);
+            authMetadata = await this.fetchAuthServerMetadata(authServerUrl, tlsSkipVerify);
           }
         }
       } else {
         // Fallback: 401 without WWW-Authenticate — try well-known OAuth authorization server at base URL
         this.logger.debug('401 but no WWW-Authenticate header; trying /.well-known/oauth-authorization-server');
-        authMetadata = await this.fetchAuthServerMetadata(baseUrl);
+        authMetadata = await this.fetchAuthServerMetadata(baseUrl, tlsSkipVerify);
       }
       
       if (!authMetadata) {
@@ -144,9 +150,9 @@ export class OAuth2Manager {
    * Fetch protected resource metadata (RFC 9728)
    * Default path: /.well-known/oauth-protected-resource
    */
-  private async fetchProtectedResourceMetadata(url: string): Promise<ProtectedResourceMetadata | null> {
+  private async fetchProtectedResourceMetadata(url: string, tlsSkipVerify?: boolean): Promise<ProtectedResourceMetadata | null> {
     try {
-      const response = await fetch(url);
+      const response = await fetch(url, { ...this.tlsFetchOptions(tlsSkipVerify) } as RequestInit);
       if (!response.ok) {
         return null;
       }
@@ -160,13 +166,13 @@ export class OAuth2Manager {
    * Fetch authorization server metadata (RFC 8414)
    * Path: /.well-known/oauth-authorization-server
    */
-  private async fetchAuthServerMetadata(authServerUrl: string): Promise<OAuth2Metadata | null> {
+  private async fetchAuthServerMetadata(authServerUrl: string, tlsSkipVerify?: boolean): Promise<OAuth2Metadata | null> {
     try {
       // Construct well-known URL
       const wellKnownUrl = new URL('/.well-known/oauth-authorization-server', authServerUrl).toString();
       
       this.logger.debug(`Fetching OAuth metadata from: ${wellKnownUrl}`);
-      const response = await fetch(wellKnownUrl);
+      const response = await fetch(wellKnownUrl, { ...this.tlsFetchOptions(tlsSkipVerify) } as RequestInit);
       if (!response.ok) {
         this.logger.warn(`OAuth metadata fetch failed: ${response.status}`);
         return null;
