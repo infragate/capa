@@ -234,9 +234,13 @@ function Install-Capa {
     # Fetch the latest version
     $APP_VERSION = Get-LatestVersion
     
+    $bannerInner = 39
+    $bannerTitle = "  CAPA Installer v$APP_VERSION"
+    $bannerPad = [Math]::Max(1, $bannerInner - $bannerTitle.Length)
+    $bannerSpaces = " " * $bannerPad
     Write-Host ""
     Write-Host "${ColorGreen}╔═══════════════════════════════════════╗${ColorReset}"
-    Write-Host "${ColorGreen}║  CAPA Installer v$APP_VERSION           ║${ColorReset}"
+    Write-Host "${ColorGreen}║${bannerTitle}${bannerSpaces}║${ColorReset}"
     Write-Host "${ColorGreen}╚═══════════════════════════════════════╝${ColorReset}"
     Write-Host ""
     
