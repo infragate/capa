@@ -16,6 +16,13 @@ export interface MCPToolResult {
   error?: string;
 }
 
+class MCPSessionExpiredError extends Error {
+  constructor() {
+    super('MCP session expired or not found');
+    this.name = 'MCPSessionExpiredError';
+  }
+}
+
 export class MCPProxy {
   private db: CapaDatabase;
   private projectId: string;
@@ -77,7 +84,6 @@ export class MCPProxy {
 
     try {
       this.logger.debug('Calling tool on MCP server...');
-      // Call the tool
       const result = await client.callTool({
         name: definition.tool,
         arguments: args,
@@ -89,6 +95,25 @@ export class MCPProxy {
         result: result.content,
       };
     } catch (error: any) {
+      if (error instanceof MCPSessionExpiredError) {
+        this.logger.warn(`Session expired for ${serverId}, reconnecting and retrying tool call...`);
+        this.clients.delete(serverId);
+        const freshClient = await this.getOrCreateClient(serverId, resolvedServerDef);
+        if (!freshClient) {
+          return { success: false, error: `Failed to reconnect to MCP server: ${serverId}` };
+        }
+        try {
+          const retryResult = await freshClient.callTool({
+            name: definition.tool,
+            arguments: args,
+          });
+          this.logger.success('Tool call succeeded after reconnect');
+          return { success: true, result: retryResult.content };
+        } catch (retryError: any) {
+          this.logger.failure(`Tool call failed after reconnect: ${retryError.message}`);
+          return { success: false, error: retryError.message || 'Tool execution failed after reconnect' };
+        }
+      }
       this.logger.failure(`Tool call failed: ${error.message}`);
       return {
         success: false,
@@ -119,6 +144,19 @@ export class MCPProxy {
       const result = await client.listTools();
       return result.tools;
     } catch (error) {
+      if (error instanceof MCPSessionExpiredError) {
+        this.logger.warn(`Session expired for ${cleanServerId}, reconnecting...`);
+        this.clients.delete(cleanServerId);
+        const freshClient = await this.getOrCreateClient(cleanServerId, resolvedServerDef);
+        if (!freshClient) return [];
+        try {
+          const result = await freshClient.listTools();
+          return result.tools;
+        } catch (retryError) {
+          this.logger.error(`Failed to list tools from ${cleanServerId} after reconnect:`, retryError);
+          return [];
+        }
+      }
       this.logger.error(`Failed to list tools from ${cleanServerId}:`, error);
       return [];
     }
@@ -425,6 +463,13 @@ class HttpMCPTransport implements Transport {
 
         // If refresh failed, throw error
         throw new Error('Authentication failed. Please reconnect OAuth2.');
+      }
+
+      // Handle 404 - remote server may have expired our session
+      if (response.status === 404 && this.sessionId) {
+        this.logger.warn(`404 Not Found with active session ID - session likely expired, clearing session`);
+        this.sessionId = undefined;
+        throw new MCPSessionExpiredError();
       }
 
       if (!response.ok) {
