@@ -282,9 +282,15 @@ install_capa() {
     get_latest_version
     APP_VERSION="$RETVAL"
     
+    local _box_inner=39
+    local _banner="  CAPA Installer v${APP_VERSION}"
+    local _banner_pad=$(( _box_inner - ${#_banner} ))
+    [ "$_banner_pad" -lt 1 ] && _banner_pad=1
+    local _banner_spaces
+    _banner_spaces=$(printf '%*s' "$_banner_pad" '')
     say ""
     say "${GREEN}╔═══════════════════════════════════════╗${RESET}"
-    say "${GREEN}║  CAPA Installer v${APP_VERSION}           ║${RESET}"
+    say "${GREEN}║${_banner}${_banner_spaces}║${RESET}"
     say "${GREEN}╚═══════════════════════════════════════╝${RESET}"
     say ""
 
