@@ -18,6 +18,7 @@ import { registerMCPServer } from '../utils/mcp-client-manager';
 import { parseEnvFile } from '../../shared/env-parser';
 import { extractAllVariables } from '../../shared/variable-resolver';
 import { resolvePlugins } from './plugin-install';
+import { installAgentsFile } from '../utils/agents-file';
 import {
   loadBlockedPhrases,
   checkBlockedPhrases,
@@ -496,7 +497,25 @@ export async function installCommand(envFile?: string | boolean): Promise<void> 
     capabilitiesFile.path
   );
   
-  // Step 3: Submit capabilities to server (merged, including plugin-derived)
+  // Step 3: Install agent instructions files (AGENTS.md and/or CLAUDE.md) if configured
+  if (capabilities.agents) {
+    console.log('\n📝 Installing agent instructions files...');
+    try {
+      await installAgentsFile(
+        projectPath,
+        capabilities.agents,
+        capabilitiesToUse.providers,
+        capabilitiesToUse.options?.security,
+        capabilitiesFile.path
+      );
+    } catch (err: any) {
+      console.error(`  ✗ Failed to install agent instructions files: ${err.message}`);
+      db.close();
+      process.exit(1);
+    }
+  }
+
+  // Step 4: Submit capabilities to server (merged, including plugin-derived)
   console.log('\n🔧 Configuring tools...');
   const response = await fetch(`${serverStatus.url}/api/projects/${projectId}/configure`, {
     method: 'POST',
@@ -561,14 +580,14 @@ export async function installCommand(envFile?: string | boolean): Promise<void> 
     console.warn('\n   To expose a tool, add it to the "requires" list of at least one skill in your capabilities.\n');
   }
   
-  // Step 4: Register MCP server with client configurations
+  // Step 5: Register MCP server with client configurations
   const mcpUrl = `${serverStatus.url}/${projectId}/mcp`;
   console.log('\n🔗 Registering MCP server with clients...');
   await registerMCPServer(projectPath, projectId, mcpUrl, capabilitiesToUse.providers);
   
   db.close();
   
-  // Step 4: Check if credential setup is needed
+  // Step 6: Check if credential setup is needed
   if (result.needsCredentials && result.credentialsUrl) {
     const hasVariables = result.missingVariables && result.missingVariables.length > 0;
     const hasOAuth2 = result.oauth2Servers && result.oauth2Servers.length > 0;
@@ -610,7 +629,7 @@ export async function installCommand(envFile?: string | boolean): Promise<void> 
     console.log('\n✓ Installation complete!');
   }
   
-  // Step 5: Display MCP endpoint
+  // Step 7: Display MCP endpoint
   console.log(`\n📡 MCP Endpoint: ${mcpUrl}`);
 }
 
