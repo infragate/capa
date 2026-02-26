@@ -1,4 +1,4 @@
-import { writeFileSync } from 'fs';
+import { writeFileSync, existsSync } from 'fs';
 import { createServer, Server as HttpServer } from 'http';
 import { loadSettings, getDatabasePath, getPidFilePath, ensureCapaDir } from '../shared/config';
 import { CapaDatabase } from '../db/database';
@@ -47,6 +47,9 @@ class CapaServer {
     const dbPath = getDatabasePath(this.settings);
     this.db = new CapaDatabase(dbPath);
 
+    // Cleanup projects whose directories no longer exist
+    await this.cleanupMissingProjects();
+
     // Initialize managers
     this.sessionManager = new SessionManager(this.db);
     this.subprocessManager = new SubprocessManager(this.db);
@@ -84,6 +87,23 @@ class CapaServer {
     this.logger.success(`CAPA server running at http://${this.settings.server.host}:${this.settings.server.port}`);
     this.logger.info(`OAuth redirect server will start on-demand at http://${this.settings.server.host}:${this.settings.oauth_redirect_port || 3100}`);
     this.logger.info(`Version: ${VERSION}`);
+  }
+
+  private async cleanupMissingProjects(): Promise<void> {
+    const projects = this.db.getAllProjects();
+    let removed = 0;
+    for (const project of projects) {
+      if (!existsSync(project.path)) {
+        this.logger.warn(`Project directory not found, removing project "${project.id}" at path: ${project.path}`);
+        this.db.deleteProject(project.id);
+        removed++;
+      }
+    }
+    if (removed > 0) {
+      this.logger.info(`Removed ${removed} project(s) with missing directories`);
+    } else {
+      this.logger.debug('All configured projects have valid directories');
+    }
   }
 
   private async startHttpServer() {

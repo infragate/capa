@@ -66,7 +66,12 @@ export async function cleanCommand(): Promise<void> {
   // Unregister MCP server from client configurations
   console.log('\n🔗 Unregistering MCP server from clients...');
   await unregisterMCPServer(projectPath, projectId, capabilities.providers);
-  
+
+  // Delete all project data from the database
+  console.log('\n🗑️  Removing project data...');
+  db.deleteProject(projectId);
+  console.log('  ✓ Removed project configuration and metadata');
+
   db.close();
   console.log('\n✓ Cleanup complete!');
 }

@@ -176,6 +176,17 @@ export class CapaDatabase {
     return this.db.query('SELECT * FROM projects ORDER BY updated_at DESC').all() as Project[];
   }
 
+  deleteProject(projectId: string): void {
+    this.db.run('DELETE FROM variables WHERE project_id = ?', [projectId]);
+    this.db.run('DELETE FROM managed_files WHERE project_id = ?', [projectId]);
+    this.db.run('DELETE FROM tool_init_state WHERE project_id = ?', [projectId]);
+    this.db.run('DELETE FROM sessions WHERE project_id = ?', [projectId]);
+    this.db.run('DELETE FROM oauth_tokens WHERE project_id = ?', [projectId]);
+    this.db.run('DELETE FROM oauth_flow_state WHERE project_id = ?', [projectId]);
+    this.db.run('DELETE FROM project_capabilities WHERE project_id = ?', [projectId]);
+    this.db.run('DELETE FROM projects WHERE id = ?', [projectId]);
+  }
+
   setProjectCapabilities(projectId: string, capabilitiesJson: string): void {
     const now = Date.now();
     this.db.run(
