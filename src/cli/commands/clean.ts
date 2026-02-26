@@ -4,6 +4,7 @@ import { loadSettings, getDatabasePath } from '../../shared/config';
 import { CapaDatabase } from '../../db/database';
 import { parseCapabilitiesFile } from '../../shared/capabilities';
 import { unregisterMCPServer } from '../utils/mcp-client-manager';
+import { cleanAgentsFile } from '../utils/agents-file';
 
 export async function cleanCommand(): Promise<void> {
   const projectPath = process.cwd();
@@ -63,6 +64,12 @@ export async function cleanCommand(): Promise<void> {
     }
   }
   
+  // Clean up capa-managed snippets from agent instructions files (AGENTS.md and/or CLAUDE.md)
+  if (capabilities.agents) {
+    console.log('\n📝 Cleaning agent instructions files...');
+    cleanAgentsFile(projectPath, capabilities.providers);
+  }
+
   // Unregister MCP server from client configurations
   console.log('\n🔗 Unregistering MCP server from clients...');
   await unregisterMCPServer(projectPath, projectId, capabilities.providers);

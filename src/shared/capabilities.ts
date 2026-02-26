@@ -19,7 +19,7 @@ export function createDefaultCapabilities(): Capabilities {
   return {
     providers: ['cursor', 'claude-code'],
     options: {
-      toolExposure: 'expose-all',
+      toolExposure: 'on-demand',
       security: {
         blockedPhrases: ["eval(", "exec(", "execSync("],
         allowedCharacters: "[\\u00A0-\\uFFFF]"  // allow all printable Unicode; strips only control chars
@@ -36,6 +36,15 @@ export function createDefaultCapabilities(): Capabilities {
         }
       }
     ],
+    agents: {
+      additional: [
+        {
+          type: 'inline',
+          id: 'capa_tool_usage',
+          content: 'After learning a new skill, call the `setup_tools` tool to activate it, then use `call_tool` to invoke the relevant tool.'
+        }
+      ]
+    },
     servers: [],
     tools: [
       {
