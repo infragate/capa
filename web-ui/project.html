@@ -583,7 +583,7 @@
     }
 
     .capability-list {
-      max-height: 300px;
+      max-height: 450px;
       overflow-y: auto;
     }
 
@@ -632,6 +632,417 @@
       font-size: 11px;
       color: var(--text-tertiary);
       margin-top: 2px;
+    }
+
+    .search-wrapper {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-left: auto;
+      border: 1px solid var(--border-primary);
+      border-radius: 4px;
+      background: var(--input-bg);
+      padding: 0 8px;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .search-wrapper:focus-within {
+      border-color: var(--accent-primary);
+      box-shadow: 0 0 0 2px rgba(138, 180, 248, 0.2);
+    }
+
+    :root[data-theme="light"] .search-wrapper:focus-within {
+      box-shadow: 0 0 0 2px rgba(25, 103, 210, 0.15);
+    }
+
+    .search-icon {
+      width: 14px;
+      height: 14px;
+      color: var(--text-tertiary);
+      flex-shrink: 0;
+    }
+
+    .search-input {
+      width: 200px;
+      padding: 7px 0;
+      border: none !important;
+      border-radius: 0 !important;
+      background: transparent !important;
+      box-shadow: none !important;
+      font-size: 13px;
+      color: var(--text-primary);
+      font-family: inherit;
+      outline: none;
+      transition: width 0.2s;
+    }
+
+    .search-input:focus {
+      width: 260px;
+      border: none !important;
+      box-shadow: none !important;
+    }
+
+    .search-clear {
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: var(--text-tertiary);
+      padding: 2px;
+      border-radius: 3px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      transition: color 0.15s;
+    }
+
+    .search-clear:hover {
+      color: var(--text-primary);
+    }
+
+    .search-clear svg {
+      width: 14px;
+      height: 14px;
+    }
+
+    .search-no-results {
+      padding: 16px;
+      text-align: center;
+      font-size: 12px;
+      color: var(--text-tertiary);
+    }
+
+    .token-savings-bar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 16px;
+      margin-bottom: 16px;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-secondary);
+      border-radius: 6px;
+      flex-wrap: wrap;
+    }
+
+    .token-savings-icon {
+      width: 15px;
+      height: 15px;
+      color: var(--success-text);
+      flex-shrink: 0;
+    }
+
+    .token-savings-label {
+      font-size: 12px;
+      color: var(--text-secondary);
+      flex-shrink: 0;
+    }
+
+    .token-savings-metrics {
+      display: flex;
+      align-items: center;
+      gap: 0;
+      margin-left: auto;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-secondary);
+      border-radius: 5px;
+      /* No overflow:hidden — would clip the tooltips */
+    }
+
+    .token-savings-metric:first-child {
+      border-radius: 5px 0 0 5px;
+    }
+
+    .token-savings-metric:last-child {
+      border-radius: 0 5px 5px 0;
+    }
+
+    .token-savings-metric {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 5px 16px;
+      gap: 1px;
+      cursor: default;
+    }
+
+    .token-savings-metric-value {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--success-text);
+      font-family: 'Roboto Mono', monospace;
+      line-height: 1.2;
+    }
+
+    .token-savings-metric-label {
+      font-size: 10px;
+      color: var(--text-tertiary);
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      white-space: nowrap;
+    }
+
+    .token-savings-divider {
+      width: 1px;
+      height: 32px;
+      background: var(--border-secondary);
+      flex-shrink: 0;
+    }
+
+    .token-savings-note {
+      font-size: 11px;
+      color: var(--text-tertiary);
+      white-space: nowrap;
+    }
+
+    .token-savings-metric {
+      position: relative;
+    }
+
+    .token-savings-metric[data-tooltip]:hover::after {
+      content: attr(data-tooltip);
+      position: absolute;
+      bottom: calc(100% + 8px);
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--bg-primary);
+      border: 1px solid var(--border-primary);
+      border-radius: 5px;
+      padding: 8px 10px;
+      font-size: 11px;
+      color: var(--text-secondary);
+      white-space: pre-line;
+      line-height: 1.6;
+      min-width: 210px;
+      max-width: 280px;
+      text-align: left;
+      pointer-events: none;
+      z-index: 50;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .token-savings-metric[data-tooltip]:hover::before {
+      content: '';
+      position: absolute;
+      bottom: calc(100% + 2px);
+      left: 50%;
+      transform: translateX(-50%);
+      border: 6px solid transparent;
+      border-top-color: var(--border-primary);
+      pointer-events: none;
+      z-index: 51;
+    }
+
+    .search-highlight {
+      background: rgba(138, 180, 248, 0.25);
+      border-radius: 2px;
+      padding: 0 1px;
+    }
+
+    :root[data-theme="light"] .search-highlight {
+      background: rgba(25, 103, 210, 0.15);
+    }
+
+    .capability-item-source {
+      font-size: 11px;
+      color: var(--text-secondary);
+      margin-top: 4px;
+      font-family: 'Roboto Mono', monospace;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      flex-wrap: wrap;
+    }
+
+    .capability-item-source-label {
+      color: var(--text-tertiary);
+      font-family: inherit;
+    }
+
+    .capability-item-args {
+      margin-top: 6px;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .capability-item-arg {
+      font-size: 11px;
+      color: var(--text-secondary);
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+      padding-left: 8px;
+    }
+
+    .capability-item-arg-name {
+      font-family: 'Roboto Mono', monospace;
+      color: var(--text-primary);
+      font-size: 11px;
+      flex-shrink: 0;
+    }
+
+    .capability-item-arg-type {
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-secondary);
+      padding: 1px 4px;
+      border-radius: 3px;
+      font-size: 10px;
+      color: var(--text-tertiary);
+      text-transform: uppercase;
+      flex-shrink: 0;
+    }
+
+    .capability-item-arg-required {
+      color: var(--error-text);
+      font-size: 10px;
+      flex-shrink: 0;
+    }
+
+    .capability-item-arg-desc {
+      color: var(--text-tertiary);
+      font-size: 11px;
+    }
+
+    .capability-item-required-by {
+      font-size: 11px;
+      color: var(--text-tertiary);
+      margin-top: 4px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      flex-wrap: wrap;
+    }
+
+    .capability-item-required-by-label {
+      color: var(--text-tertiary);
+    }
+
+    .capability-item-required-by-skill {
+      font-family: 'Roboto Mono', monospace;
+      font-size: 11px;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-secondary);
+      border-radius: 3px;
+      padding: 1px 5px;
+      color: var(--text-secondary);
+    }
+
+    .badge-disconnected {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      padding: 2px 7px;
+      border-radius: 10px;
+      background: var(--error-bg);
+      color: var(--error-text);
+      border: 1px solid var(--error-border);
+      margin-left: 4px;
+      flex-shrink: 0;
+    }
+
+    .badge-disconnected::before {
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+      flex-shrink: 0;
+    }
+
+    .server-expand-btn {
+      background: none;
+      border: 1px solid var(--border-secondary);
+      border-radius: 3px;
+      padding: 3px 8px;
+      font-size: 11px;
+      color: var(--accent-primary);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      margin-top: 6px;
+      transition: background-color 0.15s, border-color 0.15s;
+      font-family: inherit;
+    }
+
+    .server-expand-btn:hover {
+      background: var(--hover-bg);
+      border-color: var(--accent-primary);
+    }
+
+    .server-expand-btn svg {
+      width: 12px;
+      height: 12px;
+      transition: transform 0.2s;
+    }
+
+    .server-expand-btn.expanded svg {
+      transform: rotate(180deg);
+    }
+
+    .server-tools-panel {
+      margin-top: 8px;
+      border-top: 1px solid var(--border-tertiary);
+      padding-top: 8px;
+      display: none;
+    }
+
+    .server-tools-panel.open {
+      display: block;
+    }
+
+    .server-tool-item {
+      padding: 6px 0;
+      border-bottom: 1px solid var(--border-tertiary);
+    }
+
+    .server-tool-item:last-child {
+      border-bottom: none;
+      padding-bottom: 0;
+    }
+
+    .server-tool-name {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-primary);
+      font-family: 'Roboto Mono', monospace;
+    }
+
+    .server-tool-desc {
+      font-size: 11px;
+      color: var(--text-secondary);
+      margin-top: 2px;
+      line-height: 1.4;
+    }
+
+    .server-tools-loading {
+      font-size: 11px;
+      color: var(--text-tertiary);
+      padding: 4px 0;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .server-tools-loading-spinner {
+      width: 12px;
+      height: 12px;
+      border: 2px solid var(--border-tertiary);
+      border-top-color: var(--accent-primary);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      flex-shrink: 0;
+    }
+
+    .server-tools-error {
+      font-size: 11px;
+      color: var(--error-text);
+      padding: 4px 0;
     }
 
     .plugin-badge {
@@ -804,8 +1215,48 @@
     <div id="capabilities-section" class="section" style="display: none;">
       <div class="section-header">
         <div class="section-title">Installed Capabilities</div>
+        <div class="search-wrapper">
+          <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
+          <input type="text" id="capabilities-search" class="search-input" placeholder="Search capabilities…" autocomplete="off">
+          <button class="search-clear" id="search-clear" style="display:none;" onclick="clearSearch()" aria-label="Clear search">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+        </div>
       </div>
       
+      <div id="token-savings-strip" style="display:none;">
+        <div class="token-savings-bar">
+          <svg class="token-savings-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"></polyline>
+            <polyline points="17 6 23 6 23 12"></polyline>
+          </svg>
+          <span class="token-savings-label">Token savings vs. exposing all server tools</span>
+          <div class="token-savings-metrics">
+            <div class="token-savings-metric" id="metric-saved">
+              <span class="token-savings-metric-value" id="stat-tokens-saved">—</span>
+              <span class="token-savings-metric-label">tokens saved</span>
+            </div>
+            <div class="token-savings-divider"></div>
+            <div class="token-savings-metric" id="metric-reduction">
+              <span class="token-savings-metric-value" id="stat-reduction">—</span>
+              <span class="token-savings-metric-label">reduction</span>
+            </div>
+            <div class="token-savings-divider"></div>
+            <div class="token-savings-metric" id="metric-overhead">
+              <span class="token-savings-metric-value" id="stat-efficiency">—</span>
+              <span class="token-savings-metric-label">overhead</span>
+            </div>
+          </div>
+          <span class="token-savings-note" id="stat-tool-counts"></span>
+        </div>
+      </div>
+
       <div id="capabilities-content">
         <div class="capabilities-grid">
           <div class="capability-group">
@@ -825,7 +1276,7 @@
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;">
                 <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path>
               </svg>
-              <span>Tools</span>
+              <span>Configured Tools</span>
               <span class="capability-count" id="tools-count">0</span>
             </div>
             <div id="tools-list" class="capability-list"></div>
@@ -930,10 +1381,372 @@
 
     document.getElementById('project-name').textContent = projectId || 'Unknown';
 
+    // ---------- Page data store ----------
+    const serverToolSchemaCache = {}; // serverId -> { toolName -> { description, inputSchema } }
+    let capabilitiesData = { skills: [], tools: [], servers: [] };
+    let toolRequiredByMap = {}; // toolId -> [skillId, ...]
+    let currentSearch = '';
+
+    // ---------- Helpers ----------
+    function fromPluginLine(sourcePlugin) {
+      if (!sourcePlugin || !sourcePlugin.name) return '';
+      return `<div class="capability-item-from">from ${escapeHtml(sourcePlugin.name)}</div>`;
+    }
+
+    function buildArgsHtml(properties, required) {
+      const entries = Object.entries(properties || {});
+      if (!entries.length) return '';
+      const items = entries.map(([name, schema]) => {
+        const isRequired = Array.isArray(required) && required.includes(name);
+        return `<div class="capability-item-arg">
+          <span class="capability-item-arg-name">${highlight(name)}</span>
+          <span class="capability-item-arg-type">${escapeHtml(schema.type || 'any')}</span>
+          ${isRequired ? '<span class="capability-item-arg-required">required</span>' : ''}
+          ${schema.description ? `<span class="capability-item-arg-desc">${highlight(schema.description)}</span>` : ''}
+        </div>`;
+      }).join('');
+      return `<div class="capability-item-args">${items}</div>`;
+    }
+
+    // Wrap matched text in highlight spans
+    function highlight(text) {
+      if (!text) return '';
+      if (!currentSearch) return escapeHtml(text);
+      const escaped = escapeHtml(text);
+      const escapedQuery = currentSearch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return escaped.replace(new RegExp(escapedQuery, 'gi'), m => `<span class="search-highlight">${m}</span>`);
+    }
+
+    // ---------- Fetch MCP tool schemas for configured tools ----------
+    async function fetchServerToolSchemas(tools, servers) {
+      const mcpServerIds = new Set(
+        tools
+          .filter(t => t.type === 'mcp' && t.mcpServer)
+          .map(t => t.mcpServer.replace(/^@/, ''))
+      );
+      await Promise.all([...mcpServerIds].map(async serverId => {
+        if (serverToolSchemaCache[serverId]) return;
+        try {
+          const res = await fetch(`/api/projects/${projectId}/servers/${encodeURIComponent(serverId)}/tools`);
+          if (!res.ok) return;
+          const data = await res.json();
+          const map = {};
+          for (const t of (data.tools || [])) {
+            map[t.name] = { description: t.description || '', inputSchema: t.inputSchema || {} };
+          }
+          serverToolSchemaCache[serverId] = map;
+        } catch { /* best-effort */ }
+      }));
+    }
+
+    // ---------- Token savings ----------
+    const allServerToolsCache = {}; // serverId -> tool[]  (full list from server)
+
+    function estimateToolTokens(tool) {
+      // Rough estimate: serialize the meaningful text of a tool and divide by 4
+      let text = (tool.name || '') + ' ' + (tool.description || '');
+      const props = (tool.inputSchema && tool.inputSchema.properties) || {};
+      for (const [name, schema] of Object.entries(props)) {
+        text += ' ' + name + ' ' + (schema.type || '') + ' ' + (schema.description || '');
+      }
+      return Math.ceil(text.trim().length / 4);
+    }
+
+    function formatTokenCount(n) {
+      if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
+      return String(n);
+    }
+
+    async function fetchAllServerToolsForStats(servers) {
+      await Promise.all(servers.map(async server => {
+        if (allServerToolsCache[server.id]) return;
+        try {
+          const res = await fetch(`/api/projects/${projectId}/servers/${encodeURIComponent(server.id)}/tools`);
+          if (!res.ok) return;
+          const data = await res.json();
+          allServerToolsCache[server.id] = data.tools || [];
+          // Also backfill serverToolSchemaCache for the expand button
+          if (!serverToolSchemaCache[server.id]) {
+            const map = {};
+            for (const t of allServerToolsCache[server.id]) {
+              map[t.name] = { description: t.description || '', inputSchema: t.inputSchema || {} };
+            }
+            serverToolSchemaCache[server.id] = map;
+          }
+        } catch { /* best-effort */ }
+      }));
+    }
+
+    function computeAndRenderTokenSavings(tools, servers) {
+      // "Without capa": every tool exposed by every configured MCP server
+      let tokensWithout = 0;
+      let totalServerTools = 0;
+      for (const server of servers) {
+        const serverTools = allServerToolsCache[server.id] || [];
+        totalServerTools += serverTools.length;
+        for (const t of serverTools) tokensWithout += estimateToolTokens(t);
+      }
+
+      if (tokensWithout === 0) return; // No server data available yet
+
+      // "With capa": only the MCP-proxied tools (command tools are capa-native, not part of this comparison)
+      const mcpTools = tools.filter(t => t.type === 'mcp' && t.mcpServer && t.mcpTool);
+      let tokensWith = 0;
+      for (const tool of mcpTools) {
+        const serverId = tool.mcpServer.replace(/^@/, '');
+        const serverCache = serverToolSchemaCache[serverId] || {};
+        // Use the remote tool's actual schema — count what the LLM actually sees
+        const schema = serverCache[tool.mcpTool];
+        if (schema) {
+          tokensWith += estimateToolTokens({ name: tool.mcpTool, description: schema.description, inputSchema: schema.inputSchema });
+        } else {
+          tokensWith += estimateToolTokens({ name: tool.mcpTool });
+        }
+      }
+
+      const saved = tokensWithout - tokensWith;
+      const reduction = saved / tokensWithout * 100;
+      const overhead = tokensWith / tokensWithout * 100;
+
+      const fmtW = formatTokenCount(tokensWithout);
+      const fmtC = formatTokenCount(tokensWith);
+      const fmtS = formatTokenCount(Math.max(0, saved));
+
+      document.getElementById('stat-tokens-saved').textContent = '~' + fmtS;
+      document.getElementById('stat-reduction').textContent = Math.max(0, reduction).toFixed(0) + '%';
+      document.getElementById('stat-efficiency').textContent = Math.min(100, overhead).toFixed(0) + '%';
+      document.getElementById('stat-tool-counts').textContent =
+        `${mcpTools.length} of ${totalServerTools} MCP tools proxied across ${servers.length} server${servers.length !== 1 ? 's' : ''}`;
+
+      // Set descriptive tooltips with the actual numbers in the formula
+      document.getElementById('metric-saved').setAttribute('data-tooltip',
+        `without capa  ~${fmtW} tokens\n` +
+        `with capa        ~${fmtC} tokens\n` +
+        `─────────────────────\n` +
+        `saved              ~${fmtS} tokens\n\n` +
+        `Estimated using ~4 chars per token\nacross tool names, descriptions\nand parameter definitions.`
+      );
+      document.getElementById('metric-reduction').setAttribute('data-tooltip',
+        `(without − with) ÷ without\n` +
+        `(${fmtW} − ${fmtC}) ÷ ${fmtW}\n` +
+        `= ${Math.max(0, reduction).toFixed(1)}%\n\n` +
+        `Percentage of tokens eliminated\nper LLM call by using capa.`
+      );
+      document.getElementById('metric-overhead').setAttribute('data-tooltip',
+        `with ÷ without\n` +
+        `${fmtC} ÷ ${fmtW}\n` +
+        `= ${Math.min(100, overhead).toFixed(1)}%\n\n` +
+        `Token footprint of your proxied\ntools as a fraction of the full\nserver surface.`
+      );
+
+      document.getElementById('token-savings-strip').style.display = 'block';
+    }
+
+    // ---------- Search helpers ----------
+    function matchesSearch(texts) {
+      if (!currentSearch) return true;
+      const q = currentSearch.toLowerCase();
+      return texts.some(t => t && t.toLowerCase().includes(q));
+    }
+
+    // ---------- Section renderers ----------
+    function renderSkills(skills) {
+      const el = document.getElementById('skills-list');
+      const countEl = document.getElementById('skills-count');
+      const visible = skills.filter(skill => {
+        return matchesSearch([skill.id, skill.description]);
+      });
+      countEl.textContent = visible.length;
+      if (!visible.length) {
+        el.innerHTML = currentSearch
+          ? '<div class="search-no-results">No skills match your search</div>'
+          : '<div class="capability-empty">No skills installed</div>';
+        return;
+      }
+      el.innerHTML = '';
+      visible.forEach(skill => {
+        const item = document.createElement('div');
+        item.className = 'capability-item';
+        item.innerHTML = `
+          <div class="capability-item-name">${highlight(skill.id)}</div>
+          <div class="capability-item-meta">
+            <span class="capability-badge">${escapeHtml(skill.type)}</span>
+          </div>
+          ${skill.description ? `<div class="capability-item-description">${highlight(skill.description)}</div>` : ''}
+          ${fromPluginLine(skill.sourcePlugin)}
+        `;
+        el.appendChild(item);
+      });
+    }
+
+    function renderTools(tools) {
+      const el = document.getElementById('tools-list');
+      const countEl = document.getElementById('tools-count');
+
+      // Enrich MCP tools with fetched schema
+      const enriched = tools.map(tool => {
+        if (tool.type !== 'mcp' || !tool.mcpServer || !tool.mcpTool) return tool;
+        const serverId = tool.mcpServer.replace(/^@/, '');
+        const serverCache = serverToolSchemaCache[serverId] || {};
+        const schema = serverCache[tool.mcpTool] || {};
+        return { ...tool, _description: schema.description || '', _inputSchema: schema.inputSchema || {} };
+      });
+
+      const visible = enriched.filter(tool => {
+        const desc = tool._description || '';
+        const paramTexts = Object.entries((tool._inputSchema && tool._inputSchema.properties) || {})
+          .flatMap(([name, s]) => [name, s.description || '']);
+        const cmdTexts = tool.type === 'command'
+          ? [tool.command, ...(tool.commandArgs || []).flatMap(a => [a.name, a.description || ''])]
+          : [];
+        const requiredBySkills = toolRequiredByMap[tool.id] || [];
+        return matchesSearch([tool.id, desc, ...paramTexts, ...cmdTexts, ...requiredBySkills]);
+      });
+
+      countEl.textContent = visible.length;
+      if (!visible.length) {
+        el.innerHTML = currentSearch
+          ? '<div class="search-no-results">No tools match your search</div>'
+          : '<div class="capability-empty">No tools configured</div>';
+        return;
+      }
+
+      el.innerHTML = '';
+      visible.forEach(tool => {
+        const item = document.createElement('div');
+        item.className = 'capability-item';
+
+        let sourceHtml = '';
+        if (tool.type === 'mcp' && tool.mcpServer && tool.mcpTool) {
+          const serverDisplay = tool.mcpServer.replace(/^@/, '');
+          sourceHtml = `
+            <div class="capability-item-source">
+              <span class="capability-item-source-label">from</span>
+              <span>${highlight(serverDisplay)}</span>
+              <span class="capability-item-source-label">→</span>
+              <span>${highlight(tool.mcpTool)}</span>
+            </div>`;
+        } else if (tool.type === 'command' && tool.command) {
+          sourceHtml = `
+            <div class="capability-item-source">
+              <span class="capability-item-source-label">cmd</span>
+              <span>${highlight(tool.command)}</span>
+            </div>`;
+        }
+
+        let descHtml = '';
+        if (tool._description) {
+          descHtml = `<div class="capability-item-description">${highlight(tool._description)}</div>`;
+        }
+
+        let argsHtml = '';
+        if (tool.type === 'mcp' && tool._inputSchema && tool._inputSchema.properties) {
+          argsHtml = buildArgsHtml(tool._inputSchema.properties, tool._inputSchema.required);
+        } else if (tool.type === 'command' && tool.commandArgs && tool.commandArgs.length > 0) {
+          const props = {};
+          const req = [];
+          for (const a of tool.commandArgs) {
+            props[a.name] = { type: a.type || 'string', description: a.description || '' };
+            if (a.required !== false) req.push(a.name);
+          }
+          argsHtml = buildArgsHtml(props, req);
+        }
+
+        const requiredBy = toolRequiredByMap[tool.id] || [];
+        const requiredByHtml = requiredBy.length > 0
+          ? `<div class="capability-item-required-by">
+               <span class="capability-item-required-by-label">required by</span>
+               ${requiredBy.map(s => `<span class="capability-item-required-by-skill">${highlight(s)}</span>`).join('')}
+             </div>`
+          : '';
+
+        item.innerHTML = `
+          <div class="capability-item-name">${highlight(tool.id)}</div>
+          <div class="capability-item-meta">
+            <span class="capability-badge">${escapeHtml(tool.type)}</span>
+          </div>
+          ${sourceHtml}
+          ${descHtml}
+          ${argsHtml}
+          ${requiredByHtml}
+          ${fromPluginLine(tool.sourcePlugin)}
+        `;
+        el.appendChild(item);
+      });
+    }
+
+    function renderServers(servers) {
+      const el = document.getElementById('servers-list');
+      const countEl = document.getElementById('servers-count');
+
+      const visible = servers.filter(server => {
+        const cmdStr = server.cmd
+          ? [server.cmd, ...(server.args || [])].join(' ')
+          : '';
+        const connStatus = (server.requiresOAuth && server.isConnected === false) ? 'disconnected' : '';
+        return matchesSearch([server.id, server.displayName, server.url, cmdStr, server.description, connStatus]);
+      });
+
+      countEl.textContent = visible.length;
+      if (!visible.length) {
+        el.innerHTML = currentSearch
+          ? '<div class="search-no-results">No servers match your search</div>'
+          : '<div class="capability-empty">No servers configured</div>';
+        return;
+      }
+
+      el.innerHTML = '';
+      visible.forEach(server => {
+        const item = document.createElement('div');
+        item.className = 'capability-item';
+
+        let connectionHtml = '';
+        if (server.url) {
+          connectionHtml = `<span>•</span><span style="font-family:'Roboto Mono',monospace;font-size:11px;">${highlight(server.url)}</span>`;
+        } else if (server.cmd) {
+          const cmdDisplay = server.args && server.args.length > 0
+            ? `${server.cmd} ${server.args.join(' ')}`
+            : server.cmd;
+          connectionHtml = `<span>•</span><span style="font-family:'Roboto Mono',monospace;font-size:11px;">${highlight(cmdDisplay)}</span>`;
+        }
+
+        const panelId = `server-tools-${server.id.replace(/[^a-z0-9]/gi, '-')}`;
+        const disconnectedBadge = (server.requiresOAuth && server.isConnected === false)
+          ? `<span class="badge-disconnected">Disconnected</span>`
+          : '';
+
+        item.innerHTML = `
+          <div class="capability-item-name" style="display:flex;align-items:center;gap:0;">
+            ${highlight(server.displayName || server.id)}${disconnectedBadge}
+          </div>
+          <div class="capability-item-meta">
+            <span class="capability-badge">${escapeHtml(server.type)}</span>
+            ${connectionHtml}
+          </div>
+          ${server.description ? `<div class="capability-item-description">${highlight(server.description)}</div>` : ''}
+          ${fromPluginLine(server.sourcePlugin)}
+          <button class="server-expand-btn" data-server-id="${escapeHtml(server.id)}" data-panel-id="${panelId}" onclick="toggleServerTools(this)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+            <span>Show tools</span>
+          </button>
+          <div class="server-tools-panel" id="${panelId}"></div>
+        `;
+        el.appendChild(item);
+      });
+    }
+
+    function renderAllSections() {
+      renderSkills(capabilitiesData.skills);
+      renderTools(capabilitiesData.tools);
+      renderServers(capabilitiesData.servers);
+    }
+
+    // ---------- Main loader ----------
     async function loadProjectCapabilities() {
       try {
         const response = await fetch(`/api/projects/${projectId}`);
-        
         if (!response.ok) {
           console.log('Project capabilities not available');
           return;
@@ -945,13 +1758,21 @@
           document.getElementById('project-name').textContent = projectDisplayName(data.path);
         }
 
-        if (!data || !data.capabilities) {
-          return;
-        }
+        if (!data || !data.capabilities) return;
 
         const { skills, tools, servers } = data.capabilities;
+        capabilitiesData = { skills: skills || [], tools: tools || [], servers: servers || [] };
 
-        const resolvedPlugins = (data.capabilities && data.capabilities.resolvedPlugins) ? data.capabilities.resolvedPlugins : [];
+        // Build reverse map: toolId -> [skillId, ...]
+        toolRequiredByMap = {};
+        for (const skill of capabilitiesData.skills) {
+          for (const toolId of (skill.requires || [])) {
+            if (!toolRequiredByMap[toolId]) toolRequiredByMap[toolId] = [];
+            toolRequiredByMap[toolId].push(skill.id);
+          }
+        }
+
+        const resolvedPlugins = data.capabilities.resolvedPlugins || [];
         const isGitHub = (url) => (url || '').indexOf('github.com') !== -1;
 
         if (resolvedPlugins.length > 0) {
@@ -981,83 +1802,26 @@
           });
         }
 
-        // Show section if there are any capabilities
-        if ((skills && skills.length > 0) || (tools && tools.length > 0) || (servers && servers.length > 0)) {
+        if (capabilitiesData.skills.length > 0 || capabilitiesData.tools.length > 0 || capabilitiesData.servers.length > 0) {
           document.getElementById('capabilities-section').style.display = 'block';
         }
 
-        function fromPluginLine(sourcePlugin) {
-          if (!sourcePlugin || !sourcePlugin.name) return '';
-          return `<div class="capability-item-from">from ${escapeHtml(sourcePlugin.name)}</div>`;
-        }
+        // Initial render (no schemas yet for MCP tools)
+        renderAllSections();
 
-        // Display skills
-        if (skills && skills.length > 0) {
-          document.getElementById('skills-count').textContent = skills.length;
-          const skillsList = document.getElementById('skills-list');
-          skillsList.innerHTML = '';
-          
-          skills.forEach(skill => {
-            const item = document.createElement('div');
-            item.className = 'capability-item';
-            item.innerHTML = `
-              <div class="capability-item-name">${escapeHtml(skill.id)}</div>
-              <div class="capability-item-meta">
-                <span class="capability-badge">${escapeHtml(skill.type)}</span>
-              </div>
-              ${skill.description ? `<div class="capability-item-description">${escapeHtml(skill.description)}</div>` : ''}
-              ${fromPluginLine(skill.sourcePlugin)}
-            `;
-            skillsList.appendChild(item);
+        // Fetch all server tools in background for token savings stats + MCP tool schema enrichment
+        if (capabilitiesData.servers.length > 0) {
+          fetchAllServerToolsForStats(capabilitiesData.servers).then(() => {
+            // Back-fill serverToolSchemaCache from allServerToolsCache for referenced servers
+            fetchServerToolSchemas(capabilitiesData.tools, capabilitiesData.servers).then(() => {
+              renderTools(capabilitiesData.tools);
+            });
+            computeAndRenderTokenSavings(capabilitiesData.tools, capabilitiesData.servers);
           });
-        } else {
-          document.getElementById('skills-list').innerHTML = '<div class="capability-empty">No skills installed</div>';
-        }
-
-        // Display tools
-        if (tools && tools.length > 0) {
-          document.getElementById('tools-count').textContent = tools.length;
-          const toolsList = document.getElementById('tools-list');
-          toolsList.innerHTML = '';
-          
-          tools.forEach(tool => {
-            const item = document.createElement('div');
-            item.className = 'capability-item';
-            item.innerHTML = `
-              <div class="capability-item-name">${escapeHtml(tool.id)}</div>
-              <div class="capability-item-meta">
-                <span class="capability-badge">${escapeHtml(tool.type)}</span>
-              </div>
-              ${fromPluginLine(tool.sourcePlugin)}
-            `;
-            toolsList.appendChild(item);
+        } else if (capabilitiesData.tools.some(t => t.type === 'mcp')) {
+          fetchServerToolSchemas(capabilitiesData.tools, capabilitiesData.servers).then(() => {
+            renderTools(capabilitiesData.tools);
           });
-        } else {
-          document.getElementById('tools-list').innerHTML = '<div class="capability-empty">No tools installed</div>';
-        }
-
-        // Display servers
-        if (servers && servers.length > 0) {
-          document.getElementById('servers-count').textContent = servers.length;
-          const serversList = document.getElementById('servers-list');
-          serversList.innerHTML = '';
-          
-          servers.forEach(server => {
-            const item = document.createElement('div');
-            item.className = 'capability-item';
-            item.innerHTML = `
-              <div class="capability-item-name">${escapeHtml(server.id)}</div>
-              <div class="capability-item-meta">
-                <span class="capability-badge">${escapeHtml(server.type)}</span>
-                ${server.url ? `<span>•</span><span style="font-family: 'Roboto Mono', monospace; font-size: 11px;">${escapeHtml(server.url)}</span>` : ''}
-              </div>
-              ${server.description ? `<div class="capability-item-description">${escapeHtml(server.description)}</div>` : ''}
-              ${fromPluginLine(server.sourcePlugin)}
-            `;
-            serversList.appendChild(item);
-          });
-        } else {
-          document.getElementById('servers-list').innerHTML = '<div class="capability-empty">No servers configured</div>';
         }
 
       } catch (error) {
@@ -1350,6 +2114,112 @@
       return div.innerHTML;
     }
 
+    // ---------- Search ----------
+    function clearSearch() {
+      const input = document.getElementById('capabilities-search');
+      input.value = '';
+      input.dispatchEvent(new Event('input'));
+      input.focus();
+    }
+
+    function initSearch() {
+      const input = document.getElementById('capabilities-search');
+      const clearBtn = document.getElementById('search-clear');
+      if (!input) return;
+      let debounceTimer;
+      input.addEventListener('input', () => {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+          currentSearch = input.value.trim();
+          clearBtn.style.display = currentSearch ? 'flex' : 'none';
+          renderAllSections();
+        }, 120);
+      });
+      input.addEventListener('keydown', e => {
+        if (e.key === 'Escape') clearSearch();
+      });
+    }
+
+    async function toggleServerTools(btn) {
+      const serverId = btn.getAttribute('data-server-id');
+      const panelId = btn.getAttribute('data-panel-id');
+      const panel = document.getElementById(panelId);
+      const isExpanded = btn.classList.contains('expanded');
+      const label = btn.querySelector('span');
+
+      if (isExpanded) {
+        btn.classList.remove('expanded');
+        panel.classList.remove('open');
+        if (label) label.textContent = 'Show tools';
+        return;
+      }
+
+      btn.classList.add('expanded');
+      panel.classList.add('open');
+      if (label) label.textContent = 'Hide tools';
+
+      // Only fetch if panel is empty (not yet loaded)
+      if (panel.innerHTML !== '' && !panel.querySelector('.server-tools-loading')) return;
+
+      // If we already have the data in cache (from MCP tool schema prefetch), use it directly
+      if (serverToolSchemaCache[serverId]) {
+        const tools = Object.entries(serverToolSchemaCache[serverId]).map(([name, s]) => ({
+          name, description: s.description, inputSchema: s.inputSchema
+        }));
+        renderServerToolsPanel(panel, tools);
+        return;
+      }
+
+      panel.innerHTML = '<div class="server-tools-loading"><div class="server-tools-loading-spinner"></div>Loading tools...</div>';
+
+      try {
+        const response = await fetch(`/api/projects/${projectId}/servers/${encodeURIComponent(serverId)}/tools`);
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        const data = await response.json();
+        const tools = data.tools || [];
+        // Populate cache so subsequent opens are instant
+        const map = {};
+        for (const t of tools) map[t.name] = { description: t.description || '', inputSchema: t.inputSchema || {} };
+        serverToolSchemaCache[serverId] = map;
+
+        renderServerToolsPanel(panel, tools);
+      } catch (err) {
+        panel.innerHTML = `<div class="server-tools-error">Failed to load tools: ${escapeHtml(err.message)}</div>`;
+      }
+    }
+
+    function renderServerToolsPanel(panel, tools) {
+      if (!tools.length) {
+        panel.innerHTML = '<div class="server-tools-error">No tools found on this server</div>';
+        return;
+      }
+      panel.innerHTML = tools.map(t => {
+        const inputSchema = t.inputSchema || {};
+        const properties = inputSchema.properties || {};
+        const required = Array.isArray(inputSchema.required) ? inputSchema.required : [];
+        const propEntries = Object.entries(properties);
+        const argsHtml = propEntries.length > 0
+          ? `<div class="capability-item-args">${propEntries.map(([name, schema]) => {
+              const s = schema;
+              const isRequired = required.includes(name);
+              return `<div class="capability-item-arg">
+                <span class="capability-item-arg-name">${escapeHtml(name)}</span>
+                <span class="capability-item-arg-type">${escapeHtml(s.type || 'any')}</span>
+                ${isRequired ? '<span class="capability-item-arg-required">required</span>' : ''}
+                ${s.description ? `<span class="capability-item-arg-desc">${escapeHtml(s.description)}</span>` : ''}
+              </div>`;
+            }).join('')}</div>`
+          : '';
+        return `<div class="server-tool-item">
+          <div class="server-tool-name">${escapeHtml(t.name || '')}</div>
+          ${t.description ? `<div class="server-tool-desc">${escapeHtml(t.description)}</div>` : ''}
+          ${argsHtml}
+        </div>`;
+      }).join('');
+    }
+
     // Load configuration
     (async () => {
       // Validate projectId
@@ -1358,6 +2228,9 @@
         document.getElementById('no-config-message').style.display = 'block';
         return;
       }
+
+      // Initialize search
+      initSearch();
 
       // Load project capabilities first
       await loadProjectCapabilities();
