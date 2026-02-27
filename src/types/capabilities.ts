@@ -49,6 +49,90 @@ export interface CapabilitiesOptions {
   security?: SecurityOptions;
 }
 
+/**
+ * Repository + file definition for github/gitlab agent snippets.
+ * Follows the same `repo` string format used by Skill: "owner/repo@filepath"
+ * with an optional ":version" tag or "#sha" suffix.
+ *
+ * Examples:
+ *   "vercel-labs/agent-skills@AGENTS.md"
+ *   "vercel-labs/agent-skills@docs/tips.md:v1.2.0"
+ *   "vercel-labs/agent-skills@AGENTS.md#abc123def"
+ */
+export interface AgentSnippetDef {
+  repo: string;
+}
+
+/**
+ * A single snippet to append to the agent instructions file (AGENTS.md / CLAUDE.md).
+ * Each snippet is wrapped in capa-owned HTML-comment markers so it can be updated or
+ * removed without touching content written by the user.
+ *
+ * Supported types (consistent with Skill):
+ *   - inline  : literal content embedded in the capabilities file
+ *   - remote  : content fetched from a raw URL at install time
+ *   - github  : file fetched from a GitHub repository ("owner/repo@filepath")
+ *   - gitlab  : file fetched from a GitLab repository ("group/repo@filepath")
+ */
+export interface AgentSnippet {
+  /**
+   * Unique identifier used as the capa marker id in the file.
+   * Optional for github/gitlab — derived from the filepath if omitted.
+   * Required for inline and remote types.
+   */
+  id?: string;
+  type: 'inline' | 'remote' | 'github' | 'gitlab';
+  /** Literal markdown text (required when type is 'inline'). */
+  content?: string;
+  /** Raw URL of a markdown file to fetch (required when type is 'remote'). */
+  url?: string;
+  /** Repository + file definition (required when type is 'github' or 'gitlab'). */
+  def?: AgentSnippetDef;
+}
+
+/**
+ * Optional base file that seeds the agent instructions file before any snippets are applied.
+ * If omitted, capa creates a blank AGENTS.md (or uses the existing one).
+ */
+/**
+ * Source definition for the base agent instructions file.
+ * Supports the same source types as snippets (remote, github, gitlab).
+ *
+ * Examples:
+ *   ref: https://raw.githubusercontent.com/org/repo/main/AGENTS.md   # remote URL
+ *   type: github / def.repo: org/repo@AGENTS.md                       # GitHub file
+ *   type: gitlab / def.repo: group/repo@AGENTS.md:v1.0.0              # GitLab file, pinned
+ */
+export interface AgentFileBase {
+  /**
+   * Source type. Defaults to 'remote' when `ref` is set and `type` is omitted.
+   * Use 'github' or 'gitlab' together with `def.repo` for repository-hosted files.
+   */
+  type?: 'remote' | 'github' | 'gitlab';
+  /** Raw URL — used when type is 'remote' (or when type is omitted and ref is present). */
+  ref?: string;
+  /** Repository + file definition for github/gitlab types. */
+  def?: AgentSnippetDef;
+}
+
+/**
+ * Configuration for the `agents` section in the capabilities file.
+ * Controls how capa manages AGENTS.md / CLAUDE.md in the project.
+ */
+export interface AgentFileConfig {
+  /**
+   * Optional base file downloaded and written as the starting content of AGENTS.md.
+   * Capa tracks this block under the reserved id `__base__` so re-running install
+   * refreshes it without overwriting user-added content outside capa markers.
+   */
+  base?: AgentFileBase;
+  /**
+   * List of snippets to append to the agent instructions file.
+   * Each snippet is idempotently upserted on install and removed on clean.
+   */
+  additional?: AgentSnippet[];
+}
+
 export interface Capabilities {
   providers: string[];
   skills: Skill[];
@@ -58,6 +142,8 @@ export interface Capabilities {
   /** Resolved plugin metadata (name, version, provider, repository) for display */
   resolvedPlugins?: ResolvedPluginInfo[];
   options?: CapabilitiesOptions;
+  /** Manages content written to AGENTS.md / CLAUDE.md in the project root. */
+  agents?: AgentFileConfig;
 }
 
 export interface Skill {

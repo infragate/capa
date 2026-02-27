@@ -1,4 +1,4 @@
-import { writeFileSync } from 'fs';
+import { writeFileSync, existsSync } from 'fs';
 import { createServer, Server as HttpServer } from 'http';
 import { loadSettings, getDatabasePath, getPidFilePath, ensureCapaDir } from '../shared/config';
 import { CapaDatabase } from '../db/database';
@@ -47,6 +47,9 @@ class CapaServer {
     const dbPath = getDatabasePath(this.settings);
     this.db = new CapaDatabase(dbPath);
 
+    // Cleanup projects whose directories no longer exist
+    await this.cleanupMissingProjects();
+
     // Initialize managers
     this.sessionManager = new SessionManager(this.db);
     this.subprocessManager = new SubprocessManager(this.db);
@@ -84,6 +87,23 @@ class CapaServer {
     this.logger.success(`CAPA server running at http://${this.settings.server.host}:${this.settings.server.port}`);
     this.logger.info(`OAuth redirect server will start on-demand at http://${this.settings.server.host}:${this.settings.oauth_redirect_port || 3100}`);
     this.logger.info(`Version: ${VERSION}`);
+  }
+
+  private async cleanupMissingProjects(): Promise<void> {
+    const projects = this.db.getAllProjects();
+    let removed = 0;
+    for (const project of projects) {
+      if (!existsSync(project.path)) {
+        this.logger.warn(`Project directory not found, removing project "${project.id}" at path: ${project.path}`);
+        this.db.deleteProject(project.id);
+        removed++;
+      }
+    }
+    if (removed > 0) {
+      this.logger.info(`Removed ${removed} project(s) with missing directories`);
+    } else {
+      this.logger.debug('All configured projects have valid directories');
+    }
   }
 
   private async startHttpServer() {
@@ -237,6 +257,14 @@ class CapaServer {
       return this.handleOAuth2Callback(projectId, request);
     }
 
+    // List tools for a specific server
+    const serverToolsMatch = path.match(/^\/api\/projects\/([^/]+)\/servers\/([^/]+)\/tools$/);
+    if (serverToolsMatch && request.method === 'GET') {
+      const projectId = serverToolsMatch[1];
+      const serverId = serverToolsMatch[2];
+      return this.handleGetServerTools(projectId, serverId);
+    }
+
     // Disconnect OAuth2
     const oauth2DisconnectMatch = path.match(/^\/api\/projects\/([^/]+)\/oauth\/([^/]+)$/);
     if (oauth2DisconnectMatch && request.method === 'DELETE') {
@@ -368,19 +396,43 @@ class CapaServer {
             id: s.id,
             type: s.type,
             description: s.def?.description || null,
+            requires: s.def?.requires || [],
             sourcePlugin: s.sourcePlugin || null,
           })),
-          tools: capabilities.tools.map(t => ({
-            id: t.id,
-            type: t.type,
-            sourcePlugin: t.sourcePlugin || null,
-          })),
-          servers: capabilities.servers.map(s => ({
-            id: s.id,
-            type: s.type,
-            url: s.def?.url || null,
-            sourcePlugin: s.sourcePlugin || null,
-          })),
+          tools: capabilities.tools.map(t => {
+            const base: Record<string, any> = {
+              id: t.id,
+              type: t.type,
+              sourcePlugin: t.sourcePlugin || null,
+            };
+            if (t.type === 'mcp') {
+              const mcpDef = t.def as import('../types/capabilities').ToolMCPDefinition;
+              base.mcpServer = mcpDef.server;
+              base.mcpTool = mcpDef.tool;
+            } else if (t.type === 'command') {
+              const cmdDef = t.def as import('../types/capabilities').ToolCommandDefinition;
+              base.command = cmdDef.run.cmd;
+              base.commandArgs = cmdDef.run.args || [];
+            }
+            return base;
+          }),
+          servers: capabilities.servers.map(s => {
+            const requiresOAuth = !!s.def?.oauth2;
+            const isConnected = requiresOAuth
+              ? this.oauth2Manager.isServerConnected(projectId, s.id)
+              : null; // null = no auth needed, not applicable
+            return {
+              id: s.id,
+              type: s.type,
+              url: s.def?.url || null,
+              cmd: s.def?.cmd || null,
+              args: s.def?.args || null,
+              sourcePlugin: s.sourcePlugin || null,
+              displayName: s.displayName || null,
+              requiresOAuth,
+              isConnected,
+            };
+          }),
           resolvedPlugins: capabilities.resolvedPlugins || null,
         } : null,
       };
@@ -388,6 +440,59 @@ class CapaServer {
       apiLogger.success('Project found');
       return new Response(
         JSON.stringify(projectDetails),
+        { headers: { 'Content-Type': 'application/json' } }
+      );
+    } catch (error: any) {
+      apiLogger.failure(`Error: ${error.message}`);
+      return new Response(
+        JSON.stringify({ error: error.message }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+  }
+
+  private async handleGetServerTools(projectId: string, serverId: string): Promise<Response> {
+    const apiLogger = this.logger.child('API');
+    apiLogger.info(`List tools for server: ${serverId} in project: ${projectId}`);
+    try {
+      const capabilities = this.sessionManager.getProjectCapabilities(projectId);
+      if (!capabilities) {
+        return new Response(
+          JSON.stringify({ error: 'Project not configured' }),
+          { status: 404, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      const server = capabilities.servers.find(s => s.id === serverId);
+      if (!server) {
+        return new Response(
+          JSON.stringify({ error: 'Server not found' }),
+          { status: 404, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      let mcpServer = this.mcpServers.get(projectId);
+      if (!mcpServer) {
+        const project = this.db.getProject(projectId);
+        if (!project) {
+          return new Response(
+            JSON.stringify({ error: 'Project not found' }),
+            { status: 404, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        mcpServer = new CapaMCPServer(
+          this.db,
+          this.sessionManager,
+          this.subprocessManager,
+          projectId,
+          project.path
+        );
+      }
+
+      const tools = await mcpServer.listServerTools(serverId, capabilities);
+      apiLogger.success(`Found ${tools.length} tools for server ${serverId}`);
+      return new Response(
+        JSON.stringify({ tools }),
         { headers: { 'Content-Type': 'application/json' } }
       );
     } catch (error: any) {

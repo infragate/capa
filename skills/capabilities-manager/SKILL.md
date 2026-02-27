@@ -1,6 +1,6 @@
 ---
 name: capabilities-manager
-description: Guide for managing capabilities, skills, tools, and MCP servers with capa. Use this skill when you need to modify the capabilities.yaml or capabilities.json file. Includes security options (blocked phrases, character sanitization).
+description: Guide for managing capabilities, skills, tools, MCP servers, and agent instruction files (AGENTS.md/CLAUDE.md) with capa. Use this skill when you need to modify the capabilities.yaml or capabilities.json file. Includes security options (blocked phrases, character sanitization) and the agents section for managing AGENTS.md.
 ---
 
 # Capabilities Manager
@@ -19,17 +19,19 @@ Use this skill when:
 - User needs to manage the CAPA server (start/stop/restart/status)
 - User wants to understand tool exposure modes (on-demand vs expose-all)
 - User needs to configure security (blocked phrases, character sanitization)
+- User wants to manage AGENTS.md or CLAUDE.md content (the `agents` section)
 
 ## Core Concepts
 
 ### Capabilities File
-The `capabilities.yaml` (or `capabilities.json`) file defines everything an agent can do. It contains five main sections:
+The `capabilities.yaml` (or `capabilities.json`) file defines everything an agent can do. It contains six main sections:
 
 1. **providers**: List of MCP clients where skills should be installed (e.g., `cursor`, `claude-code`)
 2. **options**: Configuration for tool exposure (`toolExposure`) and security (`security`)
 3. **skills**: Modular knowledge packages that teach agents when and how to use tools
 4. **servers**: MCP servers that provide tools (local subprocesses or remote HTTP servers)
 5. **tools**: Executable capabilities (MCP tools or shell commands)
+6. **agents**: Manages the content of `AGENTS.md` in the project root (optional)
 
 ### Skills vs Tools
 - **Skills**: Provide knowledge and context about when/how to use capabilities (non-executable markdown documentation)
@@ -67,9 +69,10 @@ capa install --env          # Alternative syntax for -e
 ```
 Reads the capabilities file and:
 1. Installs all skills to configured MCP clients (creates skill directories in `.cursor/skills/` and/or `~/Library/Application Support/Claude/skills/`)
-2. Configures the CAPA server with your tools and servers
-3. Prompts for any required credentials via web UI (unless `-e` flag is used)
-4. Registers the project's MCP endpoint in client config files
+2. Installs/updates `AGENTS.md` (always) and `CLAUDE.md` (when `claude-code` is in providers) if the `agents` section is present (downloads base file, upserts/prunes snippets)
+3. Configures the CAPA server with your tools and servers
+4. Prompts for any required credentials via web UI (unless `-e` flag is used)
+5. Registers the project's MCP endpoint in client config files
 
 **Security**: If `options.security` is configured with <code>blockedPhrases</code> or <code>allowedCharacters</code>, the corresponding checks run during installation. Omit or comment out each property to disable it. If a blocked phrase is found, installation stops immediately and reports which skill and phrase caused the block. When <code>allowedCharacters</code> is present, character sanitization runs: the baseline (printable ASCII + standard whitespace) is always preserved, and the value specifies extra Unicode ranges to keep on top of that.
 
@@ -117,7 +120,7 @@ Add a skill from various sources:
 ```bash
 capa clean
 ```
-Removes all skill directories and MCP client configurations that were installed by CAPA.
+Removes all skill directories and MCP client configurations that were installed by CAPA. If the capabilities file has an `agents` section, also removes all capa-managed blocks from `AGENTS.md` and `CLAUDE.md` (each file is deleted if it becomes entirely empty after cleaning).
 
 **When to use**: Cleaning up before reinstalling or removing CAPA-managed capabilities.
 
@@ -147,6 +150,15 @@ options:
   #   blockedPhrases: []
   #   # Or load from file: blockedPhrases: { file: "./blocked-phrases.txt" }
   #   allowedCharacters: ""  # "" = baseline only (strips non-ASCII); "[\\u00A0-\\uFFFF]" = allow all Unicode
+
+# Optional: manage AGENTS.md content
+# agents:
+#   base:
+#     ref: https://raw.githubusercontent.com/org/repo/main/AGENTS.md
+#   additional:
+#     - type: inline
+#       id: my_snippet
+#       content: "Custom agent instructions here."
 
 skills:
   - id: skill-id
@@ -409,6 +421,186 @@ tools:
             type: string
             required: true
 ```
+
+### Agents Section
+
+The `agents` section manages agent instruction files (`AGENTS.md` and/or `CLAUDE.md`) in the project root. It lets you define a base file and additional snippets that capa appends on `capa install` and removes on `capa clean`.
+
+#### Which files are managed?
+
+capa determines target files automatically from the `providers` list:
+
+| Provider includes | Files written |
+|---|---|
+| `cursor` only (or other non-Claude providers) | `AGENTS.md` |
+| `claude-code` (or any `claude*` provider) | `AGENTS.md` **and** `CLAUDE.md` |
+
+- **`AGENTS.md`** is always written — it is the universal format supported by Cursor, OpenAI Codex, Google Jules, Amp, Warp, and many others.
+- **`CLAUDE.md`** is additionally written when a Claude provider is present, because Claude Code reads `./CLAUDE.md` at the project root for persistent project instructions.
+
+Both files receive identical content.
+
+#### How capa tracks ownership
+
+Each snippet capa writes is wrapped in HTML comment markers that are invisible in rendered markdown and ignored by most LLMs:
+
+```markdown
+<!-- capa:start:my_snippet_id -->
+Content of the snippet goes here.
+<!-- capa:end:my_snippet_id -->
+```
+
+- `capa install` **upserts** every snippet (adds if missing, replaces if changed) and **prunes** any capa-owned blocks whose id is no longer in the capabilities file.
+- `capa clean` strips all capa-owned blocks from every managed file. If a file is empty after stripping, it is deleted.
+- The `base` content is written directly without markers — it is not tracked or modified by capa on clean.
+- User content written outside capa markers is never touched (when no base is configured).
+- The same **security checks** that apply to skills (`options.security.blockedPhrases` and `options.security.allowedCharacters`) are applied to all agent snippet content (base and additional) before it is written.
+
+#### Schema
+
+```yaml
+agents:
+  # base is optional — seeds AGENTS.md with a file from any supported source
+  base:
+    ref: https://raw.githubusercontent.com/org/repo/main/AGENTS.md   # remote URL (default)
+  # — or — use github/gitlab source (same syntax as additional snippets):
+  # base:
+  #   type: github
+  #   def:
+  #     repo: org/repo@AGENTS.md            # owner/repo@filepath
+  # base:
+  #   type: gitlab
+  #   def:
+  #     repo: group/repo@AGENTS.md:v1.0.0   # pinned to tag
+  additional:         # optional — list of snippets to append
+    - type: inline
+      id: unique_snippet_id
+      content: |
+        ## My Custom Instructions
+        Always run tests before committing.
+    - type: remote
+      id: another_snippet
+      url: https://raw.githubusercontent.com/org/repo/main/agent-tips.md
+    - type: github
+      id: shared_tips        # optional — derived from filename if omitted
+      def:
+        repo: org/repo@AGENTS.md             # owner/repo@filepath
+    - type: github
+      def:
+        repo: org/repo@docs/tips.md:v1.2.0  # pinned to a version tag
+    - type: gitlab
+      def:
+        repo: group/repo@AGENTS.md#abc123def # pinned to a commit SHA
+```
+
+#### Snippet types
+
+| Type | Source | Required fields |
+|---|---|---|
+| `inline` | Literal text in the YAML | `id`, `content` |
+| `remote` | Fetched from a raw URL | `id`, `url` |
+| `github` | File fetched from a GitHub repository | `def.repo` (`id` optional — derived from filename) |
+| `gitlab` | File fetched from a GitLab repository | `def.repo` (`id` optional — derived from filename) |
+
+#### `def.repo` format for github/gitlab
+
+```
+owner/repo@filepath
+owner/repo@filepath:version
+owner/repo@filepath#sha
+```
+
+| Part | Description |
+|---|---|
+| `owner/repo` | GitHub/GitLab repository path (supports nested GitLab groups, e.g. `group/sub/repo`) |
+| `@filepath` | Path to the file inside the repository root, e.g. `AGENTS.md` or `docs/tips.md` |
+| `:version` | Optional version tag to pin to, e.g. `:v1.2.0` |
+| `#sha` | Optional commit SHA to pin to, e.g. `#abc123def` |
+
+When no version or SHA is specified capa fetches from `HEAD` (the default branch).
+
+#### Other fields
+
+| Field | Description |
+|---|---|
+| `agents.base.ref` | Raw URL of a remote markdown file — used when `type` is `remote` or omitted. Re-running install always re-downloads and refreshes it. |
+| `agents.base.type` | `remote` (default when `ref` is set), `github`, or `gitlab`. Use `github`/`gitlab` together with `def.repo`. |
+| `agents.base.def.repo` | Repository + file for `github`/`gitlab` base. Same `owner/repo@filepath` format as snippet `def.repo`. |
+| `agents.additional[].id` | Unique identifier used as the capa marker id. Required for `inline`/`remote`; optional for `github`/`gitlab` (derived from the filepath, e.g. `docs_tips_md`). |
+
+#### Full example
+
+```yaml
+providers:
+  - cursor
+  - claude-code
+
+agents:
+  base:
+    ref: https://raw.githubusercontent.com/org/repo/main/AGENTS.md
+  additional:
+    - type: inline
+      id: setup_tools
+      content: |
+        ## Agent Setup
+        After learning a new skill, call the `setup_tools` tool,
+        then use `call_tool` to invoke the relevant tool.
+    - type: remote
+      id: ci_tips
+      url: https://raw.githubusercontent.com/org/repo/main/ci-agent-tips.md
+    - type: github
+      def:
+        repo: org/shared-standards@AGENTS.md   # id derived → "AGENTS_md"
+    - type: github
+      id: pinned_tips
+      def:
+        repo: org/repo@docs/agent-tips.md:v2.1.0
+
+skills:
+  - id: capabilities-manager
+    type: github
+    def:
+      repo: infragate/capa@capabilities-manager
+```
+
+Because `claude-code` is in `providers`, running `capa install` produces both `AGENTS.md` and `CLAUDE.md` with identical content:
+
+```markdown
+# Project Instructions
+…(content from base URL, written as-is)…
+
+<!-- capa:start:setup_tools -->
+## Agent Setup
+After learning a new skill, call the `setup_tools` tool,
+then use `call_tool` to invoke the relevant tool.
+<!-- capa:end:setup_tools -->
+
+<!-- capa:start:ci_tips -->
+…(content from remote URL)…
+<!-- capa:end:ci_tips -->
+```
+
+The base content is written **without markers** — it is the document foundation, not a capa-owned block. Re-running `capa install` rewrites the base content and refreshes all snippets. Only the `additional` snippets carry capa markers.
+
+#### No-base usage (snippets only)
+
+If you omit `base`, capa will create blank files (if they don't already exist) and append only the `additional` snippets:
+
+```yaml
+agents:
+  additional:
+    - type: inline
+      id: commit_style
+      content: "Always use conventional commits: feat/fix/chore/docs/refactor."
+```
+
+#### Syncing changes
+
+Running `capa install` again after modifying the `agents` section is the canonical way to sync:
+- Added snippets are appended.
+- Changed snippet content is updated in place.
+- Removed snippet ids are pruned from the file.
+- When a base is configured, the entire file is rebuilt from the freshly downloaded base content plus the current snippets.
 
 ## Usage Workflows
 
