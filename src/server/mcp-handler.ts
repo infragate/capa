@@ -16,6 +16,19 @@ import { SubprocessManager } from './subprocess-manager';
 import { VERSION } from '../version';
 import { logger } from '../shared/logger';
 
+export interface ShellToolInfo {
+  id: string;
+  type: 'command' | 'mcp';
+  /** For MCP tools: the server ID (without '@') */
+  serverId?: string;
+  /** For MCP tools: the server-level description from the capabilities file */
+  serverDescription?: string;
+  /** For command tools: optional group name for nesting in capa sh */
+  group?: string;
+  description: string;
+  inputSchema: any;
+}
+
 export interface ToolValidationResult {
   toolId: string;
   success: boolean;
@@ -250,7 +263,7 @@ export class CapaMCPServer {
         content: [
           {
             type: 'text',
-            text: JSON.stringify(result),
+            text: this.serializeToolResult(result),
           },
         ],
       };
@@ -449,7 +462,7 @@ export class CapaMCPServer {
         content: [
           {
             type: 'text',
-            text: JSON.stringify(result),
+            text: this.serializeToolResult(result),
           },
         ],
       };
@@ -476,6 +489,38 @@ export class CapaMCPServer {
     const serverDef = capabilities.servers.find((s) => s.id === serverId);
     if (!serverDef) return [];
     return await this.mcpProxy.listTools(serverId, serverDef.def);
+  }
+
+  /**
+   * Return all tools with full schemas for the capa shell, regardless of toolExposure mode.
+   * Each entry includes the original tool id, type, optional server group id, description, and inputSchema.
+   */
+  async getAllShellTools(capabilities: Capabilities): Promise<ShellToolInfo[]> {
+    const result: ShellToolInfo[] = [];
+    for (const tool of capabilities.tools) {
+      const mcpTool = await this.convertToolToMCP(tool, capabilities);
+      const info: ShellToolInfo = {
+        id: tool.id,
+        type: tool.type as 'command' | 'mcp',
+        description: mcpTool.description || '',
+        inputSchema: mcpTool.inputSchema,
+      };
+      if (tool.type === 'mcp') {
+        const mcpDef = tool.def as ToolMCPDefinition;
+        const serverId = mcpDef.server.replace('@', '');
+        info.serverId = serverId;
+        const serverDef = capabilities.servers.find((s) => s.id === serverId);
+        if (serverDef?.description) {
+          info.serverDescription = serverDef.description;
+        }
+      } else {
+        if (tool.group) {
+          info.group = tool.group;
+        }
+      }
+      result.push(info);
+    }
+    return result;
   }
 
   /**
@@ -604,7 +649,7 @@ export class CapaMCPServer {
 
       const mcpTool: MCPTool = {
         name: tool.id,
-        description: `Command tool: ${tool.id}`,
+        description: tool.description || `Command tool: ${tool.id}`,
         inputSchema: {
           type: 'object' as const,
           properties,
@@ -681,6 +726,43 @@ export class CapaMCPServer {
         return mcpTool;
       }
     }
+  }
+
+  /**
+   * Serialize a tool execution result into a text string suitable for an MCP content item.
+   *
+   * For MCP proxy results — where result.result is an array of upstream content items
+   * (each with { type, text }) — this unwraps the array, tries to JSON-parse each item's
+   * text, and returns:
+   *   - a single item directly (not wrapped in an array) when there is only one entry
+   *   - a JSON array of all items when there are multiple entries
+   *
+   * For command tool results and error objects the raw JSON is returned unchanged.
+   */
+  private serializeToolResult(result: any): string {
+    const items: any[] = result?.result;
+
+    // Detect MCP proxy result: result.result is a non-empty array of {type, text} objects
+    if (
+      Array.isArray(items) &&
+      items.length > 0 &&
+      items.every((i) => i !== null && typeof i === 'object' && 'type' in i && 'text' in i)
+    ) {
+      const processed = items.map((item) => {
+        const raw = typeof item.text === 'string' ? item.text : JSON.stringify(item);
+        try {
+          return JSON.parse(raw);   // unescape nested JSON strings
+        } catch {
+          return raw;               // not JSON — return as plain string
+        }
+      });
+
+      const value = processed.length === 1 ? processed[0] : processed;
+      return typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+    }
+
+    // Fallback: command tool result or error object
+    return JSON.stringify(result);
   }
 
   getServer(): Server {
@@ -1009,7 +1091,7 @@ export class CapaMCPServer {
               content: [
                 {
                   type: 'text',
-                  text: JSON.stringify(result),
+                  text: this.serializeToolResult(result),
                 },
               ],
             },
@@ -1151,7 +1233,7 @@ export class CapaMCPServer {
             content: [
               {
                 type: 'text',
-                text: JSON.stringify(result),
+                text: this.serializeToolResult(result),
               },
             ],
           },
