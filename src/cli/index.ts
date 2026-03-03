@@ -10,6 +10,7 @@ import { cleanCommand } from './commands/clean';
 import { addCommand } from './commands/add';
 import { authCommand } from './commands/auth';
 import { upgradeCommand } from './commands/upgrade';
+import { shellCommand } from './commands/sh';
 import { checkForUpdates } from './utils/version-check';
 import { VERSION } from '../version';
 
@@ -106,6 +107,15 @@ if (process.argv[2] === '__server__') {
       .description('Upgrade capa to the latest version')
       .action(async () => {
         await upgradeCommand();
+      });
+
+    program
+      .command('sh [args...]')
+      .description('Run capa tools as CLI commands, or pass through to the OS shell')
+      .helpOption(false)      // let capa sh handle --help itself
+      .allowUnknownOption()   // pass unknown options (--query, etc.) into args
+      .action(async (args: string[]) => {
+        await shellCommand(args);
       });
 
     await program.parseAsync();
