@@ -179,6 +179,8 @@ export interface MCPServer {
   sourcePlugin?: SourcePlugin;
   /** User-facing name (e.g. "slack-server" for plugin servers); falls back to id if unset */
   displayName?: string;
+  /** Human-readable description shown in capa sh */
+  description?: string;
 }
 
 export interface MCPServerDefinition {
@@ -202,6 +204,14 @@ export interface Tool {
   type: 'mcp' | 'command';
   def: ToolMCPDefinition | ToolCommandDefinition;
   sourcePlugin?: SourcePlugin;
+  /** Human-readable description shown in capa sh */
+  description?: string;
+  /**
+   * Optional group name for command-type tools. Tools sharing the same group are
+   * nested under a parent command in capa sh. If only one tool belongs to the group
+   * it is displayed at the top level directly.
+   */
+  group?: string;
 }
 
 export interface ToolMCPDefinition {
