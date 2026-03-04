@@ -20,6 +20,7 @@ Use this skill when:
 - User wants to understand tool exposure modes (on-demand vs expose-all)
 - User needs to configure security (blocked phrases, character sanitization)
 - User wants to manage AGENTS.md or CLAUDE.md content (the `agents` section)
+- User wants to run tools from the command line or explore available tools with `capa sh`
 
 ## Core Concepts
 
@@ -123,6 +124,27 @@ capa clean
 Removes all skill directories and MCP client configurations that were installed by CAPA. If the capabilities file has an `agents` section, also removes all capa-managed blocks from `AGENTS.md` and `CLAUDE.md` (each file is deleted if it becomes entirely empty after cleaning).
 
 **When to use**: Cleaning up before reinstalling or removing CAPA-managed capabilities.
+
+### Shell / Tool Executor
+```bash
+capa sh                                     # List all available commands
+capa sh <group>                             # List subcommands for an MCP server group
+capa sh <group> <subcommand> [--arg value]  # Run an MCP tool
+capa sh <command> [--arg value]             # Run a top-level command tool
+capa sh <unknown command>                   # Pass through to the OS shell
+```
+
+`capa sh` converts every configured tool into a CLI command. MCP server tools are grouped under the server ID (e.g. `gitlab`). Command tools appear at the top level, or under a custom `group` if defined. Tool IDs are automatically slugified to kebab-case.
+
+`capa sh` is **non-interactive** — each invocation executes one command and exits, making it ideal for AI agents. Use `--help` at any level for contextual guidance:
+
+```bash
+capa sh --help                              # Top-level help
+capa sh gitlab --help                       # List gitlab subcommands
+capa sh gitlab list-merge-requests --help   # Show argument details
+```
+
+**Requires**: a `capabilities.yaml` in the current directory and the CAPA server running (`capa start`). Run `capa install` at least once to register the project.
 
 ### Server Management
 ```bash
@@ -285,6 +307,7 @@ Define MCP servers that provide tools:
 servers:
   - id: filesystem-server
     type: mcp
+    description: Read and write files on the local filesystem   # optional, shown in capa sh
     def:
       cmd: npx
       args:
@@ -300,11 +323,14 @@ servers:
 servers:
   - id: remote-server
     type: mcp
+    description: Internal API gateway                           # optional, shown in capa sh
     def:
       url: https://api.example.com/mcp
       headers:
         Authorization: Bearer ${Token}
 ```
+
+The optional `description` field provides a human-readable label shown alongside the server group in `capa sh`. Without it, `capa sh` falls back to a generic summary such as "N tools available".
 
 For servers that use a self-signed TLS certificate, add `tlsSkipVerify: true` to bypass certificate verification:
 
@@ -381,6 +407,7 @@ Proxy a tool from an MCP server:
 tools:
   - id: read_file
     type: mcp
+    description: Read the contents of a file                   # optional, shown in capa sh
     def:
       server: "@filesystem-server"
       tool: read_file
@@ -395,6 +422,7 @@ Execute shell commands:
 tools:
   - id: greet_user
     type: command
+    description: Greet a user by name                          # optional, shown in capa sh
     def:
       run:
         cmd: echo Hello, {name}!
@@ -421,6 +449,54 @@ tools:
             type: string
             required: true
 ```
+
+#### Tool Description
+
+Both MCP tools and command tools support an optional top-level `description` field. This text is displayed in `capa sh` and used as the tool description in MCP schemas. For command tools, CAPA falls back to `"Command tool: <id>"` when the field is absent.
+
+#### Tool Grouping (`group`)
+
+Command tools can be nested under a shared parent in `capa sh` using the optional `group` field. Tools sharing the same `group` value are listed together as subcommands of that group:
+
+```yaml
+tools:
+  - id: deploy_service
+    type: command
+    group: deploy                                               # optional group name
+    description: Deploy a service to production
+    def:
+      run:
+        cmd: ./deploy.sh {service}
+        args:
+          - name: service
+            type: string
+            required: true
+
+  - id: rollback_service
+    type: command
+    group: deploy
+    description: Roll back a service to the previous version
+    def:
+      run:
+        cmd: ./rollback.sh {service}
+        args:
+          - name: service
+            type: string
+            required: true
+```
+
+Running `capa sh` shows:
+```
+  deploy   2 subcommands available
+```
+
+And `capa sh deploy` reveals:
+```
+  deploy-service   [--service*]   — Deploy a service to production
+  rollback-service [--service*]   — Roll back a service to the previous version
+```
+
+**Single-subcommand promotion**: If only one tool belongs to a group, it is promoted to the top level directly — no extra nesting.
 
 ### Agents Section
 
@@ -691,7 +767,29 @@ skills:
 capa install
 ```
 
-### 5. Managing Server Lifecycle
+### 5. Running Tools with `capa sh`
+
+Once the project is installed and the server is running, any configured tool can be called directly:
+
+```bash
+# Explore what's available
+capa sh
+capa sh gitlab
+capa sh gitlab list-merge-requests --help
+
+# Execute a tool
+capa sh gitlab list-merge-requests --project-id 123 --state opened
+
+# Top-level command tool
+capa sh find-skills --query "git automation"
+
+# Pass through an OS command
+capa sh git log --oneline
+```
+
+Tool IDs are slugified automatically: `list_merge_requests` → `list-merge-requests`.
+
+### 6. Managing Server Lifecycle
 
 ```bash
 # Check server status
@@ -1058,3 +1156,7 @@ This skill requires these tools to function:
 - Server automatically monitors and restarts crashed MCP subprocesses
 - OAuth2 auto-detection is skipped for servers that already have an `Authorization` header — token-based servers are never probed with unauthenticated requests
 - Use `tlsSkipVerify: true` on remote server definitions to connect to servers with self-signed TLS certificates
+- `capa sh` slugifies all tool IDs to kebab-case (e.g. `list_merge_requests` → `list-merge-requests`)
+- `capa sh` is non-interactive — every invocation runs a single command and exits, making it safe for AI agent use
+- The optional `description` field on servers and tools controls the label shown in `capa sh`; without it a generic fallback is used
+- The optional `group` field on command tools nests them under a shared parent in `capa sh`; a group with only one member is promoted to the top level

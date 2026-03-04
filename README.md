@@ -6,13 +6,23 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 [![Platforms](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey?style=flat-square)](https://github.com/infragate/capa/releases/latest)
 
-**CAPA** is a powerful package manager for AI agents that allows you to define skills and tools, manage credentials, and seamlessly integrate with MCP clients like Cursor and Claude.
+**CAPA** is a powerful capabilities manager for AI agents that allows you to define skills and tools, manage credentials, and seamlessly integrate with agents like Cursor and Claude.
+
+## Why CAPA?
+
+AI agents need two things to be useful: *knowledge* of when and how to act, and the *ability* to actually do it. Most setups treat these separately — tools are wired up in one place, instructions scattered somewhere else. CAPA brings them together as a single unit called a **capability**.
+
+- **Skills** provide the knowledge — markdown documents that give an agent context, instructions, and decision-making guidance for a specific task.
+- **Tools** provide the ability — executable functions the agent calls to interact with the world: APIs, shell commands, file operations, and more.
+
+A tool without knowledge leaves the agent unsure when to use it. Knowledge without tools leaves the agent unable to act. CAPA pairs them declaratively in a single `capabilities.yaml` file that you can version-control, share across a team, and reproduce on any machine.
 
 ## Features
 
 - 🔌 Single MCP server that proxies only the necessary tools
 - ⚡ Dynamic on-demand tool loading
 - 🖥️ Expose shell commands as MCP tools
+- 💻 Run any configured tool from the terminal with `capa sh`
 - 🔑 Credential management via interactive UI or `.env` file
 - 🛡️ Security controls (blocked phrases, character sanitization)
 - 📦 Compatible with [skills.sh](https://skills.sh)
@@ -67,6 +77,7 @@ skills:
 servers:
   - id: brave
     type: mcp
+    description: Brave web search
     def:
       cmd: npx -y @modelcontextprotocol/server-brave-search
       env:
@@ -75,6 +86,7 @@ servers:
 tools:
   - id: brave_search
     type: mcp
+    description: Search the web using Brave Search
     def:
       server: "@brave"
       tool: brave_web_search
@@ -87,6 +99,16 @@ capa install
 ```
 
 CAPA installs your skills, starts the capability server, and automatically registers with your MCP client (Cursor, Claude Desktop).
+
+### 4. Run tools from the terminal
+
+```bash
+capa sh                                        # list all available commands
+capa sh brave                                  # list brave subcommands
+capa sh brave brave-web-search --query "…"    # run a tool directly
+```
+
+`capa sh` turns every configured tool into a CLI command. MCP server tools are grouped under their server ID. Command tools appear at the top level (or under a custom `group`). Any unrecognised command is passed through to the OS shell.
 
 ## Documentation
 

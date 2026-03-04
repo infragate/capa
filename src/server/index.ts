@@ -5,6 +5,7 @@ import { CapaDatabase } from '../db/database';
 import { SessionManager } from './session-manager';
 import { SubprocessManager } from './subprocess-manager';
 import { CapaMCPServer } from './mcp-handler';
+import type { ShellToolInfo } from './mcp-handler';
 import { OAuth2Manager } from './oauth-manager';
 import { GitIntegrationManager } from './git-integration-manager';
 import { TokenRefreshScheduler } from './token-refresh-scheduler';
@@ -265,6 +266,13 @@ class CapaServer {
       return this.handleGetServerTools(projectId, serverId);
     }
 
+    // Shell tools endpoint — all tools with schemas, regardless of exposure mode
+    const shellToolsMatch = path.match(/^\/api\/projects\/([^/]+)\/shell-tools$/);
+    if (shellToolsMatch && request.method === 'GET') {
+      const projectId = shellToolsMatch[1];
+      return this.handleGetShellTools(projectId);
+    }
+
     // Disconnect OAuth2
     const oauth2DisconnectMatch = path.match(/^\/api\/projects\/([^/]+)\/oauth\/([^/]+)$/);
     if (oauth2DisconnectMatch && request.method === 'DELETE') {
@@ -491,6 +499,52 @@ class CapaServer {
 
       const tools = await mcpServer.listServerTools(serverId, capabilities);
       apiLogger.success(`Found ${tools.length} tools for server ${serverId}`);
+      return new Response(
+        JSON.stringify({ tools }),
+        { headers: { 'Content-Type': 'application/json' } }
+      );
+    } catch (error: any) {
+      apiLogger.failure(`Error: ${error.message}`);
+      return new Response(
+        JSON.stringify({ error: error.message }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+  }
+
+  private async handleGetShellTools(projectId: string): Promise<Response> {
+    const apiLogger = this.logger.child('API');
+    apiLogger.info(`Get shell tools for project: ${projectId}`);
+    try {
+      const capabilities = this.sessionManager.getProjectCapabilities(projectId);
+      if (!capabilities) {
+        return new Response(
+          JSON.stringify({ error: 'Project not configured' }),
+          { status: 404, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      let mcpServer = this.mcpServers.get(projectId);
+      if (!mcpServer) {
+        const project = this.db.getProject(projectId);
+        if (!project) {
+          return new Response(
+            JSON.stringify({ error: 'Project not found' }),
+            { status: 404, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        mcpServer = new CapaMCPServer(
+          this.db,
+          this.sessionManager,
+          this.subprocessManager,
+          projectId,
+          project.path
+        );
+        this.mcpServers.set(projectId, mcpServer);
+      }
+
+      const tools: ShellToolInfo[] = await mcpServer.getAllShellTools(capabilities);
+      apiLogger.success(`Found ${tools.length} shell tools for project ${projectId}`);
       return new Response(
         JSON.stringify({ tools }),
         { headers: { 'Content-Type': 'application/json' } }
