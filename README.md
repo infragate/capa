@@ -13,6 +13,7 @@
 - 🔌 Single MCP server that proxies only the necessary tools
 - ⚡ Dynamic on-demand tool loading
 - 🖥️ Expose shell commands as MCP tools
+- 💻 Run any configured tool from the terminal with `capa sh`
 - 🔑 Credential management via interactive UI or `.env` file
 - 🛡️ Security controls (blocked phrases, character sanitization)
 - 📦 Compatible with [skills.sh](https://skills.sh)
@@ -67,6 +68,7 @@ skills:
 servers:
   - id: brave
     type: mcp
+    description: Brave web search
     def:
       cmd: npx -y @modelcontextprotocol/server-brave-search
       env:
@@ -75,6 +77,7 @@ servers:
 tools:
   - id: brave_search
     type: mcp
+    description: Search the web using Brave Search
     def:
       server: "@brave"
       tool: brave_web_search
@@ -87,6 +90,16 @@ capa install
 ```
 
 CAPA installs your skills, starts the capability server, and automatically registers with your MCP client (Cursor, Claude Desktop).
+
+### 4. Run tools from the terminal
+
+```bash
+capa sh                                        # list all available commands
+capa sh brave                                  # list brave subcommands
+capa sh brave brave-web-search --query "…"    # run a tool directly
+```
+
+`capa sh` turns every configured tool into a CLI command. MCP server tools are grouped under their server ID. Command tools appear at the top level (or under a custom `group`). Any unrecognised command is passed through to the OS shell.
 
 ## Documentation
 
