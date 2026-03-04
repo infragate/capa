@@ -6,7 +6,16 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 [![Platforms](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey?style=flat-square)](https://github.com/infragate/capa/releases/latest)
 
-**CAPA** is a powerful package manager for AI agents that allows you to define skills and tools, manage credentials, and seamlessly integrate with MCP clients like Cursor and Claude.
+**CAPA** is a powerful capabilities manager for AI agents that allows you to define skills and tools, manage credentials, and seamlessly integrate with agents like Cursor and Claude.
+
+## Why CAPA?
+
+AI agents need two things to be useful: *knowledge* of when and how to act, and the *ability* to actually do it. Most setups treat these separately — tools are wired up in one place, instructions scattered somewhere else. CAPA brings them together as a single unit called a **capability**.
+
+- **Skills** provide the knowledge — markdown documents that give an agent context, instructions, and decision-making guidance for a specific task.
+- **Tools** provide the ability — executable functions the agent calls to interact with the world: APIs, shell commands, file operations, and more.
+
+A tool without knowledge leaves the agent unsure when to use it. Knowledge without tools leaves the agent unable to act. CAPA pairs them declaratively in a single `capabilities.yaml` file that you can version-control, share across a team, and reproduce on any machine.
 
 ## Features
 
