@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'fs';
-import { join } from 'path';
+import { join, resolve, dirname } from 'path';
 import type { AgentFileConfig, SecurityOptions } from '../../types/capabilities';
 import {
   loadBlockedPhrases,
@@ -324,7 +324,27 @@ export async function installAgentsFile(
     let baseContent: string;
     const baseType = config.base.type ?? (config.base.ref ? 'remote' : undefined);
 
-    if (baseType === 'github' || baseType === 'gitlab') {
+    if (baseType === 'local') {
+      if (!config.base.path) {
+        throw new Error(
+          `agents.base with type 'local' requires a "path" field (e.g. "path: ./docs/AGENTS-base.md").`
+        );
+      }
+      if (!capabilitiesFilePath) {
+        throw new Error(
+          `agents.base type 'local' requires the capabilities file path to resolve relative paths.`
+        );
+      }
+      const capabilitiesDir = dirname(capabilitiesFilePath);
+      const resolvedPath = resolve(capabilitiesDir, config.base.path);
+      if (!existsSync(resolvedPath)) {
+        throw new Error(
+          `agents.base local file not found: ${resolvedPath} (resolved from path "${config.base.path}")`
+        );
+      }
+      console.log(`  Using base agents file from ${resolvedPath}`);
+      baseContent = readFileSync(resolvedPath, 'utf8');
+    } else if (baseType === 'github' || baseType === 'gitlab') {
       if (!config.base.def?.repo) {
         throw new Error(
           `agents.base with type '${baseType}' requires a "def.repo" field ` +
@@ -340,7 +360,7 @@ export async function installAgentsFile(
       baseContent = await fetchRemoteContent(config.base.ref);
     } else {
       throw new Error(
-        `agents.base requires either a "ref" URL or a "type: github/gitlab" ` +
+        `agents.base requires a "ref" URL, "type: local" with "path", or "type: github/gitlab" ` +
         `with a "def.repo" field.`
       );
     }
