@@ -96,23 +96,29 @@ export interface AgentSnippet {
  */
 /**
  * Source definition for the base agent instructions file.
- * Supports the same source types as snippets (remote, github, gitlab).
+ * Supports the same source types as snippets (remote, github, gitlab) plus local file.
  *
  * Examples:
  *   ref: https://raw.githubusercontent.com/org/repo/main/AGENTS.md   # remote URL
  *   type: github / def.repo: org/repo@AGENTS.md                       # GitHub file
  *   type: gitlab / def.repo: group/repo@AGENTS.md:v1.0.0              # GitLab file, pinned
+ *   type: local / path: ./docs/AGENTS-base.md                        # local file (relative to capabilities file)
  */
 export interface AgentFileBase {
   /**
    * Source type. Defaults to 'remote' when `ref` is set and `type` is omitted.
-   * Use 'github' or 'gitlab' together with `def.repo` for repository-hosted files.
+   * Use 'github' or 'gitlab' together with `def.repo`, or 'local' with `path`.
    */
-  type?: 'remote' | 'github' | 'gitlab';
+  type?: 'remote' | 'github' | 'gitlab' | 'local';
   /** Raw URL — used when type is 'remote' (or when type is omitted and ref is present). */
   ref?: string;
   /** Repository + file definition for github/gitlab types. */
   def?: AgentSnippetDef;
+  /**
+   * Path to a local markdown file. Used when type is 'local'.
+   * Relative paths are resolved from the directory containing the capabilities file.
+   */
+  path?: string;
 }
 
 /**
