@@ -600,8 +600,9 @@ When no version or SHA is specified capa fetches from `HEAD` (the default branch
 | Field | Description |
 |---|---|
 | `agents.base.ref` | Raw URL of a remote markdown file — used when `type` is `remote` or omitted. Re-running install always re-downloads and refreshes it. |
-| `agents.base.type` | `remote` (default when `ref` is set), `github`, or `gitlab`. Use `github`/`gitlab` together with `def.repo`. |
+| `agents.base.type` | `remote` (default when `ref` is set), `github`, `gitlab`, or `local`. Use `github`/`gitlab` with `def.repo`; use `local` with `path` for a file relative to the capabilities file. |
 | `agents.base.def.repo` | Repository + file for `github`/`gitlab` base. Same `owner/repo@filepath` format as snippet `def.repo`. |
+| `agents.base.path` | Path to a local markdown file when `type` is `local`. Relative to the directory containing the capabilities file. |
 | `agents.additional[].id` | Unique identifier used as the capa marker id. Required for `inline`/`remote`; optional for `github`/`gitlab` (derived from the filepath, e.g. `docs_tips_md`). |
 
 #### Full example

@@ -22,9 +22,12 @@ export async function upgradeCommand(): Promise<void> {
 async function upgradeWindows(): Promise<void> {
   console.log('Running Windows installation script...\n');
 
+  // So install.ps1 can defer replacing the exe until this process exits (fixes #19)
+  const env = { ...process.env, CAPA_UPGRADE_PID: String(process.pid) };
+
   const proc = Bun.spawn(
     ['powershell.exe', '-ExecutionPolicy', 'Bypass', '-Command', `irm '${INSTALL_PS1_URL}' | iex`],
-    { stdout: 'inherit', stderr: 'inherit', stdin: 'inherit' }
+    { stdout: 'inherit', stderr: 'inherit', stdin: 'inherit', env }
   );
 
   const exitCode = await proc.exited;

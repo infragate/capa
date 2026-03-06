@@ -263,18 +263,53 @@ function Install-Capa {
     $binaryName = "capa-$arch.exe"
     $downloadUrl = "https://github.com/$GITHUB_REPO/releases/download/v$APP_VERSION/$binaryName"
     $destPath = Join-Path $installDir "capa.exe"
+    # Download to temp first so we can replace the running exe when upgrading (fixes #19)
+    $tempPath = Join-Path $env:TEMP "capa-$APP_VERSION-$arch.exe"
     
     Write-Info "Downloading CAPA..."
     Write-Verbose-Custom "URL: $downloadUrl"
     
     try {
-        # Download binary
         $ProgressPreference = 'SilentlyContinue'
-        Invoke-WebRequest -Uri $downloadUrl -OutFile $destPath -UseBasicParsing
+        Invoke-WebRequest -Uri $downloadUrl -OutFile $tempPath -UseBasicParsing
         Write-Success "Downloaded CAPA binary"
     }
     catch {
         Write-Error-Custom "Failed to download CAPA from $downloadUrl`n$_"
+    }
+    
+    # Replace existing binary. If dest is in use (e.g. capa upgrade), defer replace until process exits.
+    $replaceOk = $false
+    try {
+        Move-Item -Path $tempPath -Destination $destPath -Force
+        $replaceOk = $true
+    }
+    catch {
+        if ($_.Exception.Message -match 'being used by another process') {
+            $upgradePid = $env:CAPA_UPGRADE_PID
+            if ($upgradePid) {
+                Write-Info "Current capa is running; will replace binary after it exits (PID $upgradePid)..."
+                $deferScript = @"
+try {
+    `$p = Get-Process -Id $upgradePid -ErrorAction SilentlyContinue
+    if (`$p) { `$p.WaitForExit(120000) }
+    Move-Item -LiteralPath '$tempPath' -Destination '$destPath' -Force
+    Remove-Item -LiteralPath '$tempPath' -Force -ErrorAction SilentlyContinue
+} catch { }
+"@
+                Start-Process powershell.exe -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-Command', $deferScript
+                $replaceOk = $true
+                Write-Success "Upgrade will complete when the current capa process exits. Restart your terminal and run capa again."
+            }
+        }
+        if (-not $replaceOk) {
+            Remove-Item -LiteralPath $tempPath -Force -ErrorAction SilentlyContinue
+            Write-Error-Custom "Could not replace $destPath. Close any process using it and run the installer again, or run: capa upgrade"
+        }
+    }
+    
+    if (-not $replaceOk) {
+        exit 1
     }
     
     Write-Success "Installed CAPA to $destPath"
