@@ -278,33 +278,26 @@ function Install-Capa {
         Write-Error-Custom "Failed to download CAPA from $downloadUrl`n$_"
     }
     
-    # Replace existing binary. If dest is in use (e.g. capa upgrade), defer replace until process exits.
+    # Replace existing binary. When invoked by "capa upgrade", capa exits before we run, so the exe
+    # may still be released briefly by Windows — retry a few times before failing.
     $replaceOk = $false
-    try {
-        Move-Item -Path $tempPath -Destination $destPath -Force
-        $replaceOk = $true
-    }
-    catch {
-        if ($_.Exception.Message -match 'being used by another process') {
-            $upgradePid = $env:CAPA_UPGRADE_PID
-            if ($upgradePid) {
-                Write-Info "Current capa is running; will replace binary after it exits (PID $upgradePid)..."
-                $deferScript = @"
-try {
-    `$p = Get-Process -Id $upgradePid -ErrorAction SilentlyContinue
-    if (`$p) { `$p.WaitForExit(120000) }
-    Move-Item -LiteralPath '$tempPath' -Destination '$destPath' -Force
-    Remove-Item -LiteralPath '$tempPath' -Force -ErrorAction SilentlyContinue
-} catch { }
-"@
-                Start-Process powershell.exe -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-Command', $deferScript
-                $replaceOk = $true
-                Write-Success "Upgrade will complete when the current capa process exits. Restart your terminal and run capa again."
-            }
+    $maxRetries = 5
+    $retryDelaySeconds = 2
+    for ($attempt = 1; $attempt -le $maxRetries; $attempt++) {
+        try {
+            Move-Item -Path $tempPath -Destination $destPath -Force
+            $replaceOk = $true
+            break
         }
-        if (-not $replaceOk) {
-            Remove-Item -LiteralPath $tempPath -Force -ErrorAction SilentlyContinue
-            Write-Error-Custom "Could not replace $destPath. Close any process using it and run the installer again, or run: capa upgrade"
+        catch {
+            if ($_.Exception.Message -match 'being used by another process' -and $attempt -lt $maxRetries) {
+                Write-Info "File in use; retrying in ${retryDelaySeconds}s ($attempt/$maxRetries)..."
+                Start-Sleep -Seconds $retryDelaySeconds
+            }
+            else {
+                Remove-Item -LiteralPath $tempPath -Force -ErrorAction SilentlyContinue
+                Write-Error-Custom "Could not replace $destPath. Close any process using it and run the installer again, or run: capa upgrade"
+            }
         }
     }
     
