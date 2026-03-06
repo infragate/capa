@@ -20,21 +20,25 @@ export async function upgradeCommand(): Promise<void> {
 }
 
 async function upgradeWindows(): Promise<void> {
-  console.log('Running Windows installation script...\n');
+  console.log('Starting Windows installer in the background...\n');
 
-  // So install.ps1 can defer replacing the exe until this process exits (fixes #19)
-  const env = { ...process.env, CAPA_UPGRADE_PID: String(process.pid) };
-
+  // Spawn the installer detached and exit immediately so this process (capa.exe) is
+  // no longer running when the script tries to replace the binary (fixes #19).
   const proc = Bun.spawn(
-    ['powershell.exe', '-ExecutionPolicy', 'Bypass', '-Command', `irm '${INSTALL_PS1_URL}' | iex`],
-    { stdout: 'inherit', stderr: 'inherit', stdin: 'inherit', env }
+    ['powershell.exe', '-ExecutionPolicy', 'Bypass', '-NoProfile', '-Command', `irm '${INSTALL_PS1_URL}' | iex`],
+    {
+      stdout: 'ignore',
+      stderr: 'ignore',
+      stdin: 'ignore',
+      detached: true,
+      env: { ...process.env },
+    }
   );
+  proc.unref();
 
-  const exitCode = await proc.exited;
-  if (exitCode !== 0) {
-    console.error('\n✗ Upgrade failed');
-    process.exit(exitCode ?? 1);
-  }
+  console.log('✓ Installer started. This window will close; the installer will update capa in the background.');
+  console.log('  Restart your terminal when the installer finishes, then run `capa --version` to confirm.\n');
+  process.exit(0);
 }
 
 async function upgradeUnix(): Promise<void> {
