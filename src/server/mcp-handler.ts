@@ -9,6 +9,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import type { CapaDatabase } from '../db/database';
 import type { Capabilities, Tool, ToolCommandDefinition, ToolMCPDefinition } from '../types/capabilities';
+import { getQualifiedToolName } from '../types/capabilities';
 import { SessionManager } from './session-manager';
 import { CommandToolExecutor } from './tool-executor';
 import { MCPProxy } from './mcp-proxy';
@@ -110,8 +111,8 @@ export class CapaMCPServer {
         // Expose-all mode: Show all tools from all skills immediately
         if (capabilities) {
           const allToolIds = this.sessionManager.getAllRequiredToolsForProject(this.projectId);
-          for (const toolId of allToolIds) {
-            const tool = capabilities.tools.find((t) => t.id === toolId);
+          for (const qualifiedName of allToolIds) {
+            const tool = capabilities.tools.find((t) => getQualifiedToolName(t) === qualifiedName);
             if (tool) {
               const mcpTool = await this.convertToolToMCP(tool, capabilities);
               tools.push(mcpTool);
@@ -273,9 +274,8 @@ export class CapaMCPServer {
       const toolSchemas: MCPTool[] = [];
 
       if (capabilities) {
-        // Fetch full schemas for all activated tools
-        for (const toolId of toolIds) {
-          const tool = capabilities.tools.find((t) => t.id === toolId);
+        for (const qualifiedName of toolIds) {
+          const tool = capabilities.tools.find((t) => getQualifiedToolName(t) === qualifiedName);
           if (tool) {
             const mcpTool = await this.convertToolToMCP(tool, capabilities);
             toolSchemas.push(mcpTool);
@@ -459,7 +459,7 @@ export class CapaMCPServer {
     for (const tool of capabilities.tools) {
       const mcpTool = await this.convertToolToMCP(tool, capabilities);
       const info: ShellToolInfo = {
-        id: tool.id,
+        id: getQualifiedToolName(tool),
         type: tool.type as 'command' | 'mcp',
         description: mcpTool.description || '',
         inputSchema: mcpTool.inputSchema,
@@ -495,9 +495,8 @@ export class CapaMCPServer {
         for (const t of remoteTools) {
           const name = typeof t.name === 'string' ? t.name : '';
           if (!name) continue;
-          const toolId = `${server.id}-${name}`;
           pluginTools.push({
-            id: toolId,
+            id: name,
             type: 'mcp',
             def: { server: `@${server.id}`, tool: name },
             sourcePlugin: server.sourcePlugin,
@@ -521,21 +520,20 @@ export class CapaMCPServer {
     const results: ToolValidationResult[] = [];
 
     for (const tool of capabilities.tools) {
+      const qualifiedName = getQualifiedToolName(tool);
       if (tool.type === 'command') {
-        // Command tools are always valid if they have proper structure
         results.push({
-          toolId: tool.id,
+          toolId: qualifiedName,
           success: true,
         });
       } else {
-        // MCP tool - validate against remote server
         const mcpDef = tool.def as ToolMCPDefinition;
         const serverId = mcpDef.server.replace('@', '');
         const serverDef = capabilities.servers.find((s) => s.id === serverId);
 
         if (!serverDef) {
           results.push({
-            toolId: tool.id,
+            toolId: qualifiedName,
             success: false,
             error: `Server not found: ${serverId}`,
             serverId: serverId,
@@ -544,24 +542,20 @@ export class CapaMCPServer {
         }
 
         try {
-          // Use the shared MCP proxy instance to list tools
           const remoteTools = await this.mcpProxy.listTools(serverId, serverDef.def);
-
-          // Find the matching tool on the remote server
           const remoteTool = remoteTools.find((t: any) => t.name === mcpDef.tool);
 
           if (remoteTool) {
             results.push({
-              toolId: tool.id,
+              toolId: qualifiedName,
               success: true,
               serverId: serverId,
               remoteTool: mcpDef.tool,
             });
           } else {
-            // Get list of available tools for better error message
             const availableTools = remoteTools.map((t: any) => t.name).join(', ');
             results.push({
-              toolId: tool.id,
+              toolId: qualifiedName,
               success: false,
               error: `Tool "${mcpDef.tool}" not found on server "${serverId}". Available tools: ${availableTools || '(none)'}`,
               serverId: serverId,
@@ -570,7 +564,7 @@ export class CapaMCPServer {
           }
         } catch (error: any) {
           results.push({
-            toolId: tool.id,
+            toolId: qualifiedName,
             success: false,
             error: `Failed to connect to server "${serverId}": ${error.message}`,
             serverId: serverId,
@@ -584,9 +578,11 @@ export class CapaMCPServer {
   }
 
   private async convertToolToMCP(tool: Tool, capabilities: Capabilities): Promise<MCPTool> {
+    const qualifiedName = getQualifiedToolName(tool);
+
     // Check cache first
-    if (this.toolSchemaCache.has(tool.id)) {
-      return this.toolSchemaCache.get(tool.id)!;
+    if (this.toolSchemaCache.has(qualifiedName)) {
+      return this.toolSchemaCache.get(qualifiedName)!;
     }
 
     if (tool.type === 'command') {
@@ -607,7 +603,7 @@ export class CapaMCPServer {
       }
 
       const mcpTool: MCPTool = {
-        name: tool.id,
+        name: qualifiedName,
         description: tool.description || `Command tool: ${tool.id}`,
         inputSchema: {
           type: 'object' as const,
@@ -616,8 +612,7 @@ export class CapaMCPServer {
         },
       };
 
-      // Cache it
-      this.toolSchemaCache.set(tool.id, mcpTool);
+      this.toolSchemaCache.set(qualifiedName, mcpTool);
       return mcpTool;
     } else {
       // MCP tool - fetch the actual schema from the MCP server
@@ -628,60 +623,57 @@ export class CapaMCPServer {
       if (!serverDef) {
         this.logger.failure(`Server not found for tool ${tool.id}: ${serverId}`);
         const mcpTool: MCPTool = {
-          name: tool.id,
-          description: `MCP tool: ${tool.id} (server not found)`,
+          name: qualifiedName,
+          description: `MCP tool: ${qualifiedName} (server not found)`,
           inputSchema: {
             type: 'object' as const,
             properties: {},
           },
         };
-        this.toolSchemaCache.set(tool.id, mcpTool);
+        this.toolSchemaCache.set(qualifiedName, mcpTool);
         return mcpTool;
       }
 
       try {
-        // Use the shared MCP proxy instance
         const remoteTools = await this.mcpProxy.listTools(serverId, serverDef.def);
-
-        // Find the matching tool on the remote server
         const remoteTool = remoteTools.find((t: any) => t.name === mcpDef.tool);
 
         if (remoteTool) {
-          this.logger.debug(`Fetched schema for ${tool.id} from ${serverId}`);
+          this.logger.debug(`Fetched schema for ${qualifiedName} from ${serverId}`);
           const mcpTool: MCPTool = {
-            name: tool.id,
-            description: remoteTool.description || `MCP tool: ${tool.id}`,
+            name: qualifiedName,
+            description: remoteTool.description || `MCP tool: ${qualifiedName}`,
             inputSchema: remoteTool.inputSchema || {
               type: 'object' as const,
               properties: {},
             },
           };
-          this.toolSchemaCache.set(tool.id, mcpTool);
+          this.toolSchemaCache.set(qualifiedName, mcpTool);
           return mcpTool;
         } else {
           this.logger.warn(`Tool ${mcpDef.tool} not found on server ${serverId}`);
           const mcpTool: MCPTool = {
-            name: tool.id,
-            description: `MCP tool: ${tool.id} (not found on remote server)`,
+            name: qualifiedName,
+            description: `MCP tool: ${qualifiedName} (not found on remote server)`,
             inputSchema: {
               type: 'object' as const,
               properties: {},
             },
           };
-          this.toolSchemaCache.set(tool.id, mcpTool);
+          this.toolSchemaCache.set(qualifiedName, mcpTool);
           return mcpTool;
         }
       } catch (error: any) {
-        this.logger.failure(`Failed to fetch schema for ${tool.id}:`, error.message);
+        this.logger.failure(`Failed to fetch schema for ${qualifiedName}:`, error.message);
         const mcpTool: MCPTool = {
-          name: tool.id,
-          description: `MCP tool: ${tool.id}`,
+          name: qualifiedName,
+          description: `MCP tool: ${qualifiedName}`,
           inputSchema: {
             type: 'object' as const,
             properties: {},
           },
         };
-        this.toolSchemaCache.set(tool.id, mcpTool);
+        this.toolSchemaCache.set(qualifiedName, mcpTool);
         return mcpTool;
       }
     }
@@ -778,8 +770,8 @@ export class CapaMCPServer {
         if (capabilities) {
           const allToolIds = this.sessionManager.getAllRequiredToolsForProject(this.projectId);
           this.logger.debug(`Exposing all ${allToolIds.length} tool(s) from all skills`);
-          for (const toolId of allToolIds) {
-            const tool = capabilities.tools.find((t) => t.id === toolId);
+          for (const qualifiedName of allToolIds) {
+            const tool = capabilities.tools.find((t) => getQualifiedToolName(t) === qualifiedName);
             if (tool) {
               const mcpTool = await this.convertToolToMCP(tool, capabilities);
               tools.push(mcpTool);
@@ -856,9 +848,8 @@ export class CapaMCPServer {
           const toolSchemas: MCPTool[] = [];
 
           if (capabilities) {
-            // Fetch full schemas for all activated tools
-            for (const toolId of toolIds) {
-              const tool = capabilities.tools.find((t) => t.id === toolId);
+            for (const qualifiedName of toolIds) {
+              const tool = capabilities.tools.find((t) => getQualifiedToolName(t) === qualifiedName);
               if (tool) {
                 const mcpTool = await this.convertToolToMCP(tool, capabilities);
                 toolSchemas.push(mcpTool);

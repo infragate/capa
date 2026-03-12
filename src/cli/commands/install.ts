@@ -9,6 +9,7 @@ import { ensureServer } from '../utils/server-manager';
 import { loadSettings, getDatabasePath } from '../../shared/config';
 import { CapaDatabase } from '../../db/database';
 import type { Capabilities, Skill, RequiredCommand } from '../../types/capabilities';
+import { getQualifiedToolName, normalizeToolReference } from '../../types/capabilities';
 import { createAuthenticatedFetch, AuthenticatedFetch } from '../../shared/authenticated-fetch';
 import { displayIntegrationPrompt, getIntegrationsUrl, parseRepoUrl } from '../utils/integration-helper';
 import { getAgentConfig, agents } from 'skills/src/agents';
@@ -85,17 +86,17 @@ function getUnexposedToolIds(capabilities: Capabilities): string[] {
   const requiredBySkills = new Set<string>();
   for (const skill of capabilities.skills) {
     if (skill.def?.requires) {
-      for (const toolId of skill.def.requires) {
-        requiredBySkills.add(toolId);
+      for (const ref of skill.def.requires) {
+        requiredBySkills.add(normalizeToolReference(ref));
       }
     }
   }
   const pluginToolIds = new Set(
-    capabilities.tools.filter((t) => t.sourcePlugin).map((t) => t.id)
+    capabilities.tools.filter((t) => t.sourcePlugin).map((t) => getQualifiedToolName(t))
   );
   const exposed = new Set([...requiredBySkills, ...pluginToolIds]);
   return capabilities.tools
-    .map((t) => t.id)
+    .map((t) => getQualifiedToolName(t))
     .filter((id) => !exposed.has(id));
 }
 

@@ -215,7 +215,7 @@ skills:
     def:
       description: Web research skill
       requires:
-        - brave_search
+        - '@brave.brave_search'
       content: |
         ---
         name: web-researcher
@@ -224,10 +224,12 @@ skills:
         
         # Web Researcher
         
-        Use for web research tasks with the brave_search tool.
+        Use for web research tasks with the brave.brave_search tool.
 ```
 
 **Best for**: Project-specific skills unique to your workflow.
+
+**Note**: MCP tool references in `requires` use the `@server_id.tool_id` format. Command tools use their plain ID.
 
 #### 2. GitHub Skills
 Fetch skills from the skills.sh ecosystem or any GitHub repository:
@@ -240,7 +242,7 @@ skills:
       repo: vercel-labs/agent-skills@find-skills
       description: Discover skills from skills.sh
       requires:
-        - npx_skills_find
+        - find_skills
 ```
 
 **Format**: `owner/repo@skill-name` (where `skill-name` is a subdirectory in the repo). Optional `:version` or `#sha` for pinning.
@@ -275,7 +277,7 @@ skills:
       url: https://example.com/my-skill/SKILL.md
       description: Custom remote skill
       requires:
-        - tool1
+        - '@server1.tool1'
         - tool2
 ```
 
@@ -414,6 +416,8 @@ tools:
 ```
 
 **Note**: Use `@server-id` to reference a server from the servers section.
+
+**Tool naming**: Tool IDs should be short, descriptive names without a server prefix. When exposed via MCP, the tool name becomes `server_id.tool_id` (e.g., `filesystem-server.read_file`). In skill `requires` arrays, reference MCP tools with `@server_id.tool_id` (e.g., `@filesystem-server.read_file`). In the CLI, use `capa sh server_id tool_id` (e.g., `capa sh filesystem-server read-file`).
 
 #### Command Tool
 Execute shell commands:
@@ -709,7 +713,7 @@ skills:
     def:
       repo: vercel-labs/agent-skills@web-researcher
       requires:
-        - brave_search
+        - '@brave.search'
 
 # Add required tools/servers
 
@@ -749,7 +753,7 @@ skills:
     def:
       description: My custom skill description
       requires:
-        - my_tool
+        - '@my-server.my_tool'
       content: |
         ---
         name: my-custom-skill
@@ -856,7 +860,7 @@ skills:
     def:
       description: Web research using Brave Search
       requires:
-        - brave_search
+        - '@brave-search-server.search'
       content: |
         ---
         name: web-researcher
@@ -865,7 +869,7 @@ skills:
         
         # Web Researcher
         
-        Use brave_search for finding current information on the web.
+        Use brave-search-server.search for finding current information on the web.
 
 servers:
   - id: brave-search-server
@@ -879,7 +883,7 @@ servers:
         BRAVE_API_KEY: ${BraveApiKey}
 
 tools:
-  - id: brave_search
+  - id: search
     type: mcp
     def:
       server: "@brave-search-server"
@@ -905,9 +909,9 @@ skills:
     def:
       repo: vercel-labs/agent-skills@file-operations
       requires:
-        - read_file
-        - write_file
-        - list_directory
+        - '@filesystem-server.read_file'
+        - '@filesystem-server.write_file'
+        - '@filesystem-server.list_directory'
 
 servers:
   - id: filesystem-server
@@ -966,6 +970,7 @@ skills:
         # Hello World
         
         Demonstrates command tools for greetings.
+        Command tools use their plain ID (e.g. hello_world, greet_user).
 
 servers: []
 
@@ -1004,12 +1009,12 @@ skills:
     type: inline
     def:
       requires:
-        - brave_search
+        - '@brave.search'
       content: |
         ---
         name: researcher
         ---
-        For research tasks, use brave_search
+        For research tasks, use brave.search
   
   - id: data-analyst
     type: inline
@@ -1034,7 +1039,7 @@ servers:
         BRAVE_API_KEY: ${BraveApiKey}
 
 tools:
-  - id: brave_search
+  - id: search
     type: mcp
     def:
       server: "@brave"
@@ -1057,7 +1062,7 @@ tools:
 ```
 
 With `on-demand` mode, the agent starts with only `setup_tools()` available and calls:
-- `setup_tools(["researcher"])` → Loads `brave_search`
+- `setup_tools(["researcher"])` → Loads `brave.search`
 - `setup_tools(["data-analyst"])` → Loads `pandas_query`
 
 ## Troubleshooting
@@ -1124,7 +1129,8 @@ If a server that uses Bearer token auth (e.g. Databricks, a self-hosted GitLab M
 - Re-set the token with `capa vars set VarName <new-token>` or re-run `capa install -e` with an updated `.env` file
 
 ### Tool Not Found Errors
-- Verify tool ID matches between skill `requires` and tools section
+- For MCP tools, skill `requires` must use `@server_id.tool_id` format (e.g., `@brave.search`)
+- For command tools, skill `requires` uses the plain tool ID (e.g., `greet_user`)
 - Check that server ID in tool definition uses `@` prefix (e.g., `@server-id`)
 - Ensure MCP server is running: check `capa status`
 - Verify tool name matches the actual tool provided by the MCP server
@@ -1157,7 +1163,9 @@ This skill requires these tools to function:
 - Server automatically monitors and restarts crashed MCP subprocesses
 - OAuth2 auto-detection is skipped for servers that already have an `Authorization` header — token-based servers are never probed with unauthenticated requests
 - Use `tlsSkipVerify: true` on remote server definitions to connect to servers with self-signed TLS certificates
-- `capa sh` slugifies all tool IDs to kebab-case (e.g. `list_merge_requests` → `list-merge-requests`)
+- `capa sh` slugifies tool IDs to kebab-case (e.g. `list_merge_requests` → `list-merge-requests`)
+- MCP tools are exposed with qualified names: `server_id.tool_id` (e.g. `brave.search`). In the CLI this maps to `capa sh brave search`
+- In skill `requires`, MCP tools use `@server_id.tool_id` (e.g. `@brave.search`); command tools use their plain ID
 - `capa sh` is non-interactive — every invocation runs a single command and exits, making it safe for AI agent use
 - The optional `description` field on servers and tools controls the label shown in `capa sh`; without it a generic fallback is used
 - The optional `group` field on command tools nests them under a shared parent in `capa sh`; a group with only one member is promoted to the top level

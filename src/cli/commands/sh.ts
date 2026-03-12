@@ -2,6 +2,7 @@ import { detectCapabilitiesFile, generateProjectId } from '../../shared/paths';
 import { parseCapabilitiesFile } from '../../shared/capabilities';
 import { getServerStatus } from '../utils/server-manager';
 import type { Capabilities } from '../../types/capabilities';
+import { getQualifiedToolName } from '../../types/capabilities';
 
 interface ShellToolInfo {
   id: string;
@@ -60,7 +61,6 @@ class ShellRegistry {
       };
 
       if (tool.type === 'mcp' && tool.serverId) {
-        // MCP tools always form a group keyed by server ID
         const groupSlug = slugify(tool.serverId);
         if (!this.groups.has(groupSlug)) {
           this.groups.set(groupSlug, {
@@ -71,13 +71,10 @@ class ShellRegistry {
             isMcp: true,
           });
         }
-        // Strip server name prefix from the subcommand slug to avoid duplication
-        // e.g. tool "bigquery_query" under server "bigquery" → subcommand "query" instead of "bigquery-query"
-        let subSlug = commandSlug;
-        const prefix = groupSlug + '-';
-        if (subSlug.startsWith(prefix) && subSlug.length > prefix.length) {
-          subSlug = subSlug.slice(prefix.length);
-        }
+        // Qualified name is "server.toolId"; derive the short name for the subcommand slug
+        const dotIdx = tool.id.indexOf('.');
+        const shortName = dotIdx >= 0 ? tool.id.slice(dotIdx + 1) : tool.id;
+        const subSlug = slugify(shortName);
         cmd.slug = subSlug;
         this.groups.get(groupSlug)!.commands.set(subSlug, cmd);
       } else if (tool.group) {
@@ -480,7 +477,7 @@ async function dispatch(
  * prefer the local file for: tool description, tool group, and MCP server description.
  */
 function applyLocalMetadata(tools: ShellToolInfo[], capabilities: Capabilities): ShellToolInfo[] {
-  const localToolMap = new Map(capabilities.tools.map((t) => [t.id, t]));
+  const localToolMap = new Map(capabilities.tools.map((t) => [getQualifiedToolName(t), t]));
   const localServerMap = new Map(capabilities.servers.map((s) => [s.id, s]));
 
   return tools.map((tool) => {
