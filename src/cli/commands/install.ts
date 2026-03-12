@@ -792,7 +792,11 @@ async function installSkills(
     let skillMarkdown: string;
     let additionalFiles: Map<string, string> = new Map();
     
-    if (skill.type === 'inline' && skill.def.content) {
+    if (skill.type === 'installed') {
+      // Installed skill - user installed it outside capa; capa only acknowledges for tool binding
+      console.log(`    Acknowledging installed skill (no install needed)`);
+      continue;
+    } else if (skill.type === 'inline' && skill.def.content) {
       // Inline skill - use provided SKILL.md content
       skillMarkdown = skill.def.content;
     } else if (skill.type === 'local' && skill.def.path) {
@@ -960,8 +964,8 @@ async function installSkills(
       // Provide detailed error message about what's wrong
       console.error(`  ✗ Invalid skill definition: ${skill.id}`);
       
-      if (!skill.type || !['inline', 'remote', 'github', 'gitlab', 'local'].includes(skill.type)) {
-        console.error(`    ⮡ Invalid or missing 'type'. Must be one of: 'inline', 'remote', 'github', 'gitlab', 'local'`);
+      if (!skill.type || !['inline', 'remote', 'github', 'gitlab', 'local', 'installed'].includes(skill.type)) {
+        console.error(`    ⮡ Invalid or missing 'type'. Must be one of: 'inline', 'remote', 'github', 'gitlab', 'local', 'installed'`);
         console.error(`    ⮡ Current value: ${skill.type || '(not set)'}`);
       } else if (skill.type === 'inline') {
         console.error(`    ⮡ Type is 'inline' but 'def.content' is missing`);
@@ -984,14 +988,17 @@ async function installSkills(
       } else if (skill.type === 'remote') {
         console.error(`    ⮡ Type is 'remote' but 'def.url' is missing`);
         console.error(`    ⮡ For remote skills, provide the URL to SKILL.md in 'def.url'`);
+      } else if (skill.type === 'installed') {
+        console.error(`    ⮡ Type is 'installed' — skill must exist outside capa; def only needs optional description and requires`);
       }
       
       console.error(`\n    Example configurations:`);
-      console.error(`    - Inline:  { "id": "my-skill", "type": "inline", "def": { "content": "..." } }`);
-      console.error(`    - GitHub:  { "id": "my-skill", "type": "github", "def": { "repo": "owner/repo@skill-name" } }`);
-      console.error(`    - GitLab:  { "id": "my-skill", "type": "gitlab", "def": { "repo": "owner/repo@skill-name" } }`);
-      console.error(`    - Remote:  { "id": "my-skill", "type": "remote", "def": { "url": "https://..." } }`);
-      console.error(`    - Local:   { "id": "my-skill", "type": "local", "def": { "path": "./my-skill" } }`);
+      console.error(`    - Inline:    { "id": "my-skill", "type": "inline", "def": { "content": "..." } }`);
+      console.error(`    - GitHub:    { "id": "my-skill", "type": "github", "def": { "repo": "owner/repo@skill-name" } }`);
+      console.error(`    - GitLab:    { "id": "my-skill", "type": "gitlab", "def": { "repo": "owner/repo@skill-name" } }`);
+      console.error(`    - Remote:    { "id": "my-skill", "type": "remote", "def": { "url": "https://..." } }`);
+      console.error(`    - Local:     { "id": "my-skill", "type": "local", "def": { "path": "./my-skill" } }`);
+      console.error(`    - Installed: { "id": "my-skill", "type": "installed", "def": { "description": "...", "requires": ["@server.tool"] } }`);
       
       continue;
     }
