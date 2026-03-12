@@ -25,14 +25,15 @@ Use this skill when:
 ## Core Concepts
 
 ### Capabilities File
-The `capabilities.yaml` (or `capabilities.json`) file defines everything an agent can do. It contains six main sections:
+The `capabilities.yaml` (or `capabilities.json`) file defines everything an agent can do. It contains seven main sections:
 
 1. **providers**: List of MCP clients where skills should be installed (e.g., `cursor`, `claude-code`)
 2. **options**: Configuration for tool exposure (`toolExposure`) and security (`security`)
-3. **skills**: Modular knowledge packages that teach agents when and how to use tools
-4. **servers**: MCP servers that provide tools (local subprocesses or remote HTTP servers)
-5. **tools**: Executable capabilities (MCP tools or shell commands)
-6. **agents**: Manages the content of `AGENTS.md` in the project root (optional)
+3. **requires**: CLI prerequisites that must be installed before `capa install` proceeds (optional)
+4. **skills**: Modular knowledge packages that teach agents when and how to use tools
+5. **servers**: MCP servers that provide tools (local subprocesses or remote HTTP servers)
+6. **tools**: Executable capabilities (MCP tools or shell commands)
+7. **agents**: Manages the content of `AGENTS.md` in the project root (optional)
 
 ### Skills vs Tools
 - **Skills**: Provide knowledge and context about when/how to use capabilities (non-executable markdown documentation)
@@ -173,6 +174,13 @@ options:
   #   # Or load from file: blockedPhrases: { file: "./blocked-phrases.txt" }
   #   allowedCharacters: ""  # "" = baseline only (strips non-ASCII); "[\\u00A0-\\uFFFF]" = allow all Unicode
 
+# Optional: CLI prerequisites that must be installed before `capa install` proceeds
+# requires:
+#   commands:
+#     - cli: docker
+#       description: Required to run containerised tools
+#     - cli: node
+
 # Optional: manage AGENTS.md content
 # agents:
 #   base:
@@ -278,7 +286,6 @@ skills:
       description: Custom remote skill
       requires:
         - '@server1.tool1'
-        - tool2
 ```
 
 **Best for**: Private or custom skills hosted elsewhere.
@@ -397,6 +404,29 @@ When `capa install` detects a blocked phrase, it **stops immediately** and repor
 - The forbidden phrase
 
 No further skills are installed until you remove the phrase from the skill or update your security configuration.
+
+### Requires Section (Prerequisites)
+
+The top-level `requires` section lets you declare CLI commands that must be present on the user's system before `capa install` proceeds. If any command is missing, installation stops immediately with a clear error listing the missing tools.
+
+```yaml
+requires:
+  commands:
+    - cli: docker
+      description: Required to run containerised tools
+    - cli: node
+    - cli: git
+      description: Used by GitHub skill sources
+```
+
+| Field | Required | Description |
+|---|---|---|
+| `cli` | yes | The executable name to check (e.g. `docker`, `node`, `python3`) |
+| `description` | no | Human-readable hint shown when the command is missing |
+
+**How it works:** During `capa install`, each entry is verified using `which` (Unix) or `where` (Windows). A check mark is printed for each found command; a cross is printed for missing ones along with the optional description. If any command is absent the process exits before installing skills or registering servers.
+
+Omit the `requires` section entirely if you have no CLI prerequisites.
 
 ### Tools Section
 
@@ -1064,6 +1094,83 @@ tools:
 With `on-demand` mode, the agent starts with only `setup_tools()` available and calls:
 - `setup_tools(["researcher"])` → Loads `brave.search`
 - `setup_tools(["data-analyst"])` → Loads `pandas_query`
+
+### Example 5: CLI Prerequisites
+
+**capabilities.yaml:**
+```yaml
+providers:
+  - cursor
+
+requires:
+  commands:
+    - cli: docker
+      description: Required to build and run containers
+    - cli: kubectl
+      description: Kubernetes CLI for cluster management
+    - cli: helm
+
+skills:
+  - id: k8s-deployer
+    type: inline
+    def:
+      description: Deploy services to Kubernetes
+      requires:
+        - deploy_service
+      content: |
+        ---
+        name: k8s-deployer
+        description: Deploy and manage Kubernetes workloads
+        ---
+        
+        # Kubernetes Deployer
+        
+        Use deploy_service to deploy a Helm chart to a cluster.
+
+servers: []
+
+tools:
+  - id: deploy_service
+    type: command
+    description: Deploy a Helm chart to the current kubectl context
+    def:
+      run:
+        cmd: helm upgrade --install {release} {chart} --namespace {namespace} --create-namespace
+        args:
+          - name: release
+            type: string
+            description: Helm release name
+            required: true
+          - name: chart
+            type: string
+            description: Chart reference (e.g. oci://registry/chart)
+            required: true
+          - name: namespace
+            type: string
+            description: Target Kubernetes namespace
+            required: true
+```
+
+Running `capa install` first checks that `docker`, `kubectl`, and `helm` are available:
+
+```
+🔍 Verifying prerequisites...
+  ✓ docker
+  ✓ kubectl
+  ✓ helm
+  All prerequisites satisfied
+```
+
+If any command is missing, installation stops:
+
+```
+🔍 Verifying prerequisites...
+  ✓ docker
+  ✗ kubectl not found — Kubernetes CLI for cluster management
+  ✗ helm not found
+
+✗ Some required commands are missing. Please install them and try again.
+```
 
 ## Troubleshooting
 
