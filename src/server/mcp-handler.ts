@@ -11,6 +11,7 @@ import type { CapaDatabase } from '../db/database';
 import type { Capabilities, Tool, ToolCommandDefinition, ToolMCPDefinition } from '../types/capabilities';
 import { getQualifiedToolName } from '../types/capabilities';
 import { SessionManager } from './session-manager';
+import type { SessionInfo } from './session-manager';
 import { CommandToolExecutor } from './tool-executor';
 import { MCPProxy } from './mcp-proxy';
 import { SubprocessManager } from './subprocess-manager';
@@ -84,7 +85,7 @@ export class CapaMCPServer {
    * Get the current session, recreating it transparently if it was expired/cleaned up.
    * This prevents "Session not found" errors after idle timeouts.
    */
-  private ensureSession(): import('./session-manager').SessionInfo {
+  private ensureSession(): SessionInfo {
     if (this.sessionId) {
       const session = this.sessionManager.getSession(this.sessionId);
       if (session) {
