@@ -139,6 +139,21 @@ export interface AgentFileConfig {
   additional?: AgentSnippet[];
 }
 
+/**
+ * A CLI command that must be available on the user's system.
+ */
+export interface RequiredCommand {
+  cli: string;
+  description?: string;
+}
+
+/**
+ * Global prerequisites that must be satisfied before installation proceeds.
+ */
+export interface CapabilitiesRequires {
+  commands?: RequiredCommand[];
+}
+
 export interface Capabilities {
   providers: string[];
   skills: Skill[];
@@ -150,6 +165,8 @@ export interface Capabilities {
   options?: CapabilitiesOptions;
   /** Manages content written to AGENTS.md / CLAUDE.md in the project root. */
   agents?: AgentFileConfig;
+  /** Global prerequisites that must be satisfied before installation proceeds. */
+  requires?: CapabilitiesRequires;
 }
 
 export interface Skill {

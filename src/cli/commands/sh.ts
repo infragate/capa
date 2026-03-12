@@ -71,7 +71,15 @@ class ShellRegistry {
             isMcp: true,
           });
         }
-        this.groups.get(groupSlug)!.commands.set(commandSlug, cmd);
+        // Strip server name prefix from the subcommand slug to avoid duplication
+        // e.g. tool "bigquery_query" under server "bigquery" → subcommand "query" instead of "bigquery-query"
+        let subSlug = commandSlug;
+        const prefix = groupSlug + '-';
+        if (subSlug.startsWith(prefix) && subSlug.length > prefix.length) {
+          subSlug = subSlug.slice(prefix.length);
+        }
+        cmd.slug = subSlug;
+        this.groups.get(groupSlug)!.commands.set(subSlug, cmd);
       } else if (tool.group) {
         // Command tool with an explicit group — collect for second pass
         const groupSlug = slugify(tool.group);
@@ -309,12 +317,14 @@ function printGroupHelp(group: ShellGroup): void {
     return;
   }
   console.log(`\n${group.slug} - subcommands:\n`);
+  const colWidth = 24;
   for (const [slug, cmd] of group.commands) {
-    const desc = cmd.description ? '  — ' + cmd.description.split('\n')[0].slice(0, 70) : '';
-    const argList = buildArgList(cmd);
-    console.log(`  ${slug}${argList ? '  ' + argList : ''}${desc}`);
+    const desc = cmd.description ? cmd.description.split('\n')[0].slice(0, 60) : '';
+    const padding = ' '.repeat(Math.max(1, colWidth - slug.length));
+    console.log(`  ${slug}${padding}${desc}`);
   }
-  console.log('');
+  console.log(`\nUsage: capa sh ${group.slug} <subcommand> [--arg val]`);
+  console.log(`       capa sh ${group.slug} <subcommand> --help   Show parameter details\n`);
 }
 
 function printCommandHelp(cmd: ShellCommand): void {
@@ -327,15 +337,25 @@ function printCommandHelp(cmd: ShellCommand): void {
   const props = cmd.inputSchema?.properties || {};
   const required: string[] = cmd.inputSchema?.required || [];
   if (Object.keys(props).length > 0) {
-    console.log('\n  Arguments:\n');
+    console.log('\n  Parameters:\n');
     for (const [argName, schema] of Object.entries(props) as [string, any][]) {
       const slug = slugify(argName);
       const isRequired = required.includes(argName);
       const typeStr = schema.type ? `<${schema.type}>` : '';
-      const descStr = schema.description ? `  ${schema.description}` : '';
-      const reqStr = isRequired ? ' (required)' : '';
-      console.log(`    --${slug} ${typeStr}${reqStr}${descStr}`);
+      const reqStr = isRequired ? ' (required)' : ' (optional)';
+      console.log(`    --${slug} ${typeStr}${reqStr}`);
+      if (schema.description) {
+        console.log(`        ${schema.description}`);
+      }
+      if (schema.enum) {
+        console.log(`        Allowed values: ${schema.enum.join(', ')}`);
+      }
+      if (schema.default !== undefined) {
+        console.log(`        Default: ${schema.default}`);
+      }
     }
+  } else {
+    console.log('\n  This command takes no parameters.');
   }
   console.log('');
 }
@@ -352,9 +372,22 @@ async function execCommand(
   const required: string[] = cmd.inputSchema?.required || [];
   const missingRequired = required.filter((r) => !(slugify(r) in rawArgs) && !(r in rawArgs));
   if (missingRequired.length > 0) {
-    console.error(`Missing required argument(s): ${missingRequired.map((r) => `--${slugify(r)}`).join(', ')}`);
+    const props = cmd.inputSchema?.properties || {};
+    console.error(`Missing required parameter(s):\n`);
+    for (const argName of missingRequired) {
+      const schema = props[argName] as any;
+      const slug = slugify(argName);
+      const typeStr = schema?.type ? `<${schema.type}>` : '';
+      console.error(`  --${slug} ${typeStr}`);
+      if (schema?.description) {
+        console.error(`      ${schema.description}`);
+      }
+      if (schema?.enum) {
+        console.error(`      Allowed values: ${schema.enum.join(', ')}`);
+      }
+    }
     const argList = buildArgList(cmd);
-    console.error(`Usage: capa sh ${cmd.slug}${argList ? ' ' + argList : ''}`);
+    console.error(`\nUsage: capa sh ${cmd.slug}${argList ? ' ' + argList : ''}`);
     process.exit(1);
   }
 

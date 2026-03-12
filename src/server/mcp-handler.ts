@@ -79,6 +79,24 @@ export class CapaMCPServer {
     this.setupHandlers();
   }
 
+  /**
+   * Get the current session, recreating it transparently if it was expired/cleaned up.
+   * This prevents "Session not found" errors after idle timeouts.
+   */
+  private ensureSession(): import('./session-manager').SessionInfo {
+    if (this.sessionId) {
+      const session = this.sessionManager.getSession(this.sessionId);
+      if (session) {
+        this.sessionManager.updateActivity(this.sessionId);
+        return session;
+      }
+      this.logger.warn(`Session ${this.sessionId} expired, creating new session`);
+    }
+    const session = this.sessionManager.createSession(this.projectId);
+    this.sessionId = session.sessionId;
+    return session;
+  }
+
   private setupHandlers(): void {
     // List tools handler
     this.server.setRequestHandler(ListToolsRequestSchema, async (request) => {
@@ -176,34 +194,7 @@ export class CapaMCPServer {
       // Handle other tools
       // Only require session for on-demand mode
       if (toolExposureMode === 'on-demand') {
-        if (!this.sessionId) {
-          this.logger.warn('No active session');
-          return {
-            content: [
-              {
-                type: 'text',
-                text: JSON.stringify({
-                  error: 'No active session. Call setup_tools first.',
-                }),
-              },
-            ],
-          };
-        }
-
-        const session = this.sessionManager.getSession(this.sessionId);
-        if (!session) {
-          return {
-            content: [
-              {
-                type: 'text',
-                text: JSON.stringify({ error: 'Session not found' }),
-              },
-            ],
-          };
-        }
-
-        // Update activity
-        this.sessionManager.updateActivity(this.sessionId);
+        this.ensureSession();
       }
 
       // Find tool definition
@@ -272,14 +263,10 @@ export class CapaMCPServer {
 
   private async handleSetupTools(args: { skills: string[] }): Promise<any> {
     try {
-      // Create session if needed
-      if (!this.sessionId) {
-        const session = this.sessionManager.createSession(this.projectId);
-        this.sessionId = session.sessionId;
-      }
+      this.ensureSession();
 
       // Setup tools
-      const toolIds = this.sessionManager.setupTools(this.sessionId, args.skills);
+      const toolIds = this.sessionManager.setupTools(this.sessionId!, args.skills);
 
       // Get capabilities to fetch tool schemas
       const capabilities = this.sessionManager.getProjectCapabilities(this.projectId);
@@ -341,32 +328,7 @@ export class CapaMCPServer {
 
   private async handleCallTool(args: { name: string; data: object }): Promise<any> {
     try {
-      // Validate session exists
-      if (!this.sessionId) {
-        this.logger.warn('No active session');
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify({
-                error: 'No active session. Call setup_tools first.',
-              }),
-            },
-          ],
-        };
-      }
-
-      const session = this.sessionManager.getSession(this.sessionId);
-      if (!session) {
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify({ error: 'Session not found' }),
-            },
-          ],
-        };
-      }
+      const session = this.ensureSession();
 
       // Extract tool name and data
       const toolName = args.name;
@@ -374,9 +336,6 @@ export class CapaMCPServer {
 
       this.logger.info(`Calling tool via call_tool: ${toolName}`);
       this.logger.debug(`Tool data: ${JSON.stringify(toolData)}`);
-
-      // Update activity
-      this.sessionManager.updateActivity(this.sessionId);
 
       // Find tool definition
       const toolDef = this.sessionManager.getToolDefinition(this.projectId, toolName);
@@ -776,9 +735,7 @@ export class CapaMCPServer {
     // Handle initialization
     if (message.method === 'initialize') {
       this.logger.info('Initialize request');
-      // Create session for this connection
-      const session = this.sessionManager.createSession(this.projectId);
-      this.sessionId = session.sessionId;
+      const session = this.ensureSession();
       this.logger.debug(`Session ID: ${this.sessionId}`);
 
       return {
@@ -887,16 +844,11 @@ export class CapaMCPServer {
       // Handle setup_tools
       if (name === 'setup_tools') {
         try {
-          // Create session if needed
-          if (!this.sessionId) {
-            const session = this.sessionManager.createSession(this.projectId);
-            this.sessionId = session.sessionId;
-            this.logger.debug(`Created session: ${this.sessionId}`);
-          }
+          this.ensureSession();
 
           // Setup tools
           this.logger.info(`Activating skills: ${args.skills.join(', ')}`);
-          const toolIds = this.sessionManager.setupTools(this.sessionId, args.skills);
+          const toolIds = this.sessionManager.setupTools(this.sessionId!, args.skills);
           this.logger.success(`Loaded ${toolIds.length} tool(s): ${toolIds.join(', ')}`);
 
           // Get capabilities to fetch tool schemas
@@ -973,31 +925,7 @@ export class CapaMCPServer {
         }
 
         try {
-          // Validate session exists
-          if (!this.sessionId) {
-            this.logger.warn('No active session');
-            return {
-              jsonrpc: '2.0',
-              id: message.id,
-              error: {
-                code: -32603,
-                message: 'No active session. Call setup_tools first.',
-              },
-            };
-          }
-
-          const session = this.sessionManager.getSession(this.sessionId);
-          if (!session) {
-            this.logger.warn('Session not found');
-            return {
-              jsonrpc: '2.0',
-              id: message.id,
-              error: {
-                code: -32603,
-                message: 'Session not found',
-              },
-            };
-          }
+          const session = this.ensureSession();
 
           // Extract tool name and data
           const toolName = args.name;
@@ -1005,9 +933,6 @@ export class CapaMCPServer {
 
           this.logger.info(`Calling tool via call_tool: ${toolName}`);
           this.logger.debug(`Tool data: ${JSON.stringify(toolData)}`);
-
-          // Update activity
-          this.sessionManager.updateActivity(this.sessionId);
 
           // Find tool definition
           const toolDef = this.sessionManager.getToolDefinition(this.projectId, toolName);
@@ -1133,33 +1058,7 @@ export class CapaMCPServer {
 
       // Only require session for on-demand mode
       if (toolExposureMode === 'on-demand') {
-        if (!this.sessionId) {
-          this.logger.warn('No active session');
-          return {
-            jsonrpc: '2.0',
-            id: message.id,
-            error: {
-              code: -32603,
-              message: 'No active session. Call setup_tools first.',
-            },
-          };
-        }
-
-        const session = this.sessionManager.getSession(this.sessionId);
-        if (!session) {
-          this.logger.warn('Session not found');
-          return {
-            jsonrpc: '2.0',
-            id: message.id,
-            error: {
-              code: -32603,
-              message: 'Session not found',
-            },
-          };
-        }
-
-        // Update activity
-        this.sessionManager.updateActivity(this.sessionId);
+        this.ensureSession();
       }
 
       // Find tool definition
