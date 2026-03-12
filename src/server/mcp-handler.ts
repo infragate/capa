@@ -29,6 +29,8 @@ export interface ShellToolInfo {
   group?: string;
   description: string;
   inputSchema: any;
+  /** Default argument values from the tool definition (MCP tools only) */
+  defaults?: Record<string, any>;
 }
 
 export interface ToolValidationResult {
@@ -38,6 +40,34 @@ export interface ToolValidationResult {
   serverId?: string;
   remoteTool?: string;
   pendingAuth?: boolean;  // True if validation was skipped due to pending OAuth2 authentication
+}
+
+/**
+ * Remove defaulted parameters from the schema's `required` array and annotate
+ * each property with a `default` value so MCP clients see them as optional.
+ */
+function applyDefaultsToSchema(schema: any, defaults: Record<string, any>): void {
+  const defaultKeys = Object.keys(defaults);
+  if (defaultKeys.length === 0) return;
+  if (Array.isArray(schema.required)) {
+    schema.required = schema.required.filter((r: string) => !defaultKeys.includes(r));
+  }
+  if (schema.properties) {
+    for (const key of defaultKeys) {
+      if (schema.properties[key]) {
+        schema.properties[key].default = defaults[key];
+      }
+    }
+  }
+}
+
+/** Merge tool-level default args with caller-supplied args (caller wins). */
+function mergeDefaults(
+  defaults: Record<string, any> | undefined,
+  args: Record<string, any>
+): Record<string, any> {
+  if (!defaults) return args;
+  return { ...defaults, ...args };
 }
 
 export class CapaMCPServer {
@@ -249,7 +279,7 @@ export class CapaMCPServer {
           };
         }
 
-        result = await this.mcpProxy.executeTool(name, mcpDef, serverDef.def, args as Record<string, any>);
+        result = await this.mcpProxy.executeTool(name, mcpDef, serverDef.def, mergeDefaults(mcpDef.defaults, args as Record<string, any>));
       }
 
       return {
@@ -414,7 +444,7 @@ export class CapaMCPServer {
         }
 
         this.logger.debug(`Using MCP server: ${serverId}`);
-        result = await this.mcpProxy.executeTool(toolName, mcpDef, serverDef.def, toolData as Record<string, any>);
+        result = await this.mcpProxy.executeTool(toolName, mcpDef, serverDef.def, mergeDefaults(mcpDef.defaults, toolData as Record<string, any>));
         this.logger.debug('MCP tool executed');
       }
 
@@ -472,6 +502,9 @@ export class CapaMCPServer {
         const serverDef = capabilities.servers.find((s) => s.id === serverId);
         if (serverDef?.description) {
           info.serverDescription = serverDef.description;
+        }
+        if (mcpDef.defaults) {
+          info.defaults = mcpDef.defaults;
         }
       } else {
         if (tool.group) {
@@ -641,13 +674,16 @@ export class CapaMCPServer {
 
         if (remoteTool) {
           this.logger.debug(`Fetched schema for ${qualifiedName} from ${serverId}`);
+          const inputSchema = remoteTool.inputSchema
+            ? JSON.parse(JSON.stringify(remoteTool.inputSchema))
+            : { type: 'object' as const, properties: {} };
+          if (mcpDef.defaults) {
+            applyDefaultsToSchema(inputSchema, mcpDef.defaults);
+          }
           const mcpTool: MCPTool = {
             name: qualifiedName,
             description: remoteTool.description || `MCP tool: ${qualifiedName}`,
-            inputSchema: remoteTool.inputSchema || {
-              type: 'object' as const,
-              properties: {},
-            },
+            inputSchema,
           };
           this.toolSchemaCache.set(qualifiedName, mcpTool);
           return mcpTool;
@@ -997,7 +1033,7 @@ export class CapaMCPServer {
             }
 
             this.logger.debug(`Using MCP server: ${serverId}`);
-            result = await this.mcpProxy.executeTool(toolName, mcpDef, serverDef.def, toolData as Record<string, any>);
+            result = await this.mcpProxy.executeTool(toolName, mcpDef, serverDef.def, mergeDefaults(mcpDef.defaults, toolData as Record<string, any>));
             this.logger.debug('MCP tool executed');
           }
 
@@ -1113,7 +1149,7 @@ export class CapaMCPServer {
           }
 
           this.logger.debug(`Using MCP server: ${serverId}`);
-          result = await this.mcpProxy.executeTool(name, mcpDef, serverDef.def, args as Record<string, any>);
+          result = await this.mcpProxy.executeTool(name, mcpDef, serverDef.def, mergeDefaults(mcpDef.defaults, args as Record<string, any>));
           this.logger.debug('MCP tool executed');
         }
 

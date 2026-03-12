@@ -446,6 +446,28 @@ tools:
 
 **Tool naming**: Tool IDs should be short, descriptive names without a server prefix. When exposed via MCP, the tool name becomes `server_id.tool_id` (e.g., `filesystem-server.read_file`). In skill `requires` arrays, reference MCP tools with `@server_id.tool_id` (e.g., `@filesystem-server.read_file`). In the CLI, use `capa sh server_id tool_id` (e.g., `capa sh filesystem-server read-file`).
 
+#### Default Arguments (`defaults`)
+
+MCP tools support an optional `defaults` map that provides pre-filled argument values. Parameters with defaults are exposed as **optional** in the MCP schema and in `capa sh --help`, so the AI (or CLI user) only needs to supply them when overriding. At call time, caller-supplied values take precedence over defaults.
+
+```yaml
+tools:
+  - id: search
+    type: mcp
+    description: Search Confluence
+    def:
+      server: "@atlassian"
+      tool: search
+      defaults:
+        cloudId: "abc123-def456"
+```
+
+In this example, `cloudId` is always sent as `"abc123-def456"` unless the caller explicitly provides a different value. The parameter still appears in the schema (with its default shown) but is no longer required.
+
+This is useful when:
+- A parameter is always the same for a given project (e.g. cloud IDs, workspace names, project keys)
+- You want to simplify the tool interface without losing the ability to override
+
 #### Command Tool
 Execute shell commands:
 
