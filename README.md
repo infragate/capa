@@ -29,6 +29,8 @@ A tool without knowledge leaves the agent unsure when to use it. Knowledge witho
 - 🤖 Supports Cursor and Claude plugin installation
 - 🔒 Installation of skills and plugins from private repositories (GitHub and GitLab)
 - 🧠 Self-improving agents
+- 🎯 Default argument values for MCP tools
+- 🔧 CLI prerequisite verification before installation
 
 <img width="1305" height="941" alt="CAPA Architecture" src="https://github.com/user-attachments/assets/a4db54a2-6ea5-43df-baa9-c61c189d30c1" />
 
@@ -70,9 +72,9 @@ skills:
         name: web-researcher
         description: Search the web for information
         ---
-        Use the brave_search tool to find current information online.
+        Use the brave.search tool to find current information online.
     requires:
-      - brave_search
+      - "@brave.search"
 
 servers:
   - id: brave
@@ -84,7 +86,7 @@ servers:
         BRAVE_API_KEY: ${BraveApiKey}
 
 tools:
-  - id: brave_search
+  - id: search
     type: mcp
     description: Search the web using Brave Search
     def:
@@ -103,12 +105,12 @@ CAPA installs your skills, starts the capability server, and automatically regis
 ### 4. Run tools from the terminal
 
 ```bash
-capa sh                                        # list all available commands
-capa sh brave                                  # list brave subcommands
-capa sh brave brave-web-search --query "…"    # run a tool directly
+capa sh                                  # list all available commands
+capa sh brave                            # list brave subcommands
+capa sh brave search --query "…"         # run a tool directly
 ```
 
-`capa sh` turns every configured tool into a CLI command. MCP server tools are grouped under their server ID. Command tools appear at the top level (or under a custom `group`). Any unrecognised command is passed through to the OS shell.
+`capa sh` turns every configured tool into a CLI command. MCP tools are exposed as `server_name.tool_name` and grouped under their server ID in the CLI. Command tools appear at the top level (or under a custom `group`). Any unrecognised command is passed through to the OS shell.
 
 ## Documentation
 
