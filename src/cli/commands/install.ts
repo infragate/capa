@@ -8,7 +8,8 @@ import { parseCapabilitiesFile } from '../../shared/capabilities';
 import { ensureServer } from '../utils/server-manager';
 import { loadSettings, getDatabasePath } from '../../shared/config';
 import { CapaDatabase } from '../../db/database';
-import type { Capabilities, Skill } from '../../types/capabilities';
+import type { Capabilities, Skill, RequiredCommand } from '../../types/capabilities';
+import { getQualifiedToolName, normalizeToolReference } from '../../types/capabilities';
 import { createAuthenticatedFetch, AuthenticatedFetch } from '../../shared/authenticated-fetch';
 import { displayIntegrationPrompt, getIntegrationsUrl, parseRepoUrl } from '../utils/integration-helper';
 import { getAgentConfig, agents } from 'skills/src/agents';
@@ -34,6 +35,49 @@ import {
 const execAsync = promisify(exec);
 
 /**
+ * Verify that all required CLI commands are available on the system.
+ * Returns true if all checks pass, false otherwise.
+ */
+async function verifyRequiredCommands(commands: RequiredCommand[]): Promise<boolean> {
+  console.log('\n🔍 Verifying prerequisites...');
+
+  interface CheckResult { cli: string; description?: string; available: boolean }
+  const results: CheckResult[] = [];
+
+  for (const cmd of commands) {
+    const isWindows = process.platform === 'win32';
+    const checkCmd = isWindows ? `where ${cmd.cli}` : `which ${cmd.cli}`;
+    let available = false;
+    try {
+      await execAsync(checkCmd);
+      available = true;
+    } catch {
+      available = false;
+    }
+    results.push({ cli: cmd.cli, description: cmd.description, available });
+  }
+
+  let allPassed = true;
+  for (const r of results) {
+    if (r.available) {
+      console.log(`  ✓ ${r.cli}`);
+    } else {
+      allPassed = false;
+      const desc = r.description ? ` — ${r.description}` : '';
+      console.error(`  ✗ ${r.cli} not found${desc}`);
+    }
+  }
+
+  if (!allPassed) {
+    console.error('\n✗ Some required commands are missing. Please install them and try again.');
+  } else {
+    console.log('  All prerequisites satisfied');
+  }
+
+  return allPassed;
+}
+
+/**
  * Get tool IDs that are not exposed to MCP clients because no skill requires them.
  * In both expose-all and on-demand modes, only tools required by at least one skill
  * (or from a plugin) are exposed.
@@ -42,17 +86,17 @@ function getUnexposedToolIds(capabilities: Capabilities): string[] {
   const requiredBySkills = new Set<string>();
   for (const skill of capabilities.skills) {
     if (skill.def?.requires) {
-      for (const toolId of skill.def.requires) {
-        requiredBySkills.add(toolId);
+      for (const ref of skill.def.requires) {
+        requiredBySkills.add(normalizeToolReference(ref));
       }
     }
   }
   const pluginToolIds = new Set(
-    capabilities.tools.filter((t) => t.sourcePlugin).map((t) => t.id)
+    capabilities.tools.filter((t) => t.sourcePlugin).map((t) => getQualifiedToolName(t))
   );
   const exposed = new Set([...requiredBySkills, ...pluginToolIds]);
   return capabilities.tools
-    .map((t) => t.id)
+    .map((t) => getQualifiedToolName(t))
     .filter((id) => !exposed.has(id));
 }
 
@@ -352,6 +396,15 @@ export async function installCommand(envFile?: string | boolean): Promise<void> 
     capabilitiesFile.format
   );
   
+  // Verify required CLI commands before proceeding
+  const reqCmds = capabilities.options?.requiresCommands;
+  if (reqCmds && reqCmds.length > 0) {
+    const passed = await verifyRequiredCommands(reqCmds);
+    if (!passed) {
+      process.exit(1);
+    }
+  }
+
   // Generate project ID
   const projectId = generateProjectId(projectPath);
   console.log(`Project ID: ${projectId}`);

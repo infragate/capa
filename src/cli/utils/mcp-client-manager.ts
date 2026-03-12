@@ -12,11 +12,8 @@ interface MCPClientConfig {
    * @param projectPath - Project root path for project-level configs
    */
   getConfigPath: (projectPath: string) => string;
-  /**
-   * Get the server key name to use in the config
-   * @param projectId - The project ID
-   */
-  getServerKey: (projectId: string) => string;
+  /** Get the server key name to use in the config */
+  getServerKey: () => string;
   /**
    * Get the server configuration object
    * @param mcpUrl - The MCP server URL
@@ -32,14 +29,14 @@ const MCP_CLIENTS: Record<string, MCPClientConfig> = {
     name: 'cursor',
     displayName: 'Cursor',
     getConfigPath: (projectPath: string) => join(projectPath, '.cursor', 'mcp.json'),
-    getServerKey: (projectId: string) => `capa-${projectId}`,
+    getServerKey: () => 'capa',
     getServerConfig: (mcpUrl: string) => ({ url: mcpUrl }),
   },
   'claude-code': {
     name: 'claude-code',
     displayName: 'Claude Code',
     getConfigPath: (projectPath: string) => join(projectPath, '.mcp.json'),
-    getServerKey: (projectId: string) => `capa-${projectId}`,
+    getServerKey: () => 'capa',
     getServerConfig: (mcpUrl: string) => ({ url: mcpUrl }),
   },
 };
@@ -63,7 +60,7 @@ export async function registerMCPServer(
     
     try {
       const configPath = client.getConfigPath(projectPath);
-      const serverKey = client.getServerKey(projectId);
+      const serverKey = client.getServerKey();
       const serverConfig = client.getServerConfig(mcpUrl);
       
       // Ensure directory exists
@@ -120,7 +117,7 @@ export async function unregisterMCPServer(
     
     try {
       const configPath = client.getConfigPath(projectPath);
-      const serverKey = client.getServerKey(projectId);
+      const serverKey = client.getServerKey();
       
       // Check if config exists
       if (!existsSync(configPath)) {
