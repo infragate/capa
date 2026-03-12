@@ -47,6 +47,11 @@ export interface CapabilitiesOptions {
    * Security options for skill installation (blocked phrases, character sanitization)
    */
   security?: SecurityOptions;
+  /**
+   * CLI commands that must be available before `capa install` proceeds.
+   * Installation stops immediately if any command is missing.
+   */
+  requiresCommands?: RequiredCommand[];
 }
 
 /**
@@ -147,13 +152,6 @@ export interface RequiredCommand {
   description?: string;
 }
 
-/**
- * Global prerequisites that must be satisfied before installation proceeds.
- */
-export interface CapabilitiesRequires {
-  commands?: RequiredCommand[];
-}
-
 export interface Capabilities {
   providers: string[];
   skills: Skill[];
@@ -165,8 +163,6 @@ export interface Capabilities {
   options?: CapabilitiesOptions;
   /** Manages content written to AGENTS.md / CLAUDE.md in the project root. */
   agents?: AgentFileConfig;
-  /** Global prerequisites that must be satisfied before installation proceeds. */
-  requires?: CapabilitiesRequires;
 }
 
 export interface Skill {
