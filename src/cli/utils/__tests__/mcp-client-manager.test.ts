@@ -71,8 +71,8 @@ describe('mcp-client-manager', () => {
       
       const config = JSON.parse(readFileSync(configPath, 'utf-8'));
       expect(config.mcpServers).toBeDefined();
-      expect(config.mcpServers['capa-test-project-1234']).toBeDefined();
-      expect(config.mcpServers['capa-test-project-1234'].url).toBe(mcpUrl);
+      expect(config.mcpServers['capa']).toBeDefined();
+      expect(config.mcpServers['capa'].url).toBe(mcpUrl);
     });
 
     it('should preserve existing servers when adding new one', async () => {
@@ -98,8 +98,8 @@ describe('mcp-client-manager', () => {
       const config = JSON.parse(readFileSync(configPath, 'utf-8'));
       expect(config.mcpServers['existing-server']).toBeDefined();
       expect(config.mcpServers['existing-server'].url).toBe('http://example.com/mcp');
-      expect(config.mcpServers['capa-test-project-5678']).toBeDefined();
-      expect(config.mcpServers['capa-test-project-5678'].url).toBe(mcpUrl);
+      expect(config.mcpServers['capa']).toBeDefined();
+      expect(config.mcpServers['capa'].url).toBe(mcpUrl);
     });
 
     it('should update existing server if already registered', async () => {
@@ -116,7 +116,7 @@ describe('mcp-client-manager', () => {
       // Verify updated
       const configPath = join(projectPath, '.cursor', 'mcp.json');
       const config = JSON.parse(readFileSync(configPath, 'utf-8'));
-      expect(config.mcpServers['capa-test-project-1234'].url).toBe(newUrl);
+      expect(config.mcpServers['capa'].url).toBe(newUrl);
     });
 
     it('should handle malformed existing config gracefully', async () => {
@@ -134,7 +134,7 @@ describe('mcp-client-manager', () => {
       // Verify new config is valid
       const config = JSON.parse(readFileSync(configPath, 'utf-8'));
       expect(config.mcpServers).toBeDefined();
-      expect(config.mcpServers['capa-test-project-1234']).toBeDefined();
+      expect(config.mcpServers['capa']).toBeDefined();
     });
   });
 
@@ -150,8 +150,8 @@ describe('mcp-client-manager', () => {
       
       const config = JSON.parse(readFileSync(configPath, 'utf-8'));
       expect(config.mcpServers).toBeDefined();
-      expect(config.mcpServers['capa-test-project-abcd']).toBeDefined();
-      expect(config.mcpServers['capa-test-project-abcd'].url).toBe(mcpUrl);
+      expect(config.mcpServers['capa']).toBeDefined();
+      expect(config.mcpServers['capa'].url).toBe(mcpUrl);
     });
 
     it('should preserve existing servers in claude-code config', async () => {
@@ -175,7 +175,7 @@ describe('mcp-client-manager', () => {
       // Verify both servers exist
       const config = JSON.parse(readFileSync(configPath, 'utf-8'));
       expect(config.mcpServers['another-server']).toBeDefined();
-      expect(config.mcpServers['capa-test-project-xyz']).toBeDefined();
+      expect(config.mcpServers['capa']).toBeDefined();
     });
   });
 
@@ -190,13 +190,13 @@ describe('mcp-client-manager', () => {
       const cursorConfigPath = join(projectPath, '.cursor', 'mcp.json');
       expect(existsSync(cursorConfigPath)).toBe(true);
       const cursorConfig = JSON.parse(readFileSync(cursorConfigPath, 'utf-8'));
-      expect(cursorConfig.mcpServers['capa-multi-client-test']).toBeDefined();
+      expect(cursorConfig.mcpServers['capa']).toBeDefined();
       
       // Verify claude-code config
       const claudeConfigPath = join(projectPath, '.mcp.json');
       expect(existsSync(claudeConfigPath)).toBe(true);
       const claudeConfig = JSON.parse(readFileSync(claudeConfigPath, 'utf-8'));
-      expect(claudeConfig.mcpServers['capa-multi-client-test']).toBeDefined();
+      expect(claudeConfig.mcpServers['capa']).toBeDefined();
     });
 
     it('should skip unknown clients without failing', async () => {
@@ -223,14 +223,14 @@ describe('mcp-client-manager', () => {
       // Verify registered
       let configPath = join(projectPath, '.cursor', 'mcp.json');
       let config = JSON.parse(readFileSync(configPath, 'utf-8'));
-      expect(config.mcpServers['capa-test-project-1234']).toBeDefined();
+      expect(config.mcpServers['capa']).toBeDefined();
       
       // Unregister
       await unregisterMCPServer(projectPath, projectId, ['cursor']);
       
       // Verify removed
       config = JSON.parse(readFileSync(configPath, 'utf-8'));
-      expect(config.mcpServers['capa-test-project-1234']).toBeUndefined();
+      expect(config.mcpServers['capa']).toBeUndefined();
     });
 
     it('should preserve other servers when unregistering', async () => {
@@ -243,7 +243,7 @@ describe('mcp-client-manager', () => {
           'existing-server': {
             url: 'http://example.com/mcp',
           },
-          'capa-test-project-1234': {
+          'capa': {
             url: 'http://127.0.0.1:5912/test-project-1234/mcp',
           },
         },
@@ -256,7 +256,7 @@ describe('mcp-client-manager', () => {
       // Verify existing server still there, capa server removed
       const config = JSON.parse(readFileSync(configPath, 'utf-8'));
       expect(config.mcpServers['existing-server']).toBeDefined();
-      expect(config.mcpServers['capa-test-project-1234']).toBeUndefined();
+      expect(config.mcpServers['capa']).toBeUndefined();
     });
 
     it('should handle non-existent config file gracefully', async () => {
@@ -316,12 +316,12 @@ describe('mcp-client-manager', () => {
       // Verify removed from cursor
       const cursorConfigPath = join(projectPath, '.cursor', 'mcp.json');
       const cursorConfig = JSON.parse(readFileSync(cursorConfigPath, 'utf-8'));
-      expect(cursorConfig.mcpServers['capa-multi-client-test']).toBeUndefined();
+      expect(cursorConfig.mcpServers['capa']).toBeUndefined();
       
       // Verify removed from claude-code
       const claudeConfigPath = join(projectPath, '.mcp.json');
       const claudeConfig = JSON.parse(readFileSync(claudeConfigPath, 'utf-8'));
-      expect(claudeConfig.mcpServers['capa-multi-client-test']).toBeUndefined();
+      expect(claudeConfig.mcpServers['capa']).toBeUndefined();
     });
 
     it('should skip unknown clients without failing', async () => {
@@ -337,7 +337,7 @@ describe('mcp-client-manager', () => {
       // Verify cursor was unregistered
       const cursorConfigPath = join(projectPath, '.cursor', 'mcp.json');
       const cursorConfig = JSON.parse(readFileSync(cursorConfigPath, 'utf-8'));
-      expect(cursorConfig.mcpServers['capa-test-project-1234']).toBeUndefined();
+      expect(cursorConfig.mcpServers['capa']).toBeUndefined();
     });
   });
 
@@ -371,7 +371,7 @@ describe('mcp-client-manager', () => {
       // Verify removed
       const cursorConfigPath = join(projectPath, '.cursor', 'mcp.json');
       const cursorConfig = JSON.parse(readFileSync(cursorConfigPath, 'utf-8'));
-      expect(cursorConfig.mcpServers['capa-test-case-sensitivity-2']).toBeUndefined();
+      expect(cursorConfig.mcpServers['capa']).toBeUndefined();
     });
   });
 
@@ -385,8 +385,7 @@ describe('mcp-client-manager', () => {
       const configPath = join(projectPath, '.cursor', 'mcp.json');
       const config = JSON.parse(readFileSync(configPath, 'utf-8'));
       
-      // Server key should be prefixed with 'capa-'
-      expect(config.mcpServers['capa-my-project-1234']).toBeDefined();
+      expect(config.mcpServers['capa']).toBeDefined();
     });
   });
 
@@ -412,8 +411,7 @@ describe('mcp-client-manager', () => {
       const configPath = join(projectPath, '.cursor', 'mcp.json');
       const config = JSON.parse(readFileSync(configPath, 'utf-8'));
       
-      // Should create server key with special chars
-      expect(config.mcpServers['capa-my_project-123!@#']).toBeDefined();
+      expect(config.mcpServers['capa']).toBeDefined();
     });
 
     it('should create nested directories if they do not exist', async () => {
