@@ -8,7 +8,7 @@ import { constants } from 'fs';
 
 interface ParsedSkillSource {
   id: string;
-  type: 'inline' | 'remote' | 'github' | 'gitlab' | 'local';
+  type: 'inline' | 'remote' | 'github' | 'gitlab' | 'local' | 'installed';
   def: {
     repo?: string;
     url?: string;
@@ -16,6 +16,8 @@ interface ParsedSkillSource {
     path?: string;     // For local skills: path to directory containing SKILL.md
     version?: string;  // Tag or version like "1.2.1" or "v1.2.1"
     ref?: string;      // Commit SHA
+    description?: string;  // For installed skills
+    requires?: string[];   // For installed skills: tool IDs to bind
   };
 }
 
@@ -149,7 +151,7 @@ export async function parseSkillSource(source: string): Promise<ParsedSkillSourc
   throw new Error(`Unable to parse skill source: ${source}\n\nSupported formats:\n  - GitHub with skill: owner/repo@skill-name\n  - GitHub with version: owner/repo@skill-name:1.2.1\n  - GitHub with commit: owner/repo@skill-name#abc123\n  - GitHub skill URL: https://github.com/owner/repo/tree/main/skills/skill-name\n  - GitLab with skill: gitlab:owner/repo@skill-name\n  - GitLab with version: gitlab:owner/repo@skill-name:1.2.1\n  - GitLab with commit: gitlab:owner/repo@skill-name#abc123\n  - GitLab skill URL: https://gitlab.com/owner/repo/-/tree/main/skills/skill-name\n  - Local path: ./my-local-skills (directory containing SKILL.md)\n  - Remote SKILL.md URL: https://example.com/path/to/SKILL.md\n\nVersion/commit examples:\n  - Pin to version: capa add owner/repo@skill:v1.2.3\n  - Pin to commit: capa add gitlab:group/repo@skill#abc123def\n  - Latest (default): capa add owner/repo@skill`);
 }
 
-export async function addCommand(source: string, options: { id?: string }): Promise<void> {
+export async function addCommand(source: string, options: { id?: string; installed?: boolean; requires?: string; description?: string }): Promise<void> {
   const projectPath = process.cwd();
   
   // Detect capabilities file
@@ -170,7 +172,23 @@ export async function addCommand(source: string, options: { id?: string }): Prom
   // Parse the skill source
   let skillDef: ParsedSkillSource;
   try {
-    skillDef = await parseSkillSource(source);
+    if (options.installed) {
+      // Installed skill: source is the skill ID; capa only acknowledges for tool binding
+      const id = options.id || source;
+      const requires = options.requires
+        ? options.requires.split(',').map((r) => r.trim()).filter(Boolean)
+        : undefined;
+      skillDef = {
+        id,
+        type: 'installed',
+        def: {
+          ...(options.description && { description: options.description }),
+          ...(requires && requires.length > 0 && { requires })
+        }
+      };
+    } else {
+      skillDef = await parseSkillSource(source);
+    }
   } catch (error) {
     console.error(`✗ ${error instanceof Error ? error.message : String(error)}`);
     process.exit(1);
@@ -215,6 +233,11 @@ export async function addCommand(source: string, options: { id?: string }): Prom
     console.log(`  Path: ${skillDef.def.path}`);
   } else if (skillDef.def.content) {
     console.log(`  Source: inline`);
+  } else if (skillDef.type === 'installed') {
+    console.log(`  Source: installed (acknowledged for tool binding)`);
+    if (skillDef.def.requires?.length) {
+      console.log(`  Requires: ${skillDef.def.requires.join(', ')}`);
+    }
   }
   
   // Run install
