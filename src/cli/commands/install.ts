@@ -8,7 +8,7 @@ import { parseCapabilitiesFile } from '../../shared/capabilities';
 import { ensureServer } from '../utils/server-manager';
 import { loadSettings, getDatabasePath } from '../../shared/config';
 import { CapaDatabase } from '../../db/database';
-import type { Capabilities, Skill, RequiredCommand } from '../../types/capabilities';
+import type { Capabilities, Skill } from '../../types/capabilities';
 import { getQualifiedToolName, normalizeToolReference } from '../../types/capabilities';
 import { createAuthenticatedFetch, AuthenticatedFetch } from '../../shared/authenticated-fetch';
 import { displayIntegrationPrompt, getIntegrationsUrl, parseRepoUrl } from '../utils/integration-helper';
@@ -38,7 +38,7 @@ const execAsync = promisify(exec);
  * Verify that all required CLI commands are available on the system.
  * Returns true if all checks pass, false otherwise.
  */
-async function verifyRequiredCommands(commands: RequiredCommand[]): Promise<boolean> {
+async function verifyRequiredCommands(commands: import('../../types/capabilities').RequiredCommand[]): Promise<boolean> {
   console.log('\n🔍 Verifying prerequisites...');
 
   interface CheckResult { cli: string; description?: string; available: boolean }
@@ -397,8 +397,9 @@ export async function installCommand(envFile?: string | boolean): Promise<void> 
   );
   
   // Verify required CLI commands before proceeding
-  if (capabilities.requires?.commands && capabilities.requires.commands.length > 0) {
-    const passed = await verifyRequiredCommands(capabilities.requires.commands);
+  const reqCmds = capabilities.options?.requiresCommands;
+  if (reqCmds && reqCmds.length > 0) {
+    const passed = await verifyRequiredCommands(reqCmds);
     if (!passed) {
       process.exit(1);
     }

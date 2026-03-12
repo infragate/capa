@@ -25,15 +25,14 @@ Use this skill when:
 ## Core Concepts
 
 ### Capabilities File
-The `capabilities.yaml` (or `capabilities.json`) file defines everything an agent can do. It contains seven main sections:
+The `capabilities.yaml` (or `capabilities.json`) file defines everything an agent can do. It contains six main sections:
 
 1. **providers**: List of MCP clients where skills should be installed (e.g., `cursor`, `claude-code`)
-2. **options**: Configuration for tool exposure (`toolExposure`) and security (`security`)
-3. **requires**: CLI prerequisites that must be installed before `capa install` proceeds (optional)
-4. **skills**: Modular knowledge packages that teach agents when and how to use tools
-5. **servers**: MCP servers that provide tools (local subprocesses or remote HTTP servers)
-6. **tools**: Executable capabilities (MCP tools or shell commands)
-7. **agents**: Manages the content of `AGENTS.md` in the project root (optional)
+2. **options**: Configuration for tool exposure (`toolExposure`), security (`security`), and CLI prerequisites (`requiresCommands`)
+3. **skills**: Modular knowledge packages that teach agents when and how to use tools
+4. **servers**: MCP servers that provide tools (local subprocesses or remote HTTP servers)
+5. **tools**: Executable capabilities (MCP tools or shell commands)
+6. **agents**: Manages the content of `AGENTS.md` in the project root (optional)
 
 ### Skills vs Tools
 - **Skills**: Provide knowledge and context about when/how to use capabilities (non-executable markdown documentation)
@@ -173,13 +172,11 @@ options:
   #   blockedPhrases: []
   #   # Or load from file: blockedPhrases: { file: "./blocked-phrases.txt" }
   #   allowedCharacters: ""  # "" = baseline only (strips non-ASCII); "[\\u00A0-\\uFFFF]" = allow all Unicode
-
-# Optional: CLI prerequisites that must be installed before `capa install` proceeds
-# requires:
-#   commands:
-#     - cli: docker
-#       description: Required to run containerised tools
-#     - cli: node
+  # Optional: CLI prerequisites that must be installed before `capa install` proceeds
+  # requiresCommands:
+  #   - cli: docker
+  #     description: Required to run containerised tools
+  #   - cli: node
 
 # Optional: manage AGENTS.md content
 # agents:
@@ -405,13 +402,13 @@ When `capa install` detects a blocked phrase, it **stops immediately** and repor
 
 No further skills are installed until you remove the phrase from the skill or update your security configuration.
 
-### Requires Section (Prerequisites)
+### CLI Prerequisites (`requiresCommands`)
 
-The top-level `requires` section lets you declare CLI commands that must be present on the user's system before `capa install` proceeds. If any command is missing, installation stops immediately with a clear error listing the missing tools.
+Under `options.requiresCommands` you can declare CLI commands that must be present on the user's system before `capa install` proceeds. If any command is missing, installation stops immediately with a clear error listing the missing tools.
 
 ```yaml
-requires:
-  commands:
+options:
+  requiresCommands:
     - cli: docker
       description: Required to run containerised tools
     - cli: node
@@ -426,7 +423,7 @@ requires:
 
 **How it works:** During `capa install`, each entry is verified using `which` (Unix) or `where` (Windows). A check mark is printed for each found command; a cross is printed for missing ones along with the optional description. If any command is absent the process exits before installing skills or registering servers.
 
-Omit the `requires` section entirely if you have no CLI prerequisites.
+Omit `requiresCommands` (or leave it empty) if you have no CLI prerequisites.
 
 ### Tools Section
 
@@ -1102,8 +1099,8 @@ With `on-demand` mode, the agent starts with only `setup_tools()` available and 
 providers:
   - cursor
 
-requires:
-  commands:
+options:
+  requiresCommands:
     - cli: docker
       description: Required to build and run containers
     - cli: kubectl
