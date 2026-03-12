@@ -260,3 +260,26 @@ export interface ArgumentDefinition {
   description?: string;
   required?: boolean;
 }
+
+/**
+ * Compute the qualified name for a tool.
+ * MCP tools: "{serverId}.{toolId}" (e.g. "bigquery.query")
+ * Command tools: "{toolId}" (unchanged)
+ */
+export function getQualifiedToolName(tool: Tool): string {
+  if (tool.type === 'mcp') {
+    const mcpDef = tool.def as ToolMCPDefinition;
+    const serverId = mcpDef.server.replace('@', '');
+    return `${serverId}.${tool.id}`;
+  }
+  return tool.id;
+}
+
+/**
+ * Normalize a skill `requires` reference to a qualified tool name.
+ * "@server.tool" → "server.tool" (MCP tool)
+ * "plain_id"     → "plain_id"   (command tool)
+ */
+export function normalizeToolReference(ref: string): string {
+  return ref.startsWith('@') ? ref.slice(1) : ref;
+}
