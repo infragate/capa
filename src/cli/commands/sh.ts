@@ -299,7 +299,7 @@ function printAvailableCommands(registry: ShellRegistry): void {
   if (registry.topLevelCommands.size > 0) {
     for (const [slug, cmd] of registry.topLevelCommands) {
       const padding = ' '.repeat(Math.max(1, colWidth - slug.length));
-      const desc = cmd.description ? cmd.description.split('\n')[0] : '';
+      const desc = cmd.description || '';
       console.log(`  ${slug}${padding}${desc}`);
     }
   }
@@ -320,7 +320,7 @@ function printGroupHelp(group: ShellGroup): void {
   console.log(`\n${group.slug} - subcommands:\n`);
   const colWidth = 24;
   for (const [slug, cmd] of group.commands) {
-    const desc = cmd.description ? cmd.description.split('\n')[0] : '';
+    const desc = cmd.description || '';
     const padding = ' '.repeat(Math.max(1, colWidth - slug.length));
     console.log(`  ${slug}${padding}${desc}`);
   }
@@ -331,7 +331,7 @@ function printGroupHelp(group: ShellGroup): void {
 function printCommandHelp(cmd: ShellCommand): void {
   console.log('');
   if (cmd.description) {
-    console.log(`  ${cmd.slug}  —  ${cmd.description.split('\n')[0]}`);
+    console.log(`  ${cmd.slug}  —  ${cmd.description}`);
   } else {
     console.log(`  ${cmd.slug}`);
   }
