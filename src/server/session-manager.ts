@@ -115,9 +115,10 @@ export class SessionManager {
       }
     }
 
-    // Update active skills; available tools = skill-required tools + all plugin MCP tools
-    session.activeSkills = skillIds;
-    const skillTools = this.getToolsForSkills(session.projectId, skillIds);
+    // Merge with previously active skills so tools from earlier setup_tools calls remain available
+    const mergedSkills = [...new Set([...session.activeSkills, ...skillIds])];
+    session.activeSkills = mergedSkills;
+    const skillTools = this.getToolsForSkills(session.projectId, mergedSkills);
     const pluginToolIds = this.getPluginToolIds(session.projectId);
     session.availableTools = [...new Set([...skillTools, ...pluginToolIds])];
     session.lastActivity = Date.now();
@@ -125,7 +126,7 @@ export class SessionManager {
     this.logger.debug(`Available tools: ${session.availableTools.join(', ')}`);
 
     // Update database
-    this.db.updateSessionSkills(sessionId, skillIds);
+    this.db.updateSessionSkills(sessionId, mergedSkills);
 
     return session.availableTools;
   }
