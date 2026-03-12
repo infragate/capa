@@ -236,6 +236,8 @@ export interface Tool {
 export interface ToolMCPDefinition {
   server: string; // Reference to server ID with @ prefix
   tool: string;   // Tool name on the remote MCP server
+  /** Default argument values merged at call time; defaulted params become optional in the schema. */
+  defaults?: Record<string, any>;
 }
 
 export interface ToolCommandDefinition {

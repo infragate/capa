@@ -12,6 +12,7 @@ interface ShellToolInfo {
   group?: string;
   description: string;
   inputSchema: any;
+  defaults?: Record<string, any>;
 }
 
 interface ShellCommand {
@@ -22,6 +23,8 @@ interface ShellCommand {
   inputSchema: any;
   /** Maps slugified arg name → original arg name */
   argSlugs: Map<string, string>;
+  /** Default argument values (MCP tools only) */
+  defaults?: Record<string, any>;
 }
 
 interface ShellGroup {
@@ -58,6 +61,7 @@ class ShellRegistry {
         description: tool.description,
         inputSchema: tool.inputSchema,
         argSlugs,
+        defaults: tool.defaults,
       };
 
       if (tool.type === 'mcp' && tool.serverId) {
