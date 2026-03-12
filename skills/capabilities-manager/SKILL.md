@@ -452,12 +452,12 @@ MCP tools support an optional `defaults` map that provides pre-filled argument v
 
 ```yaml
 tools:
-  - id: search
+  - id: jiraSearchIssue
     type: mcp
-    description: Search Confluence
+    description: Search Jira
     def:
       server: "@atlassian"
-      tool: search
+      tool: getJiraIssue
       defaults:
         cloudId: "abc123-def456"
 ```
