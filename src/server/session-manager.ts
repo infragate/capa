@@ -1,6 +1,7 @@
 import { nanoid } from 'nanoid';
 import type { CapaDatabase } from '../db/database';
 import type { Capabilities, Tool } from '../types/capabilities';
+import { getQualifiedToolName, normalizeToolReference } from '../types/capabilities';
 import { logger } from '../shared/logger';
 
 export interface SessionInfo {
@@ -115,9 +116,10 @@ export class SessionManager {
       }
     }
 
-    // Update active skills; available tools = skill-required tools + all plugin MCP tools
-    session.activeSkills = skillIds;
-    const skillTools = this.getToolsForSkills(session.projectId, skillIds);
+    // Merge with previously active skills so tools from earlier setup_tools calls remain available
+    const mergedSkills = [...new Set([...session.activeSkills, ...skillIds])];
+    session.activeSkills = mergedSkills;
+    const skillTools = this.getToolsForSkills(session.projectId, mergedSkills);
     const pluginToolIds = this.getPluginToolIds(session.projectId);
     session.availableTools = [...new Set([...skillTools, ...pluginToolIds])];
     session.lastActivity = Date.now();
@@ -125,7 +127,7 @@ export class SessionManager {
     this.logger.debug(`Available tools: ${session.availableTools.join(', ')}`);
 
     // Update database
-    this.db.updateSessionSkills(sessionId, skillIds);
+    this.db.updateSessionSkills(sessionId, mergedSkills);
 
     return session.availableTools;
   }
@@ -144,8 +146,8 @@ export class SessionManager {
     for (const skillId of skillIds) {
       const skill = capabilities.skills.find((s) => s.id === skillId);
       if (skill && skill.def && skill.def.requires) {
-        for (const toolId of skill.def.requires) {
-          requiredTools.add(toolId);
+        for (const ref of skill.def.requires) {
+          requiredTools.add(normalizeToolReference(ref));
         }
       }
     }
@@ -165,11 +167,11 @@ export class SessionManager {
 
     const requiredTools = new Set<string>();
 
-    // Iterate through all skills and collect their required tools
+    // Iterate through all skills and collect their required tools (normalized)
     for (const skill of capabilities.skills) {
       if (skill.def && skill.def.requires) {
-        for (const toolId of skill.def.requires) {
-          requiredTools.add(toolId);
+        for (const ref of skill.def.requires) {
+          requiredTools.add(normalizeToolReference(ref));
         }
       }
     }
@@ -188,7 +190,7 @@ export class SessionManager {
   getPluginToolIds(projectId: string): string[] {
     const capabilities = this.getProjectCapabilities(projectId);
     if (!capabilities) return [];
-    return capabilities.tools.filter((t) => t.sourcePlugin).map((t) => t.id);
+    return capabilities.tools.filter((t) => t.sourcePlugin).map((t) => getQualifiedToolName(t));
   }
 
   /**
@@ -228,13 +230,13 @@ export class SessionManager {
   /**
    * Get tool definition
    */
-  getToolDefinition(projectId: string, toolId: string): Tool | null {
+  getToolDefinition(projectId: string, qualifiedName: string): Tool | null {
     const capabilities = this.getProjectCapabilities(projectId);
     if (!capabilities) {
       return null;
     }
 
-    return capabilities.tools.find((t) => t.id === toolId) || null;
+    return capabilities.tools.find((t) => getQualifiedToolName(t) === qualifiedName) || null;
   }
 
   /**

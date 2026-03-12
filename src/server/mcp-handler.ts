@@ -9,7 +9,9 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import type { CapaDatabase } from '../db/database';
 import type { Capabilities, Tool, ToolCommandDefinition, ToolMCPDefinition } from '../types/capabilities';
+import { getQualifiedToolName } from '../types/capabilities';
 import { SessionManager } from './session-manager';
+import type { SessionInfo } from './session-manager';
 import { CommandToolExecutor } from './tool-executor';
 import { MCPProxy } from './mcp-proxy';
 import { SubprocessManager } from './subprocess-manager';
@@ -27,6 +29,8 @@ export interface ShellToolInfo {
   group?: string;
   description: string;
   inputSchema: any;
+  /** Default argument values from the tool definition (MCP tools only) */
+  defaults?: Record<string, any>;
 }
 
 export interface ToolValidationResult {
@@ -36,6 +40,34 @@ export interface ToolValidationResult {
   serverId?: string;
   remoteTool?: string;
   pendingAuth?: boolean;  // True if validation was skipped due to pending OAuth2 authentication
+}
+
+/**
+ * Remove defaulted parameters from the schema's `required` array and annotate
+ * each property with a `default` value so MCP clients see them as optional.
+ */
+function applyDefaultsToSchema(schema: any, defaults: Record<string, any>): void {
+  const defaultKeys = Object.keys(defaults);
+  if (defaultKeys.length === 0) return;
+  if (Array.isArray(schema.required)) {
+    schema.required = schema.required.filter((r: string) => !defaultKeys.includes(r));
+  }
+  if (schema.properties) {
+    for (const key of defaultKeys) {
+      if (schema.properties[key]) {
+        schema.properties[key].default = defaults[key];
+      }
+    }
+  }
+}
+
+/** Merge tool-level default args with caller-supplied args (caller wins). */
+function mergeDefaults(
+  defaults: Record<string, any> | undefined,
+  args: Record<string, any>
+): Record<string, any> {
+  if (!defaults) return args;
+  return { ...defaults, ...args };
 }
 
 export class CapaMCPServer {
@@ -79,6 +111,24 @@ export class CapaMCPServer {
     this.setupHandlers();
   }
 
+  /**
+   * Get the current session, recreating it transparently if it was expired/cleaned up.
+   * This prevents "Session not found" errors after idle timeouts.
+   */
+  private ensureSession(): SessionInfo {
+    if (this.sessionId) {
+      const session = this.sessionManager.getSession(this.sessionId);
+      if (session) {
+        this.sessionManager.updateActivity(this.sessionId);
+        return session;
+      }
+      this.logger.warn(`Session ${this.sessionId} expired, creating new session`);
+    }
+    const session = this.sessionManager.createSession(this.projectId);
+    this.sessionId = session.sessionId;
+    return session;
+  }
+
   private setupHandlers(): void {
     // List tools handler
     this.server.setRequestHandler(ListToolsRequestSchema, async (request) => {
@@ -92,8 +142,8 @@ export class CapaMCPServer {
         // Expose-all mode: Show all tools from all skills immediately
         if (capabilities) {
           const allToolIds = this.sessionManager.getAllRequiredToolsForProject(this.projectId);
-          for (const toolId of allToolIds) {
-            const tool = capabilities.tools.find((t) => t.id === toolId);
+          for (const qualifiedName of allToolIds) {
+            const tool = capabilities.tools.find((t) => getQualifiedToolName(t) === qualifiedName);
             if (tool) {
               const mcpTool = await this.convertToolToMCP(tool, capabilities);
               tools.push(mcpTool);
@@ -176,34 +226,7 @@ export class CapaMCPServer {
       // Handle other tools
       // Only require session for on-demand mode
       if (toolExposureMode === 'on-demand') {
-        if (!this.sessionId) {
-          this.logger.warn('No active session');
-          return {
-            content: [
-              {
-                type: 'text',
-                text: JSON.stringify({
-                  error: 'No active session. Call setup_tools first.',
-                }),
-              },
-            ],
-          };
-        }
-
-        const session = this.sessionManager.getSession(this.sessionId);
-        if (!session) {
-          return {
-            content: [
-              {
-                type: 'text',
-                text: JSON.stringify({ error: 'Session not found' }),
-              },
-            ],
-          };
-        }
-
-        // Update activity
-        this.sessionManager.updateActivity(this.sessionId);
+        this.ensureSession();
       }
 
       // Find tool definition
@@ -256,7 +279,7 @@ export class CapaMCPServer {
           };
         }
 
-        result = await this.mcpProxy.executeTool(name, mcpDef, serverDef.def, args as Record<string, any>);
+        result = await this.mcpProxy.executeTool(name, mcpDef, serverDef.def, mergeDefaults(mcpDef.defaults, args as Record<string, any>));
       }
 
       return {
@@ -272,23 +295,18 @@ export class CapaMCPServer {
 
   private async handleSetupTools(args: { skills: string[] }): Promise<any> {
     try {
-      // Create session if needed
-      if (!this.sessionId) {
-        const session = this.sessionManager.createSession(this.projectId);
-        this.sessionId = session.sessionId;
-      }
+      this.ensureSession();
 
       // Setup tools
-      const toolIds = this.sessionManager.setupTools(this.sessionId, args.skills);
+      const toolIds = this.sessionManager.setupTools(this.sessionId!, args.skills);
 
       // Get capabilities to fetch tool schemas
       const capabilities = this.sessionManager.getProjectCapabilities(this.projectId);
       const toolSchemas: MCPTool[] = [];
 
       if (capabilities) {
-        // Fetch full schemas for all activated tools
-        for (const toolId of toolIds) {
-          const tool = capabilities.tools.find((t) => t.id === toolId);
+        for (const qualifiedName of toolIds) {
+          const tool = capabilities.tools.find((t) => getQualifiedToolName(t) === qualifiedName);
           if (tool) {
             const mcpTool = await this.convertToolToMCP(tool, capabilities);
             toolSchemas.push(mcpTool);
@@ -341,32 +359,7 @@ export class CapaMCPServer {
 
   private async handleCallTool(args: { name: string; data: object }): Promise<any> {
     try {
-      // Validate session exists
-      if (!this.sessionId) {
-        this.logger.warn('No active session');
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify({
-                error: 'No active session. Call setup_tools first.',
-              }),
-            },
-          ],
-        };
-      }
-
-      const session = this.sessionManager.getSession(this.sessionId);
-      if (!session) {
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify({ error: 'Session not found' }),
-            },
-          ],
-        };
-      }
+      const session = this.ensureSession();
 
       // Extract tool name and data
       const toolName = args.name;
@@ -374,9 +367,6 @@ export class CapaMCPServer {
 
       this.logger.info(`Calling tool via call_tool: ${toolName}`);
       this.logger.debug(`Tool data: ${JSON.stringify(toolData)}`);
-
-      // Update activity
-      this.sessionManager.updateActivity(this.sessionId);
 
       // Find tool definition
       const toolDef = this.sessionManager.getToolDefinition(this.projectId, toolName);
@@ -454,7 +444,7 @@ export class CapaMCPServer {
         }
 
         this.logger.debug(`Using MCP server: ${serverId}`);
-        result = await this.mcpProxy.executeTool(toolName, mcpDef, serverDef.def, toolData as Record<string, any>);
+        result = await this.mcpProxy.executeTool(toolName, mcpDef, serverDef.def, mergeDefaults(mcpDef.defaults, toolData as Record<string, any>));
         this.logger.debug('MCP tool executed');
       }
 
@@ -500,7 +490,7 @@ export class CapaMCPServer {
     for (const tool of capabilities.tools) {
       const mcpTool = await this.convertToolToMCP(tool, capabilities);
       const info: ShellToolInfo = {
-        id: tool.id,
+        id: getQualifiedToolName(tool),
         type: tool.type as 'command' | 'mcp',
         description: mcpTool.description || '',
         inputSchema: mcpTool.inputSchema,
@@ -512,6 +502,9 @@ export class CapaMCPServer {
         const serverDef = capabilities.servers.find((s) => s.id === serverId);
         if (serverDef?.description) {
           info.serverDescription = serverDef.description;
+        }
+        if (mcpDef.defaults) {
+          info.defaults = mcpDef.defaults;
         }
       } else {
         if (tool.group) {
@@ -536,9 +529,8 @@ export class CapaMCPServer {
         for (const t of remoteTools) {
           const name = typeof t.name === 'string' ? t.name : '';
           if (!name) continue;
-          const toolId = `${server.id}-${name}`;
           pluginTools.push({
-            id: toolId,
+            id: name,
             type: 'mcp',
             def: { server: `@${server.id}`, tool: name },
             sourcePlugin: server.sourcePlugin,
@@ -562,21 +554,20 @@ export class CapaMCPServer {
     const results: ToolValidationResult[] = [];
 
     for (const tool of capabilities.tools) {
+      const qualifiedName = getQualifiedToolName(tool);
       if (tool.type === 'command') {
-        // Command tools are always valid if they have proper structure
         results.push({
-          toolId: tool.id,
+          toolId: qualifiedName,
           success: true,
         });
       } else {
-        // MCP tool - validate against remote server
         const mcpDef = tool.def as ToolMCPDefinition;
         const serverId = mcpDef.server.replace('@', '');
         const serverDef = capabilities.servers.find((s) => s.id === serverId);
 
         if (!serverDef) {
           results.push({
-            toolId: tool.id,
+            toolId: qualifiedName,
             success: false,
             error: `Server not found: ${serverId}`,
             serverId: serverId,
@@ -585,24 +576,20 @@ export class CapaMCPServer {
         }
 
         try {
-          // Use the shared MCP proxy instance to list tools
           const remoteTools = await this.mcpProxy.listTools(serverId, serverDef.def);
-
-          // Find the matching tool on the remote server
           const remoteTool = remoteTools.find((t: any) => t.name === mcpDef.tool);
 
           if (remoteTool) {
             results.push({
-              toolId: tool.id,
+              toolId: qualifiedName,
               success: true,
               serverId: serverId,
               remoteTool: mcpDef.tool,
             });
           } else {
-            // Get list of available tools for better error message
             const availableTools = remoteTools.map((t: any) => t.name).join(', ');
             results.push({
-              toolId: tool.id,
+              toolId: qualifiedName,
               success: false,
               error: `Tool "${mcpDef.tool}" not found on server "${serverId}". Available tools: ${availableTools || '(none)'}`,
               serverId: serverId,
@@ -611,7 +598,7 @@ export class CapaMCPServer {
           }
         } catch (error: any) {
           results.push({
-            toolId: tool.id,
+            toolId: qualifiedName,
             success: false,
             error: `Failed to connect to server "${serverId}": ${error.message}`,
             serverId: serverId,
@@ -625,9 +612,11 @@ export class CapaMCPServer {
   }
 
   private async convertToolToMCP(tool: Tool, capabilities: Capabilities): Promise<MCPTool> {
+    const qualifiedName = getQualifiedToolName(tool);
+
     // Check cache first
-    if (this.toolSchemaCache.has(tool.id)) {
-      return this.toolSchemaCache.get(tool.id)!;
+    if (this.toolSchemaCache.has(qualifiedName)) {
+      return this.toolSchemaCache.get(qualifiedName)!;
     }
 
     if (tool.type === 'command') {
@@ -648,7 +637,7 @@ export class CapaMCPServer {
       }
 
       const mcpTool: MCPTool = {
-        name: tool.id,
+        name: qualifiedName,
         description: tool.description || `Command tool: ${tool.id}`,
         inputSchema: {
           type: 'object' as const,
@@ -657,8 +646,7 @@ export class CapaMCPServer {
         },
       };
 
-      // Cache it
-      this.toolSchemaCache.set(tool.id, mcpTool);
+      this.toolSchemaCache.set(qualifiedName, mcpTool);
       return mcpTool;
     } else {
       // MCP tool - fetch the actual schema from the MCP server
@@ -669,60 +657,60 @@ export class CapaMCPServer {
       if (!serverDef) {
         this.logger.failure(`Server not found for tool ${tool.id}: ${serverId}`);
         const mcpTool: MCPTool = {
-          name: tool.id,
-          description: `MCP tool: ${tool.id} (server not found)`,
+          name: qualifiedName,
+          description: `MCP tool: ${qualifiedName} (server not found)`,
           inputSchema: {
             type: 'object' as const,
             properties: {},
           },
         };
-        this.toolSchemaCache.set(tool.id, mcpTool);
+        this.toolSchemaCache.set(qualifiedName, mcpTool);
         return mcpTool;
       }
 
       try {
-        // Use the shared MCP proxy instance
         const remoteTools = await this.mcpProxy.listTools(serverId, serverDef.def);
-
-        // Find the matching tool on the remote server
         const remoteTool = remoteTools.find((t: any) => t.name === mcpDef.tool);
 
         if (remoteTool) {
-          this.logger.debug(`Fetched schema for ${tool.id} from ${serverId}`);
+          this.logger.debug(`Fetched schema for ${qualifiedName} from ${serverId}`);
+          const inputSchema = remoteTool.inputSchema
+            ? JSON.parse(JSON.stringify(remoteTool.inputSchema))
+            : { type: 'object' as const, properties: {} };
+          if (mcpDef.defaults) {
+            applyDefaultsToSchema(inputSchema, mcpDef.defaults);
+          }
           const mcpTool: MCPTool = {
-            name: tool.id,
-            description: remoteTool.description || `MCP tool: ${tool.id}`,
-            inputSchema: remoteTool.inputSchema || {
-              type: 'object' as const,
-              properties: {},
-            },
+            name: qualifiedName,
+            description: remoteTool.description || `MCP tool: ${qualifiedName}`,
+            inputSchema,
           };
-          this.toolSchemaCache.set(tool.id, mcpTool);
+          this.toolSchemaCache.set(qualifiedName, mcpTool);
           return mcpTool;
         } else {
           this.logger.warn(`Tool ${mcpDef.tool} not found on server ${serverId}`);
           const mcpTool: MCPTool = {
-            name: tool.id,
-            description: `MCP tool: ${tool.id} (not found on remote server)`,
+            name: qualifiedName,
+            description: `MCP tool: ${qualifiedName} (not found on remote server)`,
             inputSchema: {
               type: 'object' as const,
               properties: {},
             },
           };
-          this.toolSchemaCache.set(tool.id, mcpTool);
+          this.toolSchemaCache.set(qualifiedName, mcpTool);
           return mcpTool;
         }
       } catch (error: any) {
-        this.logger.failure(`Failed to fetch schema for ${tool.id}:`, error.message);
+        this.logger.failure(`Failed to fetch schema for ${qualifiedName}:`, error.message);
         const mcpTool: MCPTool = {
-          name: tool.id,
-          description: `MCP tool: ${tool.id}`,
+          name: qualifiedName,
+          description: `MCP tool: ${qualifiedName}`,
           inputSchema: {
             type: 'object' as const,
             properties: {},
           },
         };
-        this.toolSchemaCache.set(tool.id, mcpTool);
+        this.toolSchemaCache.set(qualifiedName, mcpTool);
         return mcpTool;
       }
     }
@@ -776,9 +764,7 @@ export class CapaMCPServer {
     // Handle initialization
     if (message.method === 'initialize') {
       this.logger.info('Initialize request');
-      // Create session for this connection
-      const session = this.sessionManager.createSession(this.projectId);
-      this.sessionId = session.sessionId;
+      const session = this.ensureSession();
       this.logger.debug(`Session ID: ${this.sessionId}`);
 
       return {
@@ -821,8 +807,8 @@ export class CapaMCPServer {
         if (capabilities) {
           const allToolIds = this.sessionManager.getAllRequiredToolsForProject(this.projectId);
           this.logger.debug(`Exposing all ${allToolIds.length} tool(s) from all skills`);
-          for (const toolId of allToolIds) {
-            const tool = capabilities.tools.find((t) => t.id === toolId);
+          for (const qualifiedName of allToolIds) {
+            const tool = capabilities.tools.find((t) => getQualifiedToolName(t) === qualifiedName);
             if (tool) {
               const mcpTool = await this.convertToolToMCP(tool, capabilities);
               tools.push(mcpTool);
@@ -887,16 +873,11 @@ export class CapaMCPServer {
       // Handle setup_tools
       if (name === 'setup_tools') {
         try {
-          // Create session if needed
-          if (!this.sessionId) {
-            const session = this.sessionManager.createSession(this.projectId);
-            this.sessionId = session.sessionId;
-            this.logger.debug(`Created session: ${this.sessionId}`);
-          }
+          this.ensureSession();
 
           // Setup tools
           this.logger.info(`Activating skills: ${args.skills.join(', ')}`);
-          const toolIds = this.sessionManager.setupTools(this.sessionId, args.skills);
+          const toolIds = this.sessionManager.setupTools(this.sessionId!, args.skills);
           this.logger.success(`Loaded ${toolIds.length} tool(s): ${toolIds.join(', ')}`);
 
           // Get capabilities to fetch tool schemas
@@ -904,9 +885,8 @@ export class CapaMCPServer {
           const toolSchemas: MCPTool[] = [];
 
           if (capabilities) {
-            // Fetch full schemas for all activated tools
-            for (const toolId of toolIds) {
-              const tool = capabilities.tools.find((t) => t.id === toolId);
+            for (const qualifiedName of toolIds) {
+              const tool = capabilities.tools.find((t) => getQualifiedToolName(t) === qualifiedName);
               if (tool) {
                 const mcpTool = await this.convertToolToMCP(tool, capabilities);
                 toolSchemas.push(mcpTool);
@@ -973,31 +953,7 @@ export class CapaMCPServer {
         }
 
         try {
-          // Validate session exists
-          if (!this.sessionId) {
-            this.logger.warn('No active session');
-            return {
-              jsonrpc: '2.0',
-              id: message.id,
-              error: {
-                code: -32603,
-                message: 'No active session. Call setup_tools first.',
-              },
-            };
-          }
-
-          const session = this.sessionManager.getSession(this.sessionId);
-          if (!session) {
-            this.logger.warn('Session not found');
-            return {
-              jsonrpc: '2.0',
-              id: message.id,
-              error: {
-                code: -32603,
-                message: 'Session not found',
-              },
-            };
-          }
+          const session = this.ensureSession();
 
           // Extract tool name and data
           const toolName = args.name;
@@ -1005,9 +961,6 @@ export class CapaMCPServer {
 
           this.logger.info(`Calling tool via call_tool: ${toolName}`);
           this.logger.debug(`Tool data: ${JSON.stringify(toolData)}`);
-
-          // Update activity
-          this.sessionManager.updateActivity(this.sessionId);
 
           // Find tool definition
           const toolDef = this.sessionManager.getToolDefinition(this.projectId, toolName);
@@ -1080,7 +1033,7 @@ export class CapaMCPServer {
             }
 
             this.logger.debug(`Using MCP server: ${serverId}`);
-            result = await this.mcpProxy.executeTool(toolName, mcpDef, serverDef.def, toolData as Record<string, any>);
+            result = await this.mcpProxy.executeTool(toolName, mcpDef, serverDef.def, mergeDefaults(mcpDef.defaults, toolData as Record<string, any>));
             this.logger.debug('MCP tool executed');
           }
 
@@ -1133,33 +1086,7 @@ export class CapaMCPServer {
 
       // Only require session for on-demand mode
       if (toolExposureMode === 'on-demand') {
-        if (!this.sessionId) {
-          this.logger.warn('No active session');
-          return {
-            jsonrpc: '2.0',
-            id: message.id,
-            error: {
-              code: -32603,
-              message: 'No active session. Call setup_tools first.',
-            },
-          };
-        }
-
-        const session = this.sessionManager.getSession(this.sessionId);
-        if (!session) {
-          this.logger.warn('Session not found');
-          return {
-            jsonrpc: '2.0',
-            id: message.id,
-            error: {
-              code: -32603,
-              message: 'Session not found',
-            },
-          };
-        }
-
-        // Update activity
-        this.sessionManager.updateActivity(this.sessionId);
+        this.ensureSession();
       }
 
       // Find tool definition
@@ -1222,7 +1149,7 @@ export class CapaMCPServer {
           }
 
           this.logger.debug(`Using MCP server: ${serverId}`);
-          result = await this.mcpProxy.executeTool(name, mcpDef, serverDef.def, args as Record<string, any>);
+          result = await this.mcpProxy.executeTool(name, mcpDef, serverDef.def, mergeDefaults(mcpDef.defaults, args as Record<string, any>));
           this.logger.debug('MCP tool executed');
         }
 

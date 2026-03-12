@@ -2,6 +2,7 @@ import { detectCapabilitiesFile, generateProjectId } from '../../shared/paths';
 import { parseCapabilitiesFile } from '../../shared/capabilities';
 import { getServerStatus } from '../utils/server-manager';
 import type { Capabilities } from '../../types/capabilities';
+import { getQualifiedToolName } from '../../types/capabilities';
 
 interface ShellToolInfo {
   id: string;
@@ -11,6 +12,7 @@ interface ShellToolInfo {
   group?: string;
   description: string;
   inputSchema: any;
+  defaults?: Record<string, any>;
 }
 
 interface ShellCommand {
@@ -21,6 +23,8 @@ interface ShellCommand {
   inputSchema: any;
   /** Maps slugified arg name → original arg name */
   argSlugs: Map<string, string>;
+  /** Default argument values (MCP tools only) */
+  defaults?: Record<string, any>;
 }
 
 interface ShellGroup {
@@ -57,10 +61,10 @@ class ShellRegistry {
         description: tool.description,
         inputSchema: tool.inputSchema,
         argSlugs,
+        defaults: tool.defaults,
       };
 
       if (tool.type === 'mcp' && tool.serverId) {
-        // MCP tools always form a group keyed by server ID
         const groupSlug = slugify(tool.serverId);
         if (!this.groups.has(groupSlug)) {
           this.groups.set(groupSlug, {
@@ -71,7 +75,12 @@ class ShellRegistry {
             isMcp: true,
           });
         }
-        this.groups.get(groupSlug)!.commands.set(commandSlug, cmd);
+        // Qualified name is "server.toolId"; derive the short name for the subcommand slug
+        const dotIdx = tool.id.indexOf('.');
+        const shortName = dotIdx >= 0 ? tool.id.slice(dotIdx + 1) : tool.id;
+        const subSlug = slugify(shortName);
+        cmd.slug = subSlug;
+        this.groups.get(groupSlug)!.commands.set(subSlug, cmd);
       } else if (tool.group) {
         // Command tool with an explicit group — collect for second pass
         const groupSlug = slugify(tool.group);
@@ -290,7 +299,7 @@ function printAvailableCommands(registry: ShellRegistry): void {
   if (registry.topLevelCommands.size > 0) {
     for (const [slug, cmd] of registry.topLevelCommands) {
       const padding = ' '.repeat(Math.max(1, colWidth - slug.length));
-      const desc = cmd.description ? cmd.description.split('\n')[0].slice(0, 60) : '';
+      const desc = cmd.description || '';
       console.log(`  ${slug}${padding}${desc}`);
     }
   }
@@ -309,33 +318,45 @@ function printGroupHelp(group: ShellGroup): void {
     return;
   }
   console.log(`\n${group.slug} - subcommands:\n`);
+  const colWidth = 24;
   for (const [slug, cmd] of group.commands) {
-    const desc = cmd.description ? '  — ' + cmd.description.split('\n')[0].slice(0, 70) : '';
-    const argList = buildArgList(cmd);
-    console.log(`  ${slug}${argList ? '  ' + argList : ''}${desc}`);
+    const desc = cmd.description || '';
+    const padding = ' '.repeat(Math.max(1, colWidth - slug.length));
+    console.log(`  ${slug}${padding}${desc}`);
   }
-  console.log('');
+  console.log(`\nUsage: capa sh ${group.slug} <subcommand> [--arg val]`);
+  console.log(`       capa sh ${group.slug} <subcommand> --help   Show parameter details\n`);
 }
 
 function printCommandHelp(cmd: ShellCommand): void {
   console.log('');
   if (cmd.description) {
-    console.log(`  ${cmd.slug}  —  ${cmd.description.split('\n')[0]}`);
+    console.log(`  ${cmd.slug}  —  ${cmd.description}`);
   } else {
     console.log(`  ${cmd.slug}`);
   }
   const props = cmd.inputSchema?.properties || {};
   const required: string[] = cmd.inputSchema?.required || [];
   if (Object.keys(props).length > 0) {
-    console.log('\n  Arguments:\n');
+    console.log('\n  Parameters:\n');
     for (const [argName, schema] of Object.entries(props) as [string, any][]) {
       const slug = slugify(argName);
       const isRequired = required.includes(argName);
       const typeStr = schema.type ? `<${schema.type}>` : '';
-      const descStr = schema.description ? `  ${schema.description}` : '';
-      const reqStr = isRequired ? ' (required)' : '';
-      console.log(`    --${slug} ${typeStr}${reqStr}${descStr}`);
+      const reqStr = isRequired ? ' (required)' : ' (optional)';
+      console.log(`    --${slug} ${typeStr}${reqStr}`);
+      if (schema.description) {
+        console.log(`        ${schema.description}`);
+      }
+      if (schema.enum) {
+        console.log(`        Allowed values: ${schema.enum.join(', ')}`);
+      }
+      if (schema.default !== undefined) {
+        console.log(`        Default: ${schema.default}`);
+      }
     }
+  } else {
+    console.log('\n  This command takes no parameters.');
   }
   console.log('');
 }
@@ -352,9 +373,22 @@ async function execCommand(
   const required: string[] = cmd.inputSchema?.required || [];
   const missingRequired = required.filter((r) => !(slugify(r) in rawArgs) && !(r in rawArgs));
   if (missingRequired.length > 0) {
-    console.error(`Missing required argument(s): ${missingRequired.map((r) => `--${slugify(r)}`).join(', ')}`);
+    const props = cmd.inputSchema?.properties || {};
+    console.error(`Missing required parameter(s):\n`);
+    for (const argName of missingRequired) {
+      const schema = props[argName] as any;
+      const slug = slugify(argName);
+      const typeStr = schema?.type ? `<${schema.type}>` : '';
+      console.error(`  --${slug} ${typeStr}`);
+      if (schema?.description) {
+        console.error(`      ${schema.description}`);
+      }
+      if (schema?.enum) {
+        console.error(`      Allowed values: ${schema.enum.join(', ')}`);
+      }
+    }
     const argList = buildArgList(cmd);
-    console.error(`Usage: capa sh ${cmd.slug}${argList ? ' ' + argList : ''}`);
+    console.error(`\nUsage: capa sh ${cmd.slug}${argList ? ' ' + argList : ''}`);
     process.exit(1);
   }
 
@@ -447,7 +481,7 @@ async function dispatch(
  * prefer the local file for: tool description, tool group, and MCP server description.
  */
 function applyLocalMetadata(tools: ShellToolInfo[], capabilities: Capabilities): ShellToolInfo[] {
-  const localToolMap = new Map(capabilities.tools.map((t) => [t.id, t]));
+  const localToolMap = new Map(capabilities.tools.map((t) => [getQualifiedToolName(t), t]));
   const localServerMap = new Map(capabilities.servers.map((s) => [s.id, s]));
 
   return tools.map((tool) => {

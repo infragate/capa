@@ -47,6 +47,11 @@ export interface CapabilitiesOptions {
    * Security options for skill installation (blocked phrases, character sanitization)
    */
   security?: SecurityOptions;
+  /**
+   * CLI commands that must be available before `capa install` proceeds.
+   * Installation stops immediately if any command is missing.
+   */
+  requiresCommands?: RequiredCommand[];
 }
 
 /**
@@ -139,6 +144,14 @@ export interface AgentFileConfig {
   additional?: AgentSnippet[];
 }
 
+/**
+ * A CLI command that must be available on the user's system.
+ */
+export interface RequiredCommand {
+  cli: string;
+  description?: string;
+}
+
 export interface Capabilities {
   providers: string[];
   skills: Skill[];
@@ -223,6 +236,8 @@ export interface Tool {
 export interface ToolMCPDefinition {
   server: string; // Reference to server ID with @ prefix
   tool: string;   // Tool name on the remote MCP server
+  /** Default argument values merged at call time; defaulted params become optional in the schema. */
+  defaults?: Record<string, any>;
 }
 
 export interface ToolCommandDefinition {
@@ -242,4 +257,27 @@ export interface ArgumentDefinition {
   type: 'string' | 'number' | 'boolean' | 'object' | 'array';
   description?: string;
   required?: boolean;
+}
+
+/**
+ * Compute the qualified name for a tool.
+ * MCP tools: "{serverId}.{toolId}" (e.g. "bigquery.query")
+ * Command tools: "{toolId}" (unchanged)
+ */
+export function getQualifiedToolName(tool: Tool): string {
+  if (tool.type === 'mcp') {
+    const mcpDef = tool.def as ToolMCPDefinition;
+    const serverId = mcpDef.server.replace('@', '');
+    return `${serverId}.${tool.id}`;
+  }
+  return tool.id;
+}
+
+/**
+ * Normalize a skill `requires` reference to a qualified tool name.
+ * "@server.tool" → "server.tool" (MCP tool)
+ * "plain_id"     → "plain_id"   (command tool)
+ */
+export function normalizeToolReference(ref: string): string {
+  return ref.startsWith('@') ? ref.slice(1) : ref;
 }

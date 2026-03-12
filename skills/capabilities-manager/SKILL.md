@@ -28,7 +28,7 @@ Use this skill when:
 The `capabilities.yaml` (or `capabilities.json`) file defines everything an agent can do. It contains six main sections:
 
 1. **providers**: List of MCP clients where skills should be installed (e.g., `cursor`, `claude-code`)
-2. **options**: Configuration for tool exposure (`toolExposure`) and security (`security`)
+2. **options**: Configuration for tool exposure (`toolExposure`), security (`security`), and CLI prerequisites (`requiresCommands`)
 3. **skills**: Modular knowledge packages that teach agents when and how to use tools
 4. **servers**: MCP servers that provide tools (local subprocesses or remote HTTP servers)
 5. **tools**: Executable capabilities (MCP tools or shell commands)
@@ -172,6 +172,11 @@ options:
   #   blockedPhrases: []
   #   # Or load from file: blockedPhrases: { file: "./blocked-phrases.txt" }
   #   allowedCharacters: ""  # "" = baseline only (strips non-ASCII); "[\\u00A0-\\uFFFF]" = allow all Unicode
+  # Optional: CLI prerequisites that must be installed before `capa install` proceeds
+  # requiresCommands:
+  #   - cli: docker
+  #     description: Required to run containerised tools
+  #   - cli: node
 
 # Optional: manage AGENTS.md content
 # agents:
@@ -215,7 +220,7 @@ skills:
     def:
       description: Web research skill
       requires:
-        - brave_search
+        - '@brave.brave_search'
       content: |
         ---
         name: web-researcher
@@ -224,10 +229,12 @@ skills:
         
         # Web Researcher
         
-        Use for web research tasks with the brave_search tool.
+        Use for web research tasks with the brave.brave_search tool.
 ```
 
 **Best for**: Project-specific skills unique to your workflow.
+
+**Note**: MCP tool references in `requires` use the `@server_id.tool_id` format. Command tools use their plain ID.
 
 #### 2. GitHub Skills
 Fetch skills from the skills.sh ecosystem or any GitHub repository:
@@ -240,7 +247,7 @@ skills:
       repo: vercel-labs/agent-skills@find-skills
       description: Discover skills from skills.sh
       requires:
-        - npx_skills_find
+        - find_skills
 ```
 
 **Format**: `owner/repo@skill-name` (where `skill-name` is a subdirectory in the repo). Optional `:version` or `#sha` for pinning.
@@ -275,8 +282,7 @@ skills:
       url: https://example.com/my-skill/SKILL.md
       description: Custom remote skill
       requires:
-        - tool1
-        - tool2
+        - '@server1.tool1'
 ```
 
 **Best for**: Private or custom skills hosted elsewhere.
@@ -396,6 +402,29 @@ When `capa install` detects a blocked phrase, it **stops immediately** and repor
 
 No further skills are installed until you remove the phrase from the skill or update your security configuration.
 
+### CLI Prerequisites (`requiresCommands`)
+
+Under `options.requiresCommands` you can declare CLI commands that must be present on the user's system before `capa install` proceeds. If any command is missing, installation stops immediately with a clear error listing the missing tools.
+
+```yaml
+options:
+  requiresCommands:
+    - cli: docker
+      description: Required to run containerised tools
+    - cli: node
+    - cli: git
+      description: Used by GitHub skill sources
+```
+
+| Field | Required | Description |
+|---|---|---|
+| `cli` | yes | The executable name to check (e.g. `docker`, `node`, `python3`) |
+| `description` | no | Human-readable hint shown when the command is missing |
+
+**How it works:** During `capa install`, each entry is verified using `which` (Unix) or `where` (Windows). A check mark is printed for each found command; a cross is printed for missing ones along with the optional description. If any command is absent the process exits before installing skills or registering servers.
+
+Omit `requiresCommands` (or leave it empty) if you have no CLI prerequisites.
+
 ### Tools Section
 
 Define tools that skills can use:
@@ -414,6 +443,30 @@ tools:
 ```
 
 **Note**: Use `@server-id` to reference a server from the servers section.
+
+**Tool naming**: Tool IDs should be short, descriptive names without a server prefix. When exposed via MCP, the tool name becomes `server_id.tool_id` (e.g., `filesystem-server.read_file`). In skill `requires` arrays, reference MCP tools with `@server_id.tool_id` (e.g., `@filesystem-server.read_file`). In the CLI, use `capa sh server_id tool_id` (e.g., `capa sh filesystem-server read-file`).
+
+#### Default Arguments (`defaults`)
+
+MCP tools support an optional `defaults` map that provides pre-filled argument values. Parameters with defaults are exposed as **optional** in the MCP schema and in `capa sh --help`, so the AI (or CLI user) only needs to supply them when overriding. At call time, caller-supplied values take precedence over defaults.
+
+```yaml
+tools:
+  - id: jiraSearchIssue
+    type: mcp
+    description: Search Jira
+    def:
+      server: "@atlassian"
+      tool: getJiraIssue
+      defaults:
+        cloudId: "abc123-def456"
+```
+
+In this example, `cloudId` is always sent as `"abc123-def456"` unless the caller explicitly provides a different value. The parameter still appears in the schema (with its default shown) but is no longer required.
+
+This is useful when:
+- A parameter is always the same for a given project (e.g. cloud IDs, workspace names, project keys)
+- You want to simplify the tool interface without losing the ability to override
 
 #### Command Tool
 Execute shell commands:
@@ -709,7 +762,7 @@ skills:
     def:
       repo: vercel-labs/agent-skills@web-researcher
       requires:
-        - brave_search
+        - '@brave.search'
 
 # Add required tools/servers
 
@@ -749,7 +802,7 @@ skills:
     def:
       description: My custom skill description
       requires:
-        - my_tool
+        - '@my-server.my_tool'
       content: |
         ---
         name: my-custom-skill
@@ -856,7 +909,7 @@ skills:
     def:
       description: Web research using Brave Search
       requires:
-        - brave_search
+        - '@brave-search-server.search'
       content: |
         ---
         name: web-researcher
@@ -865,7 +918,7 @@ skills:
         
         # Web Researcher
         
-        Use brave_search for finding current information on the web.
+        Use brave-search-server.search for finding current information on the web.
 
 servers:
   - id: brave-search-server
@@ -879,7 +932,7 @@ servers:
         BRAVE_API_KEY: ${BraveApiKey}
 
 tools:
-  - id: brave_search
+  - id: search
     type: mcp
     def:
       server: "@brave-search-server"
@@ -905,9 +958,9 @@ skills:
     def:
       repo: vercel-labs/agent-skills@file-operations
       requires:
-        - read_file
-        - write_file
-        - list_directory
+        - '@filesystem-server.read_file'
+        - '@filesystem-server.write_file'
+        - '@filesystem-server.list_directory'
 
 servers:
   - id: filesystem-server
@@ -966,6 +1019,7 @@ skills:
         # Hello World
         
         Demonstrates command tools for greetings.
+        Command tools use their plain ID (e.g. hello_world, greet_user).
 
 servers: []
 
@@ -1004,12 +1058,12 @@ skills:
     type: inline
     def:
       requires:
-        - brave_search
+        - '@brave.search'
       content: |
         ---
         name: researcher
         ---
-        For research tasks, use brave_search
+        For research tasks, use brave.search
   
   - id: data-analyst
     type: inline
@@ -1034,7 +1088,7 @@ servers:
         BRAVE_API_KEY: ${BraveApiKey}
 
 tools:
-  - id: brave_search
+  - id: search
     type: mcp
     def:
       server: "@brave"
@@ -1057,8 +1111,85 @@ tools:
 ```
 
 With `on-demand` mode, the agent starts with only `setup_tools()` available and calls:
-- `setup_tools(["researcher"])` → Loads `brave_search`
+- `setup_tools(["researcher"])` → Loads `brave.search`
 - `setup_tools(["data-analyst"])` → Loads `pandas_query`
+
+### Example 5: CLI Prerequisites
+
+**capabilities.yaml:**
+```yaml
+providers:
+  - cursor
+
+options:
+  requiresCommands:
+    - cli: docker
+      description: Required to build and run containers
+    - cli: kubectl
+      description: Kubernetes CLI for cluster management
+    - cli: helm
+
+skills:
+  - id: k8s-deployer
+    type: inline
+    def:
+      description: Deploy services to Kubernetes
+      requires:
+        - deploy_service
+      content: |
+        ---
+        name: k8s-deployer
+        description: Deploy and manage Kubernetes workloads
+        ---
+        
+        # Kubernetes Deployer
+        
+        Use deploy_service to deploy a Helm chart to a cluster.
+
+servers: []
+
+tools:
+  - id: deploy_service
+    type: command
+    description: Deploy a Helm chart to the current kubectl context
+    def:
+      run:
+        cmd: helm upgrade --install {release} {chart} --namespace {namespace} --create-namespace
+        args:
+          - name: release
+            type: string
+            description: Helm release name
+            required: true
+          - name: chart
+            type: string
+            description: Chart reference (e.g. oci://registry/chart)
+            required: true
+          - name: namespace
+            type: string
+            description: Target Kubernetes namespace
+            required: true
+```
+
+Running `capa install` first checks that `docker`, `kubectl`, and `helm` are available:
+
+```
+🔍 Verifying prerequisites...
+  ✓ docker
+  ✓ kubectl
+  ✓ helm
+  All prerequisites satisfied
+```
+
+If any command is missing, installation stops:
+
+```
+🔍 Verifying prerequisites...
+  ✓ docker
+  ✗ kubectl not found — Kubernetes CLI for cluster management
+  ✗ helm not found
+
+✗ Some required commands are missing. Please install them and try again.
+```
 
 ## Troubleshooting
 
@@ -1124,7 +1255,8 @@ If a server that uses Bearer token auth (e.g. Databricks, a self-hosted GitLab M
 - Re-set the token with `capa vars set VarName <new-token>` or re-run `capa install -e` with an updated `.env` file
 
 ### Tool Not Found Errors
-- Verify tool ID matches between skill `requires` and tools section
+- For MCP tools, skill `requires` must use `@server_id.tool_id` format (e.g., `@brave.search`)
+- For command tools, skill `requires` uses the plain tool ID (e.g., `greet_user`)
 - Check that server ID in tool definition uses `@` prefix (e.g., `@server-id`)
 - Ensure MCP server is running: check `capa status`
 - Verify tool name matches the actual tool provided by the MCP server
@@ -1157,7 +1289,9 @@ This skill requires these tools to function:
 - Server automatically monitors and restarts crashed MCP subprocesses
 - OAuth2 auto-detection is skipped for servers that already have an `Authorization` header — token-based servers are never probed with unauthenticated requests
 - Use `tlsSkipVerify: true` on remote server definitions to connect to servers with self-signed TLS certificates
-- `capa sh` slugifies all tool IDs to kebab-case (e.g. `list_merge_requests` → `list-merge-requests`)
+- `capa sh` slugifies tool IDs to kebab-case (e.g. `list_merge_requests` → `list-merge-requests`)
+- MCP tools are exposed with qualified names: `server_id.tool_id` (e.g. `brave.search`). In the CLI this maps to `capa sh brave search`
+- In skill `requires`, MCP tools use `@server_id.tool_id` (e.g. `@brave.search`); command tools use their plain ID
 - `capa sh` is non-interactive — every invocation runs a single command and exits, making it safe for AI agent use
 - The optional `description` field on servers and tools controls the label shown in `capa sh`; without it a generic fallback is used
 - The optional `group` field on command tools nests them under a shared parent in `capa sh`; a group with only one member is promoted to the top level

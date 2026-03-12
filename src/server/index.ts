@@ -9,7 +9,7 @@ import type { ShellToolInfo } from './mcp-handler';
 import { OAuth2Manager } from './oauth-manager';
 import { GitIntegrationManager } from './git-integration-manager';
 import { TokenRefreshScheduler } from './token-refresh-scheduler';
-import type { Capabilities, MCPServer } from '../types/capabilities';
+import type { Capabilities, MCPServer, ToolMCPDefinition, ToolCommandDefinition } from '../types/capabilities';
 import { extractAllVariables } from '../shared/variable-resolver';
 import { VERSION } from '../version';
 import { logger } from '../shared/logger';
@@ -414,11 +414,11 @@ class CapaServer {
               sourcePlugin: t.sourcePlugin || null,
             };
             if (t.type === 'mcp') {
-              const mcpDef = t.def as import('../types/capabilities').ToolMCPDefinition;
+              const mcpDef = t.def as ToolMCPDefinition;
               base.mcpServer = mcpDef.server;
               base.mcpTool = mcpDef.tool;
             } else if (t.type === 'command') {
-              const cmdDef = t.def as import('../types/capabilities').ToolCommandDefinition;
+              const cmdDef = t.def as ToolCommandDefinition;
               base.command = cmdDef.run.cmd;
               base.commandArgs = cmdDef.run.args || [];
             }
