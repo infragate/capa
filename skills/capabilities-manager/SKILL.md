@@ -112,6 +112,7 @@ capa add <source> [--id <custom-id>]
 Add a skill from various sources:
 - **GitHub**: `capa add owner/repo@skill-name` (e.g. `capa add vercel-labs/agent-skills@web-researcher`)
 - **GitLab**: `capa add gitlab:group/repo@skill-name`
+- **Installed**: `capa add <skill-id> --installed [--requires "tool1,tool2"]` — skill already installed by user; capa only acknowledges for tool binding
 - **Remote URL**: `capa add https://example.com/path/to/SKILL.md`
 - **Local path**: `capa add ./path/to/skill` — directory must contain `SKILL.md`; stored as type `local` so the file is read on each install
 
@@ -189,7 +190,7 @@ options:
 
 skills:
   - id: skill-id
-    type: inline|remote|github|gitlab|local
+    type: inline|remote|github|gitlab|local|installed
     def:
       # skill definition
 
@@ -208,7 +209,7 @@ tools:
 
 ### Skills Section
 
-Skills can be defined in five ways:
+Skills can be defined in six ways:
 
 #### 1. Inline Skills
 Embed SKILL.md content directly in the capabilities file:
@@ -303,6 +304,24 @@ skills:
 **Requirements**: The path must point to a directory that contains a `SKILL.md` file.
 
 **Best for**: Project-local skills you edit in the repo, or shared skills in a monorepo subdirectory.
+
+#### 6. Installed Skills
+Acknowledge a skill that the user installed outside of capa (e.g. via Cursor's skill system or another tool). Capa does not install or fetch anything; it only records the skill's existence so tools can be tied to it via `requires`.
+
+```yaml
+skills:
+  - id: my-installed-skill
+    type: installed
+    def:
+      description: Skill installed by user outside capa
+      requires:
+        - '@server.tool1'
+        - tool2
+```
+
+**Best for**: Skills already installed by the user; use when you want capa to expose tools for that skill without managing its installation.
+
+**CLI**: `capa add <skill-id> --installed [--requires "@server.tool1,tool2"] [-d "description"]`
 
 ### Servers Section
 
