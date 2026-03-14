@@ -505,6 +505,35 @@ tools:
             required: true
 ```
 
+#### Default Argument Values (`default`)
+
+Command tool arguments support an optional `default` field. When the caller omits an argument that has a default, the default value is used for placeholder substitution instead of raising a missing-argument error. Arguments with defaults are exposed as **optional** in the MCP schema (removed from `required` and annotated with the default value), so the AI only needs to supply them when overriding.
+
+```yaml
+tools:
+  - id: list_items
+    type: command
+    description: List items from the API
+    def:
+      run:
+        cmd: "curl -s 'https://api.example.com/items?limit={limit}&offset={offset}'"
+        args:
+          - name: limit
+            type: number
+            description: Page size
+            default: 25
+          - name: offset
+            type: number
+            description: Starting offset
+            default: 0
+```
+
+In this example, both `limit` and `offset` will default to `25` and `0` respectively when not provided. The agent can still override them by passing explicit values.
+
+This is useful when:
+- A parameter has a sensible default that rarely changes (e.g. page sizes, output formats)
+- You want to expose a tool to the agent without requiring it to pass every argument
+
 **Optional Init**: Add `init` block to run setup commands before first use:
 
 ```yaml
