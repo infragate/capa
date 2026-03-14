@@ -18,7 +18,7 @@ describe('applyDefaultsToSchema', () => {
   });
 
   it('should annotate properties with default values', () => {
-    const schema = {
+    const schema: any = {
       type: 'object',
       properties: {
         limit: { type: 'number' },
