@@ -510,6 +510,18 @@ export class CapaMCPServer {
         if (tool.group) {
           info.group = tool.group;
         }
+        const def = tool.def as ToolCommandDefinition;
+        if (def.run.args) {
+          const cmdDefaults: Record<string, any> = {};
+          for (const arg of def.run.args) {
+            if (arg.default !== undefined) {
+              cmdDefaults[arg.name] = arg.default;
+            }
+          }
+          if (Object.keys(cmdDefaults).length > 0) {
+            info.defaults = cmdDefaults;
+          }
+        }
       }
       result.push(info);
     }
@@ -626,11 +638,15 @@ export class CapaMCPServer {
 
       if (def.run.args) {
         for (const arg of def.run.args) {
-          properties[arg.name] = {
+          const prop: any = {
             type: arg.type,
             description: arg.description,
           };
-          if (arg.required !== false) {
+          if (arg.default !== undefined) {
+            prop.default = arg.default;
+          }
+          properties[arg.name] = prop;
+          if (arg.required !== false && arg.default === undefined) {
             required.push(arg.name);
           }
         }
