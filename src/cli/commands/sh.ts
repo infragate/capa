@@ -15,7 +15,7 @@ interface ShellToolInfo {
   defaults?: Record<string, any>;
 }
 
-interface ShellCommand {
+export interface ShellCommand {
   id: string;
   slug: string;
   type: 'command' | 'mcp';
@@ -153,7 +153,7 @@ export function slugify(name: string): string {
     .replace(/^-|-$/g, '');
 }
 
-function parseInlineArgs(tokens: string[]): Record<string, string> {
+export function parseInlineArgs(tokens: string[]): Record<string, string> {
   const result: Record<string, string> = {};
   let i = 0;
   while (i < tokens.length) {
@@ -175,7 +175,7 @@ function parseInlineArgs(tokens: string[]): Record<string, string> {
 }
 
 /** Resolve slugified arg names in the user's input to original names expected by the tool. */
-function resolveArgs(cmd: ShellCommand, rawArgs: Record<string, string>): Record<string, any> {
+export function resolveArgs(cmd: ShellCommand, rawArgs: Record<string, string>): Record<string, any> {
   const resolved: Record<string, any> = {};
   for (const [slug, value] of Object.entries(rawArgs)) {
     const originalName = cmd.argSlugs.get(slug) ?? slug;
