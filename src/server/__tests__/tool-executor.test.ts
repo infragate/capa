@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, it, expect, beforeAll, afterAll } from 'bun:test';
 import { CommandToolExecutor } from '../tool-executor';
 import { CapaDatabase } from '../../db/database';
 import { mkdtempSync, rmSync } from 'fs';
@@ -12,7 +12,7 @@ describe('CommandToolExecutor', () => {
   let executor: CommandToolExecutor;
   const projectId = 'test-project';
 
-  beforeEach(() => {
+  beforeAll(() => {
     tempDir = mkdtempSync(join(tmpdir(), 'capa-executor-test-'));
     const dbPath = join(tempDir, 'test.db');
     db = new CapaDatabase(dbPath);
@@ -20,7 +20,7 @@ describe('CommandToolExecutor', () => {
     executor = new CommandToolExecutor(db, projectId, tempDir);
   });
 
-  afterEach(() => {
+  afterAll(() => {
     db.close();
     rmSync(tempDir, { recursive: true, force: true });
   });
