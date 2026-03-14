@@ -46,7 +46,7 @@ export interface ToolValidationResult {
  * Remove defaulted parameters from the schema's `required` array and annotate
  * each property with a `default` value so MCP clients see them as optional.
  */
-function applyDefaultsToSchema(schema: any, defaults: Record<string, any>): void {
+export function applyDefaultsToSchema(schema: any, defaults: Record<string, any>): void {
   const defaultKeys = Object.keys(defaults);
   if (defaultKeys.length === 0) return;
   if (Array.isArray(schema.required)) {
@@ -62,7 +62,7 @@ function applyDefaultsToSchema(schema: any, defaults: Record<string, any>): void
 }
 
 /** Merge tool-level default args with caller-supplied args (caller wins). */
-function mergeDefaults(
+export function mergeDefaults(
   defaults: Record<string, any> | undefined,
   args: Record<string, any>
 ): Record<string, any> {
