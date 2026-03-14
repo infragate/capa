@@ -23,7 +23,7 @@ interface ShellCommand {
   inputSchema: any;
   /** Maps slugified arg name → original arg name */
   argSlugs: Map<string, string>;
-  /** Default argument values (MCP tools only) */
+  /** Default argument values */
   defaults?: Record<string, any>;
 }
 
@@ -370,8 +370,16 @@ async function execCommand(
   const rawArgs = parseInlineArgs(rawArgTokens);
   const resolved = resolveArgs(cmd, rawArgs);
 
+  if (cmd.defaults) {
+    for (const [key, value] of Object.entries(cmd.defaults)) {
+      if (!(key in resolved)) {
+        resolved[key] = value;
+      }
+    }
+  }
+
   const required: string[] = cmd.inputSchema?.required || [];
-  const missingRequired = required.filter((r) => !(slugify(r) in rawArgs) && !(r in rawArgs));
+  const missingRequired = required.filter((r) => !(slugify(r) in rawArgs) && !(r in rawArgs) && !(r in (cmd.defaults || {})));
   if (missingRequired.length > 0) {
     const props = cmd.inputSchema?.properties || {};
     console.error(`Missing required parameter(s):\n`);

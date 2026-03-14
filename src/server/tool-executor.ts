@@ -86,7 +86,10 @@ export class CommandToolExecutor {
     // Replace argument placeholders
     if (spec.args) {
       for (const argDef of spec.args) {
-        const value = args[argDef.name];
+        let value = args[argDef.name];
+        if (value === undefined && argDef.default !== undefined) {
+          value = argDef.default;
+        }
         if (value === undefined && argDef.required !== false) {
           return {
             success: false,
@@ -94,7 +97,6 @@ export class CommandToolExecutor {
           };
         }
         
-        // Simple placeholder replacement - in production would need more sophisticated handling
         const placeholder = `{${argDef.name}}`;
         if (cmd.includes(placeholder)) {
           cmd = cmd.replace(placeholder, String(value));
