@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test';
-import { slugify, parseInlineArgs, resolveArgs } from '../sh';
+import { slugify, parseInlineArgs, resolveArgs, coerceValue } from '../sh';
 import type { ShellCommand } from '../sh';
 
 function makeCommand(overrides: Partial<ShellCommand> = {}): ShellCommand {
@@ -104,6 +104,127 @@ describe('resolveArgs', () => {
     const cmd = makeCommand();
     const result = resolveArgs(cmd, { unknown: 'value' });
     expect(result).toEqual({ unknown: 'value' });
+  });
+});
+
+describe('coerceValue', () => {
+  it('should coerce number type', () => {
+    expect(coerceValue('42', { type: 'number' })).toBe(42);
+    expect(coerceValue('3.14', { type: 'number' })).toBe(3.14);
+    expect(coerceValue('-10', { type: 'number' })).toBe(-10);
+  });
+
+  it('should coerce integer type', () => {
+    expect(coerceValue('42', { type: 'integer' })).toBe(42);
+    expect(coerceValue('0', { type: 'integer' })).toBe(0);
+  });
+
+  it('should return original string for non-numeric number type', () => {
+    expect(coerceValue('abc', { type: 'number' })).toBe('abc');
+  });
+
+  it('should coerce boolean type', () => {
+    expect(coerceValue('true', { type: 'boolean' })).toBe(true);
+    expect(coerceValue('false', { type: 'boolean' })).toBe(false);
+    expect(coerceValue('0', { type: 'boolean' })).toBe(false);
+    expect(coerceValue('1', { type: 'boolean' })).toBe(true);
+  });
+
+  it('should coerce array of strings from comma-separated', () => {
+    expect(coerceValue('a,b,c', { type: 'array', items: { type: 'string' } }))
+      .toEqual(['a', 'b', 'c']);
+  });
+
+  it('should trim whitespace in comma-separated arrays', () => {
+    expect(coerceValue('a, b, c', { type: 'array', items: { type: 'string' } }))
+      .toEqual(['a', 'b', 'c']);
+  });
+
+  it('should coerce array of numbers from comma-separated', () => {
+    expect(coerceValue('1,2,3', { type: 'array', items: { type: 'number' } }))
+      .toEqual([1, 2, 3]);
+  });
+
+  it('should coerce array of integers from comma-separated', () => {
+    expect(coerceValue('10,20,30', { type: 'array', items: { type: 'integer' } }))
+      .toEqual([10, 20, 30]);
+  });
+
+  it('should coerce array from JSON syntax', () => {
+    expect(coerceValue('[1,2,3]', { type: 'array', items: { type: 'number' } }))
+      .toEqual([1, 2, 3]);
+  });
+
+  it('should coerce array of objects from JSON syntax', () => {
+    expect(coerceValue('[{"a":1},{"b":2}]', { type: 'array', items: { type: 'object' } }))
+      .toEqual([{ a: 1 }, { b: 2 }]);
+  });
+
+  it('should coerce array without items schema as strings', () => {
+    expect(coerceValue('x,y,z', { type: 'array' }))
+      .toEqual(['x', 'y', 'z']);
+  });
+
+  it('should coerce object type via JSON parse', () => {
+    expect(coerceValue('{"key":"value"}', { type: 'object' }))
+      .toEqual({ key: 'value' });
+  });
+
+  it('should return raw string for invalid object JSON', () => {
+    expect(coerceValue('not-json', { type: 'object' })).toBe('not-json');
+  });
+
+  it('should keep string type as-is', () => {
+    expect(coerceValue('hello', { type: 'string' })).toBe('hello');
+    expect(coerceValue('42', { type: 'string' })).toBe('42');
+  });
+
+  it('should infer types when no schema is provided', () => {
+    expect(coerceValue('hello', undefined)).toBe('hello');
+  });
+
+  it('should infer types when schema has no type field', () => {
+    expect(coerceValue('true', {})).toBe(true);
+    expect(coerceValue('false', {})).toBe(false);
+    expect(coerceValue('42', {})).toBe(42);
+    expect(coerceValue('hello', {})).toBe('hello');
+    expect(coerceValue('{"a":1}', {})).toEqual({ a: 1 });
+    expect(coerceValue('[1,2]', {})).toEqual([1, 2]);
+  });
+});
+
+describe('resolveArgs with type coercion', () => {
+  it('should coerce integer parameters', () => {
+    const cmd = makeCommand({
+      argSlugs: new Map([['limit', 'limit']]),
+      inputSchema: {
+        type: 'object',
+        properties: { limit: { type: 'integer' } },
+      },
+    });
+    expect(resolveArgs(cmd, { limit: '5' })).toEqual({ limit: 5 });
+  });
+
+  it('should coerce array parameters from comma-separated values', () => {
+    const cmd = makeCommand({
+      argSlugs: new Map([['tags', 'tags']]),
+      inputSchema: {
+        type: 'object',
+        properties: { tags: { type: 'array', items: { type: 'string' } } },
+      },
+    });
+    expect(resolveArgs(cmd, { tags: 'a,b,c' })).toEqual({ tags: ['a', 'b', 'c'] });
+  });
+
+  it('should coerce object parameters from JSON strings', () => {
+    const cmd = makeCommand({
+      argSlugs: new Map([['config', 'config']]),
+      inputSchema: {
+        type: 'object',
+        properties: { config: { type: 'object' } },
+      },
+    });
+    expect(resolveArgs(cmd, { config: '{"key":"val"}' })).toEqual({ config: { key: 'val' } });
   });
 });
 
