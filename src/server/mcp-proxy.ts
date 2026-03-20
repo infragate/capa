@@ -248,7 +248,7 @@ export class MCPProxy {
       const transport = new StdioClientTransport({
         command: serverDefinition.cmd!,
         args: serverDefinition.args || [],
-        env: { ...process.env, ...serverDefinition.env },
+        env: { ...process.env, ...serverDefinition.env } as Record<string, string>,
         cwd: serverDefinition.cwd ?? this.projectPath,
       });
 
