@@ -459,6 +459,23 @@ class CapaServer {
     }
   }
 
+  private getOrCreateMCPServer(projectId: string): CapaMCPServer | null {
+    let mcpServer = this.mcpServers.get(projectId);
+    if (mcpServer) return mcpServer;
+
+    const project = this.db.getProject(projectId);
+    if (!project) return null;
+
+    mcpServer = new CapaMCPServer(
+      this.db,
+      this.sessionManager,
+      projectId,
+      project.path
+    );
+    this.mcpServers.set(projectId, mcpServer);
+    return mcpServer;
+  }
+
   private async handleGetServerTools(projectId: string, serverId: string): Promise<Response> {
     const apiLogger = this.logger.child('API');
     apiLogger.info(`List tools for server: ${serverId} in project: ${projectId}`);
@@ -479,21 +496,11 @@ class CapaServer {
         );
       }
 
-      let mcpServer = this.mcpServers.get(projectId);
+      const mcpServer = this.getOrCreateMCPServer(projectId);
       if (!mcpServer) {
-        const project = this.db.getProject(projectId);
-        if (!project) {
-          return new Response(
-            JSON.stringify({ error: 'Project not found' }),
-            { status: 404, headers: { 'Content-Type': 'application/json' } }
-          );
-        }
-        mcpServer = new CapaMCPServer(
-          this.db,
-          this.sessionManager,
-          this.subprocessManager,
-          projectId,
-          project.path
+        return new Response(
+          JSON.stringify({ error: 'Project not found' }),
+          { status: 404, headers: { 'Content-Type': 'application/json' } }
         );
       }
 
@@ -524,23 +531,12 @@ class CapaServer {
         );
       }
 
-      let mcpServer = this.mcpServers.get(projectId);
+      const mcpServer = this.getOrCreateMCPServer(projectId);
       if (!mcpServer) {
-        const project = this.db.getProject(projectId);
-        if (!project) {
-          return new Response(
-            JSON.stringify({ error: 'Project not found' }),
-            { status: 404, headers: { 'Content-Type': 'application/json' } }
-          );
-        }
-        mcpServer = new CapaMCPServer(
-          this.db,
-          this.sessionManager,
-          this.subprocessManager,
-          projectId,
-          project.path
+        return new Response(
+          JSON.stringify({ error: 'Project not found' }),
+          { status: 404, headers: { 'Content-Type': 'application/json' } }
         );
-        this.mcpServers.set(projectId, mcpServer);
       }
 
       const tools: ShellToolInfo[] = await mcpServer.getAllShellTools(capabilities);
@@ -575,16 +571,9 @@ class CapaServer {
       const pluginServers = capabilities.servers.filter((s) => s.sourcePlugin);
       if (pluginServers.length > 0) {
         try {
-          const project = this.db.getProject(projectId);
-          if (project) {
-            const tempMcpServer = new CapaMCPServer(
-              this.db,
-              this.sessionManager,
-              this.subprocessManager,
-              projectId,
-              project.path
-            );
-            capabilitiesToUse = await tempMcpServer.enrichCapabilitiesWithPluginTools(capabilities);
+          const mcpServer = this.getOrCreateMCPServer(projectId);
+          if (mcpServer) {
+            capabilitiesToUse = await mcpServer.enrichCapabilitiesWithPluginTools(capabilities);
             this.sessionManager.setProjectCapabilities(projectId, capabilitiesToUse);
           }
         } catch (error: any) {
@@ -673,23 +662,9 @@ class CapaServer {
       apiLogger.info('Validating tools...');
       let toolValidationResults: any[] = [];
       try {
-        // Create a temporary MCP server instance for validation
-        const mcpServer = this.mcpServers.get(projectId);
+        const mcpServer = this.getOrCreateMCPServer(projectId);
         if (mcpServer) {
           toolValidationResults = await mcpServer.validateTools(capabilitiesToUse);
-        } else {
-          // Create temporary instance just for validation
-          const project = this.db.getProject(projectId);
-          if (project) {
-            const tempMcpServer = new CapaMCPServer(
-              this.db,
-              this.sessionManager,
-              this.subprocessManager,
-              projectId,
-              project.path
-            );
-            toolValidationResults = await tempMcpServer.validateTools(capabilitiesToUse);
-          }
         }
         
         // Filter out validation failures for OAuth2 servers that need connection
@@ -1479,11 +1454,9 @@ class CapaServer {
         return new Response('Project not found', { status: 404 });
       }
 
-      // Create MCP server
       mcpServer = new CapaMCPServer(
         this.db,
         this.sessionManager,
-        this.subprocessManager,
         projectId,
         project.path
       );

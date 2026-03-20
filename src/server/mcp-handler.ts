@@ -14,7 +14,6 @@ import { SessionManager } from './session-manager';
 import type { SessionInfo } from './session-manager';
 import { CommandToolExecutor } from './tool-executor';
 import { MCPProxy } from './mcp-proxy';
-import { SubprocessManager } from './subprocess-manager';
 import { VERSION } from '../version';
 import { logger } from '../shared/logger';
 
@@ -74,7 +73,6 @@ export class CapaMCPServer {
   private server: Server;
   private db: CapaDatabase;
   private sessionManager: SessionManager;
-  private subprocessManager: SubprocessManager;
   private mcpProxy: MCPProxy;
   private projectId: string;
   private projectPath: string;
@@ -85,16 +83,14 @@ export class CapaMCPServer {
   constructor(
     db: CapaDatabase,
     sessionManager: SessionManager,
-    subprocessManager: SubprocessManager,
     projectId: string,
     projectPath: string
   ) {
     this.db = db;
     this.sessionManager = sessionManager;
-    this.subprocessManager = subprocessManager;
     this.projectId = projectId;
     this.projectPath = projectPath;
-    this.mcpProxy = new MCPProxy(db, projectId, projectPath, subprocessManager);
+    this.mcpProxy = new MCPProxy(db, projectId, projectPath);
 
     this.server = new Server(
       {
@@ -1207,6 +1203,7 @@ export class CapaMCPServer {
   }
 
   async close(): Promise<void> {
+    await this.mcpProxy.closeAll();
     await this.server.close();
   }
 }
