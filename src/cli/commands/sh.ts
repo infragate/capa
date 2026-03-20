@@ -174,19 +174,71 @@ export function parseInlineArgs(tokens: string[]): Record<string, string> {
   return result;
 }
 
+/**
+ * Coerce a raw string value to the type declared in the JSON Schema property.
+ * Handles: string, number, integer, boolean, array, object, and
+ * multi-type schemas (e.g. oneOf / type:[...]).
+ */
+export function coerceValue(value: string, schema: any): any {
+  if (!schema) return value;
+
+  const type = schema.type;
+
+  if (type === 'number' || type === 'integer') {
+    const n = Number(value);
+    return Number.isNaN(n) ? value : n;
+  }
+
+  if (type === 'boolean') {
+    return value !== 'false' && value !== '0';
+  }
+
+  if (type === 'array') {
+    // Try JSON parse first for complex arrays (e.g. '[1,2,3]' or '[{"a":1}]')
+    if (value.startsWith('[')) {
+      try { return JSON.parse(value); } catch {}
+    }
+    // Comma-separated fallback
+    const items = value.split(',').map(s => s.trim());
+    const itemType = schema.items?.type;
+    if (itemType === 'number' || itemType === 'integer') {
+      return items.map(s => { const n = Number(s); return Number.isNaN(n) ? s : n; });
+    }
+    if (itemType === 'boolean') {
+      return items.map(s => s !== 'false' && s !== '0');
+    }
+    if (itemType === 'object') {
+      return items.map(s => { try { return JSON.parse(s); } catch { return s; } });
+    }
+    return items;
+  }
+
+  if (type === 'object') {
+    try { return JSON.parse(value); } catch { return value; }
+  }
+
+  if (type === 'string') {
+    return value;
+  }
+
+  // No type or unknown type — try to infer from the value
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  if (value.startsWith('{') || value.startsWith('[')) {
+    try { return JSON.parse(value); } catch {}
+  }
+  const n = Number(value);
+  if (!Number.isNaN(n) && value.trim() !== '') return n;
+  return value;
+}
+
 /** Resolve slugified arg names in the user's input to original names expected by the tool. */
 export function resolveArgs(cmd: ShellCommand, rawArgs: Record<string, string>): Record<string, any> {
   const resolved: Record<string, any> = {};
   for (const [slug, value] of Object.entries(rawArgs)) {
     const originalName = cmd.argSlugs.get(slug) ?? slug;
     const propSchema = cmd.inputSchema?.properties?.[originalName];
-    if (propSchema?.type === 'number') {
-      resolved[originalName] = Number(value);
-    } else if (propSchema?.type === 'boolean') {
-      resolved[originalName] = value !== 'false' && value !== '0';
-    } else {
-      resolved[originalName] = value;
-    }
+    resolved[originalName] = coerceValue(value, propSchema);
   }
   return resolved;
 }

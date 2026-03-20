@@ -4,7 +4,6 @@ import { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 import type { CapaDatabase } from '../db/database';
 import type { MCPServerDefinition, ToolMCPDefinition } from '../types/capabilities';
-import { SubprocessManager } from './subprocess-manager';
 import { resolveVariablesInObject, hasUnresolvedVariables } from '../shared/variable-resolver';
 import { VERSION } from '../version';
 import { OAuth2Manager } from './oauth-manager';
@@ -27,16 +26,14 @@ export class MCPProxy {
   private db: CapaDatabase;
   private projectId: string;
   private projectPath: string;
-  private subprocessManager: SubprocessManager;
   private oauth2Manager: OAuth2Manager;
   private clients = new Map<string, Client>();
   private logger = logger.child('MCPProxy');
 
-  constructor(db: CapaDatabase, projectId: string, projectPath: string, subprocessManager: SubprocessManager) {
+  constructor(db: CapaDatabase, projectId: string, projectPath: string) {
     this.db = db;
     this.projectId = projectId;
     this.projectPath = projectPath;
-    this.subprocessManager = subprocessManager;
     this.oauth2Manager = new OAuth2Manager(db);
   }
 
@@ -223,6 +220,11 @@ export class MCPProxy {
         }
       );
 
+      client.onclose = () => {
+        this.logger.info(`Client ${serverId} closed, removing from cache`);
+        this.clients.delete(serverId);
+      };
+
       this.logger.debug('Connecting client...');
       await client.connect(transport);
 
@@ -242,29 +244,14 @@ export class MCPProxy {
     try {
       this.logger.info(`Creating stdio client for: ${serverId}`);
       this.logger.debug(`Command: ${serverDefinition.cmd}, Args: ${JSON.stringify(serverDefinition.args || [])}`);
-      
-      // Get or create subprocess
-      const subprocess = await this.subprocessManager.getOrCreateSubprocess(
-        serverId,
-        serverDefinition,
-        this.projectPath
-      );
 
-      if (subprocess.status !== 'running' || !subprocess.process) {
-        this.logger.failure(`Subprocess ${serverId} is not running (status: ${subprocess.status})`);
-        return null;
-      }
-
-      this.logger.debug(`Subprocess running with PID: ${subprocess.process.pid}`);
-
-      // Create stdio transport
       const transport = new StdioClientTransport({
         command: serverDefinition.cmd!,
         args: serverDefinition.args || [],
-        env: serverDefinition.env,
+        env: { ...process.env, ...serverDefinition.env } as Record<string, string>,
+        cwd: serverDefinition.cwd ?? this.projectPath,
       });
 
-      // Create client
       const client = new Client(
         {
           name: `capa-proxy-${serverId}`,
@@ -274,6 +261,11 @@ export class MCPProxy {
           capabilities: {},
         }
       );
+
+      client.onclose = () => {
+        this.logger.info(`Client ${serverId} closed, removing from cache`);
+        this.clients.delete(serverId);
+      };
 
       this.logger.debug('Connecting client...');
       await client.connect(transport);
