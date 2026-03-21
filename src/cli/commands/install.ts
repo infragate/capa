@@ -361,19 +361,25 @@ function readSkillFromDirectory(skillMdPath: string): {
   const skillDir = dirname(skillMdPath);
   const additionalFiles = new Map<string, string>();
   
-  // Read all files in the skill directory (except SKILL.md itself)
-  try {
-    const entries = readdirSync(skillDir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (entry.isFile() && entry.name !== 'SKILL.md') {
-        const filePath = join(skillDir, entry.name);
-        const content = readFileSync(filePath, 'utf-8');
-        additionalFiles.set(entry.name, content);
+  function collectFiles(dir: string, relativeBase: string): void {
+    try {
+      const entries = readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        const relativePath = relativeBase ? join(relativeBase, entry.name) : entry.name;
+        if (entry.isDirectory()) {
+          collectFiles(join(dir, entry.name), relativePath);
+        } else if (entry.isFile()) {
+          if (relativeBase === '' && entry.name === 'SKILL.md') continue;
+          const content = readFileSync(join(dir, entry.name), 'utf-8');
+          additionalFiles.set(relativePath, content);
+        }
       }
+    } catch (error) {
+      // Can't read directory, skip
     }
-  } catch (error) {
-    // No additional files or can't read directory
   }
+
+  collectFiles(skillDir, '');
   
   return { markdown, additionalFiles };
 }
