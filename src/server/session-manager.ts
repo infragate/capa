@@ -1,7 +1,7 @@
 import { nanoid } from 'nanoid';
 import type { CapaDatabase } from '../db/database';
 import type { Capabilities, Tool } from '../types/capabilities';
-import { getQualifiedToolName, normalizeToolReference } from '../types/capabilities';
+import { getQualifiedToolName, normalizeToolName, normalizeToolReference } from '../types/capabilities';
 import { logger } from '../shared/logger';
 
 export interface SessionInfo {
@@ -133,6 +133,31 @@ export class SessionManager {
   }
 
   /**
+   * Resolve a skill `requires` reference to a qualified tool name.
+   * Tries matching by qualified name first, then falls back to matching by bare tool id.
+   * This allows skills to reference grouped command tools by just their id (e.g. "commit")
+   * even though the qualified name is "git.commit".
+   */
+  private resolveToolReference(ref: string, capabilities: Capabilities): string {
+    const normalized = normalizeToolReference(ref);
+
+    // Direct match against qualified names
+    const directMatch = capabilities.tools.find(
+      (t) => getQualifiedToolName(t) === normalized
+    );
+    if (directMatch) return normalized;
+
+    // Fallback: match by bare tool id (for grouped command tools and MCP tools
+    // referenced without their server/group prefix)
+    const byId = capabilities.tools.find((t) => t.id === normalized);
+    if (byId) return getQualifiedToolName(byId);
+
+    // No match found — return the normalized reference as-is so the caller
+    // can still surface it (it will simply fail to resolve to a tool later)
+    return normalized;
+  }
+
+  /**
    * Get tools required by skills
    */
   private getToolsForSkills(projectId: string, skillIds: string[]): string[] {
@@ -147,7 +172,7 @@ export class SessionManager {
       const skill = capabilities.skills.find((s) => s.id === skillId);
       if (skill && skill.def && skill.def.requires) {
         for (const ref of skill.def.requires) {
-          requiredTools.add(normalizeToolReference(ref));
+          requiredTools.add(this.resolveToolReference(ref, capabilities));
         }
       }
     }
@@ -167,11 +192,11 @@ export class SessionManager {
 
     const requiredTools = new Set<string>();
 
-    // Iterate through all skills and collect their required tools (normalized)
+    // Iterate through all skills and collect their required tools (resolved to qualified names)
     for (const skill of capabilities.skills) {
       if (skill.def && skill.def.requires) {
         for (const ref of skill.def.requires) {
-          requiredTools.add(normalizeToolReference(ref));
+          requiredTools.add(this.resolveToolReference(ref, capabilities));
         }
       }
     }
@@ -228,7 +253,9 @@ export class SessionManager {
   }
 
   /**
-   * Get tool definition
+   * Get tool definition by qualified name.
+   * Tries an exact match first, then falls back to normalized comparison
+   * (dots ↔ underscores) to handle MCP clients that replace dots in tool names.
    */
   getToolDefinition(projectId: string, qualifiedName: string): Tool | null {
     const capabilities = this.getProjectCapabilities(projectId);
@@ -236,7 +263,13 @@ export class SessionManager {
       return null;
     }
 
-    return capabilities.tools.find((t) => getQualifiedToolName(t) === qualifiedName) || null;
+    const exact = capabilities.tools.find((t) => getQualifiedToolName(t) === qualifiedName);
+    if (exact) return exact;
+
+    const normalized = normalizeToolName(qualifiedName);
+    return capabilities.tools.find(
+      (t) => normalizeToolName(getQualifiedToolName(t)) === normalized
+    ) || null;
   }
 
   /**

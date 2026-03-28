@@ -99,7 +99,10 @@ class ShellRegistry {
       if (groupTools.length === 1) {
         // Promote the sole tool directly to the top level
         const tool = groupTools[0];
-        const commandSlug = slugify(tool.id);
+        // Qualified name may be "group.toolId"; derive short name for the CLI slug
+        const dotIdx = tool.id.indexOf('.');
+        const shortName = dotIdx >= 0 ? tool.id.slice(dotIdx + 1) : tool.id;
+        const commandSlug = slugify(shortName);
         const argSlugs = new Map<string, string>();
         const props = tool.inputSchema?.properties || {};
         for (const argName of Object.keys(props)) {
@@ -122,7 +125,10 @@ class ShellRegistry {
           isMcp: false,
         };
         for (const tool of groupTools) {
-          const commandSlug = slugify(tool.id);
+          // Qualified name may be "group.toolId"; derive short name for the subcommand slug
+          const dotIdx = tool.id.indexOf('.');
+          const shortName = dotIdx >= 0 ? tool.id.slice(dotIdx + 1) : tool.id;
+          const commandSlug = slugify(shortName);
           const argSlugs = new Map<string, string>();
           const props = tool.inputSchema?.properties || {};
           for (const argName of Object.keys(props)) {
