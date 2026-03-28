@@ -16,11 +16,7 @@
     "isolatedModules": true,
     "noEmit": true,
     "outDir": "./dist",
-    "rootDir": "./src",
-    "baseUrl": "./src",
-    "paths": {
-      "@/*": ["./*"]
-    }
+    "rootDir": "./src"
   },
   "include": ["src/**/*.ts", "src/**/__tests__/**/*.ts"],
   "exclude": ["node_modules", "dist"]

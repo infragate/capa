@@ -264,8 +264,9 @@ export interface ArgumentDefinition {
 
 /**
  * Compute the qualified name for a tool.
- * MCP tools: "{serverId}.{toolId}" (e.g. "bigquery.query")
- * Command tools: "{toolId}" (unchanged)
+ * MCP tools:              "{serverId}.{toolId}" (e.g. "bigquery.query")
+ * Command tools w/ group: "{group}.{toolId}"    (e.g. "git.commit")
+ * Command tools w/o group: "{toolId}"           (unchanged)
  */
 export function getQualifiedToolName(tool: Tool): string {
   if (tool.type === 'mcp') {
@@ -273,7 +274,19 @@ export function getQualifiedToolName(tool: Tool): string {
     const serverId = mcpDef.server.replace('@', '');
     return `${serverId}.${tool.id}`;
   }
+  if (tool.group) {
+    return `${tool.group}.${tool.id}`;
+  }
   return tool.id;
+}
+
+/**
+ * Normalize a tool name for comparison by collapsing dots and underscores.
+ * Many MCP clients replace dots with underscores in tool names, so
+ * "brave.search" and "brave_search" should resolve to the same tool.
+ */
+export function normalizeToolName(name: string): string {
+  return name.replace(/\./g, '_');
 }
 
 /**
