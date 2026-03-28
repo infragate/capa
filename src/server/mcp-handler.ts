@@ -9,7 +9,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import type { CapaDatabase } from '../db/database';
 import type { Capabilities, Tool, ToolCommandDefinition, ToolMCPDefinition } from '../types/capabilities';
-import { getQualifiedToolName } from '../types/capabilities';
+import { getQualifiedToolName, normalizeToolName } from '../types/capabilities';
 import { SessionManager } from './session-manager';
 import type { SessionInfo } from './session-manager';
 import { CommandToolExecutor } from './tool-executor';
@@ -380,8 +380,9 @@ export class CapaMCPServer {
         };
       }
 
-      // Check if tool is in available tools for the session
-      if (!session.availableTools.includes(toolName)) {
+      // Check if tool is in available tools for the session (normalize for dot/underscore compat)
+      const normalizedToolName = normalizeToolName(toolName);
+      if (!session.availableTools.some((t) => normalizeToolName(t) === normalizedToolName)) {
         this.logger.warn(`Tool not activated: ${toolName}`);
         return {
           content: [
@@ -988,8 +989,9 @@ export class CapaMCPServer {
             };
           }
 
-          // Check if tool is in available tools for the session
-          if (!session.availableTools.includes(toolName)) {
+          // Check if tool is in available tools for the session (normalize for dot/underscore compat)
+          const normalizedToolName = normalizeToolName(toolName);
+          if (!session.availableTools.some((t) => normalizeToolName(t) === normalizedToolName)) {
             this.logger.warn(`Tool not activated: ${toolName}`);
             return {
               jsonrpc: '2.0',
