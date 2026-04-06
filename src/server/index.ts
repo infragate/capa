@@ -162,7 +162,16 @@ class CapaServer {
       return this.handleAPI(request);
     }
 
-    // MCP endpoints
+    // Sub-agent MCP endpoints: /{projectId}/agents/{agentId}/mcp
+    const agentMcpMatch = path.match(/^\/([^/]+)\/agents\/([^/]+)\/mcp$/);
+    if (agentMcpMatch) {
+      const projectId = agentMcpMatch[1];
+      const agentId = agentMcpMatch[2];
+      this.logger.debug(`MCP endpoint for project: ${projectId}, sub-agent: ${agentId}`);
+      return this.handleMCP(request, projectId, agentId);
+    }
+
+    // Main MCP endpoints: /{projectId}/mcp
     const mcpMatch = path.match(/^\/([^/]+)\/mcp$/);
     if (mcpMatch) {
       const projectId = mcpMatch[1];
@@ -459,8 +468,9 @@ class CapaServer {
     }
   }
 
-  private getOrCreateMCPServer(projectId: string): CapaMCPServer | null {
-    let mcpServer = this.mcpServers.get(projectId);
+  private getOrCreateMCPServer(projectId: string, agentId?: string): CapaMCPServer | null {
+    const cacheKey = agentId ? `${projectId}:${agentId}` : projectId;
+    let mcpServer = this.mcpServers.get(cacheKey);
     if (mcpServer) return mcpServer;
 
     const project = this.db.getProject(projectId);
@@ -470,9 +480,10 @@ class CapaServer {
       this.db,
       this.sessionManager,
       projectId,
-      project.path
+      project.path,
+      agentId
     );
-    this.mcpServers.set(projectId, mcpServer);
+    this.mcpServers.set(cacheKey, mcpServer);
     return mcpServer;
   }
 
@@ -1440,13 +1451,16 @@ class CapaServer {
     }
   }
 
-  private async handleMCP(request: Request, projectId: string): Promise<Response> {
+  private async handleMCP(request: Request, projectId: string, agentId?: string): Promise<Response> {
     const mcpLogger = this.logger.child('MCP');
-    // Get or create MCP server for this project
-    let mcpServer = this.mcpServers.get(projectId);
-    
+    const cacheKey = agentId ? `${projectId}:${agentId}` : projectId;
+
+    // Get or create MCP server for this project (or project+sub-agent)
+    let mcpServer = this.mcpServers.get(cacheKey);
+
     if (!mcpServer) {
-      mcpLogger.info(`Creating new MCP server for project: ${projectId}`);
+      const label = agentId ? `project: ${projectId}, sub-agent: ${agentId}` : `project: ${projectId}`;
+      mcpLogger.info(`Creating new MCP server for ${label}`);
       // Get project from database
       const project = this.db.getProject(projectId);
       if (!project) {
@@ -1458,10 +1472,11 @@ class CapaServer {
         this.db,
         this.sessionManager,
         projectId,
-        project.path
+        project.path,
+        agentId
       );
 
-      this.mcpServers.set(projectId, mcpServer);
+      this.mcpServers.set(cacheKey, mcpServer);
       mcpLogger.success('MCP server created');
     }
 

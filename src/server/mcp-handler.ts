@@ -76,6 +76,8 @@ export class CapaMCPServer {
   private mcpProxy: MCPProxy;
   private projectId: string;
   private projectPath: string;
+  /** Sub-agent ID — null means the main (unfiltered) agent endpoint. */
+  private agentId: string | null;
   private sessionId: string | null = null;
   private toolSchemaCache: Map<string, MCPTool> = new Map();
   private logger = logger.child('MCPHandler');
@@ -84,12 +86,14 @@ export class CapaMCPServer {
     db: CapaDatabase,
     sessionManager: SessionManager,
     projectId: string,
-    projectPath: string
+    projectPath: string,
+    agentId?: string
   ) {
     this.db = db;
     this.sessionManager = sessionManager;
     this.projectId = projectId;
     this.projectPath = projectPath;
+    this.agentId = agentId ?? null;
     this.mcpProxy = new MCPProxy(db, projectId, projectPath);
 
     this.server = new Server(
@@ -125,6 +129,23 @@ export class CapaMCPServer {
     return session;
   }
 
+  /**
+   * Return the set of qualified tool names this endpoint may expose.
+   * Returns null for the main agent endpoint (no filtering) or when the
+   * sub-agent ID is not found in the current capabilities.
+   */
+  private getAgentAllowedToolIds(capabilities: Capabilities): Set<string> | null {
+    if (!this.agentId || !capabilities.sub_agents) return null;
+    const subAgent = capabilities.sub_agents.find((a) => a.id === this.agentId);
+    if (!subAgent) return null;
+    const allowed = new Set<string>();
+    for (const toolId of subAgent.tools) {
+      const tool = capabilities.tools.find((t) => t.id === toolId);
+      if (tool) allowed.add(getQualifiedToolName(tool));
+    }
+    return allowed;
+  }
+
   private setupHandlers(): void {
     // List tools handler
     this.server.setRequestHandler(ListToolsRequestSchema, async (request) => {
@@ -135,10 +156,13 @@ export class CapaMCPServer {
       const toolExposureMode = capabilities?.options?.toolExposure || 'expose-all';
 
       if (toolExposureMode === 'expose-all') {
-        // Expose-all mode: Show all tools from all skills immediately
+        // Expose-all mode: Show all tools from all skills immediately.
+        // Sub-agent endpoints additionally filter to only their declared tools.
         if (capabilities) {
+          const allowedToolIds = this.getAgentAllowedToolIds(capabilities);
           const allToolIds = this.sessionManager.getAllRequiredToolsForProject(this.projectId);
           for (const qualifiedName of allToolIds) {
+            if (allowedToolIds && !allowedToolIds.has(qualifiedName)) continue;
             const tool = capabilities.tools.find((t) => getQualifiedToolName(t) === qualifiedName);
             if (tool) {
               const mcpTool = await this.convertToolToMCP(tool, capabilities);
@@ -225,6 +249,32 @@ export class CapaMCPServer {
         this.ensureSession();
       }
 
+      // Sub-agent tool access guard: reject calls to tools outside the agent's allowed set
+      if (this.agentId) {
+        const capabilities = this.sessionManager.getProjectCapabilities(this.projectId);
+        if (capabilities) {
+          const allowedToolIds = this.getAgentAllowedToolIds(capabilities);
+          if (allowedToolIds) {
+            const normalizedName = normalizeToolName(name);
+            const isAllowed = [...allowedToolIds].some(
+              (id) => normalizeToolName(id) === normalizedName
+            );
+            if (!isAllowed) {
+              return {
+                content: [
+                  {
+                    type: 'text',
+                    text: JSON.stringify({
+                      error: `Tool "${name}" is not available on this sub-agent endpoint (${this.agentId}). Use the main capa endpoint to access all tools.`,
+                    }),
+                  },
+                ],
+              };
+            }
+          }
+        }
+      }
+
       // Find tool definition
       const toolDef = this.sessionManager.getToolDefinition(this.projectId, name);
       if (!toolDef) {
@@ -301,7 +351,9 @@ export class CapaMCPServer {
       const toolSchemas: MCPTool[] = [];
 
       if (capabilities) {
+        const allowedToolIds = this.getAgentAllowedToolIds(capabilities);
         for (const qualifiedName of toolIds) {
+          if (allowedToolIds && !allowedToolIds.has(qualifiedName)) continue;
           const tool = capabilities.tools.find((t) => getQualifiedToolName(t) === qualifiedName);
           if (tool) {
             const mcpTool = await this.convertToolToMCP(tool, capabilities);
@@ -816,11 +868,14 @@ export class CapaMCPServer {
       this.logger.debug(`Tool exposure mode: ${toolExposureMode}`);
 
       if (toolExposureMode === 'expose-all') {
-        // Expose-all mode: Show all tools from all skills immediately
+        // Expose-all mode: Show all tools from all skills immediately.
+        // Sub-agent endpoints additionally filter to only their declared tools.
         if (capabilities) {
+          const allowedToolIds = this.getAgentAllowedToolIds(capabilities);
           const allToolIds = this.sessionManager.getAllRequiredToolsForProject(this.projectId);
-          this.logger.debug(`Exposing all ${allToolIds.length} tool(s) from all skills`);
+          this.logger.debug(`Exposing ${allowedToolIds ? allowedToolIds.size : allToolIds.length} tool(s) (allowedToolIds=${allowedToolIds ? 'set' : 'null'})`);
           for (const qualifiedName of allToolIds) {
+            if (allowedToolIds && !allowedToolIds.has(qualifiedName)) continue;
             const tool = capabilities.tools.find((t) => getQualifiedToolName(t) === qualifiedName);
             if (tool) {
               const mcpTool = await this.convertToolToMCP(tool, capabilities);
@@ -1097,6 +1152,34 @@ export class CapaMCPServer {
       // Handle other tools
       const capabilities = this.sessionManager.getProjectCapabilities(this.projectId);
       const toolExposureMode = capabilities?.options?.toolExposure || 'expose-all';
+
+      // Sub-agent tool access guard: reject calls to tools outside the agent's allowed set
+      if (this.agentId && capabilities) {
+        const allowedToolIds = this.getAgentAllowedToolIds(capabilities);
+        if (allowedToolIds) {
+          const normalizedName = normalizeToolName(name);
+          const isAllowed = [...allowedToolIds].some(
+            (id) => normalizeToolName(id) === normalizedName
+          );
+          if (!isAllowed) {
+            this.logger.warn(`Sub-agent "${this.agentId}" attempted to call unauthorized tool: ${name}`);
+            return {
+              jsonrpc: '2.0',
+              id: message.id,
+              result: {
+                content: [
+                  {
+                    type: 'text',
+                    text: JSON.stringify({
+                      error: `Tool "${name}" is not available on this sub-agent endpoint (${this.agentId}). Use the main capa endpoint to access all tools.`,
+                    }),
+                  },
+                ],
+              },
+            };
+          }
+        }
+      }
 
       // Only require session for on-demand mode
       if (toolExposureMode === 'on-demand') {
