@@ -205,7 +205,7 @@ export interface Capabilities {
   /**
    * Named sub-agent configurations. See `SubAgent` for per-provider install behavior.
    */
-  sub_agents?: SubAgent[];
+  subAgents?: SubAgent[];
 }
 
 export interface Skill {
