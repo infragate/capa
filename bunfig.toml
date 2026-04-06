@@ -1,3 +1,7 @@
+[test]
+# Increase timeout for coverage runs on Windows where file I/O is slower
+timeout = 10000
+
 [install]
 optional = true
 dev = true
