@@ -1,6 +1,7 @@
-import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from 'fs';
 import { join, resolve, dirname } from 'path';
-import type { AgentFileConfig, SecurityOptions } from '../../types/capabilities';
+import type { AgentFileConfig, SecurityOptions, SubAgent, Capabilities } from '../../types/capabilities';
+import { getQualifiedToolName } from '../../types/capabilities';
 import {
   loadBlockedPhrases,
   checkBlockedPhrases,
@@ -407,6 +408,197 @@ export async function installAgentsFile(
   for (const filename of targetFiles) {
     applyConfigToFile(projectPath, filename, hasBase, snippetBodies);
     console.log(`  ✓ ${filename} updated`);
+  }
+}
+
+/**
+ * Build the shared prompt body for a sub-agent (used in both .claude/agents/ and .cursor/agents/).
+ */
+function buildSubAgentBody(subAgent: SubAgent, capabilities: Capabilities): string {
+  const toolNames = subAgent.tools
+    .map((toolId) => {
+      const tool = capabilities.tools.find((t) => t.id === toolId);
+      return tool ? getQualifiedToolName(tool) : toolId;
+    })
+    .join(', ');
+
+  const skillList = subAgent.skills.length > 0 ? subAgent.skills.join(', ') : '(none)';
+
+  const lines: string[] = [];
+
+  lines.push(
+    `**MCP server key:** \`capa-${subAgent.id}\``,
+    `**Skills:** ${skillList}`,
+    `**Tools:** ${toolNames || '(none)'}`,
+  );
+
+  if (subAgent.instructions) {
+    lines.push('', subAgent.instructions.trimEnd());
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * Write a Cursor-compatible subagent file at .cursor/agents/{agentId}.md.
+ *
+ * Format follows the Cursor subagents spec:
+ *   https://cursor.com/docs/subagents
+ *
+ * Frontmatter fields: name, description, model, readonly, is_background
+ * Body: markdown prompt with tool/skill context injected by capa.
+ *
+ * The `description` field is critical — Cursor's agent reads it to decide when to
+ * automatically delegate to this subagent.
+ */
+function writeCursorAgentFile(projectPath: string, subAgent: SubAgent, body: string): void {
+  const agentsDir = join(projectPath, '.cursor', 'agents');
+  mkdirSync(agentsDir, { recursive: true });
+
+  const filePath = join(agentsDir, `${subAgent.id}.md`);
+  const descriptionLine = subAgent.description
+    ? `description: ${subAgent.description}`
+    : `description: ${subAgent.id}`;
+
+  const frontmatter = [
+    '---',
+    `name: ${subAgent.id}`,
+    descriptionLine,
+    'model: inherit',
+    'readonly: false',
+    'is_background: false',
+    '---',
+    '',
+  ].join('\n');
+
+  writeFileSync(filePath, frontmatter + body + '\n', 'utf8');
+  console.log(`  ✓ .cursor/agents/${subAgent.id}.md written`);
+}
+
+/**
+ * Remove the Cursor agent file for a sub-agent, if it exists.
+ */
+function removeCursorAgentFile(projectPath: string, agentId: string): void {
+  const filePath = join(projectPath, '.cursor', 'agents', `${agentId}.md`);
+  if (existsSync(filePath)) {
+    unlinkSync(filePath);
+    console.log(`  ✓ Removed .cursor/agents/${agentId}.md`);
+  }
+  // Also clean up any legacy .cursor/rules/{id}.mdc files from old capa versions
+  const legacyPath = join(projectPath, '.cursor', 'rules', `${agentId}.mdc`);
+  if (existsSync(legacyPath)) {
+    unlinkSync(legacyPath);
+  }
+}
+
+/**
+ * Write a Claude Code subagent file at .claude/agents/{agentId}.md.
+ *
+ * Claude Code reads .claude/agents/ for sub-agent definitions (same format as Cursor).
+ * Cursor also reads .claude/agents/ when running in Claude-compatibility mode.
+ * Frontmatter fields mirror the Cursor spec: name, description, model.
+ */
+function writeClaudeAgentFile(projectPath: string, subAgent: SubAgent, body: string): void {
+  const agentsDir = join(projectPath, '.claude', 'agents');
+  mkdirSync(agentsDir, { recursive: true });
+
+  const filePath = join(agentsDir, `${subAgent.id}.md`);
+  const descriptionLine = subAgent.description
+    ? `description: ${subAgent.description}`
+    : `description: ${subAgent.id}`;
+
+  const frontmatter = [
+    '---',
+    `name: ${subAgent.id}`,
+    descriptionLine,
+    'model: inherit',
+    '---',
+    '',
+  ].join('\n');
+
+  writeFileSync(filePath, frontmatter + body + '\n', 'utf8');
+  console.log(`  ✓ .claude/agents/${subAgent.id}.md written`);
+}
+
+/**
+ * Remove the Claude agent file for a sub-agent, if it exists.
+ */
+function removeClaudeAgentFile(projectPath: string, agentId: string): void {
+  const filePath = join(projectPath, '.claude', 'agents', `${agentId}.md`);
+  if (existsSync(filePath)) {
+    unlinkSync(filePath);
+    console.log(`  ✓ Removed .claude/agents/${agentId}.md`);
+  }
+}
+
+/**
+ * Install sub-agent definition files for each active provider:
+ *
+ * - claude-code → .claude/agents/{id}.md  (Claude Code subagent format)
+ *                  CLAUDE.md block (for global context in the main conversation)
+ * - cursor      → .cursor/agents/{id}.md  (Cursor subagent format, auto-delegation via description)
+ *
+ * Both formats use YAML frontmatter + markdown prompt body.
+ * Cursor also reads .claude/agents/ (Claude-compatibility mode), so writing both
+ * gives maximum coverage when both providers are active.
+ */
+export function installSubAgentInstructions(
+  projectPath: string,
+  subAgent: SubAgent,
+  capabilities: Capabilities,
+  providers: string[]
+): void {
+  const body = buildSubAgentBody(subAgent, capabilities);
+
+  const hasClaude = providers.some((p) => p.toLowerCase().startsWith('claude'));
+  const hasCursor = providers.some((p) => p.toLowerCase() === 'cursor');
+
+  // Claude Code: write .claude/agents/{id}.md + update CLAUDE.md global context block
+  if (hasClaude) {
+    writeClaudeAgentFile(projectPath, subAgent, body);
+
+    const snippetId = `sub-agent:${subAgent.id}`;
+    const claudeMdBody = [
+      `## Agent: ${subAgent.id}`,
+      ...(subAgent.description ? ['', subAgent.description] : []),
+      '',
+      body,
+    ].join('\n');
+    let claudeMd = readMdFile(projectPath, CLAUDE_FILENAME);
+    claudeMd = upsertSnippet(claudeMd, snippetId, claudeMdBody);
+    writeMdFile(projectPath, CLAUDE_FILENAME, claudeMd);
+    console.log(`  ✓ ${CLAUDE_FILENAME} updated with sub-agent "${subAgent.id}" instructions`);
+  }
+
+  // Cursor: write .cursor/agents/{id}.md (auto-delegated based on description field)
+  if (hasCursor) {
+    writeCursorAgentFile(projectPath, subAgent, body);
+  }
+}
+
+/**
+ * Remove sub-agent definition files for all active providers.
+ */
+export function removeSubAgentInstructions(
+  projectPath: string,
+  agentId: string,
+  providers: string[]
+): void {
+  const hasClaude = providers.some((p) => p.toLowerCase().startsWith('claude'));
+  const hasCursor = providers.some((p) => p.toLowerCase() === 'cursor');
+
+  if (hasClaude) {
+    removeClaudeAgentFile(projectPath, agentId);
+    const snippetId = `sub-agent:${agentId}`;
+    const content = readMdFile(projectPath, CLAUDE_FILENAME);
+    if (content) {
+      writeMdFile(projectPath, CLAUDE_FILENAME, removeSnippet(content, snippetId));
+      console.log(`  ✓ Removed sub-agent "${agentId}" instructions from ${CLAUDE_FILENAME}`);
+    }
+  }
+
+  if (hasCursor) {
+    removeCursorAgentFile(projectPath, agentId);
   }
 }
 

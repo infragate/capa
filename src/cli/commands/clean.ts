@@ -3,8 +3,8 @@ import { detectCapabilitiesFile, generateProjectId } from '../../shared/paths';
 import { loadSettings, getDatabasePath } from '../../shared/config';
 import { CapaDatabase } from '../../db/database';
 import { parseCapabilitiesFile } from '../../shared/capabilities';
-import { unregisterMCPServer } from '../utils/mcp-client-manager';
-import { cleanAgentsFile } from '../utils/agents-file';
+import { unregisterMCPServer, unregisterSubAgentMCPServer } from '../utils/mcp-client-manager';
+import { cleanAgentsFile, removeSubAgentInstructions } from '../utils/agents-file';
 
 export async function cleanCommand(): Promise<void> {
   const projectPath = process.cwd();
@@ -70,7 +70,17 @@ export async function cleanCommand(): Promise<void> {
     cleanAgentsFile(projectPath, capabilities.providers);
   }
 
-  // Unregister MCP server from client configurations
+  // Unregister sub-agent MCP endpoints before removing the main server
+  const installedSubAgents = db.getSubAgents(projectId);
+  if (installedSubAgents.length > 0) {
+    console.log('\n🤖 Unregistering sub-agents...');
+    for (const { agent_id } of installedSubAgents) {
+      await unregisterSubAgentMCPServer(projectPath, agent_id, capabilities.providers);
+      removeSubAgentInstructions(projectPath, agent_id, capabilities.providers);
+    }
+  }
+
+  // Unregister main MCP server from client configurations
   console.log('\n🔗 Unregistering MCP server from clients...');
   await unregisterMCPServer(projectPath, projectId, capabilities.providers);
 

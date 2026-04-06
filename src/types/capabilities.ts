@@ -152,6 +152,45 @@ export interface RequiredCommand {
   description?: string;
 }
 
+/**
+ * A named sub-agent configuration. On `capa install`:
+ * - A **filtered MCP endpoint** is created at `/{projectId}/agents/{id}/mcp` exposing
+ *   only this agent's declared tools. Registered in `.mcp.json` as `"capa-{id}"` for
+ *   claude-code; Cursor uses per-file delegation instead (see below).
+ * - **claude-code**: `.claude/agents/{id}.md` is written (Claude Code sub-agent format)
+ *   and a context block is added to `CLAUDE.md`.
+ * - **cursor**: `.cursor/agents/{id}.md` is written (Cursor subagent format); Cursor
+ *   reads the `description` field to decide when to automatically delegate.
+ *
+ * Sub-agents reference skill and tool IDs already declared in the top-level
+ * `skills` and `tools` arrays — no separate installation is needed.
+ */
+export interface SubAgent {
+  /** Unique identifier. Used as the MCP server key (`capa-{id}`) and agent file name. */
+  id: string;
+  /**
+   * Human-readable description of this agent's role.
+   * For Cursor: written into the `description` frontmatter field which drives
+   * automatic delegation — make it specific about when to use this agent.
+   */
+  description?: string;
+  /**
+   * Skill IDs (from the top-level `skills` array) this agent uses.
+   * Listed in the generated agent files for context.
+   */
+  skills: string[];
+  /**
+   * Tool IDs (from the top-level `tools` array) this agent may call.
+   * Only these tools are exposed on the agent's filtered MCP endpoint.
+   */
+  tools: string[];
+  /**
+   * Optional markdown content appended to the agent file body.
+   * Use this for role-specific instructions, scope constraints, or rules.
+   */
+  instructions?: string;
+}
+
 export interface Capabilities {
   providers: string[];
   skills: Skill[];
@@ -163,6 +202,10 @@ export interface Capabilities {
   options?: CapabilitiesOptions;
   /** Manages content written to AGENTS.md / CLAUDE.md in the project root. */
   agents?: AgentFileConfig;
+  /**
+   * Named sub-agent configurations. See `SubAgent` for per-provider install behavior.
+   */
+  subagents?: SubAgent[];
 }
 
 export interface Skill {

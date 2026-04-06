@@ -30,6 +30,8 @@ tools:
   - id: tool-id
     type: mcp|command
     def: { ... }
+
+# subagents: [ { id, description?, skills, tools, instructions?, agents? } ]
 ```
 
 ## Skills Section (six types)
@@ -74,5 +76,48 @@ Manages `AGENTS.md` and (when `claude-code` in providers) `CLAUDE.md`.
 - **additional**: List of snippets. Each wrapped in `<!-- capa:start:id -->` … `<!-- capa:end:id -->`. Types: `inline` (id, content), `remote` (id, url), `github`/`gitlab` (def.repo; id optional). `def.repo` format: `owner/repo@filepath` with optional `:version` or `#sha`.
 
 `capa install` upserts and prunes by id. `capa clean` removes all capa-owned blocks; empty files are deleted.
+
+## Sub-Agents Section (`subagents`)
+
+Defines named sub-agent configurations. On `capa install`, each sub-agent produces:
+
+| Provider | MCP registration | Agent definition file | Notes |
+|---|---|---|---|
+| `claude-code` | `.mcp.json` → `capa-{id}` (filtered endpoint) | `.claude/agents/{id}.md` + `CLAUDE.md` block | Claude Code reads `.claude/agents/` for sub-agent definitions |
+| `cursor` | (none — main `capa` entry only) | `.cursor/agents/{id}.md` | Cursor reads `description` field to auto-delegate |
+
+The **filtered MCP endpoint** at `/{projectId}/agents/{id}/mcp` exposes only the tools declared in `tools`. Calls to other tools are rejected with a clear error.
+
+```yaml
+subagents:
+  - id: infra-agent
+    description: AWS CDK and Terraform specialist. Use when working in backend-infra/ or user-infra/.
+    skills:
+      - my-iac-skill          # skill IDs from the top-level skills array
+    tools:
+      - search_cdk_docs       # tool IDs from the top-level tools array
+      - validate_cfn
+    instructions: |
+      You are the infra-agent. Work exclusively in backend-infra/ and user-infra/.
+
+  - id: api-agent
+    description: Python Lambda and FastAPI specialist. Use for Lambda function work.
+    skills:
+      - my-serverless-skill
+    tools:
+      - get_lambda_guidance
+      - sam_logs
+    instructions: |
+      You are the api-agent. Work on Lambda functions only.
+```
+
+**Fields:**
+- `id` (required): Unique identifier. Used as the MCP key (`capa-{id}`) and agent file name.
+- `description` (optional): Role description. For Cursor this drives automatic delegation — be specific.
+- `skills` (required): List of skill IDs from the top-level `skills` array.
+- `tools` (required): List of tool IDs from the top-level `tools` array. Only these are exposed on the filtered MCP endpoint.
+- `instructions` (optional): Markdown text appended to the agent file body.
+
+**Cleanup:** On each `capa install`, sub-agents removed from the config are automatically unregistered and their agent files removed. `capa clean` removes all sub-agent registrations.
 
 For full YAML examples of every skill type, server type, security block, requiresCommands, tool defaults/group, and agents schema, see the original capability file docs or the examples in `references/workflows-and-examples.md`.
