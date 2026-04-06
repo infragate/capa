@@ -31,7 +31,7 @@ tools:
     type: mcp|command
     def: { ... }
 
-# sub_agents: [ { id, description?, skills, tools, instructions?, agents? } ]
+# subAgents: [ { id, description?, skills, tools, instructions?, agents? } ]
 ```
 
 ## Skills Section (six types)
@@ -77,7 +77,7 @@ Manages `AGENTS.md` and (when `claude-code` in providers) `CLAUDE.md`.
 
 `capa install` upserts and prunes by id. `capa clean` removes all capa-owned blocks; empty files are deleted.
 
-## Sub-Agents Section (`sub_agents`)
+## Sub-Agents Section (`subAgents`)
 
 Defines named sub-agent configurations. On `capa install`, each sub-agent produces:
 
@@ -89,7 +89,7 @@ Defines named sub-agent configurations. On `capa install`, each sub-agent produc
 The **filtered MCP endpoint** at `/{projectId}/agents/{id}/mcp` exposes only the tools declared in `tools`. Calls to other tools are rejected with a clear error.
 
 ```yaml
-sub_agents:
+subAgents:
   - id: infra-agent
     description: AWS CDK and Terraform specialist. Use when working in backend-infra/ or user-infra/.
     skills:

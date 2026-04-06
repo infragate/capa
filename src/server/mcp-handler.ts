@@ -135,8 +135,8 @@ export class CapaMCPServer {
    * sub-agent ID is not found in the current capabilities.
    */
   private getAgentAllowedToolIds(capabilities: Capabilities): Set<string> | null {
-    if (!this.agentId || !capabilities.sub_agents) return null;
-    const subAgent = capabilities.sub_agents.find((a) => a.id === this.agentId);
+    if (!this.agentId || !capabilities.subAgents) return null;
+    const subAgent = capabilities.subAgents.find((a) => a.id === this.agentId);
     if (!subAgent) return null;
     const allowed = new Set<string>();
     for (const toolId of subAgent.tools) {
