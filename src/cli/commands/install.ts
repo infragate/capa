@@ -15,11 +15,11 @@ import { displayIntegrationPrompt, getIntegrationsUrl, parseRepoUrl } from '../u
 import { getAgentConfig, agents } from 'skills/src/agents';
 import type { AgentType } from 'skills/src/types';
 import { VERSION } from '../../version';
-import { registerMCPServer } from '../utils/mcp-client-manager';
+import { registerMCPServer, registerSubAgentMCPServer, unregisterSubAgentMCPServer, purgeCursorSubAgentMCPEntries } from '../utils/mcp-client-manager';
 import { parseEnvFile } from '../../shared/env-parser';
 import { extractAllVariables } from '../../shared/variable-resolver';
 import { resolvePlugins } from './plugin-install';
-import { installAgentsFile } from '../utils/agents-file';
+import { installAgentsFile, installSubAgentInstructions, removeSubAgentInstructions } from '../utils/agents-file';
 import {
   loadBlockedPhrases,
   checkBlockedPhrases,
@@ -643,7 +643,56 @@ export async function installCommand(envFile?: string | boolean): Promise<void> 
   const mcpUrl = `${serverStatus.url}/${projectId}/mcp`;
   console.log('\n🔗 Registering MCP server with clients...');
   await registerMCPServer(projectPath, projectId, mcpUrl, capabilitiesToUse.providers);
-  
+
+  // Step 5a: Process sub-agents — register filtered endpoints + write instruction blocks
+  if (capabilitiesToUse.sub_agents && capabilitiesToUse.sub_agents.length > 0) {
+    console.log('\n🤖 Installing sub-agents...');
+
+    // Cursor no longer uses per-sub-agent MCP entries — purge any stale ones from prior installs
+    if (capabilitiesToUse.providers.some((p) => p.toLowerCase() === 'cursor')) {
+      await purgeCursorSubAgentMCPEntries(projectPath);
+    }
+
+    // Clean up sub-agents that were removed since the last install
+    const installedAgents = db.getSubAgents(projectId);
+    const currentAgentIds = new Set(capabilitiesToUse.sub_agents.map((a) => a.id));
+    for (const { agent_id } of installedAgents) {
+      if (!currentAgentIds.has(agent_id)) {
+        console.log(`  Removing sub-agent "${agent_id}" (no longer in capabilities)...`);
+        await unregisterSubAgentMCPServer(projectPath, agent_id, capabilitiesToUse.providers);
+        removeSubAgentInstructions(projectPath, agent_id, capabilitiesToUse.providers);
+        db.removeSubAgent(projectId, agent_id);
+      }
+    }
+
+    // Install or update each sub-agent
+    for (const subAgent of capabilitiesToUse.sub_agents) {
+      console.log(`\n  Sub-agent: ${subAgent.id}${subAgent.description ? ` — ${subAgent.description}` : ''}`);
+
+      // Register filtered MCP endpoint
+      const agentMcpUrl = `${serverStatus.url}/${projectId}/agents/${subAgent.id}/mcp`;
+      await registerSubAgentMCPServer(
+        projectPath,
+        subAgent.id,
+        agentMcpUrl,
+        capabilitiesToUse.providers
+      );
+
+      // Write instruction block to CLAUDE.md / AGENTS.md
+      installSubAgentInstructions(
+        projectPath,
+        subAgent,
+        capabilitiesToUse,
+        capabilitiesToUse.providers
+      );
+
+      // Track in DB for future cleanup
+      db.upsertSubAgent(projectId, subAgent.id);
+    }
+
+    console.log(`\n  ✓ ${capabilitiesToUse.sub_agents.length} sub-agent(s) installed`);
+  }
+
   db.close();
   
   // Step 6: Check if credential setup is needed

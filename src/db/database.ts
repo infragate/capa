@@ -144,6 +144,17 @@ export class CapaDatabase {
         FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
       )
     `);
+
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS sub_agents (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id TEXT NOT NULL,
+        agent_id TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        FOREIGN KEY (project_id) REFERENCES projects(id),
+        UNIQUE(project_id, agent_id)
+      )
+    `);
   }
 
   // Project operations
@@ -184,7 +195,32 @@ export class CapaDatabase {
     this.db.run('DELETE FROM oauth_tokens WHERE project_id = ?', [projectId]);
     this.db.run('DELETE FROM oauth_flow_state WHERE project_id = ?', [projectId]);
     this.db.run('DELETE FROM project_capabilities WHERE project_id = ?', [projectId]);
+    this.db.run('DELETE FROM sub_agents WHERE project_id = ?', [projectId]);
     this.db.run('DELETE FROM projects WHERE id = ?', [projectId]);
+  }
+
+  // Sub-agent operations
+  upsertSubAgent(projectId: string, agentId: string): void {
+    const now = Date.now();
+    this.db.run(
+      `INSERT INTO sub_agents (project_id, agent_id, created_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT(project_id, agent_id) DO NOTHING`,
+      [projectId, agentId, now]
+    );
+  }
+
+  getSubAgents(projectId: string): Array<{ agent_id: string }> {
+    return this.db.query(
+      'SELECT agent_id FROM sub_agents WHERE project_id = ?'
+    ).all(projectId) as Array<{ agent_id: string }>;
+  }
+
+  removeSubAgent(projectId: string, agentId: string): void {
+    this.db.run(
+      'DELETE FROM sub_agents WHERE project_id = ? AND agent_id = ?',
+      [projectId, agentId]
+    );
   }
 
   setProjectCapabilities(projectId: string, capabilitiesJson: string): void {
