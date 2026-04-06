@@ -645,7 +645,7 @@ export async function installCommand(envFile?: string | boolean): Promise<void> 
   await registerMCPServer(projectPath, projectId, mcpUrl, capabilitiesToUse.providers);
 
   // Step 5a: Process sub-agents — register filtered endpoints + write instruction blocks
-  if (capabilitiesToUse.subAgents && capabilitiesToUse.subAgents.length > 0) {
+  if (capabilitiesToUse.subagents && capabilitiesToUse.subagents.length > 0) {
     console.log('\n🤖 Installing sub-agents...');
 
     // Cursor no longer uses per-sub-agent MCP entries — purge any stale ones from prior installs
@@ -655,7 +655,7 @@ export async function installCommand(envFile?: string | boolean): Promise<void> 
 
     // Clean up sub-agents that were removed since the last install
     const installedAgents = db.getSubAgents(projectId);
-    const currentAgentIds = new Set(capabilitiesToUse.subAgents.map((a) => a.id));
+    const currentAgentIds = new Set(capabilitiesToUse.subagents.map((a) => a.id));
     for (const { agent_id } of installedAgents) {
       if (!currentAgentIds.has(agent_id)) {
         console.log(`  Removing sub-agent "${agent_id}" (no longer in capabilities)...`);
@@ -666,7 +666,7 @@ export async function installCommand(envFile?: string | boolean): Promise<void> 
     }
 
     // Install or update each sub-agent
-    for (const subAgent of capabilitiesToUse.subAgents) {
+    for (const subAgent of capabilitiesToUse.subagents) {
       console.log(`\n  Sub-agent: ${subAgent.id}${subAgent.description ? ` — ${subAgent.description}` : ''}`);
 
       // Register filtered MCP endpoint
@@ -690,7 +690,7 @@ export async function installCommand(envFile?: string | boolean): Promise<void> 
       db.upsertSubAgent(projectId, subAgent.id);
     }
 
-    console.log(`\n  ✓ ${capabilitiesToUse.subAgents.length} sub-agent(s) installed`);
+    console.log(`\n  ✓ ${capabilitiesToUse.subagents.length} sub-agent(s) installed`);
   }
 
   db.close();

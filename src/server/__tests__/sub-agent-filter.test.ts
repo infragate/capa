@@ -23,8 +23,8 @@ function getAllowedToolIds(
   agentId: string,
   capabilities: Capabilities
 ): Set<string> | null {
-  if (!capabilities.subAgents) return null;
-  const subAgent = capabilities.subAgents.find((a) => a.id === agentId);
+  if (!capabilities.subagents) return null;
+  const subAgent = capabilities.subagents.find((a) => a.id === agentId);
   if (!subAgent) return null;
   const allowed = new Set<string>();
   for (const toolId of subAgent.tools) {
@@ -47,7 +47,7 @@ const capabilities: Capabilities = {
     makeMCPTool('sam_logs', 'aws-serverless'),
     makeCommandTool('deploy', 'git'),
   ],
-  subAgents: [
+  subagents: [
     {
       id: 'infra-agent',
       description: 'IaC specialist',
@@ -92,8 +92,8 @@ describe('sub-agent tool filtering logic', () => {
     expect(getAllowedToolIds('ghost-agent', capabilities)).toBeNull();
   });
 
-  it('returns null when subAgents is absent', () => {
-    const cap: Capabilities = { ...capabilities, subAgents: undefined };
+  it('returns null when subagents is absent', () => {
+    const cap: Capabilities = { ...capabilities, subagents: undefined };
     expect(getAllowedToolIds('infra-agent', cap)).toBeNull();
   });
 
@@ -123,7 +123,7 @@ describe('sub-agent tool filtering logic', () => {
   it('tool id not in main tools list is silently skipped', () => {
     const cap: Capabilities = {
       ...capabilities,
-      subAgents: [
+      subagents: [
         {
           id: 'broken-agent',
           description: '',
