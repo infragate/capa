@@ -38,6 +38,10 @@
     "oauthFailed": "Failed to start OAuth flow",
     "notFound": "Not found"
   },
+  "notFound": {
+    "title": "Page not found",
+    "backToProjects": "Return to projects"
+  },
   "success": {
     "saved": "Configuration saved successfully",
     "disconnected": "Disconnected from {{name}}"

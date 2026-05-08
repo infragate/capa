@@ -25,7 +25,7 @@ export const projectsApi = {
 
   startOAuth: (projectId: string, serverId: string) =>
     api.post<OAuthStartResponse>(
-      `/api/projects/${projectId}/oauth/start?server=${serverId}`,
+      `/api/projects/${projectId}/oauth/start?server=${encodeURIComponent(serverId)}`,
     ),
 
   disconnectOAuth: (projectId: string, serverId: string) =>

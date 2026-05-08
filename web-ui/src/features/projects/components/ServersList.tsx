@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { Server, ToolSchema } from '../../../types/api';
-import { highlightText, matchesSearch, escapeHtml } from '../../../lib/utils';
+import { highlightText, matchesSearch } from '../../../lib/utils';
 import { SourceBadge } from '../../../components/common/ServerBadge';
 import { ServerToolsPanel } from './ServerToolsPanel';
 
