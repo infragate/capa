@@ -1,0 +1,71 @@
+import { useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
+import type { Integration } from '../../../types/api';
+import { integrationsApi } from '../api';
+import { StatusDot } from '../../../components/common/StatusDot';
+
+function GitLabIcon() {
+  return (
+    <svg viewBox="0 0 380 380" className="h-8 w-8">
+      <path fill="#e24329" d="M265.26416,174.37243l-.2134-.55822-21.19899-55.30908c-.4236-1.08359-1.18542-1.99642-2.17699-2.62689-.98837-.63373-2.14749-.93253-3.32305-.87014-1.1689.06239-2.29195.48925-3.20809,1.21821-.90957.73554-1.56629,1.73047-1.87493,2.85346l-14.31327,43.80662h-57.90965l-14.31327-43.80662c-.30864-1.12299-.96536-2.11791-1.87493-2.85346-.91614-.72895-2.03911-1.15582-3.20809-1.21821-1.17548-.06239-2.33468.23641-3.32297.87014-.99166.63047-1.75348,1.5433-2.17707,2.62689l-21.19891,55.31237-.21348.55493c-6.28158,16.38521-.92929,34.90803,13.05891,45.48782.02621.01641.04922.03611.07552.05582l.18719.14119,32.29094,24.17392,15.97151,12.09024,9.71951,7.34871c2.34117,1.77316,5.57877,1.77316,7.92002,0l9.71943-7.34871,15.96822-12.09024,32.48142-24.31511c.02958-.02299.05588-.04269.08538-.06568,13.97834-10.57977,19.32735-29.09604,13.04905-45.47796Z" />
+      <path fill="#fc6d26" d="M265.26416,174.37243l-.2134-.55822c-10.5174,2.16062-20.20405,6.6099-28.49844,12.81593-.1346.0985-25.20497,19.05805-46.55171,35.19699,15.84998,11.98517,29.6477,22.40405,29.6477,22.40405l32.48142-24.31511c.02958-.02299.05588-.04269.08538-.06568,13.97834-10.57977,19.32735-29.09604,13.04905-45.47796Z" />
+      <path fill="#fca326" d="M160.34962,244.23117l15.97151,12.09024,9.71951,7.34871c2.34117,1.77316,5.57877,1.77316,7.92002,0l9.71943-7.34871,15.96822-12.09024s-13.79772-10.41888-29.6477-22.40405c-15.85327,11.98517-29.65099,22.40405-29.65099,22.40405Z" />
+      <path fill="#fc6d26" d="M143.44561,186.63014c-8.29111-6.20274-17.97446-10.65531-28.49507-12.81264l-.21348.55493c-6.28158,16.38521-.92929,34.90803,13.05891,45.48782.02621.01641.04922.03611.07552.05582l.18719.14119,32.29094,24.17392s13.79772-10.41888,29.65099-22.40405c-21.34673-16.13894-46.42031-35.09848-46.55499-35.19699Z" />
+    </svg>
+  );
+}
+
+interface GitLabCardProps {
+  integration?: Integration;
+  onMessage: (text: string, type: 'success' | 'error') => void;
+  onDisconnect: (platform: string) => void;
+}
+
+export function GitLabCard({ integration, onMessage, onDisconnect }: GitLabCardProps) {
+  const { t } = useTranslation('integrations');
+  const connected = integration?.isConnected ?? false;
+
+  const handleConnect = useCallback(async () => {
+    try {
+      const data = await integrationsApi.startGitLabOAuth();
+      if (data.authorizationUrl) {
+        window.location.href = data.authorizationUrl;
+      } else {
+        onMessage(data.error || t('common:errors.oauthFailed'), 'error');
+      }
+    } catch (err) {
+      onMessage(`${t('common:errors.oauthFailed')}: ${(err as Error).message}`, 'error');
+    }
+  }, [onMessage, t]);
+
+  return (
+    <div className="rounded-sm border border-border-secondary bg-bg-tertiary p-5 transition-shadow hover:shadow-[var(--shadow-sm)]">
+      <div className="mb-3 flex items-center gap-3">
+        <div className="flex h-10 w-10 items-center justify-center rounded-md border border-border-tertiary bg-bg-secondary overflow-hidden">
+          <GitLabIcon />
+        </div>
+        <div className="text-base font-medium text-text-primary">{t('gitlab.name')}</div>
+      </div>
+      <div className="mb-4">
+        <StatusDot connected={connected} label={connected ? 'Connected' : 'Not connected'} />
+      </div>
+      {connected ? (
+        <button
+          onClick={() => {
+            if (confirm(t('gitlab.confirmDisconnect'))) onDisconnect('gitlab');
+          }}
+          className="w-full rounded-sm bg-error-btn px-6 py-2.5 text-sm font-medium text-white transition-colors hover:bg-error-btn-hover"
+        >
+          {t('common:actions.disconnect')}
+        </button>
+      ) : (
+        <button
+          onClick={handleConnect}
+          className="w-full rounded-sm bg-success-btn px-6 py-2.5 text-sm font-medium text-white transition-colors hover:bg-success-btn-hover"
+        >
+          {t('gitlab.connectButton')}
+        </button>
+      )}
+    </div>
+  );
+}

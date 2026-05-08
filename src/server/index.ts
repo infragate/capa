@@ -14,11 +14,8 @@ import { extractAllVariables } from '../shared/variable-resolver';
 import { VERSION } from '../version';
 import { logger } from '../shared/logger';
 
-// Import HTML files as text at compile time - this bundles them into the binary
-import homeHtml from '../../web-ui/home.html' with { type: 'text' };
-import indexHtml from '../../web-ui/index.html' with { type: 'text' };
-import projectHtml from '../../web-ui/project.html' with { type: 'text' };
-import integrationsHtml from '../../web-ui/integrations.html' with { type: 'text' };
+// Import the React SPA bundle as text at compile time - this bundles it into the binary
+import spaHtml from '../../web-ui/dist/index.html' with { type: 'text' };
 
 class CapaServer {
   private db!: CapaDatabase;
@@ -144,16 +141,10 @@ class CapaServer {
     }
 
 
-    // Home page
-    if (path === '/') {
-      this.logger.debug('Home page');
-      return this.handleHomePage();
-    }
-
-    // Web UI for credentials and project configuration
-    if (path === '/ui' || path.startsWith('/ui/')) {
-      this.logger.debug('Web UI');
-      return this.handleWebUI(request);
+    // SPA routes: home page and all /ui/* paths
+    if (path === '/' || path === '/ui' || path.startsWith('/ui/')) {
+      this.logger.debug('SPA');
+      return this.handleSpa();
     }
 
     // API endpoints
@@ -183,29 +174,8 @@ class CapaServer {
     return new Response('Not Found', { status: 404 });
   }
 
-  private async handleHomePage(): Promise<Response> {
-    return new Response(homeHtml as unknown as string, {
-      headers: { 'Content-Type': 'text/html' },
-    });
-  }
-
-
-
-  private async handleWebUI(request: Request): Promise<Response> {
-    const url = new URL(request.url);
-    const path = url.pathname;
-    
-    // Route to different UI pages
-    let htmlContent = indexHtml as unknown as string;
-    
-    if (path.startsWith('/ui/project')) {
-      htmlContent = projectHtml as unknown as string;
-    } else if (path.startsWith('/ui/integrations')) {
-      htmlContent = integrationsHtml as unknown as string;
-    }
-    
-    // Serve the HTML content
-    return new Response(htmlContent, {
+  private async handleSpa(): Promise<Response> {
+    return new Response(spaHtml as unknown as string, {
       headers: { 'Content-Type': 'text/html' },
     });
   }

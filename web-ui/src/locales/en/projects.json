@@ -1,0 +1,79 @@
+{
+  "title": "Projects",
+  "subtitle": "Manage your CAPA-enabled projects and configurations",
+  "filterPlaceholder": "Filter projects by name or path",
+  "columns": {
+    "project": "Project",
+    "skills": "Skills",
+    "tools": "Tools",
+    "servers": "Servers",
+    "lastUpdated": "Last Updated"
+  },
+  "empty": {
+    "title": "No projects configured",
+    "description": "Projects are automatically registered when you run capa install in a directory containing a capabilities.json or capabilities.yaml file."
+  },
+  "noResults": {
+    "title": "No projects found",
+    "description": "Try adjusting your search terms"
+  },
+  "detail": {
+    "title": "Project Configuration",
+    "subtitle": "Configure credentials and OAuth connections for this project",
+    "noProjectId": "No project ID specified",
+    "plugins": "Plugins",
+    "pluginsDescription": "Installed from remote repositories. Skills and servers from these plugins appear in the sections below.",
+    "capabilities": "Installed Capabilities",
+    "searchPlaceholder": "Search capabilities...",
+    "skills": "Skills",
+    "configuredTools": "Configured Tools",
+    "sections": {
+      "servers": "Servers"
+    },
+    "noSkills": "No skills installed",
+    "noTools": "No tools configured",
+    "noServers": "No servers configured",
+    "noSkillsMatch": "No skills match your search",
+    "noToolsMatch": "No tools match your search",
+    "noServersMatch": "No servers match your search"
+  },
+  "variables": {
+    "title": "Environment Variables",
+    "description": "These variables are required by your project's tools and services. Values are stored securely and encrypted."
+  },
+  "oauth": {
+    "title": "OAuth 2.0 Connections",
+    "description": "Connect to external services using OAuth 2.0 authentication. Click \"Connect\" to authorize access.",
+    "connectedTo": "Successfully connected to {{name}}",
+    "disconnectedFrom": "Disconnected from {{name}}",
+    "confirmDisconnect": "Disconnect from {{name}}?"
+  },
+  "noConfig": {
+    "title": "No configuration required",
+    "description": "This project doesn't require any credentials or OAuth connections."
+  },
+  "tokenSavings": {
+    "label": "Token savings vs. exposing all server tools",
+    "saved": "tokens saved",
+    "reduction": "reduction",
+    "overhead": "overhead",
+    "toolCounts": "{{proxied}} of {{total}} MCP tools proxied across {{serverCount}} server",
+    "toolCounts_other": "{{proxied}} of {{total}} MCP tools proxied across {{serverCount}} servers"
+  },
+  "tool": {
+    "from": "from",
+    "cmd": "cmd",
+    "requiredBy": "required by",
+    "noToolsOnServer": "No tools found on this server"
+  },
+  "stat": {
+    "skill": "skill",
+    "skills": "skills",
+    "tool": "tool",
+    "tools": "tools",
+    "server": "server",
+    "servers": "servers"
+  },
+  "openOnGitHub": "Open on GitHub",
+  "openOnGitLab": "Open on GitLab"
+}
