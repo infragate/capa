@@ -168,9 +168,13 @@ export function installRules(
 }
 
 /**
- * Remove all capa-managed rule files and rule marker blocks for all providers.
+ * Remove capa-managed rule files and rule marker blocks for all providers.
+ *
+ * @param ruleIds - IDs of rules to remove. When provided, only files matching
+ *   `{ruleId}{extension}` are deleted. When omitted / empty, nothing is deleted
+ *   from directory-based providers (avoiding accidental removal of user-authored files).
  */
-export function cleanRules(projectPath: string, providers: string[]): void {
+export function cleanRules(projectPath: string, providers: string[], ruleIds?: string[]): void {
   for (const pid of providers) {
     const provider = getProvider(pid);
     if (!provider) continue;
@@ -179,7 +183,12 @@ export function cleanRules(projectPath: string, providers: string[]): void {
       const rulesDir = join(projectPath, provider.rules.dir);
       if (!existsSync(rulesDir)) continue;
 
-      const files = readdirSync(rulesDir).filter((f) => f.endsWith(provider.rules!.extension));
+      const managedNames = new Set(
+        (ruleIds ?? []).map((id) => `${id}${provider.rules!.extension}`)
+      );
+      const files = readdirSync(rulesDir)
+        .filter((f) => f.endsWith(provider.rules!.extension))
+        .filter((f) => managedNames.size === 0 ? false : managedNames.has(f));
       for (const file of files) {
         unlinkSync(join(rulesDir, file));
       }

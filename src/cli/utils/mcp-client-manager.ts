@@ -16,8 +16,12 @@ export async function registerMCPServer(
   for (const clientName of clients) {
     const provider = getProvider(clientName);
 
-    if (!provider?.mcp) {
-      console.warn(`  ⚠ Unknown MCP client: ${clientName} (skipping MCP registration)`);
+    if (!provider) {
+      console.warn(`  ⚠ Unknown provider: ${clientName} (skipping MCP registration)`);
+      continue;
+    }
+    if (!provider.mcp) {
+      console.warn(`  ⚠ ${provider.displayName} does not support project-level MCP configuration (skipping)`);
       continue;
     }
 

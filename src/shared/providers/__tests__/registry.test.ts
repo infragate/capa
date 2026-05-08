@@ -372,7 +372,7 @@ describe('Codex rules as AGENTS.md marker blocks', () => {
     const rules = [{ id: 'r1', type: 'inline' as const, content: 'Rule content.' }];
     const content = new Map([['r1', 'Rule content.']]);
     installRules(tempDir, rules, ['codex'], content);
-    cleanRules(tempDir, ['codex']);
+    cleanRules(tempDir, ['codex'], ['r1']);
 
     const agentsMd = readFileSync(join(tempDir, 'AGENTS.md'), 'utf-8');
     expect(agentsMd).not.toContain('<!-- capa:start:rule:r1 -->');
@@ -417,14 +417,18 @@ describe('Cursor rules as .mdc files', () => {
     expect(content).toContain('Use 2-space indentation.');
   });
 
-  it('cleanRules removes .mdc files from .cursor/rules/', async () => {
+  it('cleanRules removes only capa-managed .mdc files from .cursor/rules/', async () => {
     const { installRules, cleanRules } = await import('../../../cli/utils/rules-installer');
     const rules = [{ id: 'r1', type: 'inline' as const, content: 'Rule.' }];
     installRules(tempDir, rules, ['cursor'], new Map([['r1', 'Rule.']]));
     expect(existsSync(join(tempDir, '.cursor', 'rules', 'r1.mdc'))).toBe(true);
 
-    cleanRules(tempDir, ['cursor']);
+    // Write a user-authored .mdc file that should NOT be deleted
+    writeFileSync(join(tempDir, '.cursor', 'rules', 'user-rule.mdc'), 'My custom rule', 'utf-8');
+
+    cleanRules(tempDir, ['cursor'], ['r1']);
     expect(existsSync(join(tempDir, '.cursor', 'rules', 'r1.mdc'))).toBe(false);
+    expect(existsSync(join(tempDir, '.cursor', 'rules', 'user-rule.mdc'))).toBe(true);
   });
 });
 
