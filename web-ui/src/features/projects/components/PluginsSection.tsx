@@ -4,7 +4,7 @@ import { BookOpen, Wrench, Server } from 'lucide-react';
 import type { ResolvedPlugin, Skill, Tool, Server as ServerType } from '../../../types/api';
 import { SourceBadge } from '../../../components/common/ServerBadge';
 
-import { GitHubIcon, GitLabIcon } from '../../../components/icons/BrandIcons';
+import { FaGithub, FaGitlab } from 'react-icons/fa';
 
 interface PluginStats {
   skills: number;
@@ -88,9 +88,9 @@ export function PluginsSection({ plugins, skills = [], tools = [], servers = [] 
                     title={isGitHub ? t('openOnGitHub') : t('openOnGitLab')}
                   >
                     {isGitHub ? (
-                      <GitHubIcon className="h-5 w-5" />
+                      <FaGithub className="h-5 w-5" />
                     ) : (
-                      <GitLabIcon className="h-5 w-5" />
+                      <FaGitlab className="h-5 w-5" />
                     )}
                   </a>
                 )}

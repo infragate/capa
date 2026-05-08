@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom';
 import { GitBranch, BookOpen } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { GitHubIcon } from '../icons/BrandIcons';
+import { FaGithub } from 'react-icons/fa';
 
 export function NavLinks() {
   const { t } = useTranslation();
@@ -33,7 +33,7 @@ export function NavLinks() {
         className="flex items-center rounded-sm p-2 text-text-secondary no-underline transition-colors hover:bg-hover-bg"
         title={t('nav.github')}
       >
-        <GitHubIcon className="h-4 w-4" />
+        <FaGithub className="h-4 w-4" />
       </a>
     </div>
   );
