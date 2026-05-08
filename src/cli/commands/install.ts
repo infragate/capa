@@ -1,8 +1,7 @@
-import { existsSync, mkdirSync, writeFileSync, rmSync, readdirSync, statSync, readFileSync } from 'fs';
+import { existsSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSync } from 'fs';
 import { resolve, join, dirname, basename } from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import { tmpdir } from 'os';
 import { detectCapabilitiesFile, generateProjectId } from '../../shared/paths';
 import { parseCapabilitiesFile } from '../../shared/capabilities';
 import { ensureServer } from '../utils/server-manager';
@@ -31,8 +30,26 @@ import {
   BlockedPhraseError,
   reportBlockedPhraseAndExit,
 } from '../../shared/skill-security';
+import { getOrCreateSnapshot, type CachePlatform, type GetSnapshotResult } from '../../shared/cache';
+import { LockfileBuilder, loadLockfile, saveLockfile } from '../../shared/lockfile';
+import type { LockSkillEntry } from '../../types/lockfile';
 
 const execAsync = promisify(exec);
+
+export interface InstallOptions {
+  /** Path to a .env file (or boolean true to use ./.env). Mirrors the existing API. */
+  envFile?: string | boolean;
+  /** When true, ignore lockfile + on-disk cache and re-resolve every remote source. */
+  noCache?: boolean;
+}
+
+/** Type signature for the snapshot resolver passed into resolvePlugins. */
+export type GetRepoSnapshotFn = (
+  platform: CachePlatform,
+  repoPath: string,
+  authFetch: AuthenticatedFetch,
+  opts?: { version?: string; ref?: string; pinnedSha?: string; noCache?: boolean }
+) => Promise<GetSnapshotResult>
 
 /**
  * Verify that all required CLI commands are available on the system.
@@ -140,169 +157,110 @@ async function checkGitInstalled(): Promise<boolean> {
 }
 
 /**
- * Clone a git repository to a temporary directory
+ * Translate raw git/exec errors into the same friendly messages capa
+ * has historically surfaced from `cloneRepository`.
  */
-async function cloneRepository(
-  platform: 'github' | 'gitlab',
+function explainGitError(
+  error: any,
+  platform: CachePlatform,
   repoPath: string,
-  authFetch: AuthenticatedFetch,
-  version?: string,    // Tag or version to checkout (e.g., "1.2.1" or "v1.2.1")
-  ref?: string         // Commit SHA to checkout (e.g., "abc123def456...")
-): Promise<string> {
-  const tempDir = join(tmpdir(), 'capa-skills', `${platform}-${repoPath.replace(/\//g, '-')}-${Date.now()}`);
-  mkdirSync(tempDir, { recursive: true });
+  hasAuth: boolean
+): Error {
+  const errorMessage: string = error?.stderr || error?.message || '';
 
-  // Construct repo URL with authentication if available
-  let repoUrl: string;
-  const hasAuth = authFetch.hasAuth(`https://${platform}.com/${repoPath}`);
-  
-  if (platform === 'github') {
-    if (hasAuth) {
-      const token = authFetch.getTokenForUrl(`https://github.com/${repoPath}`);
-      repoUrl = `https://oauth2:${token}@github.com/${repoPath}.git`;
-    } else {
-      repoUrl = `https://github.com/${repoPath}.git`;
-    }
-  } else { // gitlab
-    if (hasAuth) {
-      const token = authFetch.getTokenForUrl(`https://gitlab.com/${repoPath}`);
-      repoUrl = `https://oauth2:${token}@gitlab.com/${repoPath}.git`;
-    } else {
-      repoUrl = `https://gitlab.com/${repoPath}.git`;
-    }
+  if (errorMessage.includes('git: command not found') ||
+      errorMessage.includes("'git' is not recognized") ||
+      errorMessage.includes('git: not found') ||
+      error?.code === 'ENOENT') {
+    return new Error(
+      `Git is not installed on your system.\n\n` +
+      `    CAPA requires Git to clone repositories and install skills.\n\n` +
+      `    Please install Git:\n` +
+      `    • Windows: https://git-scm.com/download/win\n` +
+      `    • macOS:   brew install git  (or download from https://git-scm.com)\n` +
+      `    • Linux:   sudo apt install git  (Ubuntu/Debian)\n` +
+      `               sudo yum install git  (CentOS/RHEL)\n\n` +
+      `    After installing Git, run: capa install`
+    );
   }
 
-  try {
-    if (ref) {
-      // Clone full repo when checking out specific commit SHA
-      // (can't use --depth 1 because we need the specific commit)
-      await execAsync(`git clone "${repoUrl}" "${tempDir}"`);
-      await execAsync(`git -C "${tempDir}" checkout ${ref}`);
-    } else if (version) {
-      // Clone with branch/tag specified
-      await execAsync(`git clone --depth 1 --branch "${version}" "${repoUrl}" "${tempDir}"`);
+  if (errorMessage.includes('could not be found') ||
+      errorMessage.includes('not found') ||
+      errorMessage.includes("don't have permission")) {
+    const platformName = platform === 'github' ? 'GitHub' : 'GitLab';
+    const repoUrl = `https://${platform}.com/${repoPath}`;
+    let friendlyMessage = `Repository not accessible: ${repoPath}\n\n`;
+    if (hasAuth) {
+      friendlyMessage += `    Possible reasons:\n`;
+      friendlyMessage += `    • Repository doesn't exist at ${repoUrl}\n`;
+      friendlyMessage += `    • Repository path is misspelled (check owner/repo)\n`;
+      friendlyMessage += `    • Your ${platformName} token doesn't have access to this repository\n`;
+      friendlyMessage += `    • Repository is in a different ${platformName} instance (use self-managed for enterprise)\n\n`;
+      friendlyMessage += `    Please verify:\n`;
+      friendlyMessage += `    1. The repository exists and the path is correct\n`;
+      friendlyMessage += `    2. Your ${platformName} account has access to the repository\n`;
+      friendlyMessage += `    3. The repository is on ${platform}.com (not a self-managed instance)`;
     } else {
-      // Default: clone with depth 1
-      await execAsync(`git clone --depth 1 "${repoUrl}" "${tempDir}"`);
-      
-      // Try to get latest tag and checkout if available
-      try {
-        const { stdout: tags } = await execAsync(`git -C "${tempDir}" ls-remote --tags origin`);
-        if (tags.trim()) {
-          // Parse tags and find latest semantic version
-          const tagLines = tags.trim().split('\n');
-          const versionTags = tagLines
-            .map(line => {
-              const match = line.match(/refs\/tags\/(v?\d+\.\d+\.\d+)(?:\^\{\})?$/);
-              return match ? match[1] : null;
-            })
-            .filter((tag): tag is string => tag !== null);
-          
-          if (versionTags.length > 0) {
-            // Sort by semantic version and get the latest
-            const latestTag = versionTags.sort((a, b) => {
-              const parseVer = (v: string) => v.replace(/^v/, '').split('.').map(Number);
-              const [aMaj, aMin, aPat] = parseVer(a);
-              const [bMaj, bMin, bPat] = parseVer(b);
-              return (bMaj - aMaj) || (bMin - aMin) || (bPat - aPat);
-            })[0];
-            
-            await execAsync(`git -C "${tempDir}" fetch --depth 1 origin tag "${latestTag}"`);
-            await execAsync(`git -C "${tempDir}" checkout "${latestTag}"`);
-          }
-        }
-      } catch {
-        // No tags or error fetching, use current HEAD (default branch)
-      }
+      friendlyMessage += `    This repository appears to be private or doesn't exist.\n\n`;
+      friendlyMessage += `    If this is a private repository:\n`;
+      friendlyMessage += `    1. Run: capa start\n`;
+      friendlyMessage += `    2. Open the integrations page in your browser\n`;
+      friendlyMessage += `    3. Connect your ${platformName} account\n`;
+      friendlyMessage += `    4. Run: capa install (again)\n\n`;
+      friendlyMessage += `    If this is a public repository:\n`;
+      friendlyMessage += `    • Verify the repository path: ${repoUrl}`;
     }
-    return tempDir;
-  } catch (error: any) {
-    // Clean up on failure
-    try {
-      rmSync(tempDir, { recursive: true, force: true });
-    } catch {}
-    
-    // Parse error message to provide friendly feedback
-    const errorMessage = error.stderr || error.message || '';
-    
-    // Git not installed
-    if (errorMessage.includes('git: command not found') || 
-        errorMessage.includes("'git' is not recognized") ||
-        errorMessage.includes('git: not found') ||
-        error.code === 'ENOENT') {
-      throw new Error(
-        `Git is not installed on your system.\n\n` +
-        `    CAPA requires Git to clone repositories and install skills.\n\n` +
-        `    Please install Git:\n` +
-        `    • Windows: https://git-scm.com/download/win\n` +
-        `    • macOS:   brew install git  (or download from https://git-scm.com)\n` +
-        `    • Linux:   sudo apt install git  (Ubuntu/Debian)\n` +
-        `               sudo yum install git  (CentOS/RHEL)\n\n` +
-        `    After installing Git, run: capa install`
-      );
-    }
-    
-    // Repository not found or permission denied
-    if (errorMessage.includes('could not be found') || 
-        errorMessage.includes('not found') || 
-        errorMessage.includes("don't have permission")) {
-      
-      const platformName = platform === 'github' ? 'GitHub' : 'GitLab';
-      const repoUrl = `https://${platform}.com/${repoPath}`;
-      
-      let friendlyMessage = `Repository not accessible: ${repoPath}\n\n`;
-      
-      if (hasAuth) {
-        // User is authenticated but still can't access
-        friendlyMessage += `    Possible reasons:\n`;
-        friendlyMessage += `    • Repository doesn't exist at ${repoUrl}\n`;
-        friendlyMessage += `    • Repository path is misspelled (check owner/repo)\n`;
-        friendlyMessage += `    • Your ${platformName} token doesn't have access to this repository\n`;
-        friendlyMessage += `    • Repository is in a different ${platformName} instance (use self-managed for enterprise)\n\n`;
-        friendlyMessage += `    Please verify:\n`;
-        friendlyMessage += `    1. The repository exists and the path is correct\n`;
-        friendlyMessage += `    2. Your ${platformName} account has access to the repository\n`;
-        friendlyMessage += `    3. The repository is on ${platform}.com (not a self-managed instance)`;
-      } else {
-        // User is not authenticated
-        friendlyMessage += `    This repository appears to be private or doesn't exist.\n\n`;
-        friendlyMessage += `    If this is a private repository:\n`;
-        friendlyMessage += `    1. Run: capa start\n`;
-        friendlyMessage += `    2. Open the integrations page in your browser\n`;
-        friendlyMessage += `    3. Connect your ${platformName} account\n`;
-        friendlyMessage += `    4. Run: capa install (again)\n\n`;
-        friendlyMessage += `    If this is a public repository:\n`;
-        friendlyMessage += `    • Verify the repository path: ${repoUrl}`;
-      }
-      
-      throw new Error(friendlyMessage);
-    }
-    
-    // Authentication failed
-    if (errorMessage.includes('Authentication failed') || 
-        errorMessage.includes('could not read Username')) {
-      throw new Error(
-        `Authentication failed for ${platform}.com\n\n` +
-        `    Your access token may have expired or been revoked.\n` +
-        `    Please reconnect your ${platform === 'github' ? 'GitHub' : 'GitLab'} account in the integrations page.`
-      );
-    }
-    
-    // Network or other error
-    if (errorMessage.includes('unable to access') || 
-        errorMessage.includes('Could not resolve host')) {
-      throw new Error(
-        `Network error: Unable to connect to ${platform}.com\n\n` +
-        `    Please check your internet connection and try again.`
-      );
-    }
-    
-    // Generic git error - provide a sanitized message
-    throw new Error(
-      `Failed to clone repository: ${repoPath}\n\n` +
-      `    Git error: ${errorMessage.split('\n').find((line: string) => line.includes('fatal:') || line.includes('error:')) || 'Unknown error'}\n` +
-      `    Repository: https://${platform}.com/${repoPath}`
+    return new Error(friendlyMessage);
+  }
+
+  if (errorMessage.includes('Authentication failed') ||
+      errorMessage.includes('could not read Username')) {
+    return new Error(
+      `Authentication failed for ${platform}.com\n\n` +
+      `    Your access token may have expired or been revoked.\n` +
+      `    Please reconnect your ${platform === 'github' ? 'GitHub' : 'GitLab'} account in the integrations page.`
     );
+  }
+
+  if (errorMessage.includes('unable to access') ||
+      errorMessage.includes('Could not resolve host')) {
+    return new Error(
+      `Network error: Unable to connect to ${platform}.com\n\n` +
+      `    Please check your internet connection and try again.`
+    );
+  }
+
+  return new Error(
+    `Failed to clone repository: ${repoPath}\n\n` +
+    `    Git error: ${errorMessage.split('\n').find((line: string) => line.includes('fatal:') || line.includes('error:')) || 'Unknown error'}\n` +
+    `    Repository: https://${platform}.com/${repoPath}`
+  );
+}
+
+/**
+ * Cache-aware replacement for the legacy `cloneRepository` helper. Returns a
+ * stable on-disk snapshot of the repo at the resolved commit SHA. The
+ * snapshot directory is owned by the cache and must NOT be deleted by callers.
+ */
+async function getRepoSnapshot(
+  platform: CachePlatform,
+  repoPath: string,
+  authFetch: AuthenticatedFetch,
+  opts: { version?: string; ref?: string; pinnedSha?: string; noCache?: boolean } = {}
+): Promise<GetSnapshotResult> {
+  const hasAuth = authFetch.hasAuth(`https://${platform}.com/${repoPath}`);
+  try {
+    return await getOrCreateSnapshot({
+      platform,
+      repoPath,
+      authFetch,
+      version: opts.version,
+      ref: opts.ref,
+      pinnedSha: opts.pinnedSha,
+      noCache: opts.noCache,
+    });
+  } catch (error: any) {
+    throw explainGitError(error, platform, repoPath, hasAuth);
   }
 }
 
@@ -384,9 +342,22 @@ function readSkillFromDirectory(skillMdPath: string): {
   return { markdown, additionalFiles };
 }
 
-export async function installCommand(envFile?: string | boolean): Promise<void> {
+export async function installCommand(
+  envFileOrOptions?: string | boolean | InstallOptions
+): Promise<void> {
+  // Backwards compatibility: callers may pass either the legacy `envFile`
+  // string/boolean or the new `InstallOptions` object.
+  let envFile: string | boolean | undefined;
+  let noCache = false;
+  if (typeof envFileOrOptions === 'object' && envFileOrOptions !== null) {
+    envFile = envFileOrOptions.envFile;
+    noCache = !!envFileOrOptions.noCache;
+  } else {
+    envFile = envFileOrOptions;
+  }
+
   const projectPath = process.cwd();
-  
+
   // Detect capabilities file
   const capabilitiesFile = await detectCapabilitiesFile(projectPath);
   if (!capabilitiesFile) {
@@ -431,6 +402,17 @@ export async function installCommand(envFile?: string | boolean): Promise<void> 
   // Register project
   db.upsertProject({ id: projectId, path: projectPath });
 
+  // Load existing lockfile (if any). When --no-cache is set we ignore it for
+  // resolution but still keep the existing entries as a starting point so the
+  // pruning logic at the end produces a clean lockfile.
+  const existingLockfile = await loadLockfile(projectPath);
+  const lockBuilder = new LockfileBuilder(noCache ? null : existingLockfile);
+  if (noCache) {
+    console.log('\n⚠  --no-cache: ignoring existing lockfile and on-disk cache');
+  } else if (existingLockfile) {
+    console.log(`Using lockfile: ${capabilitiesFile.path.replace(/capabilities\.(yaml|json)$/, 'capabilities.lock')}`);
+  }
+
   // Resolve plugins first so merged capabilities (including plugin servers/tools) are used for env and configure
   let capabilitiesToUse = capabilities;
   if (capabilities.plugins && capabilities.plugins.length > 0) {
@@ -443,9 +425,11 @@ export async function installCommand(envFile?: string | boolean): Promise<void> 
         projectId,
         authFetch,
         db,
-        (platform, repoPath, auth, version?, ref?) =>
-          cloneRepository(platform, repoPath, auth, version, ref),
-        capabilitiesFile.path
+        (platform, repoPath, auth, opts) =>
+          getRepoSnapshot(platform, repoPath, auth, opts),
+        capabilitiesFile.path,
+        lockBuilder,
+        { noCache }
       );
       capabilitiesToUse = mergedCapabilities;
       for (const dir of tempDirsToCleanup) {
@@ -553,8 +537,40 @@ export async function installCommand(envFile?: string | boolean): Promise<void> 
     db,
     settings,
     capabilitiesToUse,
-    capabilitiesFile.path
+    capabilitiesFile.path,
+    lockBuilder,
+    noCache
   );
+
+  // Persist the lockfile after all remote resolutions are done. Prune entries
+  // for skills/plugins that are no longer in the capabilities file.
+  const skillIdsForLock = new Set(
+    capabilities.skills
+      .filter((s) => s.type === 'github' || s.type === 'gitlab')
+      .map((s) => s.id)
+  );
+  const pluginIdsForLock = new Set(
+    (capabilitiesToUse.resolvedPlugins ?? []).map((p) => p.id)
+  );
+  lockBuilder.pruneToIds(skillIdsForLock, pluginIdsForLock);
+  const lockfileToSave = lockBuilder.build();
+  if (lockfileToSave.skills.length === 0 && lockfileToSave.plugins.length === 0) {
+    // Nothing to lock; remove any pre-existing lockfile so the project doesn't
+    // carry stale entries forward.
+    try {
+      const lockPath = join(projectPath, 'capabilities.lock');
+      if (existsSync(lockPath)) {
+        rmSync(lockPath, { force: true });
+      }
+    } catch {}
+  } else {
+    try {
+      await saveLockfile(projectPath, lockfileToSave);
+      console.log(`  ✓ Wrote capabilities.lock (${lockfileToSave.skills.length} skill(s), ${lockfileToSave.plugins.length} plugin(s))`);
+    } catch (err: any) {
+      console.warn(`  ⚠ Failed to write capabilities.lock: ${err.message}`);
+    }
+  }
   
   // Step 3: Install agent instructions files (AGENTS.md and/or CLAUDE.md) if configured
   if (capabilities.agents) {
@@ -810,7 +826,9 @@ async function installSkills(
   db: CapaDatabase,
   settings: any,
   capabilities: Capabilities,
-  capabilitiesFilePath: string
+  capabilitiesFilePath: string,
+  lockBuilder: LockfileBuilder,
+  noCache: boolean
 ): Promise<void> {
   const authFetch = createAuthenticatedFetch(db);
   
@@ -832,16 +850,12 @@ async function installSkills(
       process.exit(1);
     }
   }
-  
-  // Track cloned repositories to avoid cloning the same repo multiple times
-  // Key: "platform:repoPath", Value: cloned directory path
-  const clonedRepos = new Map<string, string>();
-  
-  // Track all temp directories for cleanup
-  const tempDirs: string[] = [];
-  
-  try {
-    for (const skill of skills) {
+
+  // Per-call cache so two skills coming from the same repo+ref share one
+  // resolution (saves a redundant `git fetch` even when both hit the cache).
+  const resolvedRepos = new Map<string, GetSnapshotResult>();
+
+  for (const skill of skills) {
       console.log(`  Installing skill: ${skill.id}`);
     
     let skillMarkdown: string;
@@ -870,46 +884,74 @@ async function installSkills(
         console.error(`    ${error.message || error}`);
         continue;
       }
-    } else if (skill.type === 'github' && skill.def.repo) {
-      // GitHub skill - clone repository and search for skill
+    } else if ((skill.type === 'github' || skill.type === 'gitlab') && skill.def.repo) {
+      // GitHub/GitLab skill - resolve a snapshot (cache + lockfile aware)
+      const platform: CachePlatform = skill.type;
+      const platformLabel = platform === 'github' ? 'GitHub' : 'GitLab';
       try {
         // Parse repo string: "owner/repo@skill" or "owner/repo@skill:version" or "owner/repo@skill#sha"
         const repoWithoutVersionOrRef = skill.def.repo.split(/[:#]/)[0];
         const [repoPath, skillName] = repoWithoutVersionOrRef.split('@');
         if (!repoPath || !skillName) {
-          throw new Error('Invalid GitHub repo format. Use: owner/repo@skill-name');
+          throw new Error(`Invalid ${platformLabel} repo format. Use: owner/repo@skill-name`);
         }
-        
-        // Extract version or ref from skill.def
+
         const version = skill.def.version;
         const ref = skill.def.ref;
-        
-        // Check if we've already cloned this repo (with same version/ref)
-        const repoKey = `github:${repoPath}${version ? ':' + version : ''}${ref ? '#' + ref : ''}`;
-        let repoDir = clonedRepos.get(repoKey);
-        
-        if (!repoDir) {
-          // Clone the repository
-          const versionInfo = version ? ` (version: ${version})` : ref ? ` (commit: ${ref})` : '';
-          console.log(`    Cloning repository: ${repoPath}${versionInfo}...`);
+
+        const repoKey = `${platform}:${repoPath}${version ? ':' + version : ''}${ref ? '#' + ref : ''}`;
+        let snapshot = resolvedRepos.get(repoKey);
+
+        if (!snapshot) {
+          const lockEntry = noCache
+            ? null
+            : lockBuilder.findSkill(skill.id, version ?? null, ref ?? null);
+          const pinnedSha = lockEntry?.resolvedRef;
+
+          const sourceLabel = pinnedSha
+            ? ` (cached @ ${pinnedSha.slice(0, 7)})`
+            : version
+              ? ` (version: ${version})`
+              : ref
+                ? ` (commit: ${ref})`
+                : '';
+          console.log(`    Resolving repository: ${repoPath}${sourceLabel}...`);
+
           try {
-            repoDir = await cloneRepository('github', repoPath, authFetch, version, ref);
-            clonedRepos.set(repoKey, repoDir);
-            tempDirs.push(repoDir);
+            snapshot = await getRepoSnapshot(platform, repoPath, authFetch, {
+              version,
+              ref,
+              pinnedSha,
+              noCache,
+            });
+            resolvedRepos.set(repoKey, snapshot);
           } catch (error: any) {
-            if (error.message.includes('Unable to clone repository') && !authFetch.hasAuth(`https://github.com/${repoPath}`)) {
+            if (error.message.includes('Unable to clone repository') && !authFetch.hasAuth(`https://${platform}.com/${repoPath}`)) {
               const integrationsUrl = getIntegrationsUrl(settings.server.host, settings.server.port);
               console.error(`\n  ✗ ${error.message}`);
-              displayIntegrationPrompt('GitHub', integrationsUrl);
+              displayIntegrationPrompt(platformLabel, integrationsUrl);
               process.exit(1);
             }
             throw error;
           }
         }
-        
-        // Search for skills in the cloned repository
-        const foundSkills = findSkillsInDirectory(repoDir);
-        
+
+        // Record the resolution in the lockfile builder.
+        const lockEntry: LockSkillEntry = {
+          id: skill.id,
+          source: platform,
+          repo: repoPath,
+          skillName,
+          requestedVersion: version ?? null,
+          requestedRef: ref ?? null,
+          resolvedRef: snapshot.resolvedSha,
+          resolvedVersion: snapshot.resolvedVersion ?? null,
+        };
+        lockBuilder.upsertSkill(lockEntry);
+
+        // Search for the skill in the snapshot
+        const foundSkills = findSkillsInDirectory(snapshot.snapshotDir);
+
         if (!foundSkills.has(skillName)) {
           throw new Error(
             `Skill "${skillName}" not found in repository.\n` +
@@ -918,75 +960,14 @@ async function installSkills(
             `    Tip: Check the skill name matches a directory containing SKILL.md`
           );
         }
-        
-        // Read the skill and its additional files
+
         const skillMdPath = foundSkills.get(skillName)!;
         const skillData = readSkillFromDirectory(skillMdPath);
         skillMarkdown = skillData.markdown;
         additionalFiles = skillData.additionalFiles;
-        
+
       } catch (error: any) {
-        console.error(`  ✗ Failed to install skill from GitHub:`);
-        console.error(`    ${error.message || error}`);
-        continue;
-      }
-    } else if (skill.type === 'gitlab' && skill.def.repo) {
-      // GitLab skill - clone repository and search for skill
-      try {
-        // Parse repo string: "group/repo@skill" or "group/repo@skill:version" or "group/repo@skill#sha"
-        const repoWithoutVersionOrRef = skill.def.repo.split(/[:#]/)[0];
-        const [repoPath, skillName] = repoWithoutVersionOrRef.split('@');
-        if (!repoPath || !skillName) {
-          throw new Error('Invalid GitLab repo format. Use: owner/repo@skill-name');
-        }
-        
-        // Extract version or ref from skill.def
-        const version = skill.def.version;
-        const ref = skill.def.ref;
-        
-        // Check if we've already cloned this repo (with same version/ref)
-        const repoKey = `gitlab:${repoPath}${version ? ':' + version : ''}${ref ? '#' + ref : ''}`;
-        let repoDir = clonedRepos.get(repoKey);
-        
-        if (!repoDir) {
-          // Clone the repository
-          const versionInfo = version ? ` (version: ${version})` : ref ? ` (commit: ${ref})` : '';
-          console.log(`    Cloning repository: ${repoPath}${versionInfo}...`);
-          try {
-            repoDir = await cloneRepository('gitlab', repoPath, authFetch, version, ref);
-            clonedRepos.set(repoKey, repoDir);
-            tempDirs.push(repoDir);
-          } catch (error: any) {
-            if (error.message.includes('Unable to clone repository') && !authFetch.hasAuth(`https://gitlab.com/${repoPath}`)) {
-              const integrationsUrl = getIntegrationsUrl(settings.server.host, settings.server.port);
-              console.error(`\n  ✗ ${error.message}`);
-              displayIntegrationPrompt('GitLab', integrationsUrl);
-              process.exit(1);
-            }
-            throw error;
-          }
-        }
-        
-        // Search for skills in the cloned repository
-        const foundSkills = findSkillsInDirectory(repoDir);
-        
-        if (!foundSkills.has(skillName)) {
-          throw new Error(
-            `Skill "${skillName}" not found in repository.\n` +
-            `    Repository: ${repoPath}\n` +
-            `    Available skills: ${Array.from(foundSkills.keys()).join(', ') || 'none'}\n` +
-            `    Tip: Check the skill name matches a directory containing SKILL.md`
-          );
-        }
-        
-        // Read the skill and its additional files
-        const skillMdPath = foundSkills.get(skillName)!;
-        const skillData = readSkillFromDirectory(skillMdPath);
-        skillMarkdown = skillData.markdown;
-        additionalFiles = skillData.additionalFiles;
-        
-      } catch (error: any) {
-        console.error(`  ✗ Failed to install skill from GitLab:`);
+        console.error(`  ✗ Failed to install skill from ${platformLabel}:`);
         console.error(`    ${error.message || error}`);
         continue;
       }
@@ -1162,19 +1143,6 @@ async function installSkills(
       db.addManagedFile(projectId, skillDir);
       
       console.log(`    ✓ Installed to ${skillDir}`);
-    }
-  }
-  } finally {
-    // Clean up all cloned repositories
-    if (tempDirs.length > 0) {
-      console.log(`\n🧹 Cleaning up ${tempDirs.length} temporary ${tempDirs.length === 1 ? 'directory' : 'directories'}...`);
-      for (const dir of tempDirs) {
-        try {
-          rmSync(dir, { recursive: true, force: true });
-        } catch (error) {
-          // Ignore cleanup errors
-        }
-      }
     }
   }
 }

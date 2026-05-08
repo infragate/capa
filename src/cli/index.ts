@@ -11,6 +11,7 @@ import { addCommand } from './commands/add';
 import { authCommand } from './commands/auth';
 import { upgradeCommand } from './commands/upgrade';
 import { shellCommand } from './commands/sh';
+import { cacheInfoCommand, cacheCleanCommand } from './commands/cache';
 import { checkForUpdates } from './utils/version-check';
 import { VERSION } from '../version';
 
@@ -47,8 +48,11 @@ if (process.argv[2] === '__server__') {
       .command('install')
       .description('Install skills and configure tools')
       .option('-e, --env [file]', 'Load variables from .env file (defaults to .env if no file specified)')
+      .option('--no-cache', 'Bypass the on-disk cache and lockfile; re-resolve every remote source')
       .action(async (options) => {
-        await installCommand(options.env);
+        // Commander inverts --no-* flags: `options.cache` is true by default and
+        // false when --no-cache is passed. Convert to the explicit noCache flag.
+        await installCommand({ envFile: options.env, noCache: options.cache === false });
       });
 
     program
@@ -119,6 +123,20 @@ if (process.argv[2] === '__server__') {
       .allowUnknownOption()   // pass unknown options (--query, etc.) into args
       .action(async (args: string[]) => {
         await shellCommand(args);
+      });
+
+    const cacheCmd = program
+      .command('cache')
+      .description('Inspect or manage the on-disk cache for remote sources')
+      .action(async () => {
+        await cacheInfoCommand();
+      });
+
+    cacheCmd
+      .command('clean')
+      .description('Remove all cached repositories and snapshots')
+      .action(async () => {
+        await cacheCleanCommand();
       });
 
     await program.parseAsync();
