@@ -1,45 +1,8 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, unlinkSync } from 'fs';
 import { join, dirname } from 'path';
-
-/**
- * Configuration for different MCP clients
- */
-interface MCPClientConfig {
-  name: string;
-  displayName: string;
-  /**
-   * Get the config file path
-   * @param projectPath - Project root path for project-level configs
-   */
-  getConfigPath: (projectPath: string) => string;
-  /** Get the server key name to use in the config */
-  getServerKey: () => string;
-  /**
-   * Get the server configuration object
-   * @param mcpUrl - The MCP server URL
-   */
-  getServerConfig: (mcpUrl: string) => any;
-}
-
-/**
- * Supported MCP clients
- */
-const MCP_CLIENTS: Record<string, MCPClientConfig> = {
-  cursor: {
-    name: 'cursor',
-    displayName: 'Cursor',
-    getConfigPath: (projectPath: string) => join(projectPath, '.cursor', 'mcp.json'),
-    getServerKey: () => 'capa',
-    getServerConfig: (mcpUrl: string) => ({ url: mcpUrl }),
-  },
-  'claude-code': {
-    name: 'claude-code',
-    displayName: 'Claude Code',
-    getConfigPath: (projectPath: string) => join(projectPath, '.mcp.json'),
-    getServerKey: () => 'capa',
-    getServerConfig: (mcpUrl: string) => ({ url: mcpUrl }),
-  },
-};
+import { getProvider, getAllProviders } from '../../shared/providers';
+import { readTomlFile, writeTomlFile, setNestedKey, deleteNestedKey } from '../../shared/toml-io';
+import { getMcpConfigPath, buildMcpEntry } from '../../shared/providers/handlers';
 
 /**
  * Register MCP server with client configuration files
@@ -51,58 +14,56 @@ export async function registerMCPServer(
   clients: string[]
 ): Promise<void> {
   for (const clientName of clients) {
-    const client = MCP_CLIENTS[clientName.toLowerCase()];
-    
-    if (!client) {
-      console.warn(`  ⚠ Unknown MCP client: ${clientName} (skipping MCP registration)`);
+    const provider = getProvider(clientName);
+
+    if (!provider) {
+      console.warn(`  ⚠ Unknown provider: ${clientName} (skipping MCP registration)`);
       continue;
     }
-    
+    if (!provider.mcp) {
+      console.warn(`  ⚠ ${provider.displayName} does not support project-level MCP configuration (skipping)`);
+      continue;
+    }
+
     try {
-      const configPath = client.getConfigPath(projectPath);
-      const serverKey = client.getServerKey();
-      const serverConfig = client.getServerConfig(mcpUrl);
-      
-      // Ensure directory exists
+      const { mcp } = provider;
+      const configPath = getMcpConfigPath(provider, projectPath);
       const configDir = dirname(configPath);
       if (!existsSync(configDir)) {
         mkdirSync(configDir, { recursive: true });
       }
-      
-      // Read existing config or create new one
-      let config: any = {};
-      if (existsSync(configPath)) {
-        try {
-          const content = readFileSync(configPath, 'utf-8');
-          config = JSON.parse(content);
-        } catch (error) {
-          console.warn(`  ⚠ Failed to parse existing ${client.displayName} config, creating new one`);
-          config = {};
+
+      if (mcp.format === 'json') {
+        let config: any = {};
+        if (existsSync(configPath)) {
+          try {
+            config = JSON.parse(readFileSync(configPath, 'utf-8'));
+          } catch {
+            console.warn(`  ⚠ Failed to parse existing ${provider.displayName} config, creating new one`);
+            config = {};
+          }
         }
+        if (!config[mcp.serversKey]) {
+          config[mcp.serversKey] = {};
+        }
+        config[mcp.serversKey][mcp.serverKey] = buildMcpEntry(mcp, mcpUrl);
+        writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
+      } else if (mcp.format === 'toml') {
+        const config = readTomlFile(configPath);
+        setNestedKey(config, [mcp.serversKey, mcp.serverKey], buildMcpEntry(mcp, mcpUrl));
+        writeTomlFile(configPath, config);
       }
-      
-      // Ensure mcpServers object exists
-      if (!config.mcpServers) {
-        config.mcpServers = {};
-      }
-      
-      // Add or update our server
-      config.mcpServers[serverKey] = serverConfig;
-      
-      // Write config back
-      writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
-      
-      console.log(`  ✓ Registered MCP server with ${client.displayName}`);
+
+      console.log(`  ✓ Registered MCP server with ${provider.displayName}`);
       console.log(`    Config: ${configPath}`);
     } catch (error) {
-      console.error(`  ✗ Failed to register MCP server with ${client.displayName}:`, error);
+      console.error(`  ✗ Failed to register MCP server with ${provider.displayName}:`, error);
     }
   }
 }
 
 /**
  * Register a sub-agent's filtered MCP endpoint with all client configuration files.
- * Uses "capa-{agentId}" as the server key so it appears alongside the main "capa" entry.
  */
 export async function registerSubAgentMCPServer(
   projectPath: string,
@@ -111,45 +72,48 @@ export async function registerSubAgentMCPServer(
   clients: string[]
 ): Promise<void> {
   for (const clientName of clients) {
-    // Cursor uses .cursor/agents/{id}.md files for sub-agent delegation — it does not
-    // use separate MCP server entries per sub-agent. Only the main "capa" entry is
-    // registered in .cursor/mcp.json; all tools are accessible from that endpoint.
-    if (clientName.toLowerCase() === 'cursor') continue;
+    const provider = getProvider(clientName);
+    if (!provider?.mcp) continue;
 
-    const client = MCP_CLIENTS[clientName.toLowerCase()];
-    if (!client) continue;
+    // Skip providers that don't use per-sub-agent MCP entries
+    if (!provider.mcp.supportsSubAgentEntries) continue;
 
     try {
-      const configPath = client.getConfigPath(projectPath);
+      const { mcp } = provider;
+      const configPath = getMcpConfigPath(provider, projectPath);
       const serverKey = `capa-${agentId}`;
-
       const configDir = dirname(configPath);
       if (!existsSync(configDir)) {
         mkdirSync(configDir, { recursive: true });
       }
 
-      let config: any = {};
-      if (existsSync(configPath)) {
-        try {
-          config = JSON.parse(readFileSync(configPath, 'utf-8'));
-        } catch {
-          config = {};
+      if (mcp.format === 'json') {
+        let config: any = {};
+        if (existsSync(configPath)) {
+          try {
+            config = JSON.parse(readFileSync(configPath, 'utf-8'));
+          } catch {
+            config = {};
+          }
         }
+        if (!config[mcp.serversKey]) config[mcp.serversKey] = {};
+        config[mcp.serversKey][serverKey] = buildMcpEntry(mcp, mcpUrl);
+        writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
+      } else if (mcp.format === 'toml') {
+        const config = readTomlFile(configPath);
+        setNestedKey(config, [mcp.serversKey, serverKey], buildMcpEntry(mcp, mcpUrl));
+        writeTomlFile(configPath, config);
       }
 
-      if (!config.mcpServers) config.mcpServers = {};
-      config.mcpServers[serverKey] = { url: mcpUrl };
-
-      writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
-      console.log(`  ✓ Registered sub-agent "${agentId}" MCP server with ${client.displayName} (key: ${serverKey})`);
+      console.log(`  ✓ Registered sub-agent "${agentId}" MCP server with ${provider.displayName} (key: ${serverKey})`);
     } catch (error) {
-      console.error(`  ✗ Failed to register sub-agent MCP server with ${client.displayName}:`, error);
+      console.error(`  ✗ Failed to register sub-agent MCP server with ${provider.displayName}:`, error);
     }
   }
 }
 
 /**
- * Unregister a sub-agent's MCP entry ("capa-{agentId}") from all client config files.
+ * Unregister a sub-agent's MCP entry from all client config files.
  */
 export async function unregisterSubAgentMCPServer(
   projectPath: string,
@@ -157,39 +121,43 @@ export async function unregisterSubAgentMCPServer(
   clients: string[]
 ): Promise<void> {
   for (const clientName of clients) {
-    if (clientName.toLowerCase() === 'cursor') continue;
-
-    const client = MCP_CLIENTS[clientName.toLowerCase()];
-    if (!client) continue;
+    const provider = getProvider(clientName);
+    if (!provider?.mcp) continue;
+    if (!provider.mcp.supportsSubAgentEntries) continue;
 
     try {
-      const configPath = client.getConfigPath(projectPath);
+      const { mcp } = provider;
+      const configPath = getMcpConfigPath(provider, projectPath);
       const serverKey = `capa-${agentId}`;
 
       if (!existsSync(configPath)) continue;
 
-      let config: any;
-      try {
-        config = JSON.parse(readFileSync(configPath, 'utf-8'));
-      } catch {
-        continue;
+      if (mcp.format === 'json') {
+        let config: any;
+        try {
+          config = JSON.parse(readFileSync(configPath, 'utf-8'));
+        } catch {
+          continue;
+        }
+        if (!config[mcp.serversKey]?.[serverKey]) continue;
+        delete config[mcp.serversKey][serverKey];
+        writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
+      } else if (mcp.format === 'toml') {
+        const config = readTomlFile(configPath);
+        if (!deleteNestedKey(config, [mcp.serversKey, serverKey])) continue;
+        writeTomlFile(configPath, config);
       }
 
-      if (!config.mcpServers?.[serverKey]) continue;
-
-      delete config.mcpServers[serverKey];
-      writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
-      console.log(`  ✓ Unregistered sub-agent "${agentId}" MCP server from ${client.displayName}`);
+      console.log(`  ✓ Unregistered sub-agent "${agentId}" MCP server from ${provider.displayName}`);
     } catch (error) {
-      console.error(`  ✗ Failed to unregister sub-agent MCP server from ${client.displayName}:`, error);
+      console.error(`  ✗ Failed to unregister sub-agent MCP server from ${provider.displayName}:`, error);
     }
   }
 }
 
 /**
- * Remove any stale capa-{agentId} sub-agent entries from a client's MCP config.
- * Used during install to migrate clients (like Cursor) that no longer use per-sub-agent
- * MCP server entries. Preserves the main "capa" entry and any non-capa entries.
+ * Remove any stale capa-{agentId} sub-agent entries from Cursor's MCP config.
+ * Also cleans up legacy .cursor/rules/*.mdc files from old capa versions.
  */
 export async function purgeCursorSubAgentMCPEntries(projectPath: string): Promise<void> {
   const configPath = join(projectPath, '.cursor', 'mcp.json');
@@ -213,8 +181,6 @@ export async function purgeCursorSubAgentMCPEntries(projectPath: string): Promis
     }
   }
 
-  // Remove stale .cursor/rules/*.mdc files from old capa versions that used rules
-  // instead of the correct .cursor/agents/*.md format
   const rulesDir = join(projectPath, '.cursor', 'rules');
   if (existsSync(rulesDir)) {
     const staleRules = readdirSync(rulesDir).filter((f) => f.endsWith('.mdc'));
@@ -236,62 +202,63 @@ export async function unregisterMCPServer(
   clients: string[]
 ): Promise<void> {
   for (const clientName of clients) {
-    const client = MCP_CLIENTS[clientName.toLowerCase()];
-    
-    if (!client) {
+    const provider = getProvider(clientName);
+
+    if (!provider?.mcp) {
       continue;
     }
-    
+
     try {
-      const configPath = client.getConfigPath(projectPath);
-      const serverKey = client.getServerKey();
-      
-      // Check if config exists
+      const { mcp } = provider;
+      const configPath = getMcpConfigPath(provider, projectPath);
+
       if (!existsSync(configPath)) {
-        console.log(`  - No ${client.displayName} config found (already removed)`);
+        console.log(`  - No ${provider.displayName} config found (already removed)`);
         continue;
       }
-      
-      // Read existing config
-      let config: any;
-      try {
-        const content = readFileSync(configPath, 'utf-8');
-        config = JSON.parse(content);
-      } catch (error) {
-        console.warn(`  ⚠ Failed to parse ${client.displayName} config, skipping removal`);
-        continue;
+
+      if (mcp.format === 'json') {
+        let config: any;
+        try {
+          config = JSON.parse(readFileSync(configPath, 'utf-8'));
+        } catch {
+          console.warn(`  ⚠ Failed to parse ${provider.displayName} config, skipping removal`);
+          continue;
+        }
+        if (!config[mcp.serversKey] || !config[mcp.serversKey][mcp.serverKey]) {
+          console.log(`  - MCP server not registered with ${provider.displayName} (already removed)`);
+          continue;
+        }
+        delete config[mcp.serversKey][mcp.serverKey];
+        writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
+      } else if (mcp.format === 'toml') {
+        const config = readTomlFile(configPath);
+        if (!deleteNestedKey(config, [mcp.serversKey, mcp.serverKey])) {
+          console.log(`  - MCP server not registered with ${provider.displayName} (already removed)`);
+          continue;
+        }
+        writeTomlFile(configPath, config);
       }
-      
-      // Check if our server is registered
-      if (!config.mcpServers || !config.mcpServers[serverKey]) {
-        console.log(`  - MCP server not registered with ${client.displayName} (already removed)`);
-        continue;
-      }
-      
-      // Remove our server
-      delete config.mcpServers[serverKey];
-      
-      // Write config back
-      writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
-      
-      console.log(`  ✓ Unregistered MCP server from ${client.displayName}`);
+
+      console.log(`  ✓ Unregistered MCP server from ${provider.displayName}`);
     } catch (error) {
-      console.error(`  ✗ Failed to unregister MCP server from ${client.displayName}:`, error);
+      console.error(`  ✗ Failed to unregister MCP server from ${provider.displayName}:`, error);
     }
   }
 }
 
 /**
- * Get list of supported MCP clients
+ * Get list of supported MCP clients (those with full MCP integration)
  */
 export function getSupportedMCPClients(): string[] {
-  return Object.keys(MCP_CLIENTS);
+  return getAllProviders()
+    .filter((p) => p.mcp !== undefined)
+    .map((p) => p.id);
 }
 
 /**
  * Get MCP client display name
  */
 export function getMCPClientDisplayName(clientName: string): string | undefined {
-  const client = MCP_CLIENTS[clientName.toLowerCase()];
-  return client?.displayName;
+  return getProvider(clientName)?.displayName;
 }
