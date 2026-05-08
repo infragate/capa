@@ -11,8 +11,7 @@ import type { Capabilities, Skill, RequiredCommand } from '../../types/capabilit
 import { getQualifiedToolName, normalizeToolReference } from '../../types/capabilities';
 import { createAuthenticatedFetch, AuthenticatedFetch } from '../../shared/authenticated-fetch';
 import { displayIntegrationPrompt, getIntegrationsUrl, parseRepoUrl } from '../utils/integration-helper';
-import { getAgentConfig, agents } from 'skills/src/agents';
-import type { AgentType } from 'skills/src/types';
+import { getProvider, getAllProviders } from '../../shared/providers';
 import { VERSION } from '../../version';
 import { registerMCPServer, registerSubAgentMCPServer, unregisterSubAgentMCPServer, purgeCursorSubAgentMCPEntries } from '../utils/mcp-client-manager';
 import { parseEnvFile } from '../../shared/env-parser';
@@ -590,6 +589,64 @@ export async function installCommand(
     }
   }
 
+  // Step 3.5: Install rules across providers
+  if (capabilitiesToUse.rules && capabilitiesToUse.rules.length > 0) {
+    console.log('\n📏 Installing rules...');
+    try {
+      const resolvedContent = new Map<string, string>();
+      for (const rule of capabilitiesToUse.rules) {
+        let body: string;
+        if (rule.type === 'inline') {
+          if (!rule.content) throw new Error(`Rule "${rule.id}" is type 'inline' but has no content.`);
+          body = rule.content;
+        } else if (rule.type === 'remote') {
+          if (!rule.url) throw new Error(`Rule "${rule.id}" is type 'remote' but has no url.`);
+          console.log(`  Fetching rule "${rule.id}" from ${rule.url}`);
+          const resp = await fetch(rule.url);
+          if (!resp.ok) throw new Error(`Failed to fetch rule "${rule.id}": ${resp.status}`);
+          body = await resp.text();
+        } else if (rule.type === 'github' || rule.type === 'gitlab') {
+          if (!rule.def?.repo) throw new Error(`Rule "${rule.id}" is type '${rule.type}' but missing def.repo.`);
+          const atIdx = rule.def.repo.indexOf('@');
+          if (atIdx === -1) throw new Error(`Invalid rule repo format: "${rule.def.repo}".`);
+          const ownerRepo = rule.def.repo.slice(0, atIdx);
+          const rest = rule.def.repo.slice(atIdx + 1);
+          const shaIdx = rest.lastIndexOf('#');
+          const colonIdx = rest.lastIndexOf(':');
+          let filepath: string, ref: string;
+          if (shaIdx !== -1) {
+            filepath = rest.slice(0, shaIdx);
+            ref = rest.slice(shaIdx + 1);
+          } else if (colonIdx !== -1) {
+            filepath = rest.slice(0, colonIdx);
+            ref = rest.slice(colonIdx + 1);
+          } else {
+            filepath = rest;
+            ref = 'HEAD';
+          }
+          const baseUrl = rule.type === 'github'
+            ? `https://raw.githubusercontent.com/${ownerRepo}/${ref}/${filepath}`
+            : `https://gitlab.com/${ownerRepo}/-/raw/${ref}/${filepath}`;
+          console.log(`  Fetching rule "${rule.id}" from ${baseUrl}`);
+          const resp = await fetch(baseUrl);
+          if (!resp.ok) throw new Error(`Failed to fetch rule "${rule.id}": ${resp.status}`);
+          body = await resp.text();
+        } else {
+          throw new Error(`Unknown rule type: ${(rule as any).type}`);
+        }
+        resolvedContent.set(rule.id, body);
+      }
+
+      const { installRules } = await import('../utils/rules-installer');
+      installRules(projectPath, capabilitiesToUse.rules, capabilitiesToUse.providers, resolvedContent);
+      console.log(`\n  ✓ ${capabilitiesToUse.rules.length} rule(s) installed`);
+    } catch (err: any) {
+      console.error(`  ✗ Failed to install rules: ${err.message}`);
+      db.close();
+      process.exit(1);
+    }
+  }
+
   // Step 4: Submit capabilities to server (merged, including plugin-derived)
   console.log('\n🔧 Configuring tools...');
   const response = await fetch(`${serverStatus.url}/api/projects/${projectId}/configure`, {
@@ -1082,29 +1139,25 @@ async function installSkills(
 
     // Install skill for each client
     for (const client of clients) {
-      // Get the agent configuration from the skills package
-      const agentConfig = getAgentConfig(client as AgentType);
-      
-      if (!agentConfig) {
+      const providerEntry = getProvider(client);
+
+      if (!providerEntry) {
         console.error(`  ✗ Unknown client: ${client}`);
         console.error(`\n  Supported clients:`);
-        
-        // Group agents by their display names for better readability
-        const supportedAgents = Object.entries(agents)
-          .map(([name, config]) => ({ name, displayName: config.displayName }))
+
+        const supportedAgents = getAllProviders()
+          .map((p) => ({ name: p.id, displayName: p.displayName }))
           .sort((a, b) => a.displayName.localeCompare(b.displayName));
-        
-        // Display in columns for better readability
+
         const maxDisplayNameLength = Math.max(...supportedAgents.map(a => a.displayName.length));
         for (const agent of supportedAgents) {
           console.error(`    - ${agent.displayName.padEnd(maxDisplayNameLength)} (${agent.name})`);
         }
-        
+
         process.exit(1);
       }
-      
-      // Use the correct skills directory for this agent
-      const skillsBaseDir = join(projectPath, agentConfig.skillsDir);
+
+      const skillsBaseDir = join(projectPath, providerEntry.skillsDir);
       const skillDir = join(skillsBaseDir, skill.id);
       const skillMdPath = join(skillDir, 'SKILL.md');
       
