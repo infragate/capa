@@ -107,48 +107,10 @@ export async function fetchRemoteContent(url: string): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------
-// GitHub / GitLab repo-string resolution
+// GitHub / GitLab repo-string resolution (shared utility)
 // ---------------------------------------------------------------------------
 
-interface ParsedAgentRepo {
-  ownerRepo: string;
-  filepath: string;
-  version?: string;
-  sha?: string;
-}
-
-function parseRepoString(repo: string): ParsedAgentRepo {
-  const atIdx = repo.indexOf('@');
-  if (atIdx === -1) {
-    throw new Error(
-      `Invalid agent repo format: "${repo}". Expected "owner/repo@filepath", ` +
-      `optionally followed by ":version" or "#sha".`
-    );
-  }
-
-  const ownerRepo = repo.slice(0, atIdx);
-  const rest = repo.slice(atIdx + 1);
-
-  const shaIdx = rest.lastIndexOf('#');
-  if (shaIdx !== -1) {
-    return { ownerRepo, filepath: rest.slice(0, shaIdx), sha: rest.slice(shaIdx + 1) };
-  }
-
-  const colonIdx = rest.lastIndexOf(':');
-  if (colonIdx !== -1) {
-    return { ownerRepo, filepath: rest.slice(0, colonIdx), version: rest.slice(colonIdx + 1) };
-  }
-
-  return { ownerRepo, filepath: rest };
-}
-
-function buildRawUrl(platform: 'github' | 'gitlab', parsed: ParsedAgentRepo): string {
-  const ref = parsed.sha ?? parsed.version ?? 'HEAD';
-  if (platform === 'github') {
-    return `https://raw.githubusercontent.com/${parsed.ownerRepo}/${ref}/${parsed.filepath}`;
-  }
-  return `https://gitlab.com/${parsed.ownerRepo}/-/raw/${ref}/${parsed.filepath}`;
-}
+import { parseRepoString, buildRawUrl } from '../../shared/repo-string';
 
 function deriveIdFromFilepath(filepath: string): string {
   return filepath.replace(/[^a-zA-Z0-9_-]/g, '_');

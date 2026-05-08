@@ -31,6 +31,7 @@ import {
 } from '../../shared/skill-security';
 import { getOrCreateSnapshot, type CachePlatform, type GetSnapshotResult } from '../../shared/cache';
 import { LockfileBuilder, loadLockfile, saveLockfile } from '../../shared/lockfile';
+import { parseRepoString, buildRawUrl } from '../../shared/repo-string';
 import type { LockSkillEntry } from '../../types/lockfile';
 
 const execAsync = promisify(exec);
@@ -607,33 +608,30 @@ export async function installCommand(
           body = await resp.text();
         } else if (rule.type === 'github' || rule.type === 'gitlab') {
           if (!rule.def?.repo) throw new Error(`Rule "${rule.id}" is type '${rule.type}' but missing def.repo.`);
-          const atIdx = rule.def.repo.indexOf('@');
-          if (atIdx === -1) throw new Error(`Invalid rule repo format: "${rule.def.repo}".`);
-          const ownerRepo = rule.def.repo.slice(0, atIdx);
-          const rest = rule.def.repo.slice(atIdx + 1);
-          const shaIdx = rest.lastIndexOf('#');
-          const colonIdx = rest.lastIndexOf(':');
-          let filepath: string, ref: string;
-          if (shaIdx !== -1) {
-            filepath = rest.slice(0, shaIdx);
-            ref = rest.slice(shaIdx + 1);
-          } else if (colonIdx !== -1) {
-            filepath = rest.slice(0, colonIdx);
-            ref = rest.slice(colonIdx + 1);
-          } else {
-            filepath = rest;
-            ref = 'HEAD';
-          }
-          const baseUrl = rule.type === 'github'
-            ? `https://raw.githubusercontent.com/${ownerRepo}/${ref}/${filepath}`
-            : `https://gitlab.com/${ownerRepo}/-/raw/${ref}/${filepath}`;
-          console.log(`  Fetching rule "${rule.id}" from ${baseUrl}`);
-          const resp = await fetch(baseUrl);
+          const parsed = parseRepoString(rule.def.repo);
+          const ruleUrl = buildRawUrl(rule.type, parsed);
+          console.log(`  Fetching rule "${rule.id}" from ${ruleUrl}`);
+          const resp = await fetch(ruleUrl);
           if (!resp.ok) throw new Error(`Failed to fetch rule "${rule.id}": ${resp.status}`);
           body = await resp.text();
         } else {
           throw new Error(`Unknown rule type: ${(rule as any).type}`);
         }
+        const security = capabilitiesToUse.options?.security;
+        if (isBlockedPhrasesEnabled(security)) {
+          const blockedPhrases = loadBlockedPhrases(security, capabilitiesFile.path);
+          const check = checkBlockedPhrases(body, blockedPhrases);
+          if (check.blocked) {
+            reportBlockedPhraseAndExit(rule.id, `rule:${rule.id}`, check.phrase!);
+          }
+        }
+        if (isCharacterSanitizationEnabled(security)) {
+          const allowedChars = getAllowedCharacters(security);
+          if (allowedChars !== null) {
+            body = sanitizeContent(body, allowedChars);
+          }
+        }
+
         resolvedContent.set(rule.id, body);
       }
 
