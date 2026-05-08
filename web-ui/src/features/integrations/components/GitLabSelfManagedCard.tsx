@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import type { Integration } from '../../../types/api';
 import { integrationsApi } from '../api';
 import { StatusDot } from '../../../components/common/StatusDot';
-import { GitLabColorIcon as GitLabIcon } from '../../../components/icons/BrandIcons';
+import { FaGitlab } from 'react-icons/fa';
 
 interface GitLabSelfManagedCardProps {
   integration?: Integration;
@@ -44,7 +44,7 @@ export function GitLabSelfManagedCard({ integration, onMessage, onDisconnect, on
     <div className="rounded-sm border border-border-secondary bg-bg-tertiary p-5 transition-shadow hover:shadow-[var(--shadow-sm)]">
       <div className="mb-3 flex items-center gap-3">
         <div className="flex h-10 w-10 items-center justify-center rounded-md border border-border-tertiary bg-bg-secondary overflow-hidden">
-          <GitLabIcon className="h-8 w-8" />
+          <FaGitlab className="h-8 w-8 text-[#fc6d26]" />
         </div>
         <div className="text-base font-medium text-text-primary">{t('gitlabSelfManaged.name')}</div>
       </div>
