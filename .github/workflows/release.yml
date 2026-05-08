@@ -72,6 +72,9 @@ jobs:
         env:
           GITHUB_REF: ${{ github.ref }}
 
+      - name: Build web UI
+        run: bun run build:web
+
       - name: Build
         env:
           BUN_TARGET: ${{ matrix.bun_target }}

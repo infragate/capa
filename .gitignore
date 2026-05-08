@@ -83,3 +83,7 @@ test-capa*
 src/version.ts
 
 capa-docs
+
+# Web UI build artifacts
+web-ui/dist/
+web-ui/src/.generated/
