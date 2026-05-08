@@ -6,14 +6,7 @@ import type {
   UnifiedSkillEntry,
   NormalizedPluginMCPServerDef,
 } from '../types/plugin';
-
-const CURSOR_MANIFEST_PATH = '.cursor-plugin/plugin.json';
-const CLAUDE_MANIFEST_PATH = '.claude-plugin/plugin.json';
-
-const PROVIDER_MANIFEST_PATHS: Record<PluginProvider, string> = {
-  cursor: CURSOR_MANIFEST_PATH,
-  claude: CLAUDE_MANIFEST_PATH,
-};
+import { getProvider, getAllProviders } from './providers';
 
 /** Map capabilities provider names to plugin provider (manifest) names */
 function toPluginProvider(provider: string): PluginProvider | null {
@@ -24,25 +17,42 @@ function toPluginProvider(provider: string): PluginProvider | null {
 }
 
 /**
- * Discovery order: preferred providers first (in order), then fallback [claude, cursor].
+ * Discovery order: preferred providers first (in order), then fallback providers
+ * that have pluginManifestPaths defined.
  * Returns ordered list of (provider, manifestPath).
  */
 function getManifestSearchOrder(preferredProviders: string[]): { provider: PluginProvider; path: string }[] {
   const order: { provider: PluginProvider; path: string }[] = [];
-  const seen = new Set<PluginProvider>();
+  const seenPaths = new Set<string>();
 
+  // Preferred providers first
   for (const p of preferredProviders) {
-    const prov = toPluginProvider(p);
-    if (prov && !seen.has(prov)) {
-      seen.add(prov);
-      order.push({ provider: prov, path: PROVIDER_MANIFEST_PATHS[prov] });
+    const entry = getProvider(p);
+    if (entry?.pluginManifestPaths) {
+      const prov = toPluginProvider(p);
+      if (!prov) continue;
+      for (const mp of entry.pluginManifestPaths) {
+        if (!seenPaths.has(mp)) {
+          seenPaths.add(mp);
+          order.push({ provider: prov, path: mp });
+        }
+      }
     }
   }
-  for (const prov of ['claude', 'cursor'] as PluginProvider[]) {
-    if (!seen.has(prov)) {
-      order.push({ provider: prov, path: PROVIDER_MANIFEST_PATHS[prov] });
+
+  // Fallback: all providers with plugin manifest paths, in stable order
+  for (const entry of getAllProviders()) {
+    if (!entry.pluginManifestPaths) continue;
+    const prov = toPluginProvider(entry.id);
+    if (!prov) continue;
+    for (const mp of entry.pluginManifestPaths) {
+      if (!seenPaths.has(mp)) {
+        seenPaths.add(mp);
+        order.push({ provider: prov, path: mp });
+      }
     }
   }
+
   return order;
 }
 

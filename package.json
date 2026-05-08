@@ -16,11 +16,11 @@
     "test:coverage": "bun test --coverage"
   },
   "dependencies": {
+    "@iarna/toml": "^2.2.5",
     "@modelcontextprotocol/sdk": "^1.0.4",
     "commander": "^12.1.0",
     "js-yaml": "^4.1.0",
     "nanoid": "^5.0.8",
-    "skills": "github:vercel-labs/skills#v1.3.7",
     "xdg-basedir": "^5.1.0"
   },
   "devDependencies": {

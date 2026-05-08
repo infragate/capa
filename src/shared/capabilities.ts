@@ -20,10 +20,6 @@ export function createDefaultCapabilities(): Capabilities {
     providers: ['cursor', 'claude-code'],
     options: {
       toolExposure: 'on-demand',
-      security: {
-        blockedPhrases: ["eval(", "exec(", "execSync("],
-        allowedCharacters: "[\\u00A0-\\uFFFF]"  // allow all printable Unicode; strips only control chars
-      }
     },
     skills: [
       {
@@ -32,62 +28,11 @@ export function createDefaultCapabilities(): Capabilities {
         def: {
           repo: 'infragate/capa@capabilities-manager',
           description: 'Guide for managing capabilities with capa CLI',
-          requires: ['capa_init', 'capa_install', 'find_skills']
-        }
-      }
+        },
+      },
     ],
-    agents: {
-      additional: [
-        {
-          type: 'inline',
-          id: 'capa_tool_usage',
-          content: 'After learning a new skill, call the `setup_tools` tool to activate it, then use `call_tool` to invoke the relevant tool.'
-        }
-      ]
-    },
     servers: [],
-    tools: [
-      {
-        id: 'capa_init',
-        type: 'command',
-        def: {
-          run: {
-            cmd: 'capa init',
-            args: []
-          }
-        }
-      },
-      {
-        id: 'capa_install',
-        type: 'command',
-        def: {
-          run: {
-            cmd: 'capa install',
-            args: []
-          }
-        }
-      },
-      {
-        id: 'find_skills',
-        type: 'command',
-        def: {
-          init: {
-            cmd: 'npx skills@latest'
-          },
-          run: {
-            cmd: 'npx skills find {query}',
-            args: [
-              {
-                name: 'query',
-                type: 'string',
-                description: 'Search query for finding skills',
-                required: true
-              }
-            ]
-          }
-        }
-      }
-    ]
+    tools: [],
   };
 }
 
