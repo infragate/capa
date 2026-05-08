@@ -199,6 +199,26 @@ export const providers: Record<string, ProviderIntegration> = {
     globalSkillsDir: join(home, '.copilot/skills'),
     detectInstalled: async () =>
       existsSync(join(process.cwd(), '.github')) || existsSync(join(home, '.copilot')),
+    mcp: {
+      configPath: '.vscode/mcp.json',
+      format: 'json',
+      serversKey: 'servers',
+      serverKey: 'capa',
+      entryUrlKey: 'url',
+      supportsSubAgentEntries: false,
+    },
+    instructions: { filename: '.github/copilot-instructions.md' },
+    rules: {
+      dir: '.github/instructions',
+      extension: '.instructions.md',
+      frontmatter: 'yaml',
+      fieldMap: { appliesTo: 'applyTo' },
+    },
+    subagents: {
+      dir: '.github/agents',
+      extension: '.md',
+      format: 'markdown-frontmatter',
+    },
   },
   goose: {
     id: 'goose',
@@ -277,6 +297,20 @@ export const providers: Record<string, ProviderIntegration> = {
     globalSkillsDir: join(configHome, 'opencode/skills'),
     detectInstalled: async () =>
       existsSync(join(configHome, 'opencode')) || existsSync(join(claudeHome, 'skills')),
+    mcp: {
+      configPath: '.opencode/opencode.json',
+      format: 'json',
+      serversKey: 'mcp',
+      serverKey: 'capa',
+      entryUrlKey: 'url',
+      supportsSubAgentEntries: true,
+    },
+    instructions: { filename: 'AGENTS.md' },
+    subagents: {
+      dir: '.opencode/agents',
+      extension: '.md',
+      format: 'markdown-frontmatter',
+    },
   },
   openhands: {
     id: 'openhands',
@@ -320,6 +354,14 @@ export const providers: Record<string, ProviderIntegration> = {
     skillsDir: '.roo/skills',
     globalSkillsDir: join(home, '.roo/skills'),
     detectInstalled: async () => existsSync(join(home, '.roo')),
+    mcp: {
+      configPath: '.roo/mcp.json',
+      format: 'json',
+      serversKey: 'mcpServers',
+      serverKey: 'capa',
+      entryUrlKey: 'url',
+      supportsSubAgentEntries: true,
+    },
   },
   trae: {
     id: 'trae',
@@ -341,6 +383,17 @@ export const providers: Record<string, ProviderIntegration> = {
     skillsDir: '.windsurf/skills',
     globalSkillsDir: join(home, '.codeium/windsurf/skills'),
     detectInstalled: async () => existsSync(join(home, '.codeium/windsurf')),
+    rules: {
+      dir: '.windsurf/rules',
+      extension: '.md',
+      frontmatter: 'yaml',
+      fieldMap: {
+        description: 'description',
+        appliesTo: 'globs',
+        alwaysApply: 'trigger',
+        alwaysApplyValues: { trueValue: 'always_on', falseValue: 'model_decision' },
+      },
+    },
   },
   zencoder: {
     id: 'zencoder',

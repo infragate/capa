@@ -48,6 +48,9 @@ describe('Provider registry', () => {
       expect(ids).toContain('cursor');
       expect(ids).toContain('claude-code');
       expect(ids).toContain('codex');
+      expect(ids).toContain('github-copilot');
+      expect(ids).toContain('opencode');
+      expect(ids).toContain('roo');
     });
   });
 
@@ -429,5 +432,146 @@ describe('Codex skill installation path', () => {
   it('uses .agents/skills as its skillsDir', () => {
     const codex = getProvider('codex')!;
     expect(codex.skillsDir).toBe('.agents/skills');
+  });
+});
+
+describe('GitHub Copilot integration', () => {
+  it('has MCP integration (.vscode/mcp.json)', () => {
+    const copilot = getProvider('github-copilot')!;
+    expect(copilot.mcp).toBeDefined();
+    expect(copilot.mcp!.configPath).toBe('.vscode/mcp.json');
+    expect(copilot.mcp!.format).toBe('json');
+    expect(copilot.mcp!.serversKey).toBe('servers');
+    expect(copilot.mcp!.serverKey).toBe('capa');
+    expect(copilot.mcp!.entryUrlKey).toBe('url');
+    expect(copilot.mcp!.supportsSubAgentEntries).toBe(false);
+  });
+
+  it('has instructions integration (.github/copilot-instructions.md)', () => {
+    const copilot = getProvider('github-copilot')!;
+    expect(copilot.instructions).toBeDefined();
+    expect(copilot.instructions!.filename).toBe('.github/copilot-instructions.md');
+  });
+
+  it('has rules integration (.github/instructions/*.instructions.md)', () => {
+    const copilot = getProvider('github-copilot')!;
+    expect(copilot.rules).toBeDefined();
+    expect(copilot.rules!.dir).toBe('.github/instructions');
+    expect(copilot.rules!.extension).toBe('.instructions.md');
+    expect(copilot.rules!.frontmatter).toBe('yaml');
+    expect(copilot.rules!.fieldMap?.appliesTo).toBe('applyTo');
+  });
+
+  it('has subagents integration (.github/agents/*.md)', () => {
+    const copilot = getProvider('github-copilot')!;
+    expect(copilot.subagents).toBeDefined();
+    expect(copilot.subagents!.dir).toBe('.github/agents');
+    expect(copilot.subagents!.extension).toBe('.md');
+    expect(copilot.subagents!.format).toBe('markdown-frontmatter');
+  });
+});
+
+describe('OpenCode integration', () => {
+  it('has MCP integration (.opencode/opencode.json)', () => {
+    const oc = getProvider('opencode')!;
+    expect(oc.mcp).toBeDefined();
+    expect(oc.mcp!.configPath).toBe('.opencode/opencode.json');
+    expect(oc.mcp!.format).toBe('json');
+    expect(oc.mcp!.serversKey).toBe('mcp');
+    expect(oc.mcp!.serverKey).toBe('capa');
+    expect(oc.mcp!.supportsSubAgentEntries).toBe(true);
+  });
+
+  it('has instructions integration (AGENTS.md)', () => {
+    const oc = getProvider('opencode')!;
+    expect(oc.instructions).toBeDefined();
+    expect(oc.instructions!.filename).toBe('AGENTS.md');
+  });
+
+  it('has subagents integration (.opencode/agents/*.md)', () => {
+    const oc = getProvider('opencode')!;
+    expect(oc.subagents).toBeDefined();
+    expect(oc.subagents!.dir).toBe('.opencode/agents');
+    expect(oc.subagents!.extension).toBe('.md');
+    expect(oc.subagents!.format).toBe('markdown-frontmatter');
+  });
+});
+
+describe('Windsurf integration', () => {
+  it('has no MCP integration (global only)', () => {
+    const ws = getProvider('windsurf')!;
+    expect(ws.mcp).toBeUndefined();
+  });
+
+  it('has rules integration (.windsurf/rules/*.md)', () => {
+    const ws = getProvider('windsurf')!;
+    expect(ws.rules).toBeDefined();
+    expect(ws.rules!.dir).toBe('.windsurf/rules');
+    expect(ws.rules!.extension).toBe('.md');
+    expect(ws.rules!.frontmatter).toBe('yaml');
+    expect(ws.rules!.fieldMap?.description).toBe('description');
+    expect(ws.rules!.fieldMap?.appliesTo).toBe('globs');
+    expect(ws.rules!.fieldMap?.alwaysApply).toBe('trigger');
+    expect(ws.rules!.fieldMap?.alwaysApplyValues).toEqual({
+      trueValue: 'always_on',
+      falseValue: 'model_decision',
+    });
+  });
+});
+
+describe('Roo Code integration', () => {
+  it('has MCP integration (.roo/mcp.json)', () => {
+    const roo = getProvider('roo')!;
+    expect(roo.mcp).toBeDefined();
+    expect(roo.mcp!.configPath).toBe('.roo/mcp.json');
+    expect(roo.mcp!.format).toBe('json');
+    expect(roo.mcp!.serversKey).toBe('mcpServers');
+    expect(roo.mcp!.serverKey).toBe('capa');
+    expect(roo.mcp!.supportsSubAgentEntries).toBe(true);
+  });
+
+  it('has no rules integration', () => {
+    const roo = getProvider('roo')!;
+    expect(roo.rules).toBeUndefined();
+  });
+
+  it('has no subagents integration', () => {
+    const roo = getProvider('roo')!;
+    expect(roo.subagents).toBeUndefined();
+  });
+});
+
+describe('Windsurf rules frontmatter with alwaysApplyValues', () => {
+  it('maps alwaysApply=true to trigger: always_on', async () => {
+    const { buildRuleFrontmatter } = await import('../handlers');
+    const ws = getProvider('windsurf')!;
+    const fm = buildRuleFrontmatter(ws.rules!, {
+      id: 'test',
+      description: 'Test rule',
+      alwaysApply: true,
+    });
+    expect(fm.trigger).toBe('always_on');
+    expect(fm.description).toBe('Test rule');
+  });
+
+  it('maps alwaysApply=false to trigger: model_decision', async () => {
+    const { buildRuleFrontmatter } = await import('../handlers');
+    const ws = getProvider('windsurf')!;
+    const fm = buildRuleFrontmatter(ws.rules!, {
+      id: 'test',
+      description: 'Test rule',
+      alwaysApply: false,
+    });
+    expect(fm.trigger).toBe('model_decision');
+  });
+
+  it('maps alwaysApply=undefined to trigger: model_decision', async () => {
+    const { buildRuleFrontmatter } = await import('../handlers');
+    const ws = getProvider('windsurf')!;
+    const fm = buildRuleFrontmatter(ws.rules!, {
+      id: 'test',
+      description: 'Test rule',
+    });
+    expect(fm.trigger).toBe('model_decision');
   });
 });

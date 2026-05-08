@@ -44,6 +44,12 @@ export interface RulesIntegration {
     description?: string;
     appliesTo?: string;
     alwaysApply?: string;
+    /**
+     * Optional value mapping for the alwaysApply field.
+     * When present, `true` emits `trueValue` and `false`/undefined emits `falseValue`.
+     * e.g. Windsurf: { trueValue: 'always_on', falseValue: 'model_decision' }
+     */
+    alwaysApplyValues?: { trueValue: string; falseValue: string };
   };
 }
 

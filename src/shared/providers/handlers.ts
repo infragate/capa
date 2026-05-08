@@ -38,8 +38,14 @@ export function buildRuleFrontmatter(
   if (fieldMap.appliesTo && rule.appliesTo && rule.appliesTo.length > 0) {
     fm[fieldMap.appliesTo] = rule.appliesTo;
   }
-  if (fieldMap.alwaysApply && rule.alwaysApply) {
-    fm[fieldMap.alwaysApply] = true;
+  if (fieldMap.alwaysApply) {
+    if (fieldMap.alwaysApplyValues) {
+      fm[fieldMap.alwaysApply] = rule.alwaysApply
+        ? fieldMap.alwaysApplyValues.trueValue
+        : fieldMap.alwaysApplyValues.falseValue;
+    } else if (rule.alwaysApply) {
+      fm[fieldMap.alwaysApply] = true;
+    }
   }
   return fm;
 }
