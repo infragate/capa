@@ -10,6 +10,7 @@ interface OAuth2SectionProps {
   onMessage: (text: string, type: 'success' | 'error') => void;
 }
 
+// TODO: localize these strings via i18n (common:status.expired / expiresInDays / etc.)
 function formatExpiry(expiresAt: string | null): string {
   if (!expiresAt) return '';
   const expires = new Date(expiresAt);

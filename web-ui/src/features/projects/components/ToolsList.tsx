@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronRight } from 'lucide-react';
 import type { EnrichedTool, ToolSchema } from '../../../types/api';
-import { highlightText, matchesSearch, escapeHtml } from '../../../lib/utils';
+import { highlightText, matchesSearch } from '../../../lib/utils';
 import { SourceBadge } from '../../../components/common/ServerBadge';
 
 const DESC_PREVIEW_LENGTH = 80;

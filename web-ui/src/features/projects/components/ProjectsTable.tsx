@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import type { ProjectSummary } from '../../../types/api';
 import { projectDisplayName, formatDate } from '../../../lib/utils';
@@ -31,8 +32,8 @@ function ProjectRow({ project }: { project: ProjectSummary }) {
   const name = projectDisplayName(project.path, project.id);
 
   return (
-    <a
-      href={`/ui/project?id=${encodeURIComponent(project.id)}`}
+    <Link
+      to={`/ui/project?id=${encodeURIComponent(project.id)}`}
       className="grid grid-cols-[1fr_80px_80px_80px_140px] items-center border-b border-border-tertiary px-5 py-4 text-text-primary no-underline transition-colors hover:bg-hover-bg max-md:grid-cols-1 max-md:gap-2"
     >
       <div>
@@ -56,6 +57,6 @@ function ProjectRow({ project }: { project: ProjectSummary }) {
         <span>{project.tools_count} tools</span>
         <span>{project.servers_count} servers</span>
       </div>
-    </a>
+    </Link>
   );
 }

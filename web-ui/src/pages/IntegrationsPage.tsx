@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { useQueryClient } from '@tanstack/react-query';
 import { TopBar } from '../components/layout/TopBar';
 import { Page } from '../components/layout/Page';
 import { Alert } from '../components/common/Alert';
@@ -15,7 +14,6 @@ import { useIntegrations, useDisconnectIntegration } from '../features/integrati
 export function IntegrationsPage() {
   const { t } = useTranslation('integrations');
   const [searchParams] = useSearchParams();
-  const qc = useQueryClient();
   const { data: integrations, isLoading, refetch } = useIntegrations();
   const disconnectMutation = useDisconnectIntegration();
 

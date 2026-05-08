@@ -28,7 +28,7 @@ export function VariablesForm({ projectId, returnUrl }: VariablesFormProps) {
       try {
         await saveMutation.mutateAsync(variables);
         setMessage({ text: t('success.saved'), type: 'success' });
-        if (returnUrl) {
+        if (returnUrl && returnUrl.startsWith('/') && !returnUrl.startsWith('//')) {
           setTimeout(() => {
             window.location.href = returnUrl;
           }, 1500);
