@@ -98,11 +98,8 @@ If the server won’t start, skills don’t appear, credentials don’t prompt, 
 
 ## Tools
 
-This skill requires:
-
-- `capa_init` — Initialize capabilities file
-- `capa_install` — Install capabilities and skills
-- `find_skills` — Search for skills in the ecosystem (e.g. via `npx skills find`)
+This skill does not require any tools. It provides context and guidance
+for using the `capa` CLI directly from the terminal.
 
 ## References
 

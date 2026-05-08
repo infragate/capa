@@ -41,21 +41,15 @@ describe('capabilities', () => {
       expect(abilityManager).toBeDefined();
     });
 
-    it('should include default tools', () => {
+    it('should start with an empty tools array', () => {
       const capabilities = createDefaultCapabilities();
-      
-      expect(capabilities.tools.length).toBeGreaterThan(0);
-      expect(capabilities.tools.some(t => t.id === 'capa_init')).toBe(true);
-      expect(capabilities.tools.some(t => t.id === 'capa_install')).toBe(true);
-      expect(capabilities.tools.some(t => t.id === 'find_skills')).toBe(true);
+      expect(capabilities.tools).toBeArray();
+      expect(capabilities.tools.length).toBe(0);
     });
 
-    it('should include security options template', () => {
+    it('should set toolExposure to on-demand', () => {
       const capabilities = createDefaultCapabilities();
-      
-      expect(capabilities.options?.security).toBeDefined();
-      expect(Array.isArray(capabilities.options?.security?.blockedPhrases)).toBe(true);
-      expect(capabilities.options?.security?.allowedCharacters).toBeDefined();
+      expect(capabilities.options?.toolExposure).toBe('on-demand');
     });
   });
 
