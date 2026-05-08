@@ -18,6 +18,9 @@ import {
   isCharacterSanitizationEnabled,
   BlockedPhraseError,
 } from '../../shared/skill-security';
+import type { GetSnapshotResult, CachePlatform } from '../../shared/cache';
+import type { LockfileBuilder } from '../../shared/lockfile';
+import type { LockPluginEntry } from '../../types/lockfile';
 
 /** Base under system temp for extracted plugin content (MCP cwd). Per-project so projects don't clash. */
 function getPluginsTempBase(projectId: string): string {
@@ -119,8 +122,20 @@ export interface ResolvePluginsResult {
 }
 
 /**
- * Resolve all plugins from capabilities: clone, unpack, parse manifest, install skills and build merged capabilities.
- * Caller is responsible for cleaning up tempDirsToCleanup.
+ * Snapshot resolver injected from install.ts. Returns a stable on-disk path to
+ * the repo content at a resolved commit SHA, plus the SHA itself.
+ */
+export type GetRepoSnapshotFn = (
+  platform: CachePlatform,
+  repoPath: string,
+  authFetch: AuthenticatedFetch,
+  opts?: { version?: string; ref?: string; pinnedSha?: string; noCache?: boolean }
+) => Promise<GetSnapshotResult>;
+
+/**
+ * Resolve all plugins from capabilities: snapshot, unpack, parse manifest, install skills and build merged capabilities.
+ * Caller is responsible for cleaning up tempDirsToCleanup. Snapshot directories
+ * returned by `getRepoSnapshot` are owned by the cache and must NOT be deleted.
  * @param capabilitiesFilePath - Path to capabilities file (for resolving blocked phrases file)
  */
 export async function resolvePlugins(
@@ -129,15 +144,12 @@ export async function resolvePlugins(
   projectId: string,
   authFetch: AuthenticatedFetch,
   db: CapaDatabase,
-  cloneRepository: (
-    platform: 'github' | 'gitlab',
-    repoPath: string,
-    authFetch: AuthenticatedFetch,
-    version?: string,
-    ref?: string
-  ) => Promise<string>,
-  capabilitiesFilePath: string
+  getRepoSnapshot: GetRepoSnapshotFn,
+  capabilitiesFilePath: string,
+  lockBuilder: LockfileBuilder,
+  options: { noCache?: boolean } = {}
 ): Promise<ResolvePluginsResult> {
+  const noCache = !!options.noCache;
   const plugins = capabilities.plugins ?? [];
   const mergedSkills: Skill[] = Array.isArray(capabilities.skills) ? [...capabilities.skills] : [];
   // Preserve all explicitly defined servers from the capabilities file; never drop them when merging plugin servers
@@ -160,23 +172,32 @@ export async function resolvePlugins(
     }
 
     const repoPath = getRepoPath(parsed);
-    const platform = parsed.platform === 'github' ? 'github' : 'gitlab';
+    const platform: CachePlatform = parsed.platform === 'github' ? 'github' : 'gitlab';
     const version = pluginRef.def.version ?? parsed.version;
     const ref = pluginRef.def.ref ?? parsed.ref;
 
-    let tempDir: string;
+    let snapshot: GetSnapshotResult;
     try {
-      tempDir = await cloneRepository(platform, repoPath, authFetch, version, ref);
-      tempDirs.push(tempDir);
+      const lockEntry = noCache
+        ? null
+        : lockBuilder.findPlugin(pluginRef.def.uri, version ?? null, ref ?? null);
+      const pinnedSha = lockEntry?.resolvedRef;
+      snapshot = await getRepoSnapshot(platform, repoPath, authFetch, {
+        version,
+        ref,
+        pinnedSha,
+        noCache,
+      });
     } catch (err: any) {
       console.error(`  ✗ Failed to clone plugin ${repoPath}: ${err.message}`);
       continue;
     }
 
-    const manifest = detectAndParseManifest(tempDir, providers);
+    const sourceDir = snapshot.snapshotDir;
+
+    const manifest = detectAndParseManifest(sourceDir, providers);
     if (!manifest) {
       console.warn(`  ⚠ No plugin manifest found in ${repoPath}`);
-      try { rmSync(tempDir, { recursive: true, force: true }); } catch {}
       continue;
     }
 
@@ -187,20 +208,26 @@ export async function resolvePlugins(
     const pluginStablePath = join(pluginsBase, pluginInstallId);
     try {
       if (existsSync(pluginStablePath)) rmSync(pluginStablePath, { recursive: true, force: true });
-      copyPluginToStable(tempDir, pluginStablePath);
+      copyPluginToStable(sourceDir, pluginStablePath);
     } catch (err: any) {
       console.error(`  ✗ Failed to copy plugin to ${pluginStablePath}: ${err.message}`);
-      try {
-        rmSync(tempDir, { recursive: true, force: true });
-      } catch {}
       continue;
     }
-    // Remove temp clone immediately; we only needed it to extract files
-    try {
-      rmSync(tempDir, { recursive: true, force: true });
-    } catch {}
-    const tempIdx = tempDirs.indexOf(tempDir);
-    if (tempIdx !== -1) tempDirs.splice(tempIdx, 1);
+
+    // Record this plugin in the lockfile.
+    const lockPluginEntry: LockPluginEntry = {
+      id: pluginInstallId,
+      source: platform,
+      repo: repoPath,
+      uri: pluginRef.def.uri,
+      requestedVersion: version ?? null,
+      requestedRef: ref ?? null,
+      resolvedRef: snapshot.resolvedSha,
+      resolvedVersion: snapshot.resolvedVersion ?? null,
+      manifestName: manifest.name,
+      manifestVersion: manifest.version ?? null,
+    };
+    lockBuilder.upsertPlugin(lockPluginEntry);
 
     const repository = `https://${parsed.platform}.com/${parsed.owner}/${parsed.repo}`;
     const sourcePlugin: SourcePlugin = {
