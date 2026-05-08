@@ -1,7 +1,6 @@
 import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from 'fs';
 import { join, resolve, dirname } from 'path';
 import type { AgentFileConfig, SecurityOptions, SubAgent, Capabilities } from '../../types/capabilities';
-import { getQualifiedToolName } from '../../types/capabilities';
 import {
   loadBlockedPhrases,
   checkBlockedPhrases,
@@ -11,6 +10,8 @@ import {
   isCharacterSanitizationEnabled,
   reportBlockedPhraseAndExit,
 } from '../../shared/skill-security';
+import { getProvider } from '../../shared/providers';
+import { buildSubAgentFile as buildSubAgentFileContent } from '../../shared/providers/handlers';
 
 export const AGENTS_FILENAME = 'AGENTS.md';
 export const CLAUDE_FILENAME = 'CLAUDE.md';
@@ -18,14 +19,12 @@ export const CLAUDE_FILENAME = 'CLAUDE.md';
 const MARKER_START = (id: string) => `<!-- capa:start:${id} -->`;
 const MARKER_END = (id: string) => `<!-- capa:end:${id} -->`;
 
-// Matches a full capa-managed block for a given id (greedy within the block).
 const blockPattern = (id: string) =>
   new RegExp(
     `${escapeRegex(MARKER_START(id))}[\\s\\S]*?${escapeRegex(MARKER_END(id))}`,
     'g'
   );
 
-// Matches every capa-managed block in a file (used for listing / bulk removal).
 const ANY_BLOCK_PATTERN =
   /<!-- capa:start:([^>]+?) -->[\s\S]*?<!-- capa:end:\1 -->/g;
 
@@ -33,7 +32,6 @@ function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-/** Build the full text of a capa-owned block including its markers. */
 function buildBlock(id: string, body: string): string {
   const trimmed = body.trimEnd();
   return `${MARKER_START(id)}\n${trimmed}\n${MARKER_END(id)}`;
@@ -41,31 +39,31 @@ function buildBlock(id: string, body: string): string {
 
 /**
  * Determine which agent instruction filenames to manage based on the active providers.
- * - AGENTS.md is always managed (universal format supported by Cursor, Codex, Jules, etc.)
- * - CLAUDE.md is additionally managed when any Claude provider (e.g. `claude-code`) is present,
- *   since Claude Code reads `./CLAUDE.md` at project root.
+ * Uses the provider registry to collect unique instruction filenames.
+ * AGENTS.md is always included as the universal baseline.
  */
 export function getTargetFilenames(providers: string[]): string[] {
-  const filenames: string[] = [AGENTS_FILENAME];
-  const hasClaudeProvider = providers.some((p) => p.startsWith('claude'));
-  if (hasClaudeProvider) {
-    filenames.push(CLAUDE_FILENAME);
+  const filenames = new Set<string>([AGENTS_FILENAME]);
+  for (const pid of providers) {
+    const p = getProvider(pid);
+    if (p?.instructions) {
+      filenames.add(p.instructions.filename);
+    }
   }
-  return filenames;
+  return [...filenames];
 }
 
-/** Read a file; returns empty string if it doesn't exist. */
 function readMdFile(projectPath: string, filename: string): string {
   const filePath = join(projectPath, filename);
   return existsSync(filePath) ? readFileSync(filePath, 'utf8') : '';
 }
 
-/** Write content to a file. */
 function writeMdFile(projectPath: string, filename: string, content: string): void {
+  const dir = dirname(join(projectPath, filename));
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   writeFileSync(join(projectPath, filename), content, 'utf8');
 }
 
-/** Delete a file if it exists. */
 function deleteMdFile(projectPath: string, filename: string): void {
   const filePath = join(projectPath, filename);
   if (existsSync(filePath)) {
@@ -73,39 +71,23 @@ function deleteMdFile(projectPath: string, filename: string): void {
   }
 }
 
-/**
- * Insert or replace a capa-owned snippet block in the file content.
- * If the block already exists it is updated in place; otherwise it is appended.
- */
 export function upsertSnippet(content: string, id: string, body: string): string {
   const block = buildBlock(id, body);
   if (blockPattern(id).test(content)) {
     return content.replace(blockPattern(id), block);
   }
-  // Append: ensure a single blank line before the new block.
   const base = content.trimEnd();
   return base.length > 0 ? `${base}\n\n${block}\n` : `${block}\n`;
 }
 
-/**
- * Remove the capa-owned block for a given id from the file content.
- * Returns the content unchanged if the block is not present.
- */
 export function removeSnippet(content: string, id: string): string {
   return content.replace(blockPattern(id), '').replace(/\n{3,}/g, '\n\n');
 }
 
-/**
- * Remove all capa-owned blocks from the file content.
- * Collapses any resulting run of blank lines to at most one blank line.
- */
 export function removeAllCapaSnippets(content: string): string {
   return content.replace(ANY_BLOCK_PATTERN, '').replace(/\n{3,}/g, '\n\n').trimEnd();
 }
 
-/**
- * Return the list of snippet ids currently present in the file content.
- */
 export function listCapaSnippetIds(content: string): string[] {
   const ids: string[] = [];
   let match: RegExpExecArray | null;
@@ -116,10 +98,6 @@ export function listCapaSnippetIds(content: string): string[] {
   return ids;
 }
 
-/**
- * Fetch text content from a remote URL.
- * Throws if the request fails or returns a non-OK status.
- */
 export async function fetchRemoteContent(url: string): Promise<string> {
   const response = await fetch(url);
   if (!response.ok) {
@@ -133,23 +111,13 @@ export async function fetchRemoteContent(url: string): Promise<string> {
 // ---------------------------------------------------------------------------
 
 interface ParsedAgentRepo {
-  ownerRepo: string;  // e.g. "vercel-labs/agent-skills"
-  filepath: string;   // e.g. "AGENTS.md" or "docs/tips.md"
-  version?: string;   // e.g. "v1.2.0"
-  sha?: string;       // e.g. "abc123def"
+  ownerRepo: string;
+  filepath: string;
+  version?: string;
+  sha?: string;
 }
 
-/**
- * Parse a repo string of the form "owner/repo@filepath" with an optional
- * ":version" or "#sha" suffix.
- *
- * Examples:
- *   "vercel-labs/agent-skills@AGENTS.md"
- *   "vercel-labs/agent-skills@docs/tips.md:v1.2.0"
- *   "vercel-labs/agent-skills@AGENTS.md#abc123def"
- */
 function parseRepoString(repo: string): ParsedAgentRepo {
-  // Split on the first '@' to separate repo from filepath (+ optional specifier).
   const atIdx = repo.indexOf('@');
   if (atIdx === -1) {
     throw new Error(
@@ -159,15 +127,13 @@ function parseRepoString(repo: string): ParsedAgentRepo {
   }
 
   const ownerRepo = repo.slice(0, atIdx);
-  const rest = repo.slice(atIdx + 1); // "filepath" or "filepath:v1" or "filepath#abc"
+  const rest = repo.slice(atIdx + 1);
 
-  // SHA suffix: #<hex>
   const shaIdx = rest.lastIndexOf('#');
   if (shaIdx !== -1) {
     return { ownerRepo, filepath: rest.slice(0, shaIdx), sha: rest.slice(shaIdx + 1) };
   }
 
-  // Version/tag suffix: :version (last colon wins to avoid clashing with drive letters)
   const colonIdx = rest.lastIndexOf(':');
   if (colonIdx !== -1) {
     return { ownerRepo, filepath: rest.slice(0, colonIdx), version: rest.slice(colonIdx + 1) };
@@ -176,10 +142,6 @@ function parseRepoString(repo: string): ParsedAgentRepo {
   return { ownerRepo, filepath: rest };
 }
 
-/**
- * Build a raw content URL for a file inside a GitHub or GitLab repository.
- * Uses "HEAD" as the default ref so it always tracks the default branch.
- */
 function buildRawUrl(platform: 'github' | 'gitlab', parsed: ParsedAgentRepo): string {
   const ref = parsed.sha ?? parsed.version ?? 'HEAD';
   if (platform === 'github') {
@@ -188,19 +150,10 @@ function buildRawUrl(platform: 'github' | 'gitlab', parsed: ParsedAgentRepo): st
   return `https://gitlab.com/${parsed.ownerRepo}/-/raw/${ref}/${parsed.filepath}`;
 }
 
-/**
- * Derive a stable snippet id from a repo filepath when the user does not
- * provide one explicitly.  Non-alphanumeric characters are replaced with "_".
- * Example: "docs/AGENTS.md" → "docs_AGENTS_md"
- */
 function deriveIdFromFilepath(filepath: string): string {
   return filepath.replace(/[^a-zA-Z0-9_-]/g, '_');
 }
 
-/**
- * Resolve a github/gitlab snippet to its { id, body } pair.
- * Parses the `def.repo` string, builds the raw URL, and fetches the content.
- */
 async function resolveRepoSnippet(
   platform: 'github' | 'gitlab',
   snippet: { id?: string; def?: { repo: string } }
@@ -218,20 +171,6 @@ async function resolveRepoSnippet(
   return { id, body };
 }
 
-/**
- * Apply the `agents` configuration to a single target file.
- *
- * `snippetBodies` contains the already-resolved, security-checked content keyed by
- * the effective snippet id (including ids derived from github/gitlab filepaths).
- * The reserved key `__base__` holds the base file content when `base.ref` is set.
- *
- * When a base is configured the file is rebuilt from scratch:
- *   base content (written as-is, no markers) + all snippets appended with markers.
- *
- * When no base is configured the existing file is edited in place:
- *   1. Upsert each snippet (add if missing, replace if changed).
- *   2. Prune any capa-owned blocks whose id is no longer present in `snippetBodies`.
- */
 function applyConfigToFile(
   projectPath: string,
   filename: string,
@@ -240,19 +179,14 @@ function applyConfigToFile(
 ): void {
   let content: string;
 
-  // Snippet entries (everything except the reserved __base__ key).
   const snippetEntries = [...snippetBodies.entries()].filter(([id]) => id !== '__base__');
 
   if (hasBase) {
-    // Rebuild from scratch: base content followed by all snippets.
-    // Existing user edits outside markers are intentionally replaced — the base is
-    // the authoritative starting point and re-install always refreshes it.
     content = snippetBodies.get('__base__')!.trimEnd();
     for (const [id, body] of snippetEntries) {
       content = upsertSnippet(content, id, body);
     }
   } else {
-    // No base: edit the existing file in place, preserving user content.
     content = readMdFile(projectPath, filename);
 
     const currentIds = new Set(snippetEntries.map(([id]) => id));
@@ -260,7 +194,6 @@ function applyConfigToFile(
       content = upsertSnippet(content, id, body);
     }
 
-    // Prune capa blocks whose id is no longer in the current config.
     for (const id of listCapaSnippetIds(content)) {
       if (!currentIds.has(id)) {
         console.log(`  Removing stale agent snippet "${id}" from ${filename}`);
@@ -272,21 +205,6 @@ function applyConfigToFile(
   writeMdFile(projectPath, filename, content);
 }
 
-/**
- * Apply the full `agents` configuration to all target files.
- *
- * Target files are determined by the active providers:
- *   - AGENTS.md: always written (universal format)
- *   - CLAUDE.md: written when any `claude*` provider is present (e.g. `claude-code`)
- *
- * Remote content is fetched once and reused for all target files.
- * The same security checks (blocked phrases, character sanitization) that apply to skills
- * are applied to all agent snippet content before it is written.
- *
- * @param security - Security options from `capabilities.options.security`
- * @param capabilitiesFilePath - Full path to the capabilities file (used to resolve a
- *   file-based blockedPhrases list relative to the capabilities directory)
- */
 export async function installAgentsFile(
   projectPath: string,
   config: AgentFileConfig,
@@ -296,7 +214,6 @@ export async function installAgentsFile(
 ): Promise<void> {
   const targetFiles = getTargetFilenames(providers);
 
-  // Resolve security settings once.
   const blockedEnabled = isBlockedPhrasesEnabled(security);
   const sanitizeEnabled = isCharacterSanitizationEnabled(security);
   const blockedPhrases = blockedEnabled && capabilitiesFilePath
@@ -304,7 +221,6 @@ export async function installAgentsFile(
     : [];
   const allowedCharacters = sanitizeEnabled ? getAllowedCharacters(security) : null;
 
-  /** Run blocked-phrase check and optional sanitization on a piece of content. */
   function applySecurityChecks(content: string, sourceLabel: string): string {
     if (blockedEnabled && blockedPhrases.length > 0) {
       const check = checkBlockedPhrases(content, blockedPhrases);
@@ -318,7 +234,6 @@ export async function installAgentsFile(
     return content;
   }
 
-  // Pre-fetch and secure all content once so we don't hit the network per file.
   const snippetBodies = new Map<string, string>();
 
   if (config.base) {
@@ -374,21 +289,13 @@ export async function installAgentsFile(
     let body: string;
 
     if (snippet.type === 'inline') {
-      if (!snippet.id) {
-        throw new Error(`Agent inline snippet is missing an "id" field.`);
-      }
-      if (!snippet.content) {
-        throw new Error(`Agent snippet "${snippet.id}" is type 'inline' but has no content.`);
-      }
+      if (!snippet.id) throw new Error(`Agent inline snippet is missing an "id" field.`);
+      if (!snippet.content) throw new Error(`Agent snippet "${snippet.id}" is type 'inline' but has no content.`);
       resolvedId = snippet.id;
       body = snippet.content;
     } else if (snippet.type === 'remote') {
-      if (!snippet.id) {
-        throw new Error(`Agent remote snippet is missing an "id" field.`);
-      }
-      if (!snippet.url) {
-        throw new Error(`Agent snippet "${snippet.id}" is type 'remote' but has no url.`);
-      }
+      if (!snippet.id) throw new Error(`Agent remote snippet is missing an "id" field.`);
+      if (!snippet.url) throw new Error(`Agent snippet "${snippet.id}" is type 'remote' but has no url.`);
       resolvedId = snippet.id;
       console.log(`  Fetching remote snippet "${resolvedId}" from ${snippet.url}`);
       body = await fetchRemoteContent(snippet.url);
@@ -403,7 +310,6 @@ export async function installAgentsFile(
     snippetBodies.set(resolvedId, applySecurityChecks(body, `agents:${resolvedId}`));
   }
 
-  // Apply to each target file.
   const hasBase = !!config.base;
   for (const filename of targetFiles) {
     applyConfigToFile(projectPath, filename, hasBase, snippetBodies);
@@ -411,136 +317,64 @@ export async function installAgentsFile(
   }
 }
 
-/**
- * Build the shared prompt body for a sub-agent (used in both .claude/agents/ and .cursor/agents/).
- */
-function buildSubAgentBody(subAgent: SubAgent, capabilities: Capabilities): string {
-  const toolNames = subAgent.tools
-    .map((toolId) => {
-      const tool = capabilities.tools.find((t) => t.id === toolId);
-      return tool ? getQualifiedToolName(tool) : toolId;
-    })
-    .join(', ');
-
-  const skillList = subAgent.skills.length > 0 ? subAgent.skills.join(', ') : '(none)';
-
-  const lines: string[] = [];
-
-  lines.push(
-    `**MCP server key:** \`capa-${subAgent.id}\``,
-    `**Skills:** ${skillList}`,
-    `**Tools:** ${toolNames || '(none)'}`,
-  );
-
-  if (subAgent.instructions) {
-    lines.push('', subAgent.instructions.trimEnd());
-  }
-
-  return lines.join('\n');
-}
+// ---------------------------------------------------------------------------
+// Sub-agent instructions — registry-driven
+// ---------------------------------------------------------------------------
 
 /**
- * Write a Cursor-compatible subagent file at .cursor/agents/{agentId}.md.
- *
- * Format follows the Cursor subagents spec:
- *   https://cursor.com/docs/subagents
- *
- * Frontmatter fields: name, description, model, readonly, is_background
- * Body: markdown prompt with tool/skill context injected by capa.
- *
- * The `description` field is critical — Cursor's agent reads it to decide when to
- * automatically delegate to this subagent.
+ * Write a sub-agent definition file using the provider's subagents integration.
  */
-function writeCursorAgentFile(projectPath: string, subAgent: SubAgent, body: string): void {
-  const agentsDir = join(projectPath, '.cursor', 'agents');
+function writeSubAgentFile(
+  projectPath: string,
+  providerId: string,
+  subAgent: SubAgent,
+  capabilities: Capabilities
+): void {
+  const provider = getProvider(providerId);
+  if (!provider?.subagents) return;
+
+  const { subagents: sa } = provider;
+  const agentsDir = join(projectPath, sa.dir);
   mkdirSync(agentsDir, { recursive: true });
 
-  const filePath = join(agentsDir, `${subAgent.id}.md`);
-  const descriptionLine = subAgent.description
-    ? `description: ${subAgent.description}`
-    : `description: ${subAgent.id}`;
+  const filePath = join(agentsDir, `${subAgent.id}${sa.extension}`);
+  const content = buildSubAgentFileContent(provider, subAgent, capabilities);
+  writeFileSync(filePath, content, 'utf8');
 
-  const frontmatter = [
-    '---',
-    `name: ${subAgent.id}`,
-    descriptionLine,
-    'model: inherit',
-    'readonly: false',
-    'is_background: false',
-    '---',
-    '',
-  ].join('\n');
-
-  writeFileSync(filePath, frontmatter + body + '\n', 'utf8');
-  console.log(`  ✓ .cursor/agents/${subAgent.id}.md written`);
+  console.log(`  ✓ ${sa.dir}/${subAgent.id}${sa.extension} written`);
 }
 
 /**
- * Remove the Cursor agent file for a sub-agent, if it exists.
+ * Remove a sub-agent definition file for a provider.
  */
-function removeCursorAgentFile(projectPath: string, agentId: string): void {
-  const filePath = join(projectPath, '.cursor', 'agents', `${agentId}.md`);
+function removeSubAgentFile(projectPath: string, providerId: string, agentId: string): void {
+  const provider = getProvider(providerId);
+  if (!provider?.subagents) return;
+
+  const { subagents: sa } = provider;
+  const filePath = join(projectPath, sa.dir, `${agentId}${sa.extension}`);
   if (existsSync(filePath)) {
     unlinkSync(filePath);
-    console.log(`  ✓ Removed .cursor/agents/${agentId}.md`);
+    console.log(`  ✓ Removed ${sa.dir}/${agentId}${sa.extension}`);
   }
-  // Also clean up any legacy .cursor/rules/{id}.mdc files from old capa versions
-  const legacyPath = join(projectPath, '.cursor', 'rules', `${agentId}.mdc`);
-  if (existsSync(legacyPath)) {
-    unlinkSync(legacyPath);
-  }
-}
 
-/**
- * Write a Claude Code subagent file at .claude/agents/{agentId}.md.
- *
- * Claude Code reads .claude/agents/ for sub-agent definitions (same format as Cursor).
- * Cursor also reads .claude/agents/ when running in Claude-compatibility mode.
- * Frontmatter fields mirror the Cursor spec: name, description, model.
- */
-function writeClaudeAgentFile(projectPath: string, subAgent: SubAgent, body: string): void {
-  const agentsDir = join(projectPath, '.claude', 'agents');
-  mkdirSync(agentsDir, { recursive: true });
-
-  const filePath = join(agentsDir, `${subAgent.id}.md`);
-  const descriptionLine = subAgent.description
-    ? `description: ${subAgent.description}`
-    : `description: ${subAgent.id}`;
-
-  const frontmatter = [
-    '---',
-    `name: ${subAgent.id}`,
-    descriptionLine,
-    'model: inherit',
-    '---',
-    '',
-  ].join('\n');
-
-  writeFileSync(filePath, frontmatter + body + '\n', 'utf8');
-  console.log(`  ✓ .claude/agents/${subAgent.id}.md written`);
-}
-
-/**
- * Remove the Claude agent file for a sub-agent, if it exists.
- */
-function removeClaudeAgentFile(projectPath: string, agentId: string): void {
-  const filePath = join(projectPath, '.claude', 'agents', `${agentId}.md`);
-  if (existsSync(filePath)) {
-    unlinkSync(filePath);
-    console.log(`  ✓ Removed .claude/agents/${agentId}.md`);
+  // Legacy cleanup for Cursor: remove old .cursor/rules/{id}.mdc files
+  if (providerId === 'cursor') {
+    const legacyPath = join(projectPath, '.cursor', 'rules', `${agentId}.mdc`);
+    if (existsSync(legacyPath)) {
+      unlinkSync(legacyPath);
+    }
   }
 }
 
 /**
- * Install sub-agent definition files for each active provider:
+ * Install sub-agent definition files for each active provider.
  *
- * - claude-code → .claude/agents/{id}.md  (Claude Code subagent format)
- *                  CLAUDE.md block (for global context in the main conversation)
- * - cursor      → .cursor/agents/{id}.md  (Cursor subagent format, auto-delegation via description)
+ * For providers with a `subagents` integration, writes the agent file using
+ * the provider-specific format (markdown frontmatter or TOML).
  *
- * Both formats use YAML frontmatter + markdown prompt body.
- * Cursor also reads .claude/agents/ (Claude-compatibility mode), so writing both
- * gives maximum coverage when both providers are active.
+ * For providers with an `instructions` integration, also upserts a context
+ * block into the instructions file (e.g. CLAUDE.md for claude-code).
  */
 export function installSubAgentInstructions(
   projectPath: string,
@@ -548,31 +382,38 @@ export function installSubAgentInstructions(
   capabilities: Capabilities,
   providers: string[]
 ): void {
-  const body = buildSubAgentBody(subAgent, capabilities);
+  for (const pid of providers) {
+    const provider = getProvider(pid);
+    if (!provider) continue;
 
-  const hasClaude = providers.some((p) => p.toLowerCase().startsWith('claude'));
-  const hasCursor = providers.some((p) => p.toLowerCase() === 'cursor');
+    const mcpServerKey = `capa-${subAgent.id}`;
 
-  // Claude Code: write .claude/agents/{id}.md + update CLAUDE.md global context block
-  if (hasClaude) {
-    writeClaudeAgentFile(projectPath, subAgent, body);
+    // Write the sub-agent definition file
+    if (provider.subagents) {
+      writeSubAgentFile(projectPath, pid, subAgent, capabilities);
+    }
 
-    const snippetId = `sub-agent:${subAgent.id}`;
-    const claudeMdBody = [
-      `## Agent: ${subAgent.id}`,
-      ...(subAgent.description ? ['', subAgent.description] : []),
-      '',
-      body,
-    ].join('\n');
-    let claudeMd = readMdFile(projectPath, CLAUDE_FILENAME);
-    claudeMd = upsertSnippet(claudeMd, snippetId, claudeMdBody);
-    writeMdFile(projectPath, CLAUDE_FILENAME, claudeMd);
-    console.log(`  ✓ ${CLAUDE_FILENAME} updated with sub-agent "${subAgent.id}" instructions`);
-  }
+    // For providers with a distinct instructions file (e.g. CLAUDE.md),
+    // add a context block so the main agent knows about the sub-agent.
+    if (provider.instructions && provider.instructions.filename !== AGENTS_FILENAME) {
+      const snippetId = `sub-agent:${subAgent.id}`;
+      const bodyLines = [
+        `## Agent: ${subAgent.id}`,
+        ...(subAgent.description ? ['', subAgent.description] : []),
+        '',
+        `**MCP server key:** \`${mcpServerKey}\``,
+        `**Skills:** ${subAgent.skills.length > 0 ? subAgent.skills.join(', ') : '(none)'}`,
+      ];
+      if (subAgent.instructions) {
+        bodyLines.push('', subAgent.instructions.trimEnd());
+      }
 
-  // Cursor: write .cursor/agents/{id}.md (auto-delegated based on description field)
-  if (hasCursor) {
-    writeCursorAgentFile(projectPath, subAgent, body);
+      const filename = provider.instructions.filename;
+      let content = readMdFile(projectPath, filename);
+      content = upsertSnippet(content, snippetId, bodyLines.join('\n'));
+      writeMdFile(projectPath, filename, content);
+      console.log(`  ✓ ${filename} updated with sub-agent "${subAgent.id}" instructions`);
+    }
   }
 }
 
@@ -584,28 +425,29 @@ export function removeSubAgentInstructions(
   agentId: string,
   providers: string[]
 ): void {
-  const hasClaude = providers.some((p) => p.toLowerCase().startsWith('claude'));
-  const hasCursor = providers.some((p) => p.toLowerCase() === 'cursor');
+  for (const pid of providers) {
+    const provider = getProvider(pid);
+    if (!provider) continue;
 
-  if (hasClaude) {
-    removeClaudeAgentFile(projectPath, agentId);
-    const snippetId = `sub-agent:${agentId}`;
-    const content = readMdFile(projectPath, CLAUDE_FILENAME);
-    if (content) {
-      writeMdFile(projectPath, CLAUDE_FILENAME, removeSnippet(content, snippetId));
-      console.log(`  ✓ Removed sub-agent "${agentId}" instructions from ${CLAUDE_FILENAME}`);
+    if (provider.subagents) {
+      removeSubAgentFile(projectPath, pid, agentId);
     }
-  }
 
-  if (hasCursor) {
-    removeCursorAgentFile(projectPath, agentId);
+    if (provider.instructions && provider.instructions.filename !== AGENTS_FILENAME) {
+      const snippetId = `sub-agent:${agentId}`;
+      const filename = provider.instructions.filename;
+      const content = readMdFile(projectPath, filename);
+      if (content) {
+        writeMdFile(projectPath, filename, removeSnippet(content, snippetId));
+        console.log(`  ✓ Removed sub-agent "${agentId}" instructions from ${filename}`);
+      }
+    }
   }
 }
 
 /**
  * Remove all capa-managed blocks from every target agent instructions file.
  * Deletes a file entirely if it becomes empty after cleaning.
- * Target files are determined by the active providers (same logic as install).
  */
 export function cleanAgentsFile(projectPath: string, providers: string[]): void {
   const targetFiles = getTargetFilenames(providers);

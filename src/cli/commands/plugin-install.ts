@@ -6,8 +6,7 @@ import type { CapaDatabase } from '../../db/database';
 import type { AuthenticatedFetch } from '../../shared/authenticated-fetch';
 import { parsePluginUri, getRepoPath, getPluginInstallId } from '../../shared/plugin-uri';
 import { detectAndParseManifest, resolvePluginServerDef } from '../../shared/plugin-manifest';
-import { getAgentConfig } from 'skills/src/agents';
-import type { AgentType } from 'skills/src/types';
+import { getProvider } from '../../shared/providers';
 import {
   loadBlockedPhrases,
   checkBlockedPhrases,
@@ -255,9 +254,9 @@ export async function resolvePlugins(
       if (!existsSync(join(srcSkillDir, 'SKILL.md'))) continue;
 
       for (const client of providers) {
-        const agentConfig = getAgentConfig(client as AgentType);
-        if (!agentConfig) continue;
-        const skillsBaseDir = join(projectPath, agentConfig.skillsDir);
+        const providerEntry = getProvider(client);
+        if (!providerEntry) continue;
+        const skillsBaseDir = join(projectPath, providerEntry.skillsDir);
         const destSkillDir = join(skillsBaseDir, entry.id);
         try {
           if (existsSync(destSkillDir)) rmSync(destSkillDir, { recursive: true, force: true });
@@ -287,7 +286,7 @@ export async function resolvePlugins(
         }
       }
 
-      const firstProviderDir = getAgentConfig(providers[0] as AgentType)?.skillsDir;
+      const firstProviderDir = getProvider(providers[0])?.skillsDir;
       const localPath = firstProviderDir ? join(firstProviderDir, entry.id) : entry.id;
       mergedSkills.push({
         id: entry.id,

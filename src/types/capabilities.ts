@@ -1,9 +1,11 @@
 // Capabilities file types
 
 import type { Plugin, SourcePlugin, ResolvedPluginInfo } from './plugin';
+import type { Rule } from './rules';
 
 export type CapabilitiesFormat = 'json' | 'yaml';
 export type { Plugin, SourcePlugin, ResolvedPluginInfo } from './plugin';
+export type { Rule } from './rules';
 
 /**
  * Tool exposure modes for MCP clients
@@ -206,6 +208,11 @@ export interface Capabilities {
    * Named sub-agent configurations. See `SubAgent` for per-provider install behavior.
    */
   subagents?: SubAgent[];
+  /**
+   * Rules installed into each provider's rules directory (or folded into the
+   * instructions file for providers without a dedicated rules location).
+   */
+  rules?: Rule[];
 }
 
 export interface Skill {
