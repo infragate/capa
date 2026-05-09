@@ -62,9 +62,10 @@ function RuleItem({ rule, search }: { rule: Rule; search: string }) {
           className={`mt-0.5 shrink-0 text-text-tertiary transition-transform duration-150 ${expanded ? 'rotate-90' : ''}`}
         />
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 min-w-0">
             <span
-              className="font-mono text-xs font-medium text-text-primary"
+              className="truncate font-mono text-xs font-medium text-text-primary"
+              title={rule.id}
               dangerouslySetInnerHTML={{ __html: highlightText(rule.id, search) }}
             />
             <span
@@ -74,7 +75,7 @@ function RuleItem({ rule, search }: { rule: Rule; search: string }) {
             </span>
           </div>
           {!expanded && rule.description && (
-            <div className="mt-0.5 truncate text-[11px] text-text-tertiary">
+            <div className="mt-0.5 truncate text-[11px] text-text-tertiary" title={rule.description}>
               {rule.description}
             </div>
           )}

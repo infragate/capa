@@ -33,13 +33,14 @@ export function SkillsList({ skills, search }: SkillsListProps) {
         <div className="space-y-1">
           {visible.map((skill) => (
             <div key={skill.id} className="rounded-sm border border-border-tertiary bg-bg-tertiary p-3">
-              <div
-                className="mb-1 font-mono text-[13px] font-medium text-text-primary"
-                dangerouslySetInnerHTML={{ __html: highlightText(skill.id, search) }}
-              />
-              <div className="mb-1 flex items-center gap-2 text-xs text-text-secondary">
+              <div className="mb-1 flex items-center gap-2 min-w-0">
                 <span
-                  className={`rounded-sm px-1.5 py-0.5 text-[11px] font-medium uppercase ${sourceTypeBadgeClasses(skill.type)}`}
+                  className="truncate font-mono text-[13px] font-medium text-text-primary"
+                  title={skill.id}
+                  dangerouslySetInnerHTML={{ __html: highlightText(skill.id, search) }}
+                />
+                <span
+                  className={`shrink-0 rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase ${sourceTypeBadgeClasses(skill.type)}`}
                 >
                   {skill.type}
                 </span>
