@@ -46,7 +46,7 @@ export function TopBar({ title, showBack }: TopBarProps) {
           {title && (
             <>
               <span className="text-text-tertiary">&rsaquo;</span>
-              <span className="truncate">{title}</span>
+              <span className="truncate" title={title}>{title}</span>
             </>
           )}
           {isHome && !title && <span>{t('projects:title')}</span>}

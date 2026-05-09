@@ -125,9 +125,10 @@ function ToolItem({
           className={`mt-0.5 shrink-0 text-text-tertiary transition-transform duration-150 ${expanded ? 'rotate-90' : ''}`}
         />
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 min-w-0">
             <span
-              className="font-mono text-xs font-medium text-text-primary"
+              className="truncate font-mono text-xs font-medium text-text-primary"
+              title={tool.id}
               dangerouslySetInnerHTML={{ __html: highlightText(tool.id, search) }}
             />
             <span className="shrink-0 rounded-sm bg-bg-secondary px-1.5 py-0.5 text-[10px] font-medium uppercase text-text-tertiary">
@@ -140,7 +141,7 @@ function ToolItem({
             )}
           </div>
           {!expanded && descPreview && (
-            <div className="mt-0.5 truncate text-[11px] text-text-tertiary">
+            <div className="mt-0.5 truncate text-[11px] text-text-tertiary" title={desc}>
               {descPreview}
             </div>
           )}

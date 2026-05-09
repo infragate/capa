@@ -22,6 +22,7 @@ export function SourceBadge({ name, kind = 'server', search }: SourceBadgeProps)
     <span
       className="server-badge inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium leading-none"
       style={style}
+      title={name}
     >
       <Icon size={10} className="shrink-0" />
       {search ? (
