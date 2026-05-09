@@ -631,11 +631,16 @@ export async function installCommand(
   }
 
   // Step 3.5: Install rules across providers
-  if (capabilitiesToUse.rules && capabilitiesToUse.rules.length > 0) {
+  // We also always run a prune step (further down) so that rules removed or
+  // commented out since the last install have their files / marker blocks
+  // cleaned up. The install step itself is gated on `rules.length > 0`
+  // because there's nothing to fetch otherwise.
+  const currentRules = capabilitiesToUse.rules ?? [];
+  if (currentRules.length > 0) {
     console.log('\n📏 Installing rules...');
     try {
       const resolvedContent = new Map<string, string>();
-      for (const rule of capabilitiesToUse.rules) {
+      for (const rule of currentRules) {
         let body: string;
         if (rule.type === 'inline') {
           if (!rule.content) throw new Error(`Rule "${rule.id}" is type 'inline' but has no content.`);
@@ -680,12 +685,48 @@ export async function installCommand(
       }
 
       const { installRules } = await import('../utils/rules-installer');
-      installRules(projectPath, capabilitiesToUse.rules, providers, resolvedContent);
-      console.log(`\n  ✓ ${capabilitiesToUse.rules.length} rule(s) installed`);
+      installRules(projectPath, currentRules, providers, resolvedContent, {
+        // Register every rule file we write so `pruneRules` (and `capa
+        // clean`) can find it later, even after the user removes the rule
+        // from the capabilities file.
+        onFileWritten: (filePath) => db.addManagedFile(projectId, filePath),
+      });
+      console.log(`\n  ✓ ${currentRules.length} rule(s) installed`);
     } catch (err: any) {
       console.error(`  ✗ Failed to install rules: ${err.message}`);
       db.close();
       process.exit(1);
+    }
+  }
+
+  // Step 3.6: Prune rule artifacts that are no longer in the capabilities file.
+  // Runs unconditionally so commenting out or removing a rule removes its
+  // file (for directory-based providers) or marker block (for instruction-
+  // folded providers) on the next install.
+  if (providers.length > 0) {
+    try {
+      const { pruneRules } = await import('../utils/rules-installer');
+      const previouslyManaged = db.getManagedFiles(projectId);
+      const { removedFiles, removedMarkers } = pruneRules(
+        projectPath,
+        providers,
+        currentRules,
+        previouslyManaged
+      );
+      for (const f of removedFiles) {
+        db.removeManagedFile(projectId, f);
+      }
+      if (removedFiles.length + removedMarkers.length > 0) {
+        const fileWord = removedFiles.length === 1 ? 'file' : 'files';
+        const blockWord = removedMarkers.length === 1 ? 'block' : 'blocks';
+        console.log(
+          `  ✓ Pruned ${removedFiles.length} orphan rule ${fileWord} and ` +
+          `${removedMarkers.length} orphan rule marker ${blockWord}`
+        );
+      }
+    } catch (err: any) {
+      console.error(`  ⚠  Failed to prune orphan rules: ${err.message}`);
+      // Non-fatal: install can still proceed even if prune partially failed.
     }
   }
 
