@@ -19,9 +19,9 @@ async function buildWeb() {
   }
 
   // Step 0: Read logo assets
-  const DOCS_PUBLIC = join(ROOT, 'capa-docs', 'public');
-  const faviconSvgPath = join(DOCS_PUBLIC, 'favicon.svg');
-  const logoPngPath = join(DOCS_PUBLIC, 'favicon-white.png');
+  const ASSETS = join(ROOT, 'assets');
+  const faviconSvgPath = join(ASSETS, 'favicon.svg');
+  const logoPngPath = join(ASSETS, 'favicon-white.png');
 
   let faviconDataUrl = '';
   let logoPngDataUrl = '';
