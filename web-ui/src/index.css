@@ -1,0 +1,158 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-bg-primary: var(--bg-primary);
+  --color-bg-secondary: var(--bg-secondary);
+  --color-bg-tertiary: var(--bg-tertiary);
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-tertiary: var(--text-tertiary);
+  --color-border-primary: var(--border-primary);
+  --color-border-secondary: var(--border-secondary);
+  --color-border-tertiary: var(--border-tertiary);
+  --color-accent-primary: var(--accent-primary);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-active: var(--accent-active);
+  --color-input-bg: var(--input-bg);
+  --color-hover-bg: var(--hover-bg);
+  --color-code-bg: var(--code-bg);
+  --color-success-bg: var(--success-bg);
+  --color-success-text: var(--success-text);
+  --color-success-border: var(--success-border);
+  --color-success-btn: var(--success-btn);
+  --color-success-btn-hover: var(--success-btn-hover);
+  --color-error-bg: var(--error-bg);
+  --color-error-text: var(--error-text);
+  --color-error-border: var(--error-border);
+  --color-error-btn: var(--error-btn);
+  --color-error-btn-hover: var(--error-btn-hover);
+  --color-info-bg: var(--info-bg);
+  --color-info-text: var(--info-text);
+  --color-info-border: var(--info-border);
+  --color-status-connected: var(--status-connected);
+  --color-status-connected-dot: var(--status-connected-dot);
+
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Roboto Mono', ui-monospace, monospace;
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+}
+
+:root[data-theme="light"] {
+  --bg-primary: #f5f5f5;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #f8f9fa;
+  --text-primary: #202124;
+  --text-secondary: #5f6368;
+  --text-tertiary: #80868b;
+  --border-primary: #dadce0;
+  --border-secondary: #e0e0e0;
+  --border-tertiary: #f1f3f4;
+  --accent-primary: #1967d2;
+  --accent-hover: #1557b0;
+  --accent-active: #185abc;
+  --btn-disabled-bg: #f1f3f4;
+  --btn-disabled-text: #80868b;
+  --shadow-sm: 0 1px 2px 0 rgba(60,64,67,0.3), 0 1px 3px 1px rgba(60,64,67,0.15);
+  --shadow-md: 0 10px 30px rgba(0, 0, 0, 0.2);
+  --input-bg: #ffffff;
+  --hover-bg: #f8f9fa;
+  --code-bg: #f1f3f4;
+  --success-bg: #e6f4ea;
+  --success-text: #137333;
+  --success-border: #aecbfa;
+  --success-btn: #1e8e3e;
+  --success-btn-hover: #188038;
+  --error-bg: #fce8e6;
+  --error-text: #d93025;
+  --error-border: #f6aea9;
+  --error-btn: #d93025;
+  --error-btn-hover: #c5221f;
+  --info-bg: #e8f0fe;
+  --info-text: #1967d2;
+  --info-border: #aecbfa;
+  --status-connected: #137333;
+  --status-connected-dot: #34a853;
+}
+
+:root,
+:root[data-theme="dark"] {
+  --bg-primary: #202124;
+  --bg-secondary: #292a2d;
+  --bg-tertiary: #35363a;
+  --text-primary: #e8eaed;
+  --text-secondary: #9aa0a6;
+  --text-tertiary: #5f6368;
+  --border-primary: #3c4043;
+  --border-secondary: #3c4043;
+  --border-tertiary: #3c4043;
+  --accent-primary: #8ab4f8;
+  --accent-hover: #aecbfa;
+  --accent-active: #c6dafc;
+  --btn-disabled-bg: #3c4043;
+  --btn-disabled-text: #5f6368;
+  --shadow-sm: 0 1px 2px 0 rgba(0,0,0,0.3), 0 1px 3px 1px rgba(0,0,0,0.15);
+  --shadow-md: 0 10px 30px rgba(0, 0, 0, 0.5);
+  --input-bg: #292a2d;
+  --hover-bg: #35363a;
+  --code-bg: #3c4043;
+  --success-bg: #1e3a2a;
+  --success-text: #81c995;
+  --success-border: #3c4043;
+  --success-btn: #81c995;
+  --success-btn-hover: #9fdb9f;
+  --error-bg: #3d2621;
+  --error-text: #f28b82;
+  --error-border: #3c4043;
+  --error-btn: #f28b82;
+  --error-btn-hover: #f6aea9;
+  --info-bg: #1e3144;
+  --info-text: #8ab4f8;
+  --info-border: #3c4043;
+  --status-connected: #81c995;
+  --status-connected-dot: #81c995;
+}
+
+@layer base {
+  body {
+    font-family: var(--font-sans);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    min-height: 100vh;
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.search-highlight {
+  background: rgba(138, 180, 248, 0.3);
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+:root[data-theme="light"] .search-highlight {
+  background: rgba(25, 103, 210, 0.15);
+}
+
+.nav-logo {
+  opacity: 0.9;
+}
+
+.server-badge {
+  background: hsl(var(--badge-hue) 60% 55% / 0.14);
+  color: hsl(var(--badge-hue) 70% 65%);
+  border: 1px solid hsl(var(--badge-hue) 60% 55% / 0.25);
+}
+
+:root[data-theme="light"] .server-badge {
+  background: hsl(var(--badge-hue) 55% 48% / 0.1);
+  color: hsl(var(--badge-hue) 60% 35%);
+  border-color: hsl(var(--badge-hue) 55% 48% / 0.2);
+}
