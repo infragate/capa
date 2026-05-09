@@ -78,3 +78,49 @@ If a server that uses Bearer token auth (e.g. Databricks, a self-hosted GitLab M
 - Check that server ID in tool definition uses `@` prefix (e.g., `@server-id`)
 - Ensure MCP server is running: check `capa status`
 - Verify tool name matches the actual tool provided by the MCP server
+
+### Provider Not Found / Interactive Prompt Required
+
+When `providers` is omitted from the capabilities file and no `--provider` flag is passed:
+
+- **In a TTY**: capa shows an interactive prompt to select a provider
+- **In CI/non-TTY**: fails with an error. Fix: pass `--provider <id>` explicitly
+
+```bash
+# CI-safe: always pass --provider
+capa install -p cursor
+
+# See all supported providers
+capa install -p invalid-name  # error message lists all valid provider IDs
+```
+
+Once a provider is selected, it's stored in the DB and reused on subsequent installs.
+
+### Stale Cache / Outdated Remote Sources
+
+If skills, rules, or plugins from remote repositories aren't updating:
+
+```bash
+# Bypass cache for one install
+capa install --no-cache
+
+# Or wipe the full cache
+capa cache clean
+capa install
+```
+
+### Rules Not Appearing
+
+- Verify the `rules` section is present in `capabilities.yaml`
+- For Cursor: rules are written to `.cursor/rules/{id}.mdc` — check that directory
+- For Claude Code/Codex: rules are folded into the instructions file (e.g. `CLAUDE.md`)
+- If `providers` field is restricted on a rule, ensure your active provider matches
+- Run `capa clean` then `capa install` to force a full reinstall
+
+### MCP Server Not Registered (No Tools Configured)
+
+If `capa install` does not register the MCP server in `.cursor/mcp.json` or equivalent:
+
+- This is expected when no tools or subagents are configured in the capabilities file
+- Add at least one tool or subagent to trigger MCP server registration
+- If the server was previously registered but tools were removed, capa automatically unregisters it

@@ -2,8 +2,8 @@
 
 ## Contents
 
-- **Workflows**: 1. Starting a New Project · 2. Adding a Community Skill · 3. Adding a Local Skill · 4. Creating a Custom Skill (inline) · 5. Running Tools with `capa sh` · 6. Managing Server Lifecycle
-- **Examples**: 1. Web Research Setup · 2. File Operations · 3. Mixed Command and MCP Tools · 4. On-Demand Tool Loading · 5. CLI Prerequisites
+- **Workflows**: 1. Starting a New Project · 2. Adding a Community Skill · 3. Adding a Local Skill · 4. Creating a Custom Skill (inline) · 5. Running Tools with `capa sh` · 6. Managing Server Lifecycle · 7. Installing Without a Providers Section · 8. Bypassing the Cache
+- **Examples**: 1. Web Research Setup · 2. File Operations · 3. Mixed Command and MCP Tools · 4. On-Demand Tool Loading · 5. CLI Prerequisites · 6. Rules · 7. Plugins · 8. Optional Providers
 
 ---
 
@@ -134,6 +134,36 @@ capa start
 capa restart
 
 # View server logs (stored in ~/.capa/logs/)
+```
+
+### 7. Installing Without a Providers Section
+
+When the `providers` field is omitted from `capabilities.yaml`, capa resolves providers at install time:
+
+```bash
+# Specify provider via CLI flag (non-interactive)
+capa install -p cursor
+
+# Or let capa prompt interactively (auto-detects installed providers)
+capa install
+
+# Previously selected provider is remembered for future installs
+capa install  # re-uses the provider from last time (stored in DB)
+```
+
+This is useful for distributing a `capabilities.yaml` that works across teams using different agents — each developer picks their own provider once.
+
+### 8. Bypassing the Cache
+
+Capa caches remote git repositories locally. To force a fresh fetch:
+
+```bash
+# Re-resolve all remote sources (skills, rules, plugins, agent snippets)
+capa install --no-cache
+
+# Or clear the entire cache first, then install normally
+capa cache clean
+capa install
 ```
 
 ---
@@ -415,3 +445,103 @@ tools:
 ```
 
 Running `capa install` first checks that `docker`, `kubectl`, and `helm` are available. If any command is missing, installation stops with a clear error listing the missing tools.
+
+### Example 6: Rules
+
+**capabilities.yaml:**
+```yaml
+providers:
+  - cursor
+
+rules:
+  - id: code-style
+    type: inline
+    alwaysApply: true
+    description: Project code style guidelines
+    content: |
+      Use TypeScript strict mode. Prefer const over let.
+      Always use explicit return types on exported functions.
+
+  - id: test-conventions
+    type: inline
+    appliesTo:
+      - "**/*.test.ts"
+      - "**/*.spec.ts"
+    description: Testing conventions
+    content: |
+      Use describe/it blocks. Prefer toBe over toEqual for primitives.
+      Always test error paths alongside happy paths.
+
+  - id: org-standards
+    type: github
+    def:
+      repo: my-org/standards@rules/typescript.md:v2.0.0
+    description: Organization-wide TypeScript standards
+
+skills: []
+servers: []
+tools: []
+```
+
+For Cursor, rules are written to `.cursor/rules/{id}.mdc` with frontmatter (`description`, `globs`, `alwaysApply`). For providers without a dedicated rules directory (e.g. Claude Code), rule content is folded into the instructions file as a capa marker block.
+
+### Example 7: Plugins
+
+**capabilities.yaml:**
+```yaml
+providers:
+  - cursor
+
+plugins:
+  - type: remote
+    def:
+      uri: github:some-org/my-cursor-plugin:v1.0.0
+
+skills: []
+servers: []
+tools: []
+```
+
+During `capa install`, the plugin manifest is fetched from the repository. Skills, servers, and tools defined in the manifest are merged into the project. Plugin-sourced items appear with attribution in the web UI.
+
+### Example 8: Optional Providers
+
+**capabilities.yaml** (no `providers` field):
+```yaml
+skills:
+  - id: web-researcher
+    type: github
+    def:
+      repo: vercel-labs/agent-skills@web-researcher
+      requires:
+        - '@brave.search'
+
+servers:
+  - id: brave
+    type: mcp
+    def:
+      cmd: npx
+      args:
+        - -y
+        - "@modelcontextprotocol/server-brave-search"
+      env:
+        BRAVE_API_KEY: ${BraveApiKey}
+
+tools:
+  - id: search
+    type: mcp
+    def:
+      server: "@brave"
+      tool: brave_web_search
+```
+
+**Install:**
+```bash
+# First install: capa will prompt to pick a provider (or use -p)
+capa install -p cursor
+
+# Subsequent installs remember the choice
+capa install
+```
+
+This pattern is ideal for shared `capabilities.yaml` files where different team members use different agents.
