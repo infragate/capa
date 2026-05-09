@@ -80,14 +80,15 @@ function buildAuthenticatedRepoUrl(
 export async function ensureMirrorClone(
   platform: CachePlatform,
   repoPath: string,
-  authFetch: AuthenticatedFetch
+  authFetch: AuthenticatedFetch,
+  repoUrl?: string
 ): Promise<string> {
   const mirrorDir = getRepoMirrorDir(platform, repoPath);
   if (existsSync(mirrorDir)) {
     return mirrorDir;
   }
   mkdirSync(getRepoCacheDir(platform, repoPath), { recursive: true });
-  const url = buildAuthenticatedRepoUrl(platform, repoPath, authFetch);
+  const url = repoUrl ?? buildAuthenticatedRepoUrl(platform, repoPath, authFetch);
   await execAsync(`git clone --mirror "${url}" "${mirrorDir}"`);
   return mirrorDir;
 }
@@ -272,6 +273,8 @@ export interface GetSnapshotOptions extends ResolveOptions {
   authFetch: AuthenticatedFetch;
   /** When true, ignore any existing snapshot/mirror state and re-resolve from network. */
   noCache?: boolean;
+  /** Override the clone URL instead of deriving it from platform/repoPath (useful for tests). */
+  repoUrl?: string;
 }
 
 export interface GetSnapshotResult {
@@ -315,7 +318,7 @@ export async function getOrCreateSnapshot(
     }
   }
 
-  const mirrorDir = await ensureMirrorClone(platform, repoPath, authFetch);
+  const mirrorDir = await ensureMirrorClone(platform, repoPath, authFetch, opts.repoUrl);
   const { sha, version } = await resolveRef(mirrorDir, {
     version: opts.version,
     ref: opts.ref,
