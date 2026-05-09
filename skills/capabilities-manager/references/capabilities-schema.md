@@ -43,11 +43,29 @@ tools:
 ## Skills Section (six types)
 
 - **inline**: Embed SKILL.md content in `def.content`. Use `requires: ['@server_id.tool_id']` for MCP tools, plain ID for command tools.
-- **github**: `def.repo: owner/repo@skill-name` (optional `:version` or `#sha`).
-- **gitlab**: `def.repo: group/subgroup/repo@skill-name`.
+- **github**: `def.repo: owner/repo@skill-name` (search) or `owner/repo::path/to/skill-name` (exact). See "Repo string format" below for details.
+- **gitlab**: `def.repo: group/subgroup/repo@skill-name` (search) or `group/subgroup/repo::path/to/skill-name` (exact). Subgroups are supported.
 - **remote**: `def.url` to a SKILL.md URL.
 - **local**: `def.path` to a directory containing SKILL.md (read on each install).
 - **installed**: User installed the skill elsewhere; capa only records it for tool binding. CLI: `capa add <id> --installed [--requires "..."]`.
+
+## Repo string format (`@` vs `::`)
+
+The `def.repo` field used by skills, rules, and agent snippets has two grammars with different resolution semantics:
+
+| Form | Right-hand side | Resolution |
+|---|---|---|
+| `owner/repo@<name>` | A **basename** (no slashes) | Capa searches the cloned repo recursively for an entry matching `<name>` — a directory containing `SKILL.md` for skills, or a file whose basename equals `<name>` for rules / snippets. |
+| `owner/repo::<path>` | An **exact path** from the repo root | No search. The path must point at the right thing exactly: a directory containing `SKILL.md` for skills, or the markdown file for rules / snippets. |
+
+Both forms accept an optional pinning suffix:
+- `:version` — tag or branch name (`…@skill:v1.2.0`, `…::rules/git.md:main`)
+- `#sha` — full or short commit SHA (`…@skill#abc1234`)
+
+**When to use which:**
+- Use `@` when the name is unique inside the repo — most repos have only one `git-conventions/` skill, one `AGENTS.md`, etc.
+- Use `::` when (a) the name collides, (b) the repo layout is part of the contract, or (c) you want the reference to fail loudly if the file ever moves.
+- Raw URLs translated by capa (e.g. `https://gitlab.com/.../-/raw/main/AGENTS.md`) always resolve as `::` exact paths internally.
 
 ## Servers Section
 
@@ -79,7 +97,7 @@ Optional top-level `description` for MCP schema and `capa sh`.
 Manages `AGENTS.md` and (when `claude-code` in providers) `CLAUDE.md`.
 
 - **base**: Optional. `ref: url` or `type: github|gitlab|local` with `def.repo` or `path`. Content written without markers; re-downloaded on each install.
-- **additional**: List of snippets. Each wrapped in `<!-- capa:start:id -->` … `<!-- capa:end:id -->`. Types: `inline` (id, content), `remote` (id, url), `github`/`gitlab` (def.repo; id optional). `def.repo` format: `owner/repo@filepath` with optional `:version` or `#sha`.
+- **additional**: List of snippets. Each wrapped in `<!-- capa:start:id -->` … `<!-- capa:end:id -->`. Types: `inline` (id, content), `remote` (id, url), `github`/`gitlab` (def.repo; id optional). For `github`/`gitlab` snippets the `def.repo` field follows the [repo string format](#repo-string-format--vs-) above — usually `owner/repo::path/to/file.md` since you almost always know the file's exact location.
 
 `capa install` upserts and prunes by id. `capa clean` removes all capa-owned blocks; empty files are deleted.
 
@@ -141,8 +159,8 @@ Defines rules installed into each provider's rules directory or instructions fil
 - `alwaysApply` (optional): When `true`, the rule is always loaded regardless of file context.
 - `description` (optional): Human-readable description used in frontmatter.
 - `content` (inline only): Literal rule content.
-- `url` (remote only): Raw URL to fetch.
-- `def.repo` (github/gitlab only): Repository + file path (same format as skills).
+- `url` (remote only): Raw URL to fetch (for private repos prefer `type: github`/`gitlab` so capa uses your OAuth token instead of hitting the raw URL).
+- `def.repo` (github/gitlab only): Repository reference using the [repo string format](#repo-string-format--vs-). Use `::` for an exact file path (the common case for rules) or `@<basename>` to let capa search recursively.
 
 ```yaml
 rules:
@@ -163,12 +181,26 @@ rules:
     content: |
       Use describe/it blocks. Prefer toBe over toEqual for primitives.
 
-  - id: shared-rules
+  - id: typescript-standards
     type: github
     def:
-      repo: my-org/standards@rules/typescript.md
+      # Exact path (recommended for rules — file location is part of the contract)
+      repo: my-org/standards::rules/typescript.md
     providers:
       - cursor
+
+  - id: git-conventions
+    type: gitlab
+    alwaysApply: true
+    def:
+      # Subgroup repo + exact path, pinned to a tag
+      repo: acme/platform/data/pipeline::rules/git-conventions.md:v1.2.0
+
+  - id: shared-style
+    type: github
+    def:
+      # Recursive search — works when "style.md" is unique in the repo
+      repo: my-org/standards@style.md
 ```
 
 `capa clean` removes all capa-installed rules. Rules can be scoped per-provider and support the same source types as skills.

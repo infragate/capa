@@ -475,7 +475,9 @@ rules:
   - id: org-standards
     type: github
     def:
-      repo: my-org/standards@rules/typescript.md:v2.0.0
+      # Exact path inside the repo, pinned to v2.0.0 (use "::" for exact paths;
+      # "@" is reserved for recursive basename search and rejects slashes)
+      repo: my-org/standards::rules/typescript.md:v2.0.0
     description: Organization-wide TypeScript standards
 
 skills: []
