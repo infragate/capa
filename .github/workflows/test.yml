@@ -28,6 +28,9 @@ jobs:
       - name: Install dependencies
         run: bun install
       
+      - name: Build web UI
+        run: bun run build:web
+      
       - name: Run tests
         run: bun test src/
       
@@ -68,5 +71,11 @@ jobs:
       - name: Install dependencies
         run: bun install
       
+      - name: Build web UI (for type check)
+        run: bun run build:web
+
       - name: Check TypeScript types
         run: bunx tsc --noEmit
+
+      - name: Check web UI TypeScript types
+        run: bunx tsc --noEmit -p web-ui/tsconfig.json

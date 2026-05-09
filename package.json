@@ -8,9 +8,11 @@
   },
   "scripts": {
     "dev": "bun run src/cli/index.ts",
-    "prebuild": "bun run scripts/generate-version.ts",
+    "build:web": "bun run scripts/build-web.ts",
+    "prebuild": "bun run scripts/generate-version.ts && bun run scripts/build-web.ts",
     "build": "bun build src/cli/index.ts --compile --outfile dist/capa --icon logo.ico",
     "build:win": "bun build src/cli/index.ts --compile --windows-icon=./logo.ico --outfile dist/capa --icon logo.ico",
+    "preserver": "bun run build:web",
     "server": "bun run src/server/index.ts",
     "test": "bun test",
     "test:coverage": "bun test --coverage"
@@ -18,14 +20,37 @@
   "dependencies": {
     "@iarna/toml": "^2.2.5",
     "@modelcontextprotocol/sdk": "^1.0.4",
+    "@radix-ui/react-collapsible": "^1.1.12",
+    "@radix-ui/react-dialog": "^1.1.15",
+    "@radix-ui/react-dropdown-menu": "^2.1.16",
+    "@radix-ui/react-label": "^2.1.8",
+    "@radix-ui/react-separator": "^1.1.8",
+    "@radix-ui/react-slot": "^1.2.4",
+    "@radix-ui/react-tabs": "^1.1.13",
+    "@radix-ui/react-tooltip": "^1.2.8",
+    "@tanstack/react-query": "^5.100.9",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
     "commander": "^12.1.0",
+    "i18next": "^26.0.10",
     "js-yaml": "^4.1.0",
+    "lucide-react": "^1.14.0",
     "nanoid": "^5.0.8",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
+    "react-i18next": "^17.0.7",
+    "react-icons": "^5.6.0",
+    "react-router-dom": "^7.15.0",
+    "tailwind-merge": "^3.5.0",
     "xdg-basedir": "^5.1.0"
   },
   "devDependencies": {
+    "@tailwindcss/cli": "^4.2.4",
     "@types/bun": "latest",
     "@types/js-yaml": "^4.0.9",
-    "@types/node": "^22.10.2"
+    "@types/node": "^22.10.2",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "tailwindcss": "^4.2.4"
   }
 }

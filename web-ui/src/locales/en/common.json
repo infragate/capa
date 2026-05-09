@@ -1,0 +1,49 @@
+{
+  "appName": "CAPA",
+  "nav": {
+    "back": "Back",
+    "integrations": "Integrations",
+    "docs": "Docs",
+    "github": "GitHub Repository"
+  },
+  "theme": {
+    "light": "Light",
+    "dark": "Dark"
+  },
+  "actions": {
+    "save": "Save Configuration",
+    "saving": "Saving...",
+    "connect": "Connect",
+    "disconnect": "Disconnect",
+    "cancel": "Cancel",
+    "showTools": "Show tools",
+    "hideTools": "Hide tools"
+  },
+  "status": {
+    "connected": "Connected",
+    "notConnected": "Not connected",
+    "expired": "Expired",
+    "loading": "Loading...",
+    "expiresInDays": "expires in {{count}} day",
+    "expiresInDays_other": "expires in {{count}} days",
+    "expiresInHours": "expires in {{count}} hour",
+    "expiresInHours_other": "expires in {{count}} hours",
+    "expiresInMinutes": "expires in {{count}} minute",
+    "expiresInMinutes_other": "expires in {{count}} minutes"
+  },
+  "errors": {
+    "loadFailed": "Failed to load data",
+    "saveFailed": "Failed to save configuration",
+    "disconnectFailed": "Failed to disconnect",
+    "oauthFailed": "Failed to start OAuth flow",
+    "notFound": "Not found"
+  },
+  "notFound": {
+    "title": "Page not found",
+    "backToProjects": "Return to projects"
+  },
+  "success": {
+    "saved": "Configuration saved successfully",
+    "disconnected": "Disconnected from {{name}}"
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "title": "Git Integrations",
+  "subtitle": "Connect to GitHub and GitLab to access private repositories",
+  "cloud": {
+    "title": "Cloud Platforms",
+    "description": "Connect to GitHub and GitLab using OAuth2 authentication. This allows CAPA to access your private repositories."
+  },
+  "selfManaged": {
+    "title": "Self-Managed Instances",
+    "description": "Connect to GitHub Enterprise or GitLab Self-Managed using Personal Access Tokens (PAT)."
+  },
+  "github": {
+    "name": "GitHub",
+    "connectButton": "Connect with GitHub",
+    "connected": "GitHub connected successfully",
+    "disconnected": "Disconnected from GitHub",
+    "confirmDisconnect": "Disconnect from GitHub?"
+  },
+  "gitlab": {
+    "name": "GitLab",
+    "connectButton": "Connect with GitLab",
+    "connected": "GitLab connected successfully",
+    "disconnected": "Disconnected from GitLab",
+    "confirmDisconnect": "Disconnect from GitLab?"
+  },
+  "githubEnterprise": {
+    "name": "GitHub Enterprise",
+    "hostLabel": "Host",
+    "hostPlaceholder": "github.mycompany.com",
+    "tokenLabel": "Personal Access Token",
+    "tokenPlaceholder": "ghp_...",
+    "connected": "GitHub Enterprise connected successfully",
+    "disconnected": "Disconnected from GitHub Enterprise",
+    "confirmDisconnect": "Disconnect GitHub Enterprise?",
+    "hostAndTokenRequired": "Please enter both host and token"
+  },
+  "gitlabSelfManaged": {
+    "name": "GitLab Self-Managed",
+    "hostLabel": "Host",
+    "hostPlaceholder": "gitlab.mycompany.com",
+    "tokenLabel": "Personal Access Token",
+    "tokenPlaceholder": "glpat-...",
+    "connected": "GitLab Self-Managed connected successfully",
+    "disconnected": "Disconnected from GitLab Self-Managed",
+    "confirmDisconnect": "Disconnect GitLab Self-Managed?",
+    "hostAndTokenRequired": "Please enter both host and token"
+  },
+  "messages": {
+    "connectedTo": "Successfully connected to {{name}}",
+    "oauthError": "Error: {{error}}"
+  }
+}
