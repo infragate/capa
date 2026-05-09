@@ -69,7 +69,7 @@ If a server that uses Bearer token auth (e.g. Databricks, a self-hosted GitLab M
 
 - Ensure the `Authorization` header is present in `def.headers` — CAPA skips the OAuth2 probe for these servers automatically
 - Verify the token stored for `${VarName}` is valid for the specific server URL (wrong-workspace tokens are a common cause of 403 errors)
-- Re-set the token with `capa vars set VarName <new-token>` or re-run `capa install -e` with an updated `.env` file
+- Re-set the token by re-running `capa install -e` with an updated `.env` file, or update it via the web UI during `capa install`
 
 ### Tool Not Found Errors
 
