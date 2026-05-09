@@ -25,12 +25,10 @@ describe('capabilities', () => {
       const capabilities = createDefaultCapabilities();
       
       expect(capabilities).toBeDefined();
-      expect(capabilities.providers).toBeArray();
+      expect(capabilities.providers).toBeUndefined();
       expect(capabilities.skills).toBeArray();
       expect(capabilities.servers).toBeArray();
       expect(capabilities.tools).toBeArray();
-      expect(capabilities.providers).toContain('cursor');
-      expect(capabilities.providers).toContain('claude-code');
     });
 
     it('should include default skills', () => {

@@ -194,7 +194,7 @@ export interface SubAgent {
 }
 
 export interface Capabilities {
-  providers: string[];
+  providers?: string[];
   skills: Skill[];
   servers: MCPServer[];
   tools: Tool[];

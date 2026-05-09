@@ -348,4 +348,53 @@ describe('CapaDatabase', () => {
       expect(db.getSession('session-2')).not.toBeNull();
     });
   });
+
+  describe('Project provider operations', () => {
+    beforeEach(() => {
+      db.upsertProject({ id: 'test-proj', path: '/test/path' });
+    });
+
+    it('should set and get providers for a project', () => {
+      db.setProjectProviders('test-proj', ['cursor', 'claude-code']);
+
+      const providers = db.getProjectProviders('test-proj');
+      expect(providers).toEqual(['cursor', 'claude-code']);
+    });
+
+    it('should return empty array when no providers are set', () => {
+      const providers = db.getProjectProviders('test-proj');
+      expect(providers).toEqual([]);
+    });
+
+    it('should replace providers on subsequent set', () => {
+      db.setProjectProviders('test-proj', ['cursor', 'claude-code']);
+      db.setProjectProviders('test-proj', ['codex']);
+
+      const providers = db.getProjectProviders('test-proj');
+      expect(providers).toEqual(['codex']);
+    });
+
+    it('should handle single provider', () => {
+      db.setProjectProviders('test-proj', ['cursor']);
+
+      const providers = db.getProjectProviders('test-proj');
+      expect(providers).toEqual(['cursor']);
+    });
+
+    it('should handle empty providers array (clears all)', () => {
+      db.setProjectProviders('test-proj', ['cursor', 'claude-code']);
+      db.setProjectProviders('test-proj', []);
+
+      const providers = db.getProjectProviders('test-proj');
+      expect(providers).toEqual([]);
+    });
+
+    it('should be cleaned up when project is deleted', () => {
+      db.setProjectProviders('test-proj', ['cursor']);
+      db.deleteProject('test-proj');
+
+      const providers = db.getProjectProviders('test-proj');
+      expect(providers).toEqual([]);
+    });
+  });
 });
