@@ -4,10 +4,12 @@ import type { CapaDatabase } from '../../db/database';
 
 /**
  * Validate that a provider id exists in the registry.
+ * Returns the canonical (lowercase) provider id.
  * Throws with a formatted list of valid providers when invalid.
  */
-export function validateProvider(id: string): void {
-  if (getProvider(id)) return;
+export function validateProvider(id: string): string {
+  const provider = getProvider(id);
+  if (provider) return provider.id;
 
   const supportedAgents = getAllProviders()
     .map((p) => ({ name: p.id, displayName: p.displayName }))
@@ -44,16 +46,12 @@ export async function resolveProvidersForInstall(
 ): Promise<string[]> {
   // 1. CLI flag
   if (opts.flagProvider) {
-    validateProvider(opts.flagProvider);
-    return [opts.flagProvider];
+    return [validateProvider(opts.flagProvider)];
   }
 
   // 2. Capabilities file
   if (opts.capabilitiesProviders && opts.capabilitiesProviders.length > 0) {
-    for (const p of opts.capabilitiesProviders) {
-      validateProvider(p);
-    }
-    return opts.capabilitiesProviders;
+    return opts.capabilitiesProviders.map((p) => validateProvider(p));
   }
 
   // 3. Database (previous install)

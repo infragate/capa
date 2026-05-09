@@ -42,29 +42,12 @@ async function rawSelect(
   const stdin = process.stdin;
   const stdout = process.stdout;
 
-  stdin.setRawMode(true);
-  stdin.resume();
-
   let selectedIndex = 0;
 
-  const render = () => {
-    // Move cursor to clear previous render
-    stdout.write('\x1B[?25l'); // hide cursor
-    stdout.write(`\r\x1B[K${message}\n`);
-    for (let i = 0; i < options.length; i++) {
-      const prefix = i === selectedIndex ? '❯ ' : '  ';
-      const highlight = i === selectedIndex ? '\x1B[36m' : '\x1B[90m';
-      stdout.write(`\x1B[K${highlight}${prefix}${options[i].label}\x1B[0m\n`);
-    }
-    // Move cursor back up to the start for next render
-    stdout.write(`\x1B[${options.length + 1}A`);
-  };
-
   const cleanup = () => {
-    stdin.setRawMode(false);
+    try { stdin.setRawMode(false); } catch {}
     stdin.pause();
     stdin.removeAllListeners('data');
-    // Clear the rendered menu
     for (let i = 0; i <= options.length; i++) {
       stdout.write(`\x1B[K\n`);
     }
@@ -72,37 +55,54 @@ async function rawSelect(
     stdout.write('\x1B[?25h'); // show cursor
   };
 
-  render();
+  const render = () => {
+    stdout.write('\x1B[?25l'); // hide cursor
+    stdout.write(`\r\x1B[K${message}\n`);
+    for (let i = 0; i < options.length; i++) {
+      const prefix = i === selectedIndex ? '❯ ' : '  ';
+      const highlight = i === selectedIndex ? '\x1B[36m' : '\x1B[90m';
+      stdout.write(`\x1B[K${highlight}${prefix}${options[i].label}\x1B[0m\n`);
+    }
+    stdout.write(`\x1B[${options.length + 1}A`);
+  };
 
-  return new Promise<string>((resolve, reject) => {
-    const onData = (data: Buffer) => {
-      const key = data.toString();
+  stdin.setRawMode(true);
+  stdin.resume();
 
-      if (key === '\x03') {
-        // Ctrl+C
-        cleanup();
-        reject(new Error('User cancelled'));
-        process.exit(130);
-      }
+  try {
+    render();
 
-      if (key === '\r' || key === '\n') {
-        cleanup();
-        resolve(options[selectedIndex].value);
-        return;
-      }
+    return await new Promise<string>((resolve, reject) => {
+      const onData = (data: Buffer) => {
+        const key = data.toString();
 
-      // Arrow keys: ESC [ A (up), ESC [ B (down)
-      if (key === '\x1B[A' || key === 'k') {
-        selectedIndex = (selectedIndex - 1 + options.length) % options.length;
-        render();
-      } else if (key === '\x1B[B' || key === 'j') {
-        selectedIndex = (selectedIndex + 1) % options.length;
-        render();
-      }
-    };
+        if (key === '\x03') {
+          cleanup();
+          reject(new Error('User cancelled'));
+          return;
+        }
 
-    stdin.on('data', onData);
-  });
+        if (key === '\r' || key === '\n') {
+          cleanup();
+          resolve(options[selectedIndex].value);
+          return;
+        }
+
+        if (key === '\x1B[A' || key === 'k') {
+          selectedIndex = (selectedIndex - 1 + options.length) % options.length;
+          render();
+        } else if (key === '\x1B[B' || key === 'j') {
+          selectedIndex = (selectedIndex + 1) % options.length;
+          render();
+        }
+      };
+
+      stdin.on('data', onData);
+    });
+  } catch (err) {
+    cleanup();
+    throw err;
+  }
 }
 
 async function numberedSelect(

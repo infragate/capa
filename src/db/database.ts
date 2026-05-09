@@ -214,7 +214,10 @@ export class CapaDatabase {
   setProjectProviders(projectId: string, providers: string[]): void {
     const now = Date.now();
     this.db.run('DELETE FROM project_providers WHERE project_id = ?', [projectId]);
+    const seen = new Set<string>();
     for (const pid of providers) {
+      if (seen.has(pid)) continue;
+      seen.add(pid);
       this.db.run(
         'INSERT INTO project_providers (project_id, provider_id, created_at) VALUES (?, ?, ?)',
         [projectId, pid, now]
