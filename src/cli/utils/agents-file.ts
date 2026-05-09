@@ -143,7 +143,7 @@ async function resolveRepoSnippet(
       `This is a bug; please report it.`
     );
   }
-  console.log(`  Fetching ${platform} snippet "${id}" from ${parsed.ownerRepo}@${parsed.filepath}`);
+  console.log(`  Fetching ${platform} snippet "${id}" from ${snippet.def.repo}`);
   const result = await fetchRepoFile(
     platform,
     snippet.def.repo,
@@ -445,6 +445,24 @@ export function detectRepoCoordsFromRawUrl(
  * and the fully-qualified `refs/heads/<branch>/<path>` and
  * `refs/tags/<tag>/<path>` forms that GitHub's "Raw" button produces.
  *
+ * Limitation — multi-segment refs:
+ *   GitHub allows branch names that contain `/` (e.g. `feature/foo`,
+ *   `release/2024-Q4`). In a raw URL these slashes are usually written
+ *   literally, which means `.../refs/heads/feature/foo/bar.md` is genuinely
+ *   ambiguous: it could mean ref=`feature` + path=`foo/bar.md`, or
+ *   ref=`feature/foo` + path=`bar.md`. Resolving that requires hitting the
+ *   GitHub API, which we don't do at URL-detection time. We make the simple
+ *   assumption that the first segment after `refs/heads|tags/` (or the
+ *   first segment of a bare-ref tail) is the entire ref.
+ *
+ *   - Single-segment branches (`main`, `develop`, `feat-foo`) round-trip
+ *     correctly. This covers the overwhelming majority of GitHub raw URLs.
+ *   - Multi-segment branches with `/` URL-encoded as `%2F` are decoded here
+ *     and round-trip correctly.
+ *   - Multi-segment branches with literal `/` are mis-split; the resulting
+ *     repo string will fail at clone-time, at which point the user should
+ *     switch to a typed `github` source with an explicit `def.repo`.
+ *
  * Returns `null` when the tail can't be split into a non-empty ref + path.
  */
 function splitGithubRefAndPath(
@@ -455,16 +473,29 @@ function splitGithubRefAndPath(
     tail[0] === 'refs' &&
     (tail[1] === 'heads' || tail[1] === 'tags')
   ) {
-    const ref = tail[2];
+    const ref = decodeRefSegment(tail[2]);
     const path = tail.slice(3).join('/');
     if (!ref || !path) return null;
     return { ref, path };
   }
   if (tail.length < 2) return null;
-  const ref = tail[0];
+  const ref = decodeRefSegment(tail[0]);
   const path = tail.slice(1).join('/');
   if (!ref || !path) return null;
   return { ref, path };
+}
+
+/**
+ * Percent-decode a single ref segment, e.g. `feature%2Ffoo` → `feature/foo`.
+ * Tolerant of malformed encodings — falls back to the raw value rather than
+ * throwing so a single bad URL doesn't crash the install.
+ */
+function decodeRefSegment(seg: string): string {
+  try {
+    return decodeURIComponent(seg);
+  } catch {
+    return seg;
+  }
 }
 
 function refSuffix(ref: string): string {

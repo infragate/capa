@@ -32,7 +32,7 @@ import {
 } from '../../shared/skill-security';
 import { getOrCreateSnapshot, type CachePlatform, type GetSnapshotResult } from '../../shared/cache';
 import { LockfileBuilder, loadLockfile, saveLockfile } from '../../shared/lockfile';
-import { fetchRepoFile, fetchTextFile } from '../../shared/repo-file';
+import { assertSafeRepoPath, fetchRepoFile, fetchTextFile } from '../../shared/repo-file';
 import { parseRepoString } from '../../shared/repo-string';
 import type { LockSkillEntry } from '../../types/lockfile';
 
@@ -1113,7 +1113,20 @@ async function installSkills(
         let skillMdPath: string | undefined;
 
         if (parsed.mode === 'exact') {
-          const candidate = join(snapshot.snapshotDir, skillTarget, 'SKILL.md');
+          // Reject `..` / absolute / drive-letter paths before joining so a
+          // crafted capabilities entry can't read SKILL.md from outside the
+          // snapshot. Shares the same guard as `fetchRepoFile`.
+          let skillDir: string;
+          try {
+            skillDir = assertSafeRepoPath(snapshot.snapshotDir, skillTarget);
+          } catch (err: any) {
+            throw new Error(
+              `${err.message}\n` +
+              `    Repository: ${repoPath}\n` +
+              `    Snapshot:   ${snapshot.resolvedSha.slice(0, 7)}`
+            );
+          }
+          const candidate = join(skillDir, 'SKILL.md');
           if (!existsSync(candidate)) {
             throw new Error(
               `SKILL.md not found at exact path "${skillTarget}/SKILL.md".\n` +

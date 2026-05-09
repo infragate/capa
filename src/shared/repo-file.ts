@@ -18,10 +18,63 @@
  */
 
 import { existsSync, readFileSync, readdirSync, type Dirent } from 'fs';
-import { join, relative, sep } from 'path';
+import { join, posix, relative, resolve, sep, win32 } from 'path';
 import type { AuthenticatedFetch } from './authenticated-fetch';
 import type { CachePlatform, GetSnapshotResult } from './cache';
 import { parseRepoString, type ParsedRepo } from './repo-string';
+
+/**
+ * Reject repo-relative paths that would escape the snapshot directory when
+ * joined with it — absolute paths, `..` segments, drive letters, etc. Used
+ * by both `fetchRepoFile` (for rules / snippets) and the skill installer
+ * (for `owner/repo::path/to/skill` references) so an attacker who controls
+ * the capabilities file can't read arbitrary local files via a crafted
+ * repo string like `owner/repo::../../etc/passwd`.
+ *
+ * Throws a descriptive Error when `target` is unsafe; returns the
+ * normalized absolute path inside `rootDir` otherwise.
+ */
+export function assertSafeRepoPath(rootDir: string, target: string): string {
+  if (!target) {
+    throw new Error(`Invalid empty path inside repository.`);
+  }
+  // Reject absolute paths regardless of the host OS so a Windows-style path
+  // can't slip past on Linux and vice versa. Includes:
+  //   - POSIX absolute (`/etc/passwd`)
+  //   - Windows absolute (`C:\…`, `\\server\share\…`)
+  //   - "Root-relative" paths starting with a single separator
+  //   - Bare drive-letter prefixes (`C:`, `D:`)
+  if (
+    posix.isAbsolute(target) ||
+    win32.isAbsolute(target) ||
+    /^[a-zA-Z]:/.test(target) ||
+    target.startsWith('/') ||
+    target.startsWith('\\')
+  ) {
+    throw new Error(
+      `Invalid repository path "${target}": absolute paths are not allowed.`
+    );
+  }
+  // Catches `..` and `..\` segments before they're collapsed by `resolve`.
+  const segments = target.split(/[\\/]/);
+  if (segments.some((s) => s === '..')) {
+    throw new Error(
+      `Invalid repository path "${target}": parent-directory segments ("..") are not allowed.`
+    );
+  }
+  const resolved = resolve(rootDir, target);
+  // Defense in depth: even if the segment check above somehow let something
+  // through (encoding, OS-specific quirks), require the resolved path to
+  // sit inside `rootDir`.
+  const rootResolved = resolve(rootDir);
+  const rootWithSep = rootResolved.endsWith(sep) ? rootResolved : rootResolved + sep;
+  if (resolved !== rootResolved && !resolved.startsWith(rootWithSep)) {
+    throw new Error(
+      `Invalid repository path "${target}": resolves outside the repository root.`
+    );
+  }
+  return resolved;
+}
 
 /**
  * Snapshot resolver signature. Matches the one defined in `install.ts` /
@@ -101,7 +154,14 @@ function resolveExactFile(
   parsed: ParsedRepo,
   resolvedSha: string
 ): string {
-  const filePath = join(snapshotDir, parsed.target);
+  let filePath: string;
+  try {
+    filePath = assertSafeRepoPath(snapshotDir, parsed.target);
+  } catch (err: any) {
+    throw new Error(
+      `${err.message} (repository: ${parsed.ownerRepo} @ ${resolvedSha.slice(0, 7)})`
+    );
+  }
   if (!existsSync(filePath)) {
     throw new Error(
       `File "${parsed.target}" not found in repository ${parsed.ownerRepo} ` +
@@ -148,7 +208,9 @@ function resolveBasenameMatch(
 /**
  * Recursively walk `root` and return every file whose basename equals
  * `wanted`, expressed as forward-slash paths relative to `root`. Skips
- * the usual noise (`.git`, `node_modules`, dotfiles).
+ * `.git` and `node_modules` (other dotfile-prefixed dirs like `.cursor`,
+ * `.github`, `.agents` are intentionally traversed because they're valid
+ * locations for skill / rule content).
  */
 function findFilesByBasename(root: string, wanted: string): string[] {
   const out: string[] = [];
@@ -272,7 +334,11 @@ export async function fetchTextFile(
   const body = await response.text();
 
   if (looksLikeHtmlPage(body, contentType)) {
-    const where = sourceLabel ? `for ${sourceLabel}` : '';
+    // Trailing space inside `where` so the message reads
+    // `Refusing to install HTML response for <label> from <url>` (or, when
+    // no label is provided, `Refusing to install HTML response from <url>`)
+    // — without it the label glued straight onto "from".
+    const where = sourceLabel ? `for ${sourceLabel} ` : '';
     throw new Error(
       `Refusing to install HTML response ${where}from ${url}.\n` +
       `    The server returned an HTML page (likely a login / SSO redirect) ` +

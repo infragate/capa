@@ -178,4 +178,35 @@ describe('detectRepoCoordsFromRawUrl', () => {
     expect(detectRepoCoordsFromRawUrl('not a url')).toBeNull();
     expect(detectRepoCoordsFromRawUrl('')).toBeNull();
   });
+
+  // ---- Multi-segment ref handling --------------------------------------
+  // GitHub allows branch names containing `/` (e.g. `feature/foo`). Inside a
+  // raw URL these slashes are usually written literally, which makes the
+  // ref/path boundary ambiguous without an API call. Capa makes the
+  // single-segment-ref assumption; the cases below pin down that behavior so
+  // any future change is intentional.
+  it('decodes percent-encoded slashes in the ref segment (round-trips correctly)', () => {
+    // `feature%2Ffoo` ⇒ ref = `feature/foo`, path stays intact.
+    const detected = detectRepoCoordsFromRawUrl(
+      'https://raw.githubusercontent.com/owner/repo/refs/heads/feature%2Ffoo/AGENTS.md'
+    );
+    expect(detected).toEqual({
+      platform: 'github',
+      repoString: 'owner/repo::AGENTS.md:feature/foo',
+    });
+  });
+
+  it('mis-splits literal multi-segment refs (documented limitation)', () => {
+    // `.../refs/heads/feature/foo/AGENTS.md` is genuinely ambiguous in a
+    // raw URL. We assume `feature` is the entire ref and the rest is the
+    // path; users with branches containing `/` should URL-encode the slash
+    // or switch to a typed `github` source with an explicit `def.repo`.
+    const detected = detectRepoCoordsFromRawUrl(
+      'https://raw.githubusercontent.com/owner/repo/refs/heads/feature/foo/AGENTS.md'
+    );
+    expect(detected).toEqual({
+      platform: 'github',
+      repoString: 'owner/repo::foo/AGENTS.md:feature',
+    });
+  });
 });
