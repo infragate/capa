@@ -117,8 +117,9 @@ async function numberedSelect(
   }
   stdout.write('Enter number: ');
 
+  const { createInterface } = await import('node:readline');
   return new Promise<string>((resolve, reject) => {
-    const rl = require('readline').createInterface({
+    const rl = createInterface({
       input: process.stdin,
       output: process.stdout,
       terminal: false,

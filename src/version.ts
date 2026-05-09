@@ -4,4 +4,4 @@
  * Version extracted from Git tag or package.json
  */
 
-export const VERSION = '1.0.0';
+export const VERSION = '1.6.0-dev.5+dcede81-dirty';
