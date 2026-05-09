@@ -102,11 +102,24 @@ export function parseRepoString(repo: string): ParsedRepo {
   if (shaIdx !== -1) {
     sha = target.slice(shaIdx + 1);
     target = target.slice(0, shaIdx);
+    // An empty SHA produces broken raw URLs (`/<owner>/<repo>//path`) and
+    // confuses the snapshot resolver — reject it loudly with a hint.
+    if (!sha) {
+      throw new Error(
+        `Invalid repo format: "${repo}". Empty SHA after "#" — drop the "#" or pin to a real commit.`
+      );
+    }
   } else {
     const colonIdx = target.lastIndexOf(':');
     if (colonIdx !== -1) {
       version = target.slice(colonIdx + 1);
       target = target.slice(0, colonIdx);
+      // Same problem as the empty-SHA case above.
+      if (!version) {
+        throw new Error(
+          `Invalid repo format: "${repo}". Empty version after ":" — drop the ":" or pin to a real tag/branch.`
+        );
+      }
     }
   }
 

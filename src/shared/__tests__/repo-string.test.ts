@@ -103,6 +103,16 @@ describe('parseRepoString', () => {
       expect(() => parseRepoString('@skill')).toThrow(/Missing "owner\/repo"/);
       expect(() => parseRepoString('::path/file.md')).toThrow(/Missing "owner\/repo"/);
     });
+
+    it('rejects an empty version suffix (trailing ":")', () => {
+      expect(() => parseRepoString('owner/repo::path/file.md:')).toThrow(/Empty version/);
+      expect(() => parseRepoString('owner/repo@skill:')).toThrow(/Empty version/);
+    });
+
+    it('rejects an empty sha suffix (trailing "#")', () => {
+      expect(() => parseRepoString('owner/repo::path/file.md#')).toThrow(/Empty SHA/);
+      expect(() => parseRepoString('owner/repo@skill#')).toThrow(/Empty SHA/);
+    });
   });
 
   describe('back-compat', () => {

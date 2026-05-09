@@ -4,7 +4,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import { fetchRepoFile, fetchTextFile, looksLikeHtmlPage } from '../repo-file';
+import { assertSafeRepoPath, fetchRepoFile, fetchTextFile, looksLikeHtmlPage } from '../repo-file';
 import { getOrCreateSnapshot, getRepoCacheDir, getRepoMirrorDir } from '../cache';
 import type { CachePlatform } from '../cache';
 
@@ -327,5 +327,65 @@ describe('fetchRepoFile', () => {
       expect(err!.message).toContain('b/dup.md');
       expect(err!.message).toMatch(/owner\/repo::<exact-path>/);
     });
+  });
+
+  // Targeted regression tests for the path-traversal guard. A capabilities
+  // file is the kind of input a user might pull from another team's repo, so
+  // we want to ensure that even hostile `::` targets cannot read files
+  // outside the snapshot directory.
+  describe('path-traversal guard (:: form)', () => {
+    it('rejects parent-directory segments', async () => {
+      await seedMirrorFromFixture('github', 'owner/repo', fixture.url);
+      await expect(
+        fetchRepoFile('github', 'owner/repo::../../etc/passwd', snap, noAuthFetch)
+      ).rejects.toThrow(/parent-directory|outside the repository/i);
+    });
+
+    it('rejects POSIX-style absolute paths', async () => {
+      await seedMirrorFromFixture('github', 'owner/repo', fixture.url);
+      await expect(
+        fetchRepoFile('github', 'owner/repo::/etc/passwd', snap, noAuthFetch)
+      ).rejects.toThrow(/absolute paths/i);
+    });
+
+    it('rejects Windows-style root-relative paths starting with backslash', async () => {
+      // We cannot reach this guard with `::C:/…` because parseRepoString
+      // would split the `:` after `C` as a version suffix; but a leading
+      // backslash makes it through cleanly.
+      await seedMirrorFromFixture('github', 'owner/repo', fixture.url);
+      await expect(
+        fetchRepoFile('github', 'owner/repo::\\Windows\\System32', snap, noAuthFetch)
+      ).rejects.toThrow(/absolute paths/i);
+    });
+  });
+});
+
+describe('assertSafeRepoPath', () => {
+  const root = '/tmp/capa-fake-snapshot';
+
+  it('accepts simple relative paths', () => {
+    expect(() => assertSafeRepoPath(root, 'AGENTS.md')).not.toThrow();
+    expect(() => assertSafeRepoPath(root, 'rules/git.md')).not.toThrow();
+    expect(() => assertSafeRepoPath(root, 'a/b/c/d.md')).not.toThrow();
+  });
+
+  it('rejects parent-directory segments anywhere in the path', () => {
+    expect(() => assertSafeRepoPath(root, '..')).toThrow(/parent-directory/);
+    expect(() => assertSafeRepoPath(root, '../etc/passwd')).toThrow(/parent-directory/);
+    expect(() => assertSafeRepoPath(root, 'rules/../../etc/passwd')).toThrow(/parent-directory/);
+    expect(() => assertSafeRepoPath(root, 'rules\\..\\..\\etc\\passwd')).toThrow(/parent-directory/);
+  });
+
+  it('rejects POSIX absolute paths', () => {
+    expect(() => assertSafeRepoPath(root, '/etc/passwd')).toThrow(/absolute paths/);
+  });
+
+  it('rejects Windows drive-letter paths', () => {
+    expect(() => assertSafeRepoPath(root, 'C:/Windows/System32')).toThrow(/absolute paths/);
+    expect(() => assertSafeRepoPath(root, 'D:\\foo\\bar')).toThrow(/absolute paths/);
+  });
+
+  it('rejects empty input', () => {
+    expect(() => assertSafeRepoPath(root, '')).toThrow(/empty/);
   });
 });
