@@ -48,11 +48,12 @@ if (process.argv[2] === '__server__') {
       .command('install')
       .description('Install skills and configure tools')
       .option('-e, --env [file]', 'Load variables from .env file (defaults to .env if no file specified)')
+      .option('-p, --provider <id>', 'Install for a single provider (e.g. "cursor", "claude-code")')
       .option('--no-cache', 'Bypass the on-disk cache and lockfile; re-resolve every remote source')
       .action(async (options) => {
         // Commander inverts --no-* flags: `options.cache` is true by default and
         // false when --no-cache is passed. Convert to the explicit noCache flag.
-        await installCommand({ envFile: options.env, noCache: options.cache === false });
+        await installCommand({ envFile: options.env, provider: options.provider, noCache: options.cache === false });
       });
 
     program

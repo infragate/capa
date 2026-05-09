@@ -155,6 +155,16 @@ export class CapaDatabase {
         UNIQUE(project_id, agent_id)
       )
     `);
+
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS project_providers (
+        project_id TEXT NOT NULL,
+        provider_id TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (project_id, provider_id),
+        FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+      )
+    `);
   }
 
   // Project operations
@@ -196,7 +206,27 @@ export class CapaDatabase {
     this.db.run('DELETE FROM oauth_flow_state WHERE project_id = ?', [projectId]);
     this.db.run('DELETE FROM project_capabilities WHERE project_id = ?', [projectId]);
     this.db.run('DELETE FROM sub_agents WHERE project_id = ?', [projectId]);
+    this.db.run('DELETE FROM project_providers WHERE project_id = ?', [projectId]);
     this.db.run('DELETE FROM projects WHERE id = ?', [projectId]);
+  }
+
+  // Project provider operations
+  setProjectProviders(projectId: string, providers: string[]): void {
+    const now = Date.now();
+    this.db.run('DELETE FROM project_providers WHERE project_id = ?', [projectId]);
+    for (const pid of providers) {
+      this.db.run(
+        'INSERT INTO project_providers (project_id, provider_id, created_at) VALUES (?, ?, ?)',
+        [projectId, pid, now]
+      );
+    }
+  }
+
+  getProjectProviders(projectId: string): string[] {
+    const rows = this.db.query(
+      'SELECT provider_id FROM project_providers WHERE project_id = ? ORDER BY rowid'
+    ).all(projectId) as Array<{ provider_id: string }>;
+    return rows.map((r) => r.provider_id);
   }
 
   // Sub-agent operations

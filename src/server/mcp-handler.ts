@@ -790,7 +790,8 @@ export class CapaMCPServer {
    *   - a single item directly (not wrapped in an array) when there is only one entry
    *   - a JSON array of all items when there are multiple entries
    *
-   * For command tool results and error objects the raw JSON is returned unchanged.
+   * For command tool results ({success, result/error}) the inner result/error string
+   * is returned directly without the wrapper envelope.
    */
   private serializeToolResult(result: any): string {
     const items: any[] = result?.result;
@@ -814,7 +815,16 @@ export class CapaMCPServer {
       return typeof value === 'string' ? value : JSON.stringify(value, null, 2);
     }
 
-    // Fallback: command tool result or error object
+    // Command tool result: unwrap the {success, result/error} envelope
+    if (result && typeof result === 'object' && 'success' in result) {
+      if (result.success && typeof result.result === 'string') {
+        return result.result;
+      }
+      if (!result.success && typeof result.error === 'string') {
+        return result.error;
+      }
+    }
+
     return JSON.stringify(result);
   }
 
