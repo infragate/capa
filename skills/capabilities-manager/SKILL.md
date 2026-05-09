@@ -23,19 +23,26 @@ Use this skill when:
 - User needs to configure security (blocked phrases, character sanitization)
 - User wants to manage AGENTS.md or CLAUDE.md content (the `agents` section)
 - User wants to run tools from the command line or explore available tools with `capa sh`
+- User needs to define provider-specific rules (Cursor rules, Copilot rules, etc.)
+- User wants to add remote plugins that bundle skills, servers, and tools
+- User needs to configure sub-agents with scoped tools and instructions
+- User wants to manage the remote source cache or bypass it
 
 ## Core Concepts
 
 ### Capabilities File
 
-The `capabilities.yaml` (or `capabilities.json`) file defines everything an agent can do. It has six main sections:
+The `capabilities.yaml` (or `capabilities.json`) file defines everything an agent can do. It has these main sections:
 
-1. **providers**: MCP clients where skills are installed (e.g. `cursor`, `claude-code`)
+1. **providers** (optional): MCP clients where skills are installed (e.g. `cursor`, `claude-code`). When omitted, `capa install` resolves providers via `--provider` flag, DB memory, or interactive prompt.
 2. **options**: Tool exposure (`toolExposure`), security (`security`), CLI prerequisites (`requiresCommands`)
 3. **skills**: Modular knowledge packages (when/how to use tools)
 4. **servers**: MCP servers (local subprocess or remote HTTP)
 5. **tools**: Executable capabilities (MCP or shell commands)
 6. **agents**: (Optional) Manages `AGENTS.md` / `CLAUDE.md` content in the project root
+7. **subagents**: (Optional) Named sub-agent configurations with filtered tool access
+8. **rules**: (Optional) Provider rules installed into each provider's rules directory or instructions file
+9. **plugins**: (Optional) Remote plugin packages that bundle skills, servers, and tools
 
 ### Skills vs Tools
 
@@ -59,20 +66,27 @@ Only properties that are present are applied. If a blocked phrase is detected du
 | Command | Purpose |
 |--------|--------|
 | `capa init [--format json\|yaml]` | Create a new capabilities file |
-| `capa install [-e [file]]` | Install skills, agents, register servers; prompt for credentials (use `-e` for .env) |
+| `capa install [-e [file]] [-p <id>] [--no-cache]` | Install skills, agents, rules, register servers; prompt for credentials |
 | `capa add <source> [--id <id>]` | Add a skill (GitHub, GitLab, remote URL, local path, or `--installed`) |
-| `capa clean` | Remove CAPA-installed skills and agent blocks |
+| `capa clean` | Remove CAPA-installed skills, rules, and agent blocks |
 | `capa sh [group] [subcommand] [--arg value]` | List or run tools; unknown commands pass through to the OS shell |
 | `capa start \| stop \| restart \| status` | Manage the CAPA server |
+| `capa auth [provider]` | Authenticate with Git providers (github.com, gitlab.com, etc.) |
+| `capa upgrade` | Upgrade capa to the latest version |
+| `capa cache` | Show cache stats; `capa cache clean` to wipe |
 
 **Full command reference**: See `references/commands.md`.
 
 ## Capabilities File Structure (Summary)
 
+- **Providers**: Optional. When omitted, resolved at install time via `--provider` flag → DB memory → interactive prompt.
 - **Skills**: Six types — `inline`, `github`, `gitlab`, `remote`, `local`, `installed`. Each has `id`, `type`, `def` (and for inline, `content`; for others, `repo`/`url`/`path` plus optional `requires`, `description`).
 - **Servers**: `type: mcp` with `def.cmd`/`args`/`env` (local) or `def.url`/`headers` (remote). Optional `tlsSkipVerify: true`, `description`.
 - **Tools**: `type: mcp` (def: `server`, `tool`, optional `defaults`) or `type: command` (def: `run.cmd`/`args`, optional `init`, `group`, `description`).
 - **Agents**: Optional `base` (ref or type+def) and `additional` list (inline, remote, github, gitlab snippets). Managed files: `AGENTS.md` always; `CLAUDE.md` when a Claude provider is present.
+- **Subagents**: Named sub-agent configurations with filtered tool access, per-provider MCP endpoints and agent files.
+- **Rules**: Types `inline`, `remote`, `github`, `gitlab`. Each has `id`, optional `providers`, `appliesTo` (glob), `alwaysApply`, `description`. Installed as files (Cursor `.cursor/rules/`) or folded into instructions files.
+- **Plugins**: Remote packages (`type: remote`, `def.uri`) that bundle skills, servers, and tools from a provider manifest.
 
 **Full schema and YAML examples**: See `references/capabilities-schema.md`.
 
@@ -105,8 +119,8 @@ for using the `capa` CLI directly from the terminal.
 
 | Topic | File |
 |-------|------|
-| Commands (init, install, add, clean, sh, server) | `references/commands.md` |
-| Capabilities schema (skills, servers, tools, security, agents) | `references/capabilities-schema.md` |
+| Commands (init, install, add, clean, sh, server, auth, upgrade, cache) | `references/commands.md` |
+| Capabilities schema (skills, servers, tools, rules, plugins, security, agents, subagents) | `references/capabilities-schema.md` |
 | Workflows and full examples | `references/workflows-and-examples.md` |
 | Troubleshooting | `references/troubleshooting.md` |
 

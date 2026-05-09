@@ -10,7 +10,7 @@ import {
   isCharacterSanitizationEnabled,
   reportBlockedPhraseAndExit,
 } from '../../shared/skill-security';
-import { getProvider } from '../../shared/providers';
+import { getProvider, getAllProviders } from '../../shared/providers';
 import { buildSubAgentFile as buildSubAgentFileContent } from '../../shared/providers/handlers';
 
 export const AGENTS_FILENAME = 'AGENTS.md';
@@ -44,8 +44,8 @@ function buildBlock(id: string, body: string): string {
  */
 export function getTargetFilenames(providers: string[]): string[] {
   const filenames = new Set<string>([AGENTS_FILENAME]);
-  for (const pid of providers) {
-    const p = getProvider(pid);
+  const list = providers.length > 0 ? providers.map(getProvider).filter(Boolean) : getAllProviders();
+  for (const p of list) {
     if (p?.instructions) {
       filenames.add(p.instructions.filename);
     }

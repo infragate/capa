@@ -12,8 +12,9 @@ import { getQualifiedToolName, normalizeToolReference } from '../../types/capabi
 import { createAuthenticatedFetch, AuthenticatedFetch } from '../../shared/authenticated-fetch';
 import { displayIntegrationPrompt, getIntegrationsUrl, parseRepoUrl } from '../utils/integration-helper';
 import { getProvider, getAllProviders } from '../../shared/providers';
+import { resolveProvidersForInstall } from '../../shared/providers/resolve';
 import { VERSION } from '../../version';
-import { registerMCPServer, registerSubAgentMCPServer, unregisterSubAgentMCPServer, purgeCursorSubAgentMCPEntries } from '../utils/mcp-client-manager';
+import { registerMCPServer, unregisterMCPServer, registerSubAgentMCPServer, unregisterSubAgentMCPServer, purgeCursorSubAgentMCPEntries } from '../utils/mcp-client-manager';
 import { parseEnvFile } from '../../shared/env-parser';
 import { extractAllVariables } from '../../shared/variable-resolver';
 import { resolvePlugins } from './plugin-install';
@@ -39,6 +40,8 @@ const execAsync = promisify(exec);
 export interface InstallOptions {
   /** Path to a .env file (or boolean true to use ./.env). Mirrors the existing API. */
   envFile?: string | boolean;
+  /** Install for a single provider (overrides capabilities file and stored selection). */
+  provider?: string;
   /** When true, ignore lockfile + on-disk cache and re-resolve every remote source. */
   noCache?: boolean;
 }
@@ -348,9 +351,11 @@ export async function installCommand(
   // Backwards compatibility: callers may pass either the legacy `envFile`
   // string/boolean or the new `InstallOptions` object.
   let envFile: string | boolean | undefined;
+  let flagProvider: string | undefined;
   let noCache = false;
   if (typeof envFileOrOptions === 'object' && envFileOrOptions !== null) {
     envFile = envFileOrOptions.envFile;
+    flagProvider = envFileOrOptions.provider;
     noCache = !!envFileOrOptions.noCache;
   } else {
     envFile = envFileOrOptions;
@@ -401,6 +406,24 @@ export async function installCommand(
   
   // Register project
   db.upsertProject({ id: projectId, path: projectPath });
+
+  // Resolve providers (flag > capabilities file > DB > interactive prompt)
+  let resolvedProviders: string[];
+  try {
+    resolvedProviders = await resolveProvidersForInstall({
+      flagProvider,
+      capabilitiesProviders: capabilities.providers,
+      db,
+      projectId,
+    });
+  } catch (err: any) {
+    console.error(`✗ ${err.message}`);
+    db.close();
+    process.exit(1);
+  }
+  capabilities.providers = resolvedProviders;
+  db.setProjectProviders(projectId, resolvedProviders);
+  console.log(`Providers: ${resolvedProviders.join(', ')}`);
 
   // Load existing lockfile (if any). When --no-cache is set we ignore it for
   // resolution but still keep the existing entries as a starting point so the
@@ -453,6 +476,10 @@ export async function installCommand(
     }
   }
   
+  // providers is guaranteed non-empty after resolveProvidersForInstall
+  const providers = capabilitiesToUse.providers ?? resolvedProviders;
+  capabilitiesToUse.providers = providers;
+
   // Handle .env file if provided
   if (envFile !== undefined) {
     // Determine the env file path
@@ -525,7 +552,7 @@ export async function installCommand(
   
   // Step 1: Clean up removed skills
   console.log('\n🧹 Checking for removed skills...');
-  await cleanupRemovedSkills(projectPath, projectId, capabilitiesToUse.skills, capabilitiesToUse.providers, db);
+  await cleanupRemovedSkills(projectPath, projectId, capabilitiesToUse.skills, providers, db);
   
   // Step 2: Install skills (copy to client directories) — only base skills from file; plugin skills already installed in resolvePlugins
   console.log('\n📦 Installing skills...');
@@ -533,7 +560,7 @@ export async function installCommand(
     projectPath,
     projectId,
     capabilities.skills,
-    capabilitiesToUse.providers,
+    providers,
     db,
     settings,
     capabilitiesToUse,
@@ -579,7 +606,7 @@ export async function installCommand(
       await installAgentsFile(
         projectPath,
         capabilities.agents,
-        capabilitiesToUse.providers,
+        providers,
         capabilitiesToUse.options?.security,
         capabilitiesFile.path
       );
@@ -636,7 +663,7 @@ export async function installCommand(
       }
 
       const { installRules } = await import('../utils/rules-installer');
-      installRules(projectPath, capabilitiesToUse.rules, capabilitiesToUse.providers, resolvedContent);
+      installRules(projectPath, capabilitiesToUse.rules, providers, resolvedContent);
       console.log(`\n  ✓ ${capabilitiesToUse.rules.length} rule(s) installed`);
     } catch (err: any) {
       console.error(`  ✗ Failed to install rules: ${err.message}`);
@@ -710,17 +737,25 @@ export async function installCommand(
     console.warn('\n   To expose a tool, add it to the "requires" list of at least one skill in your capabilities.\n');
   }
   
-  // Step 5: Register MCP server with client configurations
+  // Step 5: Register MCP server with client configurations (only when tools or subagents exist)
+  const hasTools = capabilitiesToUse.tools.length > 0;
+  const hasSubagents = (capabilitiesToUse.subagents ?? []).length > 0;
   const mcpUrl = `${serverStatus.url}/${projectId}/mcp`;
-  console.log('\n🔗 Registering MCP server with clients...');
-  await registerMCPServer(projectPath, projectId, mcpUrl, capabilitiesToUse.providers);
+
+  if (hasTools || hasSubagents) {
+    console.log('\n🔗 Registering MCP server with clients...');
+    await registerMCPServer(projectPath, projectId, mcpUrl, providers);
+  } else {
+    console.log('\n🔗 No tools or sub-agents configured, unregistering MCP server from clients...');
+    await unregisterMCPServer(projectPath, projectId, providers);
+  }
 
   // Step 5a: Process sub-agents — register filtered endpoints + write instruction blocks
   if (capabilitiesToUse.subagents && capabilitiesToUse.subagents.length > 0) {
     console.log('\n🤖 Installing sub-agents...');
 
     // Cursor no longer uses per-sub-agent MCP entries — purge any stale ones from prior installs
-    if (capabilitiesToUse.providers.some((p) => p.toLowerCase() === 'cursor')) {
+    if (providers.some((p) => p.toLowerCase() === 'cursor')) {
       await purgeCursorSubAgentMCPEntries(projectPath);
     }
 
@@ -730,8 +765,8 @@ export async function installCommand(
     for (const { agent_id } of installedAgents) {
       if (!currentAgentIds.has(agent_id)) {
         console.log(`  Removing sub-agent "${agent_id}" (no longer in capabilities)...`);
-        await unregisterSubAgentMCPServer(projectPath, agent_id, capabilitiesToUse.providers);
-        removeSubAgentInstructions(projectPath, agent_id, capabilitiesToUse.providers);
+        await unregisterSubAgentMCPServer(projectPath, agent_id, providers);
+        removeSubAgentInstructions(projectPath, agent_id, providers);
         db.removeSubAgent(projectId, agent_id);
       }
     }
@@ -746,7 +781,7 @@ export async function installCommand(
         projectPath,
         subAgent.id,
         agentMcpUrl,
-        capabilitiesToUse.providers
+        providers
       );
 
       // Write instruction block to CLAUDE.md / AGENTS.md
@@ -754,7 +789,7 @@ export async function installCommand(
         projectPath,
         subAgent,
         capabilitiesToUse,
-        capabilitiesToUse.providers
+        providers
       );
 
       // Track in DB for future cleanup
