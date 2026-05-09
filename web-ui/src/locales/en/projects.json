@@ -35,7 +35,13 @@
     "noServers": "No servers configured",
     "noSkillsMatch": "No skills match your search",
     "noToolsMatch": "No tools match your search",
-    "noServersMatch": "No servers match your search"
+    "noServersMatch": "No servers match your search",
+    "subagents": "Sub-Agents",
+    "rules": "Rules",
+    "noSubagents": "No sub-agents configured",
+    "noRules": "No rules configured",
+    "noSubagentsMatch": "No sub-agents match your search",
+    "noRulesMatch": "No rules match your search"
   },
   "variables": {
     "title": "Environment Variables",
@@ -72,8 +78,43 @@
     "tool": "tool",
     "tools": "tools",
     "server": "server",
-    "servers": "servers"
+    "servers": "servers",
+    "subagent": "sub-agent",
+    "subagents": "sub-agents",
+    "rule": "rule",
+    "rules": "rules"
   },
   "openOnGitHub": "Open on GitHub",
-  "openOnGitLab": "Open on GitLab"
+  "openOnGitLab": "Open on GitLab",
+  "subagents": {
+    "title": "Sub-Agents",
+    "subtitle": "Named agent configurations with scoped skills and tools",
+    "skills": "Skills",
+    "tools": "Tools",
+    "instructions": "Instructions",
+    "noDescription": "No description"
+  },
+  "rules": {
+    "title": "Rules",
+    "subtitle": "Rules installed into provider rule directories",
+    "type": "Type",
+    "providers": "Providers",
+    "appliesTo": "Applies to",
+    "alwaysApply": "Always apply",
+    "allProviders": "All providers"
+  },
+  "providers": {
+    "title": "Providers",
+    "subtitle": "Configured AI coding assistant providers"
+  },
+  "options": {
+    "title": "Options",
+    "subtitle": "Project configuration options",
+    "toolExposure": "Tool Exposure",
+    "security": "Security",
+    "blockedPhrases": "Blocked Phrases",
+    "allowedCharacters": "Allowed Characters",
+    "requiredCommands": "Required Commands",
+    "noSecurityConfig": "No security configuration"
+  }
 }

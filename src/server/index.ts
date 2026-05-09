@@ -421,6 +421,33 @@ class CapaServer {
             };
           }),
           resolvedPlugins: capabilities.resolvedPlugins || null,
+          providers: capabilities.providers || [],
+          subagents: (capabilities.subagents || []).map(sa => ({
+            id: sa.id,
+            description: sa.description || null,
+            skills: sa.skills,
+            tools: sa.tools,
+            instructions: sa.instructions || null,
+          })),
+          rules: (capabilities.rules || []).map(r => ({
+            id: r.id,
+            type: r.type,
+            description: r.description || null,
+            providers: r.providers || [],
+            appliesTo: r.appliesTo || [],
+            alwaysApply: r.alwaysApply || false,
+          })),
+          options: capabilities.options ? {
+            toolExposure: capabilities.options.toolExposure || null,
+            security: capabilities.options.security ? {
+              blockedPhrases: capabilities.options.security.blockedPhrases || [],
+              allowedCharacters: capabilities.options.security.allowedCharacters || null,
+            } : null,
+            requiresCommands: (capabilities.options.requiresCommands || []).map(c => ({
+              cli: c.cli,
+              description: c.description || null,
+            })),
+          } : null,
         } : null,
       };
 

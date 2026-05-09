@@ -8,6 +8,8 @@ import { Spinner } from '../components/common/Spinner';
 import { EmptyState } from '../components/common/EmptyState';
 import { PluginsSection } from '../features/projects/components/PluginsSection';
 import { CapabilitiesSection } from '../features/projects/components/CapabilitiesSection';
+import { ProvidersSection } from '../features/projects/components/ProvidersSection';
+import { OptionsSection } from '../features/projects/components/OptionsSection';
 import { VariablesForm } from '../features/projects/components/VariablesForm';
 import { OAuth2Section } from '../features/projects/components/OAuth2Section';
 import { useProject, useVariables, useOAuth2Servers } from '../features/projects/hooks';
@@ -45,10 +47,17 @@ export function ProjectDetailPage() {
   const displayName = project ? projectDisplayName(project.path, projectId || undefined) : projectId || '';
   const caps = project?.capabilities;
   const hasCapabilities =
-    caps && (caps.skills.length > 0 || caps.tools.length > 0 || caps.servers.length > 0);
+    caps &&
+    (caps.skills.length > 0 ||
+      caps.tools.length > 0 ||
+      caps.servers.length > 0 ||
+      (caps.subagents?.length ?? 0) > 0 ||
+      (caps.rules?.length ?? 0) > 0);
   const hasVariables = (variables?.required?.length ?? 0) > 0;
   const hasOAuth = (oauth2Servers?.length ?? 0) > 0;
-  const showNoConfig = !isLoading && !hasCapabilities && !hasVariables && !hasOAuth && !error;
+  const hasProviders = (caps?.providers?.length ?? 0) > 0;
+  const hasOptions = caps?.options != null;
+  const showNoConfig = !isLoading && !hasCapabilities && !hasProviders && !hasOptions && !hasVariables && !hasOAuth && !error;
 
   if (!projectId) {
     return (
@@ -90,14 +99,22 @@ export function ProjectDetailPage() {
               />
             )}
 
+            {caps?.providers && caps.providers.length > 0 && (
+              <ProvidersSection providers={caps.providers} />
+            )}
+
             {hasCapabilities && (
               <CapabilitiesSection
                 skills={caps!.skills}
                 tools={caps!.tools}
                 servers={caps!.servers}
+                subagents={caps!.subagents ?? []}
+                rules={caps!.rules ?? []}
                 projectId={projectId}
               />
             )}
+
+            {caps?.options && <OptionsSection options={caps.options} />}
 
             <VariablesForm projectId={projectId} returnUrl={returnUrl} />
 
