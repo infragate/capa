@@ -370,9 +370,19 @@ export async function installAgentsFile(
  * `fetchRepoFile`. Returns `null` for URLs that don't match a recognized
  * raw-content shape (those callers should fall back to plain HTTP fetch).
  *
- * Accepted shapes:
+ * Accepted shapes (GitHub):
  *   https://raw.githubusercontent.com/<owner>/<repo>/<ref>/<path>
+ *   https://raw.githubusercontent.com/<owner>/<repo>/refs/heads/<branch>/<path>
+ *   https://raw.githubusercontent.com/<owner>/<repo>/refs/tags/<tag>/<path>
  *   https://github.com/<owner>/<repo>/raw/<ref>/<path>
+ *   https://github.com/<owner>/<repo>/raw/refs/heads/<branch>/<path>
+ *
+ * GitHub silently accepts both the bare `<ref>` and the fully-qualified
+ * `refs/heads/<branch>` / `refs/tags/<tag>` forms in raw URLs, and the
+ * GitHub UI's "Raw" button now generates the fully-qualified form by
+ * default. Both must round-trip to the same parsed reference.
+ *
+ * Accepted shape (GitLab):
  *   https://gitlab.com/<group/.../subgroup>/<repo>/-/raw/<ref>/<path>
  */
 export function detectRepoCoordsFromRawUrl(
@@ -389,10 +399,12 @@ export function detectRepoCoordsFromRawUrl(
 
   if (host === 'raw.githubusercontent.com') {
     if (segments.length < 4) return null;
-    const [owner, repo, ref, ...rest] = segments;
+    const [owner, repo, ...rest] = segments;
+    const split = splitGithubRefAndPath(rest);
+    if (!split) return null;
     return {
       platform: 'github',
-      repoString: `${owner}/${repo}::${rest.join('/')}${refSuffix(ref)}`,
+      repoString: `${owner}/${repo}::${split.path}${refSuffix(split.ref)}`,
     };
   }
 
@@ -401,12 +413,11 @@ export function detectRepoCoordsFromRawUrl(
     if (rawIdx === -1 || rawIdx < 2 || segments.length < rawIdx + 3) return null;
     const owner = segments[0];
     const repo = segments[1];
-    const ref = segments[rawIdx + 1];
-    const filepath = segments.slice(rawIdx + 2).join('/');
-    if (!owner || !repo || !ref || !filepath) return null;
+    const split = splitGithubRefAndPath(segments.slice(rawIdx + 1));
+    if (!owner || !repo || !split) return null;
     return {
       platform: 'github',
-      repoString: `${owner}/${repo}::${filepath}${refSuffix(ref)}`,
+      repoString: `${owner}/${repo}::${split.path}${refSuffix(split.ref)}`,
     };
   }
 
@@ -426,6 +437,34 @@ export function detectRepoCoordsFromRawUrl(
   }
 
   return null;
+}
+
+/**
+ * Split the post-`<owner>/<repo>` (or post-`/raw`) tail of a GitHub URL into
+ * its `(ref, path)` components. Handles both the bare `<branch>/<path>` form
+ * and the fully-qualified `refs/heads/<branch>/<path>` and
+ * `refs/tags/<tag>/<path>` forms that GitHub's "Raw" button produces.
+ *
+ * Returns `null` when the tail can't be split into a non-empty ref + path.
+ */
+function splitGithubRefAndPath(
+  tail: string[]
+): { ref: string; path: string } | null {
+  if (
+    tail.length >= 4 &&
+    tail[0] === 'refs' &&
+    (tail[1] === 'heads' || tail[1] === 'tags')
+  ) {
+    const ref = tail[2];
+    const path = tail.slice(3).join('/');
+    if (!ref || !path) return null;
+    return { ref, path };
+  }
+  if (tail.length < 2) return null;
+  const ref = tail[0];
+  const path = tail.slice(1).join('/');
+  if (!ref || !path) return null;
+  return { ref, path };
 }
 
 function refSuffix(ref: string): string {
