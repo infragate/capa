@@ -12,6 +12,8 @@ import {
 } from '../../shared/skill-security';
 import { getProvider, getAllProviders } from '../../shared/providers';
 import { buildSubAgentFile as buildSubAgentFileContent } from '../../shared/providers/handlers';
+import type { AuthenticatedFetch } from '../../shared/authenticated-fetch';
+import { fetchRepoFile, fetchTextFile, type RepoSnapshotResolver } from '../../shared/repo-file';
 
 export const AGENTS_FILENAME = 'AGENTS.md';
 export const CLAUDE_FILENAME = 'CLAUDE.md';
@@ -98,19 +100,26 @@ export function listCapaSnippetIds(content: string): string[] {
   return ids;
 }
 
-export async function fetchRemoteContent(url: string): Promise<string> {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch ${url}: ${response.status} ${response.statusText}`);
-  }
-  return response.text();
+/**
+ * Fetch a text file from a raw URL.
+ *
+ * Backwards-compatible wrapper around `fetchTextFile` from `shared/repo-file`.
+ * The new helper additionally rejects HTML responses (which usually indicate
+ * a private-repo login redirect that would otherwise be silently written
+ * verbatim into AGENTS.md / CLAUDE.md).
+ */
+export async function fetchRemoteContent(
+  url: string,
+  options: { authFetch?: AuthenticatedFetch; sourceLabel?: string } = {}
+): Promise<string> {
+  return fetchTextFile(url, options);
 }
 
 // ---------------------------------------------------------------------------
 // GitHub / GitLab repo-string resolution (shared utility)
 // ---------------------------------------------------------------------------
 
-import { parseRepoString, buildRawUrl } from '../../shared/repo-string';
+import { parseRepoString } from '../../shared/repo-string';
 
 function deriveIdFromFilepath(filepath: string): string {
   return filepath.replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -118,7 +127,8 @@ function deriveIdFromFilepath(filepath: string): string {
 
 async function resolveRepoSnippet(
   platform: 'github' | 'gitlab',
-  snippet: { id?: string; def?: { repo: string } }
+  snippet: { id?: string; def?: { repo: string } },
+  ctx: RepoFetchContext
 ): Promise<{ id: string; body: string }> {
   if (!snippet.def?.repo) {
     throw new Error(
@@ -127,10 +137,32 @@ async function resolveRepoSnippet(
   }
   const parsed = parseRepoString(snippet.def.repo);
   const id = snippet.id ?? deriveIdFromFilepath(parsed.filepath);
-  const url = buildRawUrl(platform, parsed);
-  console.log(`  Fetching ${platform} snippet "${id}" from ${url}`);
-  const body = await fetchRemoteContent(url);
-  return { id, body };
+  if (!ctx.authFetch || !ctx.getRepoSnapshot) {
+    throw new Error(
+      `Cannot resolve ${platform} snippet "${id}" — repo snapshot resolver is not configured. ` +
+      `This is a bug; please report it.`
+    );
+  }
+  console.log(`  Fetching ${platform} snippet "${id}" from ${snippet.def.repo}`);
+  const result = await fetchRepoFile(
+    platform,
+    snippet.def.repo,
+    ctx.getRepoSnapshot,
+    ctx.authFetch,
+    { noCache: ctx.noCache }
+  );
+  return { id, body: result.content };
+}
+
+/**
+ * Context passed through `installAgentsFile` so it can clone private repos
+ * via the existing snapshot/cache machinery instead of relying on raw HTTP
+ * fetches that fail (silently!) on auth-gated GitLab / GitHub URLs.
+ */
+export interface RepoFetchContext {
+  authFetch?: AuthenticatedFetch;
+  getRepoSnapshot?: RepoSnapshotResolver;
+  noCache?: boolean;
 }
 
 function applyConfigToFile(
@@ -172,7 +204,8 @@ export async function installAgentsFile(
   config: AgentFileConfig,
   providers: string[],
   security?: SecurityOptions,
-  capabilitiesFilePath?: string
+  capabilitiesFilePath?: string,
+  ctx: RepoFetchContext = {}
 ): Promise<void> {
   const targetFiles = getTargetFilenames(providers);
 
@@ -229,13 +262,45 @@ export async function installAgentsFile(
           `(e.g. "owner/repo@AGENTS.md").`
         );
       }
-      const parsed = parseRepoString(config.base.def.repo);
-      const url = buildRawUrl(baseType, parsed);
-      console.log(`  Fetching base agents file from ${url}`);
-      baseContent = await fetchRemoteContent(url);
+      if (!ctx.authFetch || !ctx.getRepoSnapshot) {
+        throw new Error(
+          `Cannot resolve ${baseType} agents.base — repo snapshot resolver is not configured. ` +
+          `This is a bug; please report it.`
+        );
+      }
+      console.log(`  Fetching base agents file from ${baseType}:${config.base.def.repo}`);
+      const result = await fetchRepoFile(
+        baseType,
+        config.base.def.repo,
+        ctx.getRepoSnapshot,
+        ctx.authFetch,
+        { noCache: ctx.noCache }
+      );
+      baseContent = result.content;
     } else if (config.base.ref) {
-      console.log(`  Fetching base agents file from ${config.base.ref}`);
-      baseContent = await fetchRemoteContent(config.base.ref);
+      // Auto-detect github.com / gitlab.com raw URLs and route them through the
+      // snapshot path so private repos work without manual reconfiguration.
+      const repoCoords = detectRepoCoordsFromRawUrl(config.base.ref);
+      if (repoCoords && ctx.authFetch && ctx.getRepoSnapshot) {
+        console.log(
+          `  Fetching base agents file from ${repoCoords.platform}:${repoCoords.repoString} ` +
+          `(detected from raw URL)`
+        );
+        const result = await fetchRepoFile(
+          repoCoords.platform,
+          repoCoords.repoString,
+          ctx.getRepoSnapshot,
+          ctx.authFetch,
+          { noCache: ctx.noCache }
+        );
+        baseContent = result.content;
+      } else {
+        console.log(`  Fetching base agents file from ${config.base.ref}`);
+        baseContent = await fetchRemoteContent(config.base.ref, {
+          authFetch: ctx.authFetch,
+          sourceLabel: 'agents.base',
+        });
+      }
     } else {
       throw new Error(
         `agents.base requires a "ref" URL, "type: local" with "path", or "type: github/gitlab" ` +
@@ -259,10 +324,30 @@ export async function installAgentsFile(
       if (!snippet.id) throw new Error(`Agent remote snippet is missing an "id" field.`);
       if (!snippet.url) throw new Error(`Agent snippet "${snippet.id}" is type 'remote' but has no url.`);
       resolvedId = snippet.id;
-      console.log(`  Fetching remote snippet "${resolvedId}" from ${snippet.url}`);
-      body = await fetchRemoteContent(snippet.url);
+
+      const repoCoords = detectRepoCoordsFromRawUrl(snippet.url);
+      if (repoCoords && ctx.authFetch && ctx.getRepoSnapshot) {
+        console.log(
+          `  Fetching remote snippet "${resolvedId}" from ${repoCoords.platform}:${repoCoords.repoString} ` +
+          `(detected from raw URL)`
+        );
+        const result = await fetchRepoFile(
+          repoCoords.platform,
+          repoCoords.repoString,
+          ctx.getRepoSnapshot,
+          ctx.authFetch,
+          { noCache: ctx.noCache }
+        );
+        body = result.content;
+      } else {
+        console.log(`  Fetching remote snippet "${resolvedId}" from ${snippet.url}`);
+        body = await fetchRemoteContent(snippet.url, {
+          authFetch: ctx.authFetch,
+          sourceLabel: `agents snippet "${resolvedId}"`,
+        });
+      }
     } else if (snippet.type === 'github' || snippet.type === 'gitlab') {
-      const resolved = await resolveRepoSnippet(snippet.type, snippet);
+      const resolved = await resolveRepoSnippet(snippet.type, snippet, ctx);
       resolvedId = resolved.id;
       body = resolved.body;
     } else {
@@ -277,6 +362,150 @@ export async function installAgentsFile(
     applyConfigToFile(projectPath, filename, hasBase, snippetBodies);
     console.log(`  ✓ ${filename} updated`);
   }
+}
+
+/**
+ * Detect a github.com / gitlab.com raw-content URL and translate it back into
+ * a `(platform, owner/repo@filepath[:ref])` triple suitable for
+ * `fetchRepoFile`. Returns `null` for URLs that don't match a recognized
+ * raw-content shape (those callers should fall back to plain HTTP fetch).
+ *
+ * Accepted shapes (GitHub):
+ *   https://raw.githubusercontent.com/<owner>/<repo>/<ref>/<path>
+ *   https://raw.githubusercontent.com/<owner>/<repo>/refs/heads/<branch>/<path>
+ *   https://raw.githubusercontent.com/<owner>/<repo>/refs/tags/<tag>/<path>
+ *   https://github.com/<owner>/<repo>/raw/<ref>/<path>
+ *   https://github.com/<owner>/<repo>/raw/refs/heads/<branch>/<path>
+ *
+ * GitHub silently accepts both the bare `<ref>` and the fully-qualified
+ * `refs/heads/<branch>` / `refs/tags/<tag>` forms in raw URLs, and the
+ * GitHub UI's "Raw" button now generates the fully-qualified form by
+ * default. Both must round-trip to the same parsed reference.
+ *
+ * Accepted shape (GitLab):
+ *   https://gitlab.com/<group/.../subgroup>/<repo>/-/raw/<ref>/<path>
+ */
+export function detectRepoCoordsFromRawUrl(
+  rawUrl: string
+): { platform: 'github' | 'gitlab'; repoString: string } | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+  const host = parsed.hostname.toLowerCase();
+  const segments = parsed.pathname.split('/').filter(Boolean);
+
+  if (host === 'raw.githubusercontent.com') {
+    if (segments.length < 4) return null;
+    const [owner, repo, ...rest] = segments;
+    const split = splitGithubRefAndPath(rest);
+    if (!split) return null;
+    return {
+      platform: 'github',
+      repoString: `${owner}/${repo}::${split.path}${refSuffix(split.ref)}`,
+    };
+  }
+
+  if (host === 'github.com') {
+    const rawIdx = segments.indexOf('raw');
+    if (rawIdx === -1 || rawIdx < 2 || segments.length < rawIdx + 3) return null;
+    const owner = segments[0];
+    const repo = segments[1];
+    const split = splitGithubRefAndPath(segments.slice(rawIdx + 1));
+    if (!owner || !repo || !split) return null;
+    return {
+      platform: 'github',
+      repoString: `${owner}/${repo}::${split.path}${refSuffix(split.ref)}`,
+    };
+  }
+
+  if (host === 'gitlab.com') {
+    const sepIdx = segments.indexOf('-');
+    if (sepIdx === -1 || sepIdx < 2) return null;
+    if (segments[sepIdx + 1] !== 'raw') return null;
+    if (segments.length < sepIdx + 4) return null;
+    const ownerRepo = segments.slice(0, sepIdx).join('/');
+    const ref = segments[sepIdx + 2];
+    const filepath = segments.slice(sepIdx + 3).join('/');
+    if (!ownerRepo || !ref || !filepath) return null;
+    return {
+      platform: 'gitlab',
+      repoString: `${ownerRepo}::${filepath}${refSuffix(ref)}`,
+    };
+  }
+
+  return null;
+}
+
+/**
+ * Split the post-`<owner>/<repo>` (or post-`/raw`) tail of a GitHub URL into
+ * its `(ref, path)` components. Handles both the bare `<branch>/<path>` form
+ * and the fully-qualified `refs/heads/<branch>/<path>` and
+ * `refs/tags/<tag>/<path>` forms that GitHub's "Raw" button produces.
+ *
+ * Limitation — multi-segment refs:
+ *   GitHub allows branch names that contain `/` (e.g. `feature/foo`,
+ *   `release/2024-Q4`). In a raw URL these slashes are usually written
+ *   literally, which means `.../refs/heads/feature/foo/bar.md` is genuinely
+ *   ambiguous: it could mean ref=`feature` + path=`foo/bar.md`, or
+ *   ref=`feature/foo` + path=`bar.md`. Resolving that requires hitting the
+ *   GitHub API, which we don't do at URL-detection time. We make the simple
+ *   assumption that the first segment after `refs/heads|tags/` (or the
+ *   first segment of a bare-ref tail) is the entire ref.
+ *
+ *   - Single-segment branches (`main`, `develop`, `feat-foo`) round-trip
+ *     correctly. This covers the overwhelming majority of GitHub raw URLs.
+ *   - Multi-segment branches with `/` URL-encoded as `%2F` are decoded here
+ *     and round-trip correctly.
+ *   - Multi-segment branches with literal `/` are mis-split; the resulting
+ *     repo string will fail at clone-time, at which point the user should
+ *     switch to a typed `github` source with an explicit `def.repo`.
+ *
+ * Returns `null` when the tail can't be split into a non-empty ref + path.
+ */
+function splitGithubRefAndPath(
+  tail: string[]
+): { ref: string; path: string } | null {
+  if (
+    tail.length >= 4 &&
+    tail[0] === 'refs' &&
+    (tail[1] === 'heads' || tail[1] === 'tags')
+  ) {
+    const ref = decodeRefSegment(tail[2]);
+    const path = tail.slice(3).join('/');
+    if (!ref || !path) return null;
+    return { ref, path };
+  }
+  if (tail.length < 2) return null;
+  const ref = decodeRefSegment(tail[0]);
+  const path = tail.slice(1).join('/');
+  if (!ref || !path) return null;
+  return { ref, path };
+}
+
+/**
+ * Percent-decode a single ref segment, e.g. `feature%2Ffoo` → `feature/foo`.
+ * Tolerant of malformed encodings — falls back to the raw value rather than
+ * throwing so a single bad URL doesn't crash the install.
+ */
+function decodeRefSegment(seg: string): string {
+  try {
+    return decodeURIComponent(seg);
+  } catch {
+    return seg;
+  }
+}
+
+function refSuffix(ref: string): string {
+  if (!ref || ref === 'HEAD' || ref === 'main' || ref === 'master') return '';
+  // SHAs go after `#`, named refs after `:`. Use a heuristic: 7-40 hex chars
+  // ⇒ commit SHA; everything else ⇒ tag/branch.
+  if (/^[0-9a-f]{7,40}$/i.test(ref)) {
+    return `#${ref}`;
+  }
+  return `:${ref}`;
 }
 
 // ---------------------------------------------------------------------------

@@ -58,13 +58,18 @@ export interface CapabilitiesOptions {
 
 /**
  * Repository + file definition for github/gitlab agent snippets.
- * Follows the same `repo` string format used by Skill: "owner/repo@filepath"
- * with an optional ":version" tag or "#sha" suffix.
+ * Follows the same `repo` string format used by Skill, with two grammars:
+ *
+ *   - `owner/repo@<basename>`  → recursive search for a file with that
+ *     basename anywhere in the repo. Errors on 0 or multiple matches.
+ *   - `owner/repo::<path>`     → exact file path inside the repo.
+ *
+ * Both accept an optional `:version` (tag/branch) or `#sha` suffix.
  *
  * Examples:
- *   "vercel-labs/agent-skills@AGENTS.md"
- *   "vercel-labs/agent-skills@docs/tips.md:v1.2.0"
- *   "vercel-labs/agent-skills@AGENTS.md#abc123def"
+ *   "vercel-labs/agent-skills@AGENTS.md"             // search by basename
+ *   "vercel-labs/agent-skills::docs/tips.md:v1.2.0"  // exact path, pinned tag
+ *   "vercel-labs/agent-skills::AGENTS.md#abc123def"  // exact path, pinned SHA
  */
 export interface AgentSnippetDef {
   repo: string;
@@ -78,8 +83,8 @@ export interface AgentSnippetDef {
  * Supported types (consistent with Skill):
  *   - inline  : literal content embedded in the capabilities file
  *   - remote  : content fetched from a raw URL at install time
- *   - github  : file fetched from a GitHub repository ("owner/repo@filepath")
- *   - gitlab  : file fetched from a GitLab repository ("group/repo@filepath")
+ *   - github  : file fetched from a GitHub repository (see AgentSnippetDef for repo string format)
+ *   - gitlab  : file fetched from a GitLab repository (see AgentSnippetDef for repo string format)
  */
 export interface AgentSnippet {
   /**
@@ -107,8 +112,8 @@ export interface AgentSnippet {
  *
  * Examples:
  *   ref: https://raw.githubusercontent.com/org/repo/main/AGENTS.md   # remote URL
- *   type: github / def.repo: org/repo@AGENTS.md                       # GitHub file
- *   type: gitlab / def.repo: group/repo@AGENTS.md:v1.0.0              # GitLab file, pinned
+ *   type: github / def.repo: org/repo::AGENTS.md                      # GitHub file, exact path
+ *   type: gitlab / def.repo: group/repo::AGENTS.md:v1.0.0             # GitLab file, exact path, pinned
  *   type: local / path: ./docs/AGENTS-base.md                        # local file (relative to capabilities file)
  */
 export interface AgentFileBase {

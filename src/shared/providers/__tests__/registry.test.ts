@@ -432,6 +432,220 @@ describe('Cursor rules as .mdc files', () => {
   });
 });
 
+describe('Rules: managed-file registration + pruning', () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), 'capa-rules-prune-'));
+  });
+
+  afterEach(() => {
+    if (existsSync(tempDir)) {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('installRules invokes onFileWritten for every directory-based rule it writes', async () => {
+    const { installRules } = await import('../../../cli/utils/rules-installer');
+    const rules = [
+      { id: 'r1', type: 'inline' as const, content: 'one' },
+      { id: 'r2', type: 'inline' as const, content: 'two' },
+    ];
+    const written: string[] = [];
+    installRules(
+      tempDir,
+      rules,
+      ['cursor'],
+      new Map([
+        ['r1', 'one'],
+        ['r2', 'two'],
+      ]),
+      { onFileWritten: (p) => written.push(p) }
+    );
+    expect(written.sort()).toEqual([
+      join(tempDir, '.cursor', 'rules', 'r1.mdc'),
+      join(tempDir, '.cursor', 'rules', 'r2.mdc'),
+    ]);
+  });
+
+  it('installRules does NOT invoke onFileWritten for instruction-folded providers', async () => {
+    // Marker-block rules are tracked via the inline marker, not the
+    // managed-files DB, so the callback should stay silent for codex.
+    const { installRules } = await import('../../../cli/utils/rules-installer');
+    const written: string[] = [];
+    installRules(
+      tempDir,
+      [{ id: 'only-rule', type: 'inline' as const, content: 'x' }],
+      ['codex'],
+      new Map([['only-rule', 'x']]),
+      { onFileWritten: (p) => written.push(p) }
+    );
+    expect(written).toEqual([]);
+  });
+
+  it('pruneRules removes a directory-based rule that was dropped from the config', async () => {
+    const { installRules, pruneRules } = await import('../../../cli/utils/rules-installer');
+    const written: string[] = [];
+    installRules(
+      tempDir,
+      [
+        { id: 'kept', type: 'inline' as const, content: 'keep' },
+        { id: 'gone', type: 'inline' as const, content: 'drop' },
+      ],
+      ['cursor'],
+      new Map([['kept', 'keep'], ['gone', 'drop']]),
+      { onFileWritten: (p) => written.push(p) }
+    );
+
+    const keptPath = join(tempDir, '.cursor', 'rules', 'kept.mdc');
+    const gonePath = join(tempDir, '.cursor', 'rules', 'gone.mdc');
+    expect(existsSync(keptPath)).toBe(true);
+    expect(existsSync(gonePath)).toBe(true);
+
+    // Re-install with `gone` removed from the config; it should be pruned.
+    const result = pruneRules(
+      tempDir,
+      ['cursor'],
+      [{ id: 'kept', type: 'inline' as const, content: 'keep' }],
+      written
+    );
+    expect(existsSync(keptPath)).toBe(true);
+    expect(existsSync(gonePath)).toBe(false);
+    expect(result.removedFiles).toEqual([gonePath]);
+    expect(result.removedMarkers).toEqual([]);
+  });
+
+  it('pruneRules removes ALL rule files when the rules section is emptied', async () => {
+    const { installRules, pruneRules } = await import('../../../cli/utils/rules-installer');
+    const written: string[] = [];
+    installRules(
+      tempDir,
+      [
+        { id: 'a', type: 'inline' as const, content: 'a' },
+        { id: 'b', type: 'inline' as const, content: 'b' },
+      ],
+      ['cursor'],
+      new Map([['a', 'a'], ['b', 'b']]),
+      { onFileWritten: (p) => written.push(p) }
+    );
+    expect(existsSync(join(tempDir, '.cursor', 'rules', 'a.mdc'))).toBe(true);
+    expect(existsSync(join(tempDir, '.cursor', 'rules', 'b.mdc'))).toBe(true);
+
+    const result = pruneRules(tempDir, ['cursor'], [], written);
+    expect(existsSync(join(tempDir, '.cursor', 'rules', 'a.mdc'))).toBe(false);
+    expect(existsSync(join(tempDir, '.cursor', 'rules', 'b.mdc'))).toBe(false);
+    expect(result.removedFiles.sort()).toEqual([
+      join(tempDir, '.cursor', 'rules', 'a.mdc'),
+      join(tempDir, '.cursor', 'rules', 'b.mdc'),
+    ]);
+  });
+
+  it('pruneRules never deletes user-authored files in the rules dir', async () => {
+    const { pruneRules } = await import('../../../cli/utils/rules-installer');
+    mkdirSync(join(tempDir, '.cursor', 'rules'), { recursive: true });
+    const userPath = join(tempDir, '.cursor', 'rules', 'user-rule.mdc');
+    writeFileSync(userPath, 'user-authored', 'utf-8');
+
+    // Empty managed-files list = capa never wrote anything = nothing to delete,
+    // even though the user has a file in the rules dir whose name might match
+    // a future rule.
+    const result = pruneRules(tempDir, ['cursor'], [], []);
+    expect(existsSync(userPath)).toBe(true);
+    expect(result.removedFiles).toEqual([]);
+  });
+
+  it('pruneRules removes the marker block for a removed rule but keeps current ones', async () => {
+    const { installRules, pruneRules } = await import('../../../cli/utils/rules-installer');
+    installRules(
+      tempDir,
+      [
+        { id: 'kept', type: 'inline' as const, content: 'keep' },
+        { id: 'gone', type: 'inline' as const, content: 'drop' },
+      ],
+      ['codex'],
+      new Map([['kept', 'keep'], ['gone', 'drop']])
+    );
+    const before = readFileSync(join(tempDir, 'AGENTS.md'), 'utf-8');
+    expect(before).toContain('<!-- capa:start:rule:kept -->');
+    expect(before).toContain('<!-- capa:start:rule:gone -->');
+
+    const result = pruneRules(
+      tempDir,
+      ['codex'],
+      [{ id: 'kept', type: 'inline' as const, content: 'keep' }],
+      []
+    );
+    const after = readFileSync(join(tempDir, 'AGENTS.md'), 'utf-8');
+    expect(after).toContain('<!-- capa:start:rule:kept -->');
+    expect(after).not.toContain('<!-- capa:start:rule:gone -->');
+    expect(result.removedMarkers).toEqual(['gone']);
+  });
+
+  it('pruneRules removes ALL marker blocks when the rules section is emptied', async () => {
+    const { installRules, pruneRules } = await import('../../../cli/utils/rules-installer');
+    installRules(
+      tempDir,
+      [
+        { id: 'a', type: 'inline' as const, content: 'a' },
+        { id: 'b', type: 'inline' as const, content: 'b' },
+      ],
+      ['codex'],
+      new Map([['a', 'a'], ['b', 'b']])
+    );
+
+    const result = pruneRules(tempDir, ['codex'], [], []);
+    const after = readFileSync(join(tempDir, 'AGENTS.md'), 'utf-8');
+    expect(after).not.toContain('<!-- capa:start:rule:a -->');
+    expect(after).not.toContain('<!-- capa:start:rule:b -->');
+    expect(result.removedMarkers.sort()).toEqual(['a', 'b']);
+  });
+
+  it('pruneRules respects per-rule provider filtering (rule restricted to other provider counts as absent)', async () => {
+    const { installRules, pruneRules } = await import('../../../cli/utils/rules-installer');
+    // Install a rule restricted to cursor; codex should never have written anything for it.
+    installRules(
+      tempDir,
+      [{ id: 'cursor-only', type: 'inline' as const, content: 'x', providers: ['cursor'] }],
+      ['cursor', 'codex'],
+      new Map([['cursor-only', 'x']])
+    );
+    expect(existsSync(join(tempDir, '.cursor', 'rules', 'cursor-only.mdc'))).toBe(true);
+    expect(existsSync(join(tempDir, 'AGENTS.md'))).toBe(false);
+
+    // From codex's perspective the rule is not desired, so a stray block in
+    // codex's AGENTS.md (if one existed) should be pruned. Simulate that by
+    // hand-installing a marker block and running prune.
+    writeFileSync(
+      join(tempDir, 'AGENTS.md'),
+      '<!-- capa:start:rule:cursor-only -->\nstray\n<!-- capa:end:rule:cursor-only -->\n',
+      'utf-8'
+    );
+    const result = pruneRules(
+      tempDir,
+      ['codex'],
+      [{ id: 'cursor-only', type: 'inline' as const, content: 'x', providers: ['cursor'] }],
+      []
+    );
+    const after = readFileSync(join(tempDir, 'AGENTS.md'), 'utf-8');
+    expect(after).not.toContain('<!-- capa:start:rule:cursor-only -->');
+    expect(result.removedMarkers).toEqual(['cursor-only']);
+  });
+
+  it('pruneRules ignores managed files outside the provider rules dir (no false deletions)', async () => {
+    const { pruneRules } = await import('../../../cli/utils/rules-installer');
+    // A skill directory is "managed" but lives elsewhere. pruneRules must
+    // never touch it even when the rules dir would match the basename.
+    const skillDir = join(tempDir, '.agents', 'skills', 'my-skill');
+    mkdirSync(skillDir, { recursive: true });
+    const skillFile = join(skillDir, 'SKILL.md');
+    writeFileSync(skillFile, '# skill', 'utf-8');
+
+    const result = pruneRules(tempDir, ['cursor'], [], [skillDir, skillFile]);
+    expect(existsSync(skillFile)).toBe(true);
+    expect(result.removedFiles).toEqual([]);
+  });
+});
+
 describe('Codex skill installation path', () => {
   it('uses .agents/skills as its skillsDir', () => {
     const codex = getProvider('codex')!;
