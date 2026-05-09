@@ -86,13 +86,16 @@ capa add <source> [--id <custom-id>]
 ```
 
 Add a skill from various sources:
-- **GitHub**: `capa add owner/repo@skill-name` (e.g. `capa add vercel-labs/agent-skills@web-researcher`)
-- **GitLab**: `capa add gitlab:group/repo@skill-name`
+- **GitHub (search)**: `capa add owner/repo@skill-name` — capa searches the repo for a directory named `skill-name`. Use when the name is unique.
+- **GitHub (exact)**: `capa add owner/repo::skills/path/to/skill-name` — exact directory path inside the repo.
+- **GitLab (search)**: `capa add gitlab:group/repo@skill-name` (subgroups supported)
+- **GitLab (exact)**: `capa add gitlab:group/sub/repo::skills/path/skill-name`
+- **Pinning** (works with both `@` and `::`): append `:v1.2.3` for a tag/branch or `#abc1234` for a commit SHA — e.g. `capa add owner/repo@skill:v1.2.3`, `capa add gitlab:group/repo::skills/x/y#abc1234`.
 - **Installed**: `capa add <skill-id> --installed [--requires "tool1,tool2"]` — skill already installed by user; capa only acknowledges for tool binding
 - **Remote URL**: `capa add https://example.com/path/to/SKILL.md`
 - **Local path**: `capa add ./path/to/skill` — directory must contain `SKILL.md`; stored as type `local` so the file is read on each install
 
-**When to use**: Quickly adding community skills without manually editing the capabilities file.
+**When to use**: Quickly adding community skills without manually editing the capabilities file. Prefer `@` for the common case (unique skill names); fall back to `::` to disambiguate or to keep the reference tied to a specific layout.
 
 ---
 

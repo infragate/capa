@@ -32,7 +32,8 @@ import {
 } from '../../shared/skill-security';
 import { getOrCreateSnapshot, type CachePlatform, type GetSnapshotResult } from '../../shared/cache';
 import { LockfileBuilder, loadLockfile, saveLockfile } from '../../shared/lockfile';
-import { parseRepoString, buildRawUrl } from '../../shared/repo-string';
+import { fetchRepoFile, fetchTextFile } from '../../shared/repo-file';
+import { parseRepoString } from '../../shared/repo-string';
 import type { LockSkillEntry } from '../../types/lockfile';
 
 const execAsync = promisify(exec);
@@ -599,6 +600,17 @@ export async function installCommand(
     }
   }
   
+  // Auth + snapshot resolver shared by AGENTS.md and rule installation, so
+  // both paths can clone private GitHub/GitLab repos via OAuth instead of
+  // hitting raw URLs that silently return HTML login redirects.
+  const repoFetchAuth = createAuthenticatedFetch(db);
+  const repoFetchCtx = {
+    authFetch: repoFetchAuth,
+    getRepoSnapshot: (platform: CachePlatform, repoPath: string, auth: AuthenticatedFetch, opts: any) =>
+      getRepoSnapshot(platform, repoPath, auth, opts),
+    noCache,
+  };
+
   // Step 3: Install agent instructions files (AGENTS.md and/or CLAUDE.md) if configured
   if (capabilities.agents) {
     console.log('\n📝 Installing agent instructions files...');
@@ -608,7 +620,8 @@ export async function installCommand(
         capabilities.agents,
         providers,
         capabilitiesToUse.options?.security,
-        capabilitiesFile.path
+        capabilitiesFile.path,
+        repoFetchCtx
       );
     } catch (err: any) {
       console.error(`  ✗ Failed to install agent instructions files: ${err.message}`);
@@ -630,17 +643,21 @@ export async function installCommand(
         } else if (rule.type === 'remote') {
           if (!rule.url) throw new Error(`Rule "${rule.id}" is type 'remote' but has no url.`);
           console.log(`  Fetching rule "${rule.id}" from ${rule.url}`);
-          const resp = await fetch(rule.url);
-          if (!resp.ok) throw new Error(`Failed to fetch rule "${rule.id}": ${resp.status}`);
-          body = await resp.text();
+          body = await fetchTextFile(rule.url, {
+            authFetch: repoFetchAuth,
+            sourceLabel: `rule "${rule.id}"`,
+          });
         } else if (rule.type === 'github' || rule.type === 'gitlab') {
           if (!rule.def?.repo) throw new Error(`Rule "${rule.id}" is type '${rule.type}' but missing def.repo.`);
-          const parsed = parseRepoString(rule.def.repo);
-          const ruleUrl = buildRawUrl(rule.type, parsed);
-          console.log(`  Fetching rule "${rule.id}" from ${ruleUrl}`);
-          const resp = await fetch(ruleUrl);
-          if (!resp.ok) throw new Error(`Failed to fetch rule "${rule.id}": ${resp.status}`);
-          body = await resp.text();
+          console.log(`  Fetching rule "${rule.id}" from ${rule.type}:${rule.def.repo}`);
+          const result = await fetchRepoFile(
+            rule.type,
+            rule.def.repo,
+            repoFetchCtx.getRepoSnapshot,
+            repoFetchAuth,
+            { noCache }
+          );
+          body = result.content;
         } else {
           throw new Error(`Unknown rule type: ${(rule as any).type}`);
         }
@@ -979,15 +996,23 @@ async function installSkills(
       const platform: CachePlatform = skill.type;
       const platformLabel = platform === 'github' ? 'GitHub' : 'GitLab';
       try {
-        // Parse repo string: "owner/repo@skill" or "owner/repo@skill:version" or "owner/repo@skill#sha"
-        const repoWithoutVersionOrRef = skill.def.repo.split(/[:#]/)[0];
-        const [repoPath, skillName] = repoWithoutVersionOrRef.split('@');
-        if (!repoPath || !skillName) {
-          throw new Error(`Invalid ${platformLabel} repo format. Use: owner/repo@skill-name`);
+        // Parse "owner/repo@name" (recursive search) or
+        // "owner/repo::path/to/skill" (exact path), with optional :version / #sha
+        let parsed;
+        try {
+          parsed = parseRepoString(skill.def.repo);
+        } catch (err: any) {
+          throw new Error(
+            `Invalid ${platformLabel} repo format for skill "${skill.id}": ${err.message}`
+          );
         }
+        const repoPath = parsed.ownerRepo;
+        const skillTarget = parsed.target;
 
-        const version = skill.def.version;
-        const ref = skill.def.ref;
+        // `version`/`ref` from the def take precedence over what's parsed off
+        // the repo string, mirroring how the lockfile keys these skills.
+        const version = skill.def.version ?? parsed.version;
+        const ref = skill.def.ref ?? parsed.sha;
 
         const repoKey = `${platform}:${repoPath}${version ? ':' + version : ''}${ref ? '#' + ref : ''}`;
         let snapshot = resolvedRepos.get(repoKey);
@@ -1026,12 +1051,14 @@ async function installSkills(
           }
         }
 
-        // Record the resolution in the lockfile builder.
+        // Record the resolution in the lockfile builder. For both `@` and `::`
+        // forms we record the right-hand side as `skillName` — consumers of the
+        // lockfile only use it for human-readable display.
         const lockEntry: LockSkillEntry = {
           id: skill.id,
           source: platform,
           repo: repoPath,
-          skillName,
+          skillName: skillTarget,
           requestedVersion: version ?? null,
           requestedRef: ref ?? null,
           resolvedRef: snapshot.resolvedSha,
@@ -1039,19 +1066,37 @@ async function installSkills(
         };
         lockBuilder.upsertSkill(lockEntry);
 
-        // Search for the skill in the snapshot
-        const foundSkills = findSkillsInDirectory(snapshot.snapshotDir);
+        // Locate the skill directory. `@` form searches the snapshot
+        // recursively for a directory named `skillTarget` containing
+        // SKILL.md; `::` form expects the directory at exactly that path.
+        let skillMdPath: string | undefined;
 
-        if (!foundSkills.has(skillName)) {
-          throw new Error(
-            `Skill "${skillName}" not found in repository.\n` +
-            `    Repository: ${repoPath}\n` +
-            `    Available skills: ${Array.from(foundSkills.keys()).join(', ') || 'none'}\n` +
-            `    Tip: Check the skill name matches a directory containing SKILL.md`
-          );
+        if (parsed.mode === 'exact') {
+          const candidate = join(snapshot.snapshotDir, skillTarget, 'SKILL.md');
+          if (!existsSync(candidate)) {
+            throw new Error(
+              `SKILL.md not found at exact path "${skillTarget}/SKILL.md".\n` +
+              `    Repository: ${repoPath}\n` +
+              `    Snapshot:   ${snapshot.resolvedSha.slice(0, 7)}\n` +
+              `    Tip: Use "${repoPath}@${basename(skillTarget)}" to search the repo recursively for a SKILL.md.`
+            );
+          }
+          skillMdPath = candidate;
+        } else {
+          const foundSkills = findSkillsInDirectory(snapshot.snapshotDir);
+          if (!foundSkills.has(skillTarget)) {
+            const available = Array.from(foundSkills.keys()).sort();
+            throw new Error(
+              `Skill "${skillTarget}" not found in repository.\n` +
+              `    Repository: ${repoPath}\n` +
+              `    Available skills: ${available.join(', ') || 'none'}\n` +
+              `    Tip: The "@" separator matches by directory basename. ` +
+              `For an exact path, use "${repoPath}::path/to/${skillTarget}" instead.`
+            );
+          }
+          skillMdPath = foundSkills.get(skillTarget)!;
         }
 
-        const skillMdPath = foundSkills.get(skillName)!;
         const skillData = readSkillFromDirectory(skillMdPath);
         skillMarkdown = skillData.markdown;
         additionalFiles = skillData.additionalFiles;

@@ -23,9 +23,34 @@ interface ParsedSkillSource {
 
 /**
  * Parse a skill source URL/path and convert it to a skill definition
+ *
+ * Repo strings accept two grammars (decided at install time by `parseRepoString`):
+ *   `owner/repo@<name>`     — capa searches the cloned repo recursively for
+ *                             a directory named `<name>` containing SKILL.md
+ *   `owner/repo::<path>`    — exact directory path inside the repo
+ * Both can be suffixed with `:version` or `#sha` for pinning.
+ *
  * @internal Exported for testing purposes
  */
 export async function parseSkillSource(source: string): Promise<ParsedSkillSource> {
+  // GitHub exact-path syntax: vercel-labs/agent-skills::skills/web-researcher
+  // The path can contain slashes; we still strip an optional :version or #sha suffix.
+  const githubExactMatch = source.match(
+    /^([\w.-]+\/[\w.-]+)::([\w./-]+?)(?::([\w.-]+)|#([a-f0-9]{7,40}))?$/i
+  );
+  if (githubExactMatch) {
+    const [, repo, path, version, ref] = githubExactMatch;
+    return {
+      id: basename(path),
+      type: 'github',
+      def: {
+        repo: `${repo}::${path}${version ? ':' + version : ''}${ref ? '#' + ref : ''}`,
+        ...(version && { version }),
+        ...(ref && { ref })
+      }
+    };
+  }
+
   // GitHub short syntax with skill name: vercel-labs/agent-skills@skill-name
   // With optional version: owner/repo@skill:1.2.1 or commit: owner/repo@skill#abc123
   // Note: GitHub doesn't support nested paths, only owner/repo structure
@@ -63,7 +88,24 @@ export async function parseSkillSource(source: string): Promise<ParsedSkillSourc
       }
     };
   }
-  
+
+  // GitLab exact-path syntax: gitlab:group/sub/repo::skills/path/skill-name
+  const gitlabExactMatch = source.match(
+    /^gitlab:([\w.-]+(?:\/[\w.-]+)+)::([\w./-]+?)(?::([\w.-]+)|#([a-f0-9]{7,40}))?$/i
+  );
+  if (gitlabExactMatch) {
+    const [, repo, path, version, ref] = gitlabExactMatch;
+    return {
+      id: basename(path),
+      type: 'gitlab',
+      def: {
+        repo: `${repo}::${path}${version ? ':' + version : ''}${ref ? '#' + ref : ''}`,
+        ...(version && { version }),
+        ...(ref && { ref })
+      }
+    };
+  }
+
   // GitLab prefix syntax with skill name: gitlab:group/subgroup/repo@skill-name
   // With optional version: gitlab:group/repo@skill:1.2.1 or commit: gitlab:group/repo@skill#abc123
   // GitLab supports nested groups, so we match one or more path segments
@@ -148,7 +190,27 @@ export async function parseSkillSource(source: string): Promise<ParsedSkillSourc
   }
   
   // Fallback - treat as invalid
-  throw new Error(`Unable to parse skill source: ${source}\n\nSupported formats:\n  - GitHub with skill: owner/repo@skill-name\n  - GitHub with version: owner/repo@skill-name:1.2.1\n  - GitHub with commit: owner/repo@skill-name#abc123\n  - GitHub skill URL: https://github.com/owner/repo/tree/main/skills/skill-name\n  - GitLab with skill: gitlab:owner/repo@skill-name\n  - GitLab with version: gitlab:owner/repo@skill-name:1.2.1\n  - GitLab with commit: gitlab:owner/repo@skill-name#abc123\n  - GitLab skill URL: https://gitlab.com/owner/repo/-/tree/main/skills/skill-name\n  - Local path: ./my-local-skills (directory containing SKILL.md)\n  - Remote SKILL.md URL: https://example.com/path/to/SKILL.md\n\nVersion/commit examples:\n  - Pin to version: capa add owner/repo@skill:v1.2.3\n  - Pin to commit: capa add gitlab:group/repo@skill#abc123def\n  - Latest (default): capa add owner/repo@skill`);
+  throw new Error(
+    `Unable to parse skill source: ${source}\n\n` +
+    `Supported formats:\n` +
+    `  GitHub:\n` +
+    `    - Recursive search:  owner/repo@skill-name\n` +
+    `    - Exact path:        owner/repo::skills/path/to/skill-name\n` +
+    `    - URL:               https://github.com/owner/repo/tree/main/skills/skill-name\n` +
+    `  GitLab:\n` +
+    `    - Recursive search:  gitlab:owner/repo@skill-name\n` +
+    `    - Exact path:        gitlab:owner/repo::skills/path/to/skill-name\n` +
+    `    - URL:               https://gitlab.com/owner/repo/-/tree/main/skills/skill-name\n` +
+    `  Local path:            ./my-local-skills (directory containing SKILL.md)\n` +
+    `  Remote SKILL.md URL:   https://example.com/path/to/SKILL.md\n\n` +
+    `Pinning (any of the above):\n` +
+    `  - Tag:    capa add owner/repo@skill:v1.2.3\n` +
+    `  - Commit: capa add gitlab:group/repo@skill#abc123def\n` +
+    `  - Latest: capa add owner/repo@skill\n\n` +
+    `When to use which:\n` +
+    `  Use "@" when the skill folder name is unique in the repo.\n` +
+    `  Use "::" when you need an exact path (e.g. two skills share a name).`
+  );
 }
 
 export async function addCommand(source: string, options: { id?: string; installed?: boolean; requires?: string; description?: string }): Promise<void> {

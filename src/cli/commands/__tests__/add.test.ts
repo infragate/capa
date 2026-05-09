@@ -74,6 +74,42 @@ describe('parseSkillSource', () => {
     });
   });
 
+  describe('GitHub exact-path (::) syntax', () => {
+    it('should parse GitHub exact-path syntax', async () => {
+      const result = await parseSkillSource(
+        'vercel-labs/agent-skills::skills/web/web-researcher'
+      );
+
+      expect(result.id).toBe('web-researcher');
+      expect(result.type).toBe('github');
+      expect(result.def.repo).toBe(
+        'vercel-labs/agent-skills::skills/web/web-researcher'
+      );
+    });
+
+    it('should parse GitHub exact-path with a tag', async () => {
+      const result = await parseSkillSource(
+        'owner/repo::skills/general/git-conventions:v1.2.0'
+      );
+
+      expect(result.id).toBe('git-conventions');
+      expect(result.type).toBe('github');
+      expect(result.def.repo).toBe(
+        'owner/repo::skills/general/git-conventions:v1.2.0'
+      );
+      expect(result.def.version).toBe('v1.2.0');
+    });
+
+    it('should parse GitHub exact-path with a SHA', async () => {
+      const result = await parseSkillSource(
+        'owner/repo::skills/git-conventions#abc1234567'
+      );
+
+      expect(result.id).toBe('git-conventions');
+      expect(result.def.ref).toBe('abc1234567');
+    });
+  });
+
   describe('GitLab short syntax', () => {
     it('should parse GitLab short syntax with two-level path', async () => {
       const result = await parseSkillSource('gitlab:tony.z.1711/example-skills@example-skill');
@@ -118,6 +154,30 @@ describe('parseSkillSource', () => {
     it('should not match single-level GitLab path', async () => {
       // GitLab requires at least group/repo structure
       await expect(parseSkillSource('gitlab:repo@skill')).rejects.toThrow();
+    });
+  });
+
+  describe('GitLab exact-path (::) syntax', () => {
+    it('should parse GitLab exact-path with subgroups', async () => {
+      const result = await parseSkillSource(
+        'gitlab:acme/platform/data/pipeline::skills/data-eng/etl-skill'
+      );
+
+      expect(result.id).toBe('etl-skill');
+      expect(result.type).toBe('gitlab');
+      expect(result.def.repo).toBe(
+        'acme/platform/data/pipeline::skills/data-eng/etl-skill'
+      );
+    });
+
+    it('should parse GitLab exact-path with a version', async () => {
+      const result = await parseSkillSource(
+        'gitlab:group/sub/repo::skills/foo/bar:v2.1.0'
+      );
+
+      expect(result.id).toBe('bar');
+      expect(result.type).toBe('gitlab');
+      expect(result.def.version).toBe('v2.1.0');
     });
   });
 
@@ -285,8 +345,13 @@ describe('parseSkillSource', () => {
         expect(error).toBeInstanceOf(Error);
         const message = (error as Error).message;
         expect(message).toContain('Supported formats:');
-        expect(message).toContain('GitHub with skill:');
-        expect(message).toContain('GitLab with skill:');
+        expect(message).toContain('GitHub:');
+        expect(message).toContain('GitLab:');
+        // Both grammars are documented
+        expect(message).toContain('owner/repo@skill-name');
+        expect(message).toContain('owner/repo::skills/path/to/skill-name');
+        // Guidance on which to use
+        expect(message).toContain('When to use which');
       }
     });
 
