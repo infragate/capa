@@ -2,7 +2,7 @@
 
 ## Contents
 
-- Initialize Capabilities · Install Capabilities · Add Skills · Clean Managed Files · Shell / Tool Executor · Server Management
+- Initialize Capabilities · Install Capabilities · Add Skills · Clean Managed Files · Shell / Tool Executor · Server Management · Authentication · Upgrade · Cache Management
 
 ---
 
@@ -24,15 +24,19 @@ Creates a new capabilities file with default configuration. Defaults to YAML for
 capa install
 capa install -e             # Load variables from .env file
 capa install -e .prod.env   # Load variables from custom env file
-capa install --env          # Alternative syntax for -e
+capa install -p cursor      # Install for a single provider
+capa install --no-cache     # Bypass on-disk cache; re-resolve all remote sources
 ```
 
 Reads the capabilities file and:
-1. Installs all skills to configured MCP clients (creates skill directories in `.cursor/skills/` and/or `~/Library/Application Support/Claude/skills/`)
-2. Installs/updates `AGENTS.md` (always) and `CLAUDE.md` (when `claude-code` is in providers) if the `agents` section is present (downloads base file, upserts/prunes snippets)
-3. Configures the CAPA server with your tools and servers
-4. Prompts for any required credentials via web UI (unless `-e` flag is used)
-5. Registers the project's MCP endpoint in client config files
+1. Resolves providers (from the file, `--provider` flag, DB memory, or interactive prompt)
+2. Installs all skills to configured MCP clients (creates skill directories in `.cursor/skills/` and/or `~/Library/Application Support/Claude/skills/`)
+3. Installs/updates `AGENTS.md` (always) and `CLAUDE.md` (when `claude-code` is in providers) if the `agents` section is present (downloads base file, upserts/prunes snippets)
+4. Installs rules into each provider's rules directory or instructions file if the `rules` section is present
+5. Resolves plugins and merges their skills, servers, and tools
+6. Configures the CAPA server with your tools and servers
+7. Prompts for any required credentials via web UI (unless `-e` flag is used)
+8. Registers the project's MCP endpoint in client config files (skipped when no tools or subagents are configured)
 
 **Security**: If `options.security` is configured with `blockedPhrases` or `allowedCharacters`, the corresponding checks run during installation. Omit or comment out each property to disable it. If a blocked phrase is found, installation stops immediately and reports which skill and phrase caused the block. When `allowedCharacters` is present, character sanitization runs: the baseline (printable ASCII + standard whitespace) is always preserved, and the value specifies extra Unicode ranges to keep on top of that.
 
@@ -42,6 +46,14 @@ Reads the capabilities file and:
   - With filename: Uses the specified file (e.g., `.prod.env`, `.staging.env`)
   - The env file must exist, or the command will fail with an error
   - All required variables must be present in the env file
+- `-p, --provider <id>`: Install for a single provider (e.g. `cursor`, `claude-code`). Overrides the `providers` field in the capabilities file.
+- `--no-cache`: Bypass the on-disk cache and lockfile; re-resolve every remote source (skills, agents, rules, plugins) from scratch.
+
+**Provider resolution** (when `providers` is omitted from the capabilities file):
+1. `--provider` flag (highest priority)
+2. `providers` array in the capabilities file
+3. Stored providers from a previous install (persisted in DB)
+4. Interactive prompt (TTY only — auto-detects installed providers)
 
 **When to use**: After modifying the capabilities file or adding new skills.
 
@@ -124,9 +136,49 @@ capa sh gitlab list-merge-requests --help   # Show argument details
 
 ```bash
 capa start              # Start the CAPA server (background)
+capa start -f           # Start in foreground (for debugging)
 capa stop               # Stop the CAPA server
 capa restart            # Restart the CAPA server
 capa status             # Check server health and uptime
 ```
 
 **When to use**: Managing the background MCP server that handles tool execution and credential management.
+
+---
+
+## Authentication
+
+```bash
+capa auth               # Authenticate with the default Git provider
+capa auth github.com    # Authenticate with GitHub
+capa auth gitlab.com    # Authenticate with GitLab
+```
+
+Authenticates with Git providers for accessing private repositories (skills, plugins, agent snippets). Credentials are stored securely in the capa database.
+
+**When to use**: When you need to access private GitHub or GitLab repositories for skills or plugins.
+
+---
+
+## Upgrade
+
+```bash
+capa upgrade
+```
+
+Upgrades capa to the latest published version.
+
+**When to use**: When a new version of capa is available (capa will notify you after commands when an update is available).
+
+---
+
+## Cache Management
+
+```bash
+capa cache              # Show cache stats (location, size, per-repo breakdown)
+capa cache clean        # Remove all cached repositories and snapshots
+```
+
+Capa caches remote sources (GitHub/GitLab repositories) locally to speed up subsequent installs. The cache stores bare git mirrors and file snapshots. Use `capa cache clean` to free disk space, or `capa install --no-cache` to bypass the cache for a single install without clearing it.
+
+**When to use**: Inspecting cache disk usage or clearing stale cached data.
