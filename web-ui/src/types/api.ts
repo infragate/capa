@@ -69,11 +69,48 @@ export interface ResolvedPlugin {
   version?: string;
 }
 
+export interface SubAgent {
+  id: string;
+  description: string | null;
+  skills: string[];
+  tools: string[];
+  instructions: string | null;
+}
+
+export interface Rule {
+  id: string;
+  type: 'inline' | 'remote' | 'github' | 'gitlab';
+  description: string | null;
+  providers: string[];
+  appliesTo: string[];
+  alwaysApply: boolean;
+}
+
+export interface RequiredCommand {
+  cli: string;
+  description: string | null;
+}
+
+export interface SecurityOptions {
+  blockedPhrases: string[];
+  allowedCharacters: string | null;
+}
+
+export interface CapabilitiesOptions {
+  toolExposure: string | null;
+  security: SecurityOptions | null;
+  requiresCommands: RequiredCommand[];
+}
+
 export interface ProjectCapabilities {
   skills: Skill[];
   tools: Tool[];
   servers: Server[];
   resolvedPlugins: ResolvedPlugin[] | null;
+  providers: string[];
+  subagents: SubAgent[];
+  rules: Rule[];
+  options: CapabilitiesOptions | null;
 }
 
 export interface ProjectDetail {
