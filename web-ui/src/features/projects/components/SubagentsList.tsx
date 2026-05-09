@@ -68,11 +68,12 @@ function SubagentItem({ agent, search }: { agent: SubAgent; search: string }) {
         />
         <div className="min-w-0 flex-1">
           <span
-            className="font-mono text-xs font-medium text-text-primary"
+            className="truncate font-mono text-xs font-medium text-text-primary"
+            title={agent.id}
             dangerouslySetInnerHTML={{ __html: highlightText(agent.id, search) }}
           />
           {!expanded && (
-            <div className="mt-0.5 truncate text-[11px] text-text-tertiary">
+            <div className="mt-0.5 truncate text-[11px] text-text-tertiary" title={desc || undefined}>
               {descPreview || t('subagents.noDescription')}
             </div>
           )}

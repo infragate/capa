@@ -126,6 +126,7 @@ function ServerItem({
             <span className="shrink-0 text-text-tertiary">&bull;</span>
             <span
               className={`font-mono text-[11px] ${expanded ? 'break-all' : 'truncate'}`}
+              title={connectionText}
               dangerouslySetInnerHTML={{ __html: highlightText(connectionText, search) }}
             />
           </>
