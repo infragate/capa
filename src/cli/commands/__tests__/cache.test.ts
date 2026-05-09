@@ -195,25 +195,20 @@ describe('install cache flow (offline second resolve)', () => {
     await materializeSnapshot(mirrorDir, 'github', 'owner/repo', fixture.latestSha);
     expect(existsSync(mirrorDir)).toBe(true);
 
-    // With noCache the per-repo dir is wiped first; a real resolve would then
-    // re-clone. We can't re-clone in this offline test, but we can assert the
-    // wipe happened by catching the (expected) error.
-    let threw = false;
-    try {
-      await getOrCreateSnapshot({
-        platform: 'github',
-        repoPath: 'owner/repo',
-        authFetch: noAuthFetch,
-        pinnedSha: fixture.latestSha,
-        noCache: true,
-      });
-    } catch {
-      threw = true;
-    }
-    // Either it errored trying to fetch from github.com, or the cache was wiped.
-    // The important assertion is that the prior cache state is gone.
-    expect(existsSync(getRepoCacheDir('github', 'owner/repo')) && existsSync(mirrorDir)).toBe(false);
-    // Suppress the "unused variable" warning if the noCache call somehow succeeded.
-    void threw;
+    // With noCache the per-repo dir is wiped first, then a fresh clone is
+    // performed. Pass repoUrl so re-clone uses the local file:// fixture
+    // instead of hitting the network (which would hang on CI).
+    const result = await getOrCreateSnapshot({
+      platform: 'github',
+      repoPath: 'owner/repo',
+      authFetch: noAuthFetch,
+      pinnedSha: fixture.latestSha,
+      noCache: true,
+      repoUrl: fixture.url,
+    });
+
+    // The old mirror was wiped and a fresh one was created from the fixture.
+    expect(result.resolvedSha).toBe(fixture.latestSha);
+    expect(existsSync(result.snapshotDir)).toBe(true);
   });
 });
