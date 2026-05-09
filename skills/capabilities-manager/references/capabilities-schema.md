@@ -1,10 +1,12 @@
 # Capabilities File Schema
 
-Full reference for `capabilities.yaml` / `capabilities.json` structure: basic layout, skills (all six types), servers, tools, security, `requiresCommands`, and the `agents` section.
+Full reference for `capabilities.yaml` / `capabilities.json` structure: basic layout, skills (all six types), servers, tools, rules, plugins, security, `requiresCommands`, the `agents` section, and sub-agents.
 
 ## Basic Structure (YAML)
 
 ```yaml
+# providers is optional — when omitted, resolved at install time via
+# --provider flag, DB memory from a previous install, or interactive prompt.
 providers:
   - cursor
   - claude-code
@@ -31,7 +33,11 @@ tools:
     type: mcp|command
     def: { ... }
 
-# subagents: [ { id, description?, skills, tools, instructions?, agents? } ]
+# rules: [ { id, type, content?, url?, def?, providers?, appliesTo?, alwaysApply?, description? } ]
+
+# plugins: [ { type: remote, def: { uri } } ]
+
+# subagents: [ { id, description?, skills, tools, instructions? } ]
 ```
 
 ## Skills Section (six types)
@@ -120,4 +126,73 @@ subagents:
 
 **Cleanup:** On each `capa install`, sub-agents removed from the config are automatically unregistered and their agent files removed. `capa clean` removes all sub-agent registrations.
 
-For full YAML examples of every skill type, server type, security block, requiresCommands, tool defaults/group, and agents schema, see the original capability file docs or the examples in `references/workflows-and-examples.md`.
+## Rules Section
+
+Defines rules installed into each provider's rules directory or instructions file.
+
+- **Providers with a rules directory** (e.g. Cursor → `.cursor/rules/`): each rule is written as a separate file with optional YAML frontmatter (`description`, `globs`, `alwaysApply`).
+- **Providers without a rules directory** (e.g. Claude Code, Codex): rule content is folded into the provider's instructions file as a capa marker block.
+
+**Fields:**
+- `id` (required): Unique identifier, used as filename stem and capa marker id.
+- `type` (required): `inline`, `remote`, `github`, or `gitlab`.
+- `providers` (optional): Restrict this rule to specific providers. When omitted, applies to all.
+- `appliesTo` (optional): Glob patterns for auto-attached rules (maps to Cursor `globs`).
+- `alwaysApply` (optional): When `true`, the rule is always loaded regardless of file context.
+- `description` (optional): Human-readable description used in frontmatter.
+- `content` (inline only): Literal rule content.
+- `url` (remote only): Raw URL to fetch.
+- `def.repo` (github/gitlab only): Repository + file path (same format as skills).
+
+```yaml
+rules:
+  - id: code-style
+    type: inline
+    alwaysApply: true
+    description: Project code style guidelines
+    content: |
+      Use TypeScript strict mode. Prefer const over let.
+      Always use explicit return types on exported functions.
+
+  - id: test-patterns
+    type: inline
+    appliesTo:
+      - "**/*.test.ts"
+      - "**/*.spec.ts"
+    description: Testing conventions
+    content: |
+      Use describe/it blocks. Prefer toBe over toEqual for primitives.
+
+  - id: shared-rules
+    type: github
+    def:
+      repo: my-org/standards@rules/typescript.md
+    providers:
+      - cursor
+```
+
+`capa clean` removes all capa-installed rules. Rules can be scoped per-provider and support the same source types as skills.
+
+## Plugins Section
+
+Remote plugin packages that bundle skills, servers, and tools from a provider manifest.
+
+**Fields:**
+- `id` (optional): Stable identifier; derived from name + ref if absent.
+- `type` (required): `remote`.
+- `def.uri` (required): Plugin URI. Format: `github:owner/repo`, `github:owner/repo:v1.0.0`, or `github:owner/repo#sha`. GitLab URIs also supported (`gitlab:...`).
+
+```yaml
+plugins:
+  - type: remote
+    def:
+      uri: github:some-org/my-plugin:v1.0.0
+
+  - type: remote
+    def:
+      uri: github:another-org/tools-bundle#abc123
+```
+
+Plugins are resolved during `capa install`. The plugin manifest is fetched from the repository and its skills, servers, and tools are merged into the capabilities. Plugin-sourced items are tagged with `sourcePlugin` attribution for display.
+
+For full YAML examples of every skill type, server type, security block, requiresCommands, tool defaults/group, rules, plugins, and agents schema, see the original capability file docs or the examples in `references/workflows-and-examples.md`.

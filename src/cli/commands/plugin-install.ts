@@ -156,7 +156,10 @@ export async function resolvePlugins(
   const mergedTools = Array.isArray(capabilities.tools) ? [...capabilities.tools] : [];
   const resolvedPlugins: ResolvedPluginInfo[] = [];
   const tempDirs: string[] = [];
-  const providers = capabilities.providers ?? ['cursor', 'claude-code'];
+  const providers = capabilities.providers;
+  if (!providers || providers.length === 0) {
+    throw new Error('No providers configured. Resolve providers before calling resolvePlugins.');
+  }
 
   const pluginsBase = getPluginsTempBase(projectId);
   const currentPluginIds = new Set<string>();
