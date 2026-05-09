@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { AlertTriangle, ArrowDown } from 'lucide-react';
 import { TopBar } from '../components/layout/TopBar';
 import { Page } from '../components/layout/Page';
 import { Alert } from '../components/common/Alert';
@@ -59,6 +60,17 @@ export function ProjectDetailPage() {
   const hasOptions = caps?.options != null;
   const showNoConfig = !isLoading && !hasCapabilities && !hasProviders && !hasOptions && !hasVariables && !hasOAuth && !error;
 
+  const missingVarCount = variables?.required
+    ? variables.required.filter((v) => !variables.values?.[v]).length
+    : 0;
+  const pendingOAuthCount = oauth2Servers
+    ? oauth2Servers.filter((s) => !s.isConnected).length
+    : 0;
+
+  const scrollTo = useCallback((id: string) => {
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, []);
+
   if (!projectId) {
     return (
       <>
@@ -82,6 +94,41 @@ export function ProjectDetailPage() {
           >
             {message.text}
           </Alert>
+        )}
+
+        {(missingVarCount > 0 || pendingOAuthCount > 0) && !isLoading && !error && (
+          <div className="mb-6 space-y-2">
+            {missingVarCount > 0 && (
+              <div className="flex items-center justify-between gap-4 rounded-lg border border-[hsl(40_80%_50%/0.3)] bg-[hsl(40_80%_50%/0.08)] px-4 py-3">
+                <div className="flex items-center gap-2.5 text-sm text-[hsl(40_80%_45%)]">
+                  <AlertTriangle size={16} className="shrink-0" />
+                  <span>{t('projects:banner.missingVariables', { count: missingVarCount })}</span>
+                </div>
+                <button
+                  onClick={() => scrollTo('variables-section')}
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-sm border border-[hsl(40_80%_50%/0.3)] bg-[hsl(40_80%_50%/0.12)] px-3 py-1.5 text-xs font-medium text-[hsl(40_80%_45%)] transition-colors hover:bg-[hsl(40_80%_50%/0.2)] cursor-pointer"
+                >
+                  {t('projects:banner.configure')}
+                  <ArrowDown size={12} />
+                </button>
+              </div>
+            )}
+            {pendingOAuthCount > 0 && (
+              <div className="flex items-center justify-between gap-4 rounded-lg border border-[hsl(40_80%_50%/0.3)] bg-[hsl(40_80%_50%/0.08)] px-4 py-3">
+                <div className="flex items-center gap-2.5 text-sm text-[hsl(40_80%_45%)]">
+                  <AlertTriangle size={16} className="shrink-0" />
+                  <span>{t('projects:banner.pendingOAuth', { count: pendingOAuthCount })}</span>
+                </div>
+                <button
+                  onClick={() => scrollTo('oauth-section')}
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-sm border border-[hsl(40_80%_50%/0.3)] bg-[hsl(40_80%_50%/0.12)] px-3 py-1.5 text-xs font-medium text-[hsl(40_80%_45%)] transition-colors hover:bg-[hsl(40_80%_50%/0.2)] cursor-pointer"
+                >
+                  {t('projects:banner.connect')}
+                  <ArrowDown size={12} />
+                </button>
+              </div>
+            )}
+          </div>
         )}
 
         {isLoading ? (
