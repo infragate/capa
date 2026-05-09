@@ -2,6 +2,7 @@ import { useTranslation } from 'react-i18next';
 import type { Skill } from '../../../types/api';
 import { highlightText, matchesSearch } from '../../../lib/utils';
 import { SourceBadge } from '../../../components/common/ServerBadge';
+import { sourceTypeBadgeClasses } from './sourceTypeColors';
 
 interface SkillsListProps {
   skills: Skill[];
@@ -37,7 +38,9 @@ export function SkillsList({ skills, search }: SkillsListProps) {
                 dangerouslySetInnerHTML={{ __html: highlightText(skill.id, search) }}
               />
               <div className="mb-1 flex items-center gap-2 text-xs text-text-secondary">
-                <span className="rounded-sm bg-bg-secondary px-1.5 py-0.5 text-[11px] font-medium uppercase">
+                <span
+                  className={`rounded-sm px-1.5 py-0.5 text-[11px] font-medium uppercase ${sourceTypeBadgeClasses(skill.type)}`}
+                >
                   {skill.type}
                 </span>
               </div>
