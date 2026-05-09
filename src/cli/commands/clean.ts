@@ -77,13 +77,13 @@ export async function cleanCommand(): Promise<void> {
     }
   }
   
-  if (providers.length > 0) {
-    // Clean up capa-managed snippets from agent instructions files (AGENTS.md and/or CLAUDE.md)
-    if (capabilities.agents) {
-      console.log('\n📝 Cleaning agent instructions files...');
-      cleanAgentsFile(projectPath, providers);
-    }
+  // Clean up capa-managed snippets from agent instructions files (AGENTS.md and/or CLAUDE.md)
+  if (capabilities.agents) {
+    console.log('\n📝 Cleaning agent instructions files...');
+    cleanAgentsFile(projectPath, providers);
+  }
 
+  if (providers.length > 0) {
     // Clean up capa-managed rules
     if (capabilities.rules && capabilities.rules.length > 0) {
       console.log('\n📏 Cleaning rules...');
