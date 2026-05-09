@@ -34,10 +34,10 @@ export function ProjectDetailPage() {
         text: t('projects:oauth.connectedTo', { name: connectedServer || 'server' }),
         type: 'success',
       });
-      window.history.replaceState({}, document.title, `/ui/project?id=${projectId}`);
+      window.history.replaceState({}, document.title, `/ui/project?id=${encodeURIComponent(projectId!)}`);
     } else if (oauthError) {
       setMessage({ text: `OAuth error: ${decodeURIComponent(oauthError)}`, type: 'error' });
-      window.history.replaceState({}, document.title, `/ui/project?id=${projectId}`);
+      window.history.replaceState({}, document.title, `/ui/project?id=${encodeURIComponent(projectId!)}`);
     }
   }, [oauthSuccess, oauthError, connectedServer, projectId, t]);
 
