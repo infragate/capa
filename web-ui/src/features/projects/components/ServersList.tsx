@@ -117,15 +117,15 @@ function ServerItem({
           </span>
         )}
       </div>
-      <div className="mb-1 flex items-center gap-2 text-xs text-text-secondary">
-        <span className="rounded-sm bg-bg-secondary px-1.5 py-0.5 text-[11px] font-medium uppercase">
+      <div className="mb-1 flex items-center gap-2 text-xs text-text-secondary min-w-0">
+        <span className="shrink-0 rounded-sm bg-bg-secondary px-1.5 py-0.5 text-[11px] font-medium uppercase">
           {server.type}
         </span>
         {connectionText && (
           <>
-            <span className="text-text-tertiary">&bull;</span>
+            <span className="shrink-0 text-text-tertiary">&bull;</span>
             <span
-              className="font-mono text-[11px]"
+              className={`font-mono text-[11px] ${expanded ? 'break-all' : 'truncate'}`}
               dangerouslySetInnerHTML={{ __html: highlightText(connectionText, search) }}
             />
           </>
