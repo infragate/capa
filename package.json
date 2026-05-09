@@ -12,6 +12,7 @@
     "prebuild": "bun run scripts/generate-version.ts && bun run scripts/build-web.ts",
     "build": "bun build src/cli/index.ts --compile --outfile dist/capa --icon logo.ico",
     "build:win": "bun build src/cli/index.ts --compile --windows-icon=./logo.ico --outfile dist/capa --icon logo.ico",
+    "preserver": "bun run build:web",
     "server": "bun run src/server/index.ts",
     "test": "bun test",
     "test:coverage": "bun test --coverage"
