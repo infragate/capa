@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, unlinkSync } from 'fs';
-import { join, dirname } from 'path';
+import { join, dirname, basename, sep } from 'path';
 import type { Rule } from '../../types/rules';
 import { getProvider } from '../../shared/providers';
 import { buildRuleFrontmatter } from '../../shared/providers/handlers';
@@ -101,6 +101,19 @@ function writeMd(projectPath: string, filename: string, content: string): void {
 // Public API
 // ---------------------------------------------------------------------------
 
+export interface InstallRulesOptions {
+  /**
+   * Invoked once per rule file actually written to disk by a directory-based
+   * provider (e.g. `.cursor/rules/git.mdc`). Use this to register the file in
+   * the managed-files DB so `capa clean` and `capa install` can prune it
+   * later when the rule is removed from the capabilities file.
+   *
+   * Marker-block rules (folded into AGENTS.md / CLAUDE.md) do not invoke this
+   * callback — they're tracked via the inline marker pattern instead.
+   */
+  onFileWritten?: (filePath: string) => void;
+}
+
 /**
  * Install rules for all active providers.
  *
@@ -116,7 +129,8 @@ export function installRules(
   projectPath: string,
   rules: Rule[],
   providers: string[],
-  resolvedContent: Map<string, string>
+  resolvedContent: Map<string, string>,
+  options: InstallRulesOptions = {}
 ): void {
   for (const pid of providers) {
     const provider = getProvider(pid);
@@ -150,6 +164,7 @@ export function installRules(
         const filePath = join(rulesDir, `${rule.id}${provider.rules.extension}`);
         writeFileSync(filePath, fileContent, 'utf-8');
         console.log(`  ✓ ${provider.rules.dir}/${rule.id}${provider.rules.extension} written (${provider.displayName})`);
+        options.onFileWritten?.(filePath);
       }
     } else if (provider.instructions) {
       const filename = provider.instructions.filename;
@@ -165,6 +180,116 @@ export function installRules(
       console.log(`  ✓ ${filename} updated with ${applicableRules.length} rule(s) (${provider.displayName})`);
     }
   }
+}
+
+export interface PruneRulesResult {
+  /**
+   * Absolute paths of rule files removed from disk during the prune.
+   * Callers should drop these from the managed-files DB.
+   */
+  removedFiles: string[];
+  /** Rule IDs whose marker blocks were stripped from instruction files. */
+  removedMarkers: string[];
+}
+
+/**
+ * Bring on-disk rules state in sync with the capabilities file by removing
+ * rule artifacts that no longer correspond to a rule in `currentRules`.
+ *
+ * For directory-based providers (`provider.rules`):
+ *   Iterates `previouslyManagedFiles`. Any file inside the provider's rules
+ *   directory whose `<basename>{extension}` does not correspond to a current
+ *   rule for that provider is deleted. User-authored files are never touched
+ *   because we only consider files capa explicitly registered.
+ *
+ * For instruction-folded providers (`provider.instructions` only):
+ *   Scans the instruction file for `<!-- capa:start:rule:<id> -->` blocks.
+ *   Any block whose id does not correspond to a current rule for that
+ *   provider is removed. Inline markers are self-tracking, so no DB lookup
+ *   is needed.
+ *
+ * Per-rule `providers:` filtering is honored — a rule restricted to
+ * `providers: ['cursor']` is treated as "absent" when pruning the windsurf
+ * provider, which matches install-time behavior.
+ *
+ * Safe to call when `currentRules` is empty — every previously-installed
+ * rule artifact will be removed in that case (which is exactly what `capa
+ * install` should do after the user comments out the entire rules section).
+ */
+export function pruneRules(
+  projectPath: string,
+  providers: string[],
+  currentRules: Rule[],
+  previouslyManagedFiles: string[]
+): PruneRulesResult {
+  const removedFiles: string[] = [];
+  const removedMarkers: string[] = [];
+
+  for (const pid of providers) {
+    const provider = getProvider(pid);
+    if (!provider) continue;
+
+    const desiredForProvider = new Set<string>();
+    for (const r of currentRules) {
+      if (!r.providers || r.providers.length === 0 || r.providers.includes(pid)) {
+        desiredForProvider.add(r.id);
+      }
+    }
+
+    if (provider.rules) {
+      const rulesDir = join(projectPath, provider.rules.dir);
+      const ext = provider.rules.extension;
+      // `+ sep` so `.cursor/rules/foo` doesn't match `.cursor/rules-old/foo`.
+      const dirPrefix = rulesDir.endsWith(sep) ? rulesDir : rulesDir + sep;
+
+      for (const file of previouslyManagedFiles) {
+        if (!file.startsWith(dirPrefix)) continue;
+        if (!file.endsWith(ext)) continue;
+        const ruleId = basename(file).slice(0, -ext.length);
+        if (desiredForProvider.has(ruleId)) continue;
+
+        if (existsSync(file)) {
+          try {
+            unlinkSync(file);
+            console.log(`  ✓ Removed orphan rule ${provider.rules.dir}/${basename(file)} (${provider.displayName})`);
+          } catch (err: any) {
+            console.error(`  ✗ Failed to remove orphan rule ${file}: ${err.message}`);
+            // Skip DB cleanup if the file still exists on disk so we'll retry next install.
+            continue;
+          }
+        }
+        removedFiles.push(file);
+      }
+      continue;
+    }
+
+    if (provider.instructions) {
+      const filename = provider.instructions.filename;
+      const mdContent = readMd(projectPath, filename);
+      if (!mdContent) continue;
+
+      const markers = listMarkerIds(mdContent).filter((id) =>
+        id.startsWith(RULE_MARKER_PREFIX)
+      );
+      let updated = mdContent;
+      let removedHere = 0;
+      for (const markerId of markers) {
+        const ruleId = markerId.slice(RULE_MARKER_PREFIX.length);
+        if (desiredForProvider.has(ruleId)) continue;
+        updated = removeBlock(updated, markerId);
+        removedHere++;
+        removedMarkers.push(ruleId);
+      }
+      if (removedHere > 0) {
+        writeMd(projectPath, filename, updated);
+        console.log(
+          `  ✓ Removed ${removedHere} orphan rule block(s) from ${filename} (${provider.displayName})`
+        );
+      }
+    }
+  }
+
+  return { removedFiles, removedMarkers };
 }
 
 /**
