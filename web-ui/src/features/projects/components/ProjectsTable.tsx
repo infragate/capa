@@ -38,7 +38,7 @@ function ProjectRow({ project }: { project: ProjectSummary }) {
     >
       <div>
         <div className="mb-1 text-sm font-medium">{name}</div>
-        <div className="truncate font-mono text-xs text-text-tertiary">{project.path}</div>
+        <div className="truncate font-mono text-xs text-text-tertiary" title={project.path}>{project.path}</div>
       </div>
       <div className="text-center text-sm text-text-secondary max-md:hidden">
         {project.skills_count}
