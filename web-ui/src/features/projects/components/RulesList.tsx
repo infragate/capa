@@ -3,18 +3,12 @@ import { useTranslation } from 'react-i18next';
 import { ChevronRight, Scale } from 'lucide-react';
 import type { Rule } from '../../../types/api';
 import { highlightText, matchesSearch } from '../../../lib/utils';
+import { sourceTypeBadgeClasses } from './sourceTypeColors';
 
 interface RulesListProps {
   rules: Rule[];
   search?: string;
 }
-
-const TYPE_COLORS: Record<string, string> = {
-  inline: 'bg-blue-500/10 text-blue-400',
-  remote: 'bg-purple-500/10 text-purple-400',
-  github: 'bg-green-500/10 text-green-400',
-  gitlab: 'bg-orange-500/10 text-orange-400',
-};
 
 export function RulesList({ rules, search = '' }: RulesListProps) {
   const { t } = useTranslation('projects');
@@ -54,7 +48,7 @@ function RuleItem({ rule, search }: { rule: Rule; search: string }) {
   const { t } = useTranslation('projects');
   const [expanded, setExpanded] = useState(false);
 
-  const typeColor = TYPE_COLORS[rule.type] || 'bg-bg-secondary text-text-tertiary';
+  const typeColor = sourceTypeBadgeClasses(rule.type);
 
   return (
     <div className="overflow-hidden rounded-sm border border-border-tertiary bg-bg-tertiary">
