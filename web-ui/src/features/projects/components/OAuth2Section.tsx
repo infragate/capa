@@ -64,7 +64,7 @@ export function OAuth2Section({ projectId, onMessage }: OAuth2SectionProps) {
   if (!servers?.length) return null;
 
   return (
-    <div className="mb-6 rounded-lg border border-border-primary bg-bg-secondary p-6">
+    <div id="oauth-section" className="mb-6 rounded-lg border border-border-primary bg-bg-secondary p-6">
       <div className="mb-4 border-b border-border-secondary pb-4">
         <h2 className="text-base font-medium text-text-primary">{t('projects:oauth.title')}</h2>
       </div>

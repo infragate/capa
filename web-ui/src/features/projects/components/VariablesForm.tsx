@@ -47,7 +47,7 @@ export function VariablesForm({ projectId, returnUrl }: VariablesFormProps) {
   if (error || !data?.required?.length) return null;
 
   return (
-    <div className="mb-6 rounded-lg border border-border-primary bg-bg-secondary p-6">
+    <div id="variables-section" className="mb-6 rounded-lg border border-border-primary bg-bg-secondary p-6">
       <div className="mb-4 border-b border-border-secondary pb-4">
         <h2 className="text-base font-medium text-text-primary">{t('projects:variables.title')}</h2>
       </div>

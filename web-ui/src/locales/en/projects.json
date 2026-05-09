@@ -54,6 +54,14 @@
     "disconnectedFrom": "Disconnected from {{name}}",
     "confirmDisconnect": "Disconnect from {{name}}?"
   },
+  "banner": {
+    "missingVariables": "{{count}} environment variable requires configuration",
+    "missingVariables_other": "{{count}} environment variables require configuration",
+    "pendingOAuth": "{{count}} service requires OAuth connection",
+    "pendingOAuth_other": "{{count}} services require OAuth connection",
+    "configure": "Configure",
+    "connect": "Connect"
+  },
   "noConfig": {
     "title": "No configuration required",
     "description": "This project doesn't require any credentials or OAuth connections."
