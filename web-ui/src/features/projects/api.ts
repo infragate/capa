@@ -12,27 +12,28 @@ import type {
 export const projectsApi = {
   list: () => api.get<ProjectsResponse>('/api/projects'),
 
-  get: (projectId: string) => api.get<ProjectDetail>(`/api/projects/${projectId}`),
+  get: (projectId: string) =>
+    api.get<ProjectDetail>(`/api/projects/${encodeURIComponent(projectId)}`),
 
   getVariables: (projectId: string) =>
-    api.get<VariablesResponse>(`/api/projects/${projectId}/variables`),
+    api.get<VariablesResponse>(`/api/projects/${encodeURIComponent(projectId)}/variables`),
 
   saveVariables: (projectId: string, variables: Record<string, string>) =>
-    api.post<ActionResponse>(`/api/projects/${projectId}/variables`, variables),
+    api.post<ActionResponse>(`/api/projects/${encodeURIComponent(projectId)}/variables`, variables),
 
   getOAuth2Servers: (projectId: string) =>
-    api.get<OAuth2ServersResponse>(`/api/projects/${projectId}/oauth-servers`),
+    api.get<OAuth2ServersResponse>(`/api/projects/${encodeURIComponent(projectId)}/oauth-servers`),
 
   startOAuth: (projectId: string, serverId: string) =>
     api.post<OAuthStartResponse>(
-      `/api/projects/${projectId}/oauth/start?server=${encodeURIComponent(serverId)}`,
+      `/api/projects/${encodeURIComponent(projectId)}/oauth/start?server=${encodeURIComponent(serverId)}`,
     ),
 
   disconnectOAuth: (projectId: string, serverId: string) =>
-    api.delete<ActionResponse>(`/api/projects/${projectId}/oauth/${serverId}`),
+    api.delete<ActionResponse>(`/api/projects/${encodeURIComponent(projectId)}/oauth/${encodeURIComponent(serverId)}`),
 
   getServerTools: (projectId: string, serverId: string) =>
     api.get<ServerToolsResponse>(
-      `/api/projects/${projectId}/servers/${encodeURIComponent(serverId)}/tools`,
+      `/api/projects/${encodeURIComponent(projectId)}/servers/${encodeURIComponent(serverId)}/tools`,
     ),
 };

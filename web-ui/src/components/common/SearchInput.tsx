@@ -16,6 +16,10 @@ export function SearchInput({ placeholder, value, onChange, debounceMs = 120 }: 
     setLocalValue(value);
   }, [value]);
 
+  useEffect(() => {
+    return () => clearTimeout(timerRef.current);
+  }, []);
+
   const handleChange = useCallback(
     (v: string) => {
       setLocalValue(v);

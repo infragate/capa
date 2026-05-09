@@ -10,6 +10,7 @@ import { GitLabCard } from '../features/integrations/components/GitLabCard';
 import { GitHubEnterpriseCard } from '../features/integrations/components/GitHubEnterpriseCard';
 import { GitLabSelfManagedCard } from '../features/integrations/components/GitLabSelfManagedCard';
 import { useIntegrations, useDisconnectIntegration } from '../features/integrations/hooks';
+import { safeDecode } from '../lib/utils';
 
 export function IntegrationsPage() {
   const { t } = useTranslation('integrations');
@@ -27,7 +28,7 @@ export function IntegrationsPage() {
       window.history.replaceState({}, document.title, '/ui/integrations');
       setTimeout(() => refetch(), 500);
     } else if (error) {
-      setMessage({ text: t('messages.oauthError', { error: decodeURIComponent(error) }), type: 'error' });
+      setMessage({ text: t('messages.oauthError', { error: safeDecode(error) }), type: 'error' });
       window.history.replaceState({}, document.title, '/ui/integrations');
     }
   }, [searchParams, t, refetch]);
@@ -37,9 +38,9 @@ export function IntegrationsPage() {
   }, []);
 
   const handleDisconnect = useCallback(
-    async (platform: string) => {
+    async (platform: string, host?: string) => {
       try {
-        await disconnectMutation.mutateAsync({ platform });
+        await disconnectMutation.mutateAsync({ platform, host });
         setMessage({ text: `Disconnected from ${platform}`, type: 'success' });
       } catch {
         setMessage({ text: 'Failed to disconnect', type: 'error' });

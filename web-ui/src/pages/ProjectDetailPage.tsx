@@ -11,7 +11,7 @@ import { CapabilitiesSection } from '../features/projects/components/Capabilitie
 import { VariablesForm } from '../features/projects/components/VariablesForm';
 import { OAuth2Section } from '../features/projects/components/OAuth2Section';
 import { useProject, useVariables, useOAuth2Servers } from '../features/projects/hooks';
-import { projectDisplayName } from '../lib/utils';
+import { projectDisplayName, safeDecode } from '../lib/utils';
 
 export function ProjectDetailPage() {
   const { t } = useTranslation();
@@ -29,15 +29,16 @@ export function ProjectDetailPage() {
   const { data: oauth2Servers } = useOAuth2Servers(projectId);
 
   useEffect(() => {
+    if (!projectId) return;
     if (oauthSuccess) {
       setMessage({
         text: t('projects:oauth.connectedTo', { name: connectedServer || 'server' }),
         type: 'success',
       });
-      window.history.replaceState({}, document.title, `/ui/project?id=${encodeURIComponent(projectId!)}`);
+      window.history.replaceState({}, document.title, `/ui/project?id=${encodeURIComponent(projectId)}`);
     } else if (oauthError) {
-      setMessage({ text: `OAuth error: ${decodeURIComponent(oauthError)}`, type: 'error' });
-      window.history.replaceState({}, document.title, `/ui/project?id=${encodeURIComponent(projectId!)}`);
+      setMessage({ text: `OAuth error: ${safeDecode(oauthError)}`, type: 'error' });
+      window.history.replaceState({}, document.title, `/ui/project?id=${encodeURIComponent(projectId)}`);
     }
   }, [oauthSuccess, oauthError, connectedServer, projectId, t]);
 

@@ -9,7 +9,7 @@ import { FaGithub } from 'react-icons/fa';
 interface GitHubEnterpriseCardProps {
   integration?: Integration;
   onMessage: (text: string, type: 'success' | 'error') => void;
-  onDisconnect: (platform: string) => void;
+  onDisconnect: (platform: string, host?: string) => void;
   onRefresh: () => void;
 }
 
@@ -57,7 +57,7 @@ export function GitHubEnterpriseCard({ integration, onMessage, onDisconnect, onR
       {connected ? (
         <button
           onClick={() => {
-            if (confirm(t('githubEnterprise.confirmDisconnect'))) onDisconnect('github-enterprise');
+            if (confirm(t('githubEnterprise.confirmDisconnect'))) onDisconnect('github-enterprise', integration?.host);
           }}
           className="w-full rounded-sm bg-error-btn px-6 py-2.5 text-sm font-medium text-white transition-colors hover:bg-error-btn-hover"
         >
