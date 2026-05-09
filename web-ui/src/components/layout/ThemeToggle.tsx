@@ -1,11 +1,11 @@
 import { useState, useCallback } from 'react';
 import { Sun, Moon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { type Theme, initTheme, setTheme as applyTheme } from '../../lib/theme';
+import { type Theme, getStoredTheme, setTheme as applyTheme } from '../../lib/theme';
 
 export function ThemeToggle() {
   const { t } = useTranslation();
-  const [theme, setThemeState] = useState<Theme>(initTheme);
+  const [theme, setThemeState] = useState<Theme>(getStoredTheme);
 
   const toggle = useCallback(() => {
     const next: Theme = theme === 'dark' ? 'light' : 'dark';

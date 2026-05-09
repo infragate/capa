@@ -9,7 +9,7 @@ import { FaGitlab } from 'react-icons/fa';
 interface GitLabSelfManagedCardProps {
   integration?: Integration;
   onMessage: (text: string, type: 'success' | 'error') => void;
-  onDisconnect: (platform: string) => void;
+  onDisconnect: (platform: string, host?: string) => void;
   onRefresh: () => void;
 }
 
@@ -57,7 +57,7 @@ export function GitLabSelfManagedCard({ integration, onMessage, onDisconnect, on
       {connected ? (
         <button
           onClick={() => {
-            if (confirm(t('gitlabSelfManaged.confirmDisconnect'))) onDisconnect('gitlab-self-managed');
+            if (confirm(t('gitlabSelfManaged.confirmDisconnect'))) onDisconnect('gitlab-self-managed', integration?.host);
           }}
           className="w-full rounded-sm bg-error-btn px-6 py-2.5 text-sm font-medium text-white transition-colors hover:bg-error-btn-hover"
         >
