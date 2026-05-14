@@ -34,24 +34,28 @@ function stripFrontmatter(md: string): string {
   return md.replace(/^---\s*\n[\s\S]*?\n---\s*\n?/, '');
 }
 
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
 function highlightCli(cmd: string): string {
   const parts = cmd.split(/\s+/);
-  if (parts.length === 0) return cmd;
-  const bin = `<span class="sh-bin">${parts[0]}</span>`;
-  const sub = parts[1] ? ` <span class="sh-sub">${parts[1]}</span>` : '';
+  if (parts.length === 0) return escapeHtml(cmd);
+  const bin = `<span class="sh-bin">${escapeHtml(parts[0])}</span>`;
+  const sub = parts[1] ? ` <span class="sh-sub">${escapeHtml(parts[1])}</span>` : '';
   const rest = parts.slice(2).map((p) =>
     p.startsWith('-')
-      ? `<span class="sh-flag">${p}</span>`
-      : `<span class="sh-arg">${p}</span>`,
+      ? `<span class="sh-flag">${escapeHtml(p)}</span>`
+      : `<span class="sh-arg">${escapeHtml(p)}</span>`,
   );
   return [bin, sub, ...rest.map((r) => ' ' + r)].join('');
 }
 
 function highlightYaml(yaml: string): string {
-  return yaml.replace(/^(\s*)(\w[\w-]*)(:)(.*)/gm, (_m, indent, key, colon, value) => {
+  return escapeHtml(yaml).replace(/^(\s*)(\w[\w-]*)(:)(.*)/gm, (_m, indent, key, colon, value) => {
     const val = value.trim();
     let valHtml: string;
-    if (val.startsWith('"') && val.endsWith('"')) {
+    if (val.startsWith('&quot;') && val.endsWith('&quot;')) {
       valHtml = ` <span class="yl-str">${val}</span>`;
     } else if (/^(true|false|null)$/i.test(val)) {
       valHtml = ` <span class="yl-bool">${val}</span>`;
@@ -172,7 +176,7 @@ export function ItemDetail({ registryId, registryName, capability, itemId }: Ite
   if (!itemId) {
     return (
       <div className="flex h-full items-center justify-center text-sm text-text-tertiary">
-        Select an item to view details
+        {t('detail.selectPrompt')}
       </div>
     );
   }
@@ -225,7 +229,7 @@ export function ItemDetail({ registryId, registryName, capability, itemId }: Ite
               className="inline-flex items-center gap-1 text-accent-primary hover:underline"
             >
               <ExternalLink className="h-3 w-3" />
-              Homepage
+              {t('detail.homepage')}
             </a>
           )}
         </div>

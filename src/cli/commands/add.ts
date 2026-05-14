@@ -3,6 +3,7 @@ import { parseCapabilitiesFile, writeCapabilitiesFile } from '../../shared/capab
 import { installCommand } from './install';
 import { RegistryManager } from '../../shared/registries/manager';
 import type { Skill } from '../../types/capabilities';
+import type { Plugin } from '../../types/plugin';
 import type { RegistryCapability } from '../../types/registry';
 import { resolve, basename, join, relative } from 'path';
 import { readFile, access } from 'fs/promises';
@@ -234,36 +235,46 @@ export async function addCommand(source: string, options: { id?: string; install
   );
   
   // Check if source matches registry syntax: <registryId>:<itemId>
-  // The first segment before the first colon is the registry id; the rest is the item id.
-  // We distinguish from GitHub "owner/repo" and local paths by requiring the registry id
-  // to NOT contain slashes and NOT start with "http" or "." or "/" or a drive letter.
+  // Reserve known URI prefixes (github:, gitlab:, http:, https:) so they
+  // are never interpreted as registry IDs.
+  const RESERVED_PREFIXES = /^(github|gitlab|http|https):/i;
   const registryMatch = source.match(/^([a-zA-Z][\w-]*):([\s\S]+)$/);
-  if (registryMatch && !source.startsWith('http') && !source.startsWith('.') && !source.startsWith('/') && !/^[A-Za-z]:[\\/]/.test(source)) {
+  if (registryMatch && !RESERVED_PREFIXES.test(source) && !source.startsWith('.') && !source.startsWith('/') && !/^[A-Za-z]:[\\/]/.test(source)) {
     const [, registryId, itemId] = registryMatch;
-    // Possibly a registry reference — attempt resolution
     const manager = new RegistryManager();
     const adapter = await manager.getAdapter(registryId);
     if (adapter) {
       console.log(`Resolving from registry "${adapter.manifest.name}"...`);
-      const capability: RegistryCapability = 'skills';
+
+      const capability: RegistryCapability = adapter.manifest.capabilities[0];
       const detail = await manager.view(registryId, { capability, id: itemId });
-      const snippet = detail.installSnippet as Skill;
-      const skillId = options.id ?? snippet.id ?? itemId.split('/').pop() ?? 'registry-skill';
+      const snippet = detail.installSnippet;
+      const itemName = options.id ?? (snippet as any).id ?? itemId.split('/').pop() ?? 'registry-item';
 
-      const existingSkill = capabilities.skills.find(s => s.id === skillId);
-      if (existingSkill) {
-        console.error(`\u2717 Skill with id "${skillId}" already exists in capabilities file.`);
-        console.error('  Use a different ID with --id <name> or remove the existing skill first.');
-        process.exit(1);
+      if (capability === 'skills') {
+        const existing = capabilities.skills.find(s => s.id === itemName);
+        if (existing) {
+          console.error(`\u2717 Skill with id "${itemName}" already exists in capabilities file.`);
+          console.error('  Use a different ID with --id <name> or remove the existing skill first.');
+          process.exit(1);
+        }
+        const newSkill: Skill = { ...(snippet as Skill), id: itemName };
+        capabilities.skills.push(newSkill);
+      } else if (capability === 'plugins') {
+        if (!capabilities.plugins) capabilities.plugins = [];
+        const existing = capabilities.plugins.find(p => (p as any).id === itemName || (p.def?.uri && (snippet as Plugin).def?.uri && p.def.uri === (snippet as Plugin).def.uri));
+        if (existing) {
+          console.error(`\u2717 Plugin "${itemName}" already exists in capabilities file.`);
+          console.error('  Use a different ID with --id <name> or remove the existing plugin first.');
+          process.exit(1);
+        }
+        const newPlugin: Plugin = { ...(snippet as Plugin) };
+        capabilities.plugins.push(newPlugin);
       }
-
-      const newSkill: Skill = { ...snippet, id: skillId };
-      capabilities.skills.push(newSkill);
 
       await writeCapabilitiesFile(capabilitiesFile.path, capabilitiesFile.format, capabilities);
 
-      console.log(`\u2713 Added skill "${skillId}" from registry "${registryId}" to ${capabilitiesFile.path}`);
-      console.log(`  Type: ${newSkill.type}`);
+      console.log(`\u2713 Added ${capability.slice(0, -1)} "${itemName}" from registry "${registryId}" to ${capabilitiesFile.path}`);
       console.log('\n\u{1F4E6} Running installation...\n');
       await installCommand();
       return;
