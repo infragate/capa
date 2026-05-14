@@ -18,7 +18,7 @@ One file, version controlled, pinned by `capabilities.lock`, cached by SHA. The 
 
 ## Screenshots
 
-`capa ui` opens a local web UI next to your project. You can edit `capabilities.yaml` visually, browse registries, manage credentials, and see exactly what each agent will receive.
+CAPA is equipped with local web UI. You can visualize your `capabilities.yaml`, browse registries, manage credentials, and see exactly what each agent will receive.
 
 The project view shows installed plugins, configured providers, and your full capability inventory. The bar across the top tracks token savings from `on-demand` tool exposure: the agent sees only the tools it's actively using, and pulls any of the rest in by name when it needs them.
 
