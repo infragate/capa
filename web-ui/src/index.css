@@ -181,6 +181,15 @@
 :root[data-theme="light"] .yl-num   { color: #e65100; }
 
 /* Markdown rendering for registry previews */
+.registry-markdown {
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+.registry-markdown pre {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
 .registry-markdown h1,
 .registry-markdown h2,
 .registry-markdown h3,

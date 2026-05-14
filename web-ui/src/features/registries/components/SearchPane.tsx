@@ -116,21 +116,23 @@ export function SearchPane({
                       {safeStr(item.description)}
                     </div>
                   )}
-                  <div className="mt-1 flex items-center gap-2 text-xs text-text-tertiary">
-                    {item.author && <span>{safeStr(item.author)}</span>}
-                    {item.tags && item.tags.length > 0 && (
-                      <div className="flex flex-wrap gap-1">
-                        {item.tags.slice(0, 3).map((tag, i) => (
-                          <span
-                            key={i}
-                            className="rounded-sm bg-bg-tertiary px-1.5 py-0.5 text-[10px]"
-                          >
-                            {safeStr(tag)}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                  {item.author && (
+                    <div className="mt-1 text-xs text-text-tertiary">
+                      {safeStr(item.author)}
+                    </div>
+                  )}
+                  {item.tags && item.tags.length > 0 && (
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {item.tags.slice(0, 3).map((tag, i) => (
+                        <span
+                          key={i}
+                          className="rounded-sm bg-bg-tertiary px-1.5 py-0.5 text-[10px] text-text-tertiary"
+                        >
+                          {safeStr(tag)}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </button>
               </li>
             ))}
