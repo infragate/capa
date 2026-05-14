@@ -128,7 +128,7 @@ export function RegistriesPage() {
                   </div>
 
                   {/* Right: detail pane — grows naturally, drives the row height */}
-                  <div className="rounded-lg border border-border-primary bg-bg-secondary p-4">
+                  <div className="min-w-0 rounded-lg border border-border-primary bg-bg-secondary p-4">
                     <ItemDetail
                       registryId={selectedRegistry}
                       registryName={activeRegistry.name}
