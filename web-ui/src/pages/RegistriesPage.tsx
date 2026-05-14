@@ -110,7 +110,7 @@ export function RegistriesPage() {
                 selected={selectedCapability}
                 onSelect={handleCapabilityChange}
               >
-                <div className="grid grid-cols-1 gap-6 lg:grid-cols-[380px_1fr]">
+                <div className="grid min-h-[calc(100vh-340px)] grid-cols-1 gap-6 lg:grid-cols-[380px_1fr]">
                   {/* Left: search + results — height driven by right column */}
                   <div className="relative min-h-[300px]">
                     <div className="absolute inset-0 flex flex-col overflow-hidden rounded-lg border border-border-primary bg-bg-secondary p-4">
