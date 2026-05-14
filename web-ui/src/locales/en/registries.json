@@ -29,7 +29,9 @@
     "version": "Version",
     "tags": "Tags",
     "via": "via {{registry}}",
-    "filesTitle": "Files"
+    "filesTitle": "Files",
+    "selectPrompt": "Select an item to view details",
+    "homepage": "Homepage"
   },
   "errors": {
     "loadFailed": "Failed to load registries",
