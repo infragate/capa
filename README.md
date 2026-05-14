@@ -6,33 +6,65 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 [![Platforms](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey?style=flat-square)](https://github.com/infragate/capa/releases/latest)
 
-**CAPA** is a powerful capabilities manager for AI agents that allows you to define skills and tools, manage credentials, and seamlessly integrate with agents like Cursor and Claude.
+CAPA is a capabilities manager for AI coding agents. You declare skills, tools, rules, sub-agents, MCP servers, and plugins once in `capabilities.yaml`, run `capa install`, and CAPA writes them into Cursor, Claude Code, Codex, Windsurf, GitHub Copilot, and 30+ other agents.
 
 ## Why CAPA?
 
-AI agents need two things to be useful: *knowledge* of when and how to act, and the *ability* to actually do it. Most setups treat these separately — tools are wired up in one place, instructions scattered somewhere else. CAPA brings them together as a single unit called a **capability**.
+An AI coding agent needs to know when to act and to have the tools to act with. Wiring that up usually means scattering config across half a dozen files: MCP servers in one place, skill markdown in another, team conventions in `CLAUDE.md`, Cursor rules in `.cursor/rules/`, a half-finished onboarding doc somewhere in Notion. Nobody's setup matches anyone else's.
 
-- **Skills** provide the knowledge — markdown documents that give an agent context, instructions, and decision-making guidance for a specific task.
-- **Tools** provide the ability — executable functions the agent calls to interact with the world: APIs, shell commands, file operations, and more.
+CAPA collapses that into one `capabilities.yaml` next to your code. You list your skills (markdown that tells the agent how to do something), the tools each skill needs (MCP calls and shell commands), your rules, your sub-agents, and any plugins you want pulled in. `capa install` does the rest. Cursor gets `.cursor/rules/`. Claude Code gets `.claude/agents/` and `CLAUDE.md`. Codex gets `AGENTS.md`. Each provider on your list gets the files it expects, with capa-managed marker blocks for the parts it owns.
 
-A tool without knowledge leaves the agent unsure when to use it. Knowledge without tools leaves the agent unable to act. CAPA pairs them declaratively in a single `capabilities.yaml` file that you can version-control, share across a team, and reproduce on any machine.
+One file, version controlled, pinned by `capabilities.lock`, cached by SHA. The teammate who clones tomorrow gets the same bytes you got today.
 
-## Features
+## Screenshots
 
-- 🔌 Single MCP server that proxies only the necessary tools
-- ⚡ Dynamic on-demand tool loading
-- 🖥️ Expose shell commands as MCP tools
-- 💻 Run any configured tool from the terminal with `capa sh`
-- 🔑 Credential management via interactive UI or `.env` file
-- 🛡️ Security controls (blocked phrases, character sanitization)
-- 📦 Compatible with [skills.sh](https://skills.sh)
-- 🤖 Supports Cursor and Claude plugin installation
-- 🔒 Installation of skills and plugins from private repositories (GitHub and GitLab)
-- 🧠 Self-improving agents
-- 🎯 Default argument values for MCP tools
-- 🔧 CLI prerequisite verification before installation
+`capa ui` opens a local web UI next to your project. You can edit `capabilities.yaml` visually, browse registries, manage credentials, and see exactly what each agent will receive.
 
-<img width="1305" height="941" alt="CAPA Architecture" src="https://github.com/user-attachments/assets/a4db54a2-6ea5-43df-baa9-c61c189d30c1" />
+The project view shows installed plugins, configured providers, and your full capability inventory. The bar across the top tracks token savings from `on-demand` tool exposure: the agent sees only the tools it's actively using, and pulls any of the rest in by name when it needs them.
+
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/d61b3ecf-1ab1-4965-994c-883b42d8174a" alt="CAPA project view: plugins, providers, skills, tools, and servers" width="900" />
+</p>
+
+Scrolling down the same page brings up sub-agents, rules, project options, and credentials. Every entry carries an `INLINE` / `GITHUB` / `REMOTE` badge so you can see at a glance where each one came from.
+
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/155f861d-cfc9-47a4-a584-c3d88cb9bc39" alt="CAPA project view: sub-agents, rules, options, and credentials" width="900" />
+</p>
+
+The Registries tab pulls skills and plugins from external catalogs. Cursor Marketplace and skills.sh are wired in by default. Need a private one? Drop a registry adapter into the repo and it shows up here too.
+
+<table align="center">
+  <tr>
+    <td align="center">
+      <img src="https://github.com/user-attachments/assets/edc5e853-27dc-4671-9866-08c955f684af" alt="CAPA: Cursor Marketplace registry" width="440" /><br/>
+      <sub><b>Cursor Marketplace</b></sub>
+    </td>
+    <td align="center">
+      <img src="https://github.com/user-attachments/assets/0ca3e3b6-680d-4e7d-8ea7-6c91fd2dce03" alt="CAPA: skills.sh registry" width="440" /><br/>
+      <sub><b>skills.sh</b></sub>
+    </td>
+  </tr>
+</table>
+
+## What it does
+
+- Skills from inline content, raw URLs, GitHub, GitLab, local paths, or a configured registry.
+- 35+ supported agents: Cursor, Claude Code, Codex, Windsurf, GitHub Copilot, Cline, Continue, Goose, Gemini CLI, Roo Code, Qwen Code, and more.
+- One MCP server per agent. Tools load on demand, so the context window stays small.
+- Any CLI command can be wrapped as an MCP tool the agent (and `capa sh`) can call.
+- Rules go to each provider's native location: Cursor `.cursor/rules/`, Windsurf `.windsurf/rules/`, Copilot's instructions file, or a managed marker block in `AGENTS.md` / `CLAUDE.md` for providers without a rules directory. Glob scoping works.
+- Sub-agents get their own filtered MCP endpoint that exposes only the tools the specialist actually needs.
+- Skills and plugins are browsable from `capa add` and the web UI. Bundled registries: skills.sh and the Cursor Marketplace. Drop a registry adapter in the repo and it shows up too.
+- `capabilities.lock` records resolved commit SHAs. A SHA-keyed content cache makes repeat installs near instant.
+- Credentials are encrypted at rest, edited in the web UI, or read from `.env`.
+- Blocked-phrase enforcement, tool output sanitisation, and CLI prerequisite checks all run before any install touches your filesystem.
+- Private GitHub and GitLab repos work over OAuth.
+- The bundled `capabilities-manager` skill teaches the agent how to read and edit its own `capabilities.yaml`.
+
+<p align="center">
+  <img width="1305" height="941" alt="CAPA Architecture" src="https://github.com/user-attachments/assets/a4db54a2-6ea5-43df-baa9-c61c189d30c1" />
+</p>
 
 ## Installation
 
@@ -46,7 +78,7 @@ curl -LsSf https://capa.infragate.ai/install.sh | sh
 powershell -ExecutionPolicy ByPass -c "irm https://capa.infragate.ai/install.ps1 | iex"
 ```
 
-## Quick Start
+## Quick start
 
 ### 1. Initialize your project
 
@@ -55,31 +87,54 @@ cd your-project
 capa init
 ```
 
-This creates a `capabilities.yaml` file where you define your agent's tools and skills.
+This drops a `capabilities.yaml` next to your code.
 
-### 2. Define your capabilities
+### 2. Add a skill
+
+Pull a skill from any public GitHub repo:
+
+```bash
+capa add anthropics/skills@frontend-design
+```
+
+### 3. Edit `capabilities.yaml`
 
 ```yaml
 providers:
   - cursor
+  - claude-code
 
 skills:
+  - id: frontend-design
+    type: github
+    def:
+      repo: anthropics/skills@frontend-design
+
   - id: web-researcher
     type: inline
     def:
+      description: Search the web for fresh information
+      requires:
+        - "@brave.search"
       content: |
         ---
         name: web-researcher
-        description: Search the web for information
+        description: Use when you need current information from the web.
         ---
-        Use the brave.search tool to find current information online.
-    requires:
-      - "@brave.search"
+        Use `brave.search` and always cite a link.
+
+rules:
+  - id: commit-style
+    type: inline
+    description: Conventional Commits
+    alwaysApply: true
+    content: |
+      Always use Conventional Commits (feat/fix/chore/docs/refactor).
+      Subject ≤ 72 chars, imperative mood, no trailing period.
 
 servers:
   - id: brave
     type: mcp
-    description: Brave web search
     def:
       cmd: npx -y @modelcontextprotocol/server-brave-search
       env:
@@ -88,33 +143,33 @@ servers:
 tools:
   - id: search
     type: mcp
-    description: Search the web using Brave Search
+    description: Search the web with Brave Search
     def:
       server: "@brave"
       tool: brave_web_search
 ```
 
-### 3. Install and launch
+### 4. Install
 
 ```bash
 capa install
 ```
 
-CAPA installs your skills, starts the capability server, and automatically registers with your MCP client (Cursor, Claude Desktop).
+`capa install` resolves SHAs and downloads anything that isn't already in the cache. It then writes the per-provider files (`.cursor/rules/`, `.claude/agents/`, `AGENTS.md`, and so on) and registers one MCP endpoint with each agent on your list. The resolved SHAs land in `capabilities.lock` so the next clone gets the same bytes.
 
-### 4. Run tools from the terminal
+### 5. Turn any MCP server into a CLI tool
 
 ```bash
-capa sh                                  # list all available commands
+capa sh                                  # list every configured tool
 capa sh brave                            # list brave subcommands
 capa sh brave search --query "…"         # run a tool directly
 ```
 
-`capa sh` turns every configured tool into a CLI command. MCP tools are exposed as `server_name.tool_name` and grouped under their server ID in the CLI. Command tools appear at the top level (or under a custom `group`). Any unrecognised command is passed through to the OS shell.
+Every tool you define is also a CLI command under `capa sh`. MCP tools live at `capa sh <server> <tool>`. Shell tools live at the top level (or under whatever `group` you assigned). 
 
 ## Documentation
 
-For complete guides, examples, and API reference, visit:
+Guides, the full schema reference, and the registry catalog:
 
 **[https://capa.infragate.ai](https://capa.infragate.ai)**
 
