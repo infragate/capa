@@ -2,7 +2,7 @@
 
 ## Contents
 
-- Initialize Capabilities · Install Capabilities · Add Skills · Clean Managed Files · Shell / Tool Executor · Server Management · Authentication · Upgrade · Cache Management
+- Initialize Capabilities · Install Capabilities · Add Skills · Clean Managed Files · Shell / Tool Executor · Server Management · Authentication · Upgrade · Cache Management · Registry Management
 
 ---
 
@@ -91,11 +91,12 @@ Add a skill from various sources:
 - **GitLab (search)**: `capa add gitlab:group/repo@skill-name` (subgroups supported)
 - **GitLab (exact)**: `capa add gitlab:group/sub/repo::skills/path/skill-name`
 - **Pinning** (works with both `@` and `::`): append `:v1.2.3` for a tag/branch or `#abc1234` for a commit SHA — e.g. `capa add owner/repo@skill:v1.2.3`, `capa add gitlab:group/repo::skills/x/y#abc1234`.
+- **Registry**: `capa add <registryId>:<itemId>` — resolve the skill from a configured registry adapter. Example: `capa add skills-sh:vercel-labs/skills/find-skills`. The registry's `view()` method is called to fetch the install snippet, which is then added to `capabilities.yaml`.
 - **Installed**: `capa add <skill-id> --installed [--requires "tool1,tool2"]` — skill already installed by user; capa only acknowledges for tool binding
 - **Remote URL**: `capa add https://example.com/path/to/SKILL.md`
 - **Local path**: `capa add ./path/to/skill` — directory must contain `SKILL.md`; stored as type `local` so the file is read on each install
 
-**When to use**: Quickly adding community skills without manually editing the capabilities file. Prefer `@` for the common case (unique skill names); fall back to `::` to disambiguate or to keep the reference tied to a specific layout.
+**When to use**: Quickly adding community skills without manually editing the capabilities file. Prefer `@` for the common case (unique skill names); fall back to `::` to disambiguate or to keep the reference tied to a specific layout. Use the `<registryId>:<itemId>` syntax to install from a configured third-party registry.
 
 ---
 
@@ -185,3 +186,38 @@ capa cache clean        # Remove all cached repositories and snapshots
 Capa caches remote sources (GitHub/GitLab repositories) locally to speed up subsequent installs. The cache stores bare git mirrors and file snapshots. Use `capa cache clean` to free disk space, or `capa install --no-cache` to bypass the cache for a single install without clearing it.
 
 **When to use**: Inspecting cache disk usage or clearing stale cached data.
+
+---
+
+## Registry Management
+
+```bash
+capa registry              # List all configured registries (same as `capa registry list`)
+capa registry list         # List all configured registries and their capabilities
+capa registry path         # Print the registries directory path (~/.capa/registries/)
+```
+
+Registries allow browsing and installing skills and plugins from third-party sources (e.g. skills.sh, internal company registries, JFrog). Each registry is a TypeScript file in `~/.capa/registries/` that exports a `RegistryAdapter` with `search()` and `view()` methods.
+
+### Setting up a registry
+
+1. Run `capa registry path` to find the registries directory
+2. Copy an adapter `.ts` file into that directory (see `examples/registries/` in the capa repo for reference adapters)
+3. Run `capa registry list` to verify the adapter loaded correctly
+4. Open the capa web UI — a "Registries" tab will appear in the navigation bar
+5. Browse and install from the web UI, or use `capa add <registryId>:<itemId>` from the CLI
+
+### Installing from a registry
+
+```bash
+capa add skills-sh:vercel-labs/skills/find-skills     # Install a skill from skills.sh
+capa add acme-internal:design-system/checkout          # Install from an internal registry
+```
+
+The syntax is `<registryId>:<itemId>` where `registryId` matches the `manifest.id` of the adapter and `itemId` is the registry-specific identifier for the item.
+
+### Security
+
+Registry adapters are executable TypeScript files — only use adapters from sources you trust. Capa logs every loaded registry on startup. There is no auto-download of registry files from URLs.
+
+**When to use**: When you want to browse, search, and install skills or plugins from public or private registries beyond GitHub/GitLab.
