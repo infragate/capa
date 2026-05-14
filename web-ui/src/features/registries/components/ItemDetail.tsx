@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import * as Tabs from '@radix-ui/react-tabs';
 import { Copy, Check, ExternalLink, File, Folder, ChevronRight, ChevronDown } from 'lucide-react';
 import { marked } from 'marked';
+import DOMPurify from 'dompurify';
 import { Spinner } from '../../../components/common/Spinner';
 import { useRegistryView } from '../hooks';
 
@@ -13,6 +14,12 @@ interface ItemDetailProps {
   itemId: string | undefined;
 }
 
+function yamlValue(v: unknown): string {
+  if (typeof v === 'boolean' || typeof v === 'number') return String(v);
+  if (typeof v === 'string') return /^[\w./:@#-]+$/.test(v) ? v : `"${v.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+  return JSON.stringify(v);
+}
+
 function yamlDump(obj: Record<string, unknown>): string {
   const lines: string[] = [];
   for (const [key, value] of Object.entries(obj)) {
@@ -21,10 +28,10 @@ function yamlDump(obj: Record<string, unknown>): string {
       lines.push(`${key}:`);
       for (const [k2, v2] of Object.entries(value as Record<string, unknown>)) {
         if (v2 === undefined || v2 === null) continue;
-        lines.push(`  ${k2}: ${JSON.stringify(v2)}`);
+        lines.push(`  ${k2}: ${yamlValue(v2)}`);
       }
     } else {
-      lines.push(`${key}: ${JSON.stringify(value)}`);
+      lines.push(`${key}: ${yamlValue(value)}`);
     }
   }
   return lines.join('\n');
@@ -71,7 +78,8 @@ function highlightYaml(yaml: string): string {
 }
 
 function renderMarkdown(md: string): string {
-  return marked.parse(stripFrontmatter(md), { async: false, gfm: true, breaks: true }) as string;
+  const raw = marked.parse(stripFrontmatter(md), { async: false, gfm: true, breaks: true }) as string;
+  return DOMPurify.sanitize(raw);
 }
 
 /* ---- File tree helpers ---- */

@@ -235,9 +235,9 @@ export async function addCommand(source: string, options: { id?: string; install
   );
   
   // Check if source matches registry syntax: <registryId>:<itemId>
-  // Reserve known URI prefixes (github:, gitlab:, http:, https:) so they
-  // are never interpreted as registry IDs.
-  const RESERVED_PREFIXES = /^(github|gitlab|http|https):/i;
+  // Reserve all URI-like prefixes used by parseSkillSource so they are never
+  // interpreted as registry IDs. Keep in sync with schemes above.
+  const RESERVED_PREFIXES = /^(github|gitlab|bitbucket|npm|file|http|https):/i;
   const registryMatch = source.match(/^([a-zA-Z][\w-]*):([\s\S]+)$/);
   if (registryMatch && !RESERVED_PREFIXES.test(source) && !source.startsWith('.') && !source.startsWith('/') && !/^[A-Za-z]:[\\/]/.test(source)) {
     const [, registryId, itemId] = registryMatch;
@@ -246,12 +246,29 @@ export async function addCommand(source: string, options: { id?: string; install
     if (adapter) {
       console.log(`Resolving from registry "${adapter.manifest.name}"...`);
 
-      const capability: RegistryCapability = adapter.manifest.capabilities[0];
-      const detail = await manager.view(registryId, { capability, id: itemId });
+      // Probe each capability the adapter supports until view() succeeds
+      let detail: Awaited<ReturnType<typeof manager.view>> | undefined;
+      let resolvedCapability: RegistryCapability | undefined;
+      for (const cap of adapter.manifest.capabilities) {
+        try {
+          detail = await manager.view(registryId, { capability: cap, id: itemId });
+          resolvedCapability = cap;
+          break;
+        } catch {
+          // item not found under this capability, try next
+        }
+      }
+      if (!detail || !resolvedCapability) {
+        throw new Error(
+          `Item "${itemId}" not found in registry "${registryId}" under any capability ` +
+          `(tried: ${adapter.manifest.capabilities.join(', ')}).`
+        );
+      }
+
       const snippet = detail.installSnippet;
       const itemName = options.id ?? (snippet as any).id ?? itemId.split('/').pop() ?? 'registry-item';
 
-      if (capability === 'skills') {
+      if (resolvedCapability === 'skills') {
         const existing = capabilities.skills.find(s => s.id === itemName);
         if (existing) {
           console.error(`\u2717 Skill with id "${itemName}" already exists in capabilities file.`);
@@ -260,7 +277,7 @@ export async function addCommand(source: string, options: { id?: string; install
         }
         const newSkill: Skill = { ...(snippet as Skill), id: itemName };
         capabilities.skills.push(newSkill);
-      } else if (capability === 'plugins') {
+      } else if (resolvedCapability === 'plugins') {
         if (!capabilities.plugins) capabilities.plugins = [];
         const existing = capabilities.plugins.find(p => (p as any).id === itemName || (p.def?.uri && (snippet as Plugin).def?.uri && p.def.uri === (snippet as Plugin).def.uri));
         if (existing) {
@@ -274,7 +291,7 @@ export async function addCommand(source: string, options: { id?: string; install
 
       await writeCapabilitiesFile(capabilitiesFile.path, capabilitiesFile.format, capabilities);
 
-      console.log(`\u2713 Added ${capability.slice(0, -1)} "${itemName}" from registry "${registryId}" to ${capabilitiesFile.path}`);
+      console.log(`\u2713 Added ${resolvedCapability.slice(0, -1)} "${itemName}" from registry "${registryId}" to ${capabilitiesFile.path}`);
       console.log('\n\u{1F4E6} Running installation...\n');
       await installCommand();
       return;

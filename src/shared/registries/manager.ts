@@ -10,6 +10,7 @@ import type {
 
 const MAX_ITEMS_PER_PAGE = 200;
 const CALL_TIMEOUT_MS = 15_000;
+const LOAD_TTL_MS = 30_000;
 
 async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout>;
@@ -30,13 +31,16 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): P
 export class RegistryManager {
   private loader = new RegistryLoader();
   private adapters = new Map<string, RegistryAdapter>();
+  private lastLoadedAt = 0;
 
+  /** Force a rescan of the registries directory. */
   async reload(): Promise<void> {
     this.adapters = await this.loader.loadAll();
+    this.lastLoadedAt = Date.now();
   }
 
   private async ensureLoaded(): Promise<void> {
-    if (this.adapters.size === 0) {
+    if (this.adapters.size === 0 || Date.now() - this.lastLoadedAt > LOAD_TTL_MS) {
       await this.reload();
     }
   }
