@@ -12,20 +12,14 @@ const MAX_ITEMS_PER_PAGE = 200;
 const CALL_TIMEOUT_MS = 15_000;
 
 async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), ms);
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+  });
   try {
-    const result = await Promise.race([
-      promise,
-      new Promise<never>((_, reject) => {
-        controller.signal.addEventListener('abort', () =>
-          reject(new Error(`${label} timed out after ${ms}ms`))
-        );
-      }),
-    ]);
-    return result;
+    return await Promise.race([promise, timeout]);
   } finally {
-    clearTimeout(timer);
+    clearTimeout(timer!);
   }
 }
 
@@ -48,7 +42,7 @@ export class RegistryManager {
   }
 
   async list(): Promise<RegistryManifest[]> {
-    await this.reload();
+    await this.ensureLoaded();
     return Array.from(this.adapters.values()).map((a) => ({ ...a.manifest }));
   }
 
