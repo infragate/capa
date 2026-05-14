@@ -1,13 +1,26 @@
 import { Link } from 'react-router-dom';
-import { GitBranch, BookOpen } from 'lucide-react';
+import { GitBranch, BookOpen, Package } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { FaGithub } from 'react-icons/fa';
+import { useRegistries } from '../../features/registries/hooks';
 
 export function NavLinks() {
   const { t } = useTranslation();
+  const { data: registries } = useRegistries();
+  const hasRegistries = registries && registries.length > 0;
 
   return (
     <div className="flex items-center gap-1">
+      {hasRegistries && (
+        <Link
+          to="/ui/registries"
+          className="flex items-center gap-2 rounded-sm px-3 py-2 text-[13px] text-text-secondary no-underline transition-colors hover:bg-hover-bg"
+          title={t('registries:nav.registries')}
+        >
+          <Package className="h-4 w-4" />
+          <span>{t('registries:nav.registries')}</span>
+        </Link>
+      )}
       <Link
         to="/ui/integrations"
         className="flex items-center gap-2 rounded-sm px-3 py-2 text-[13px] text-text-secondary no-underline transition-colors hover:bg-hover-bg"

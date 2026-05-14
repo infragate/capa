@@ -40,10 +40,18 @@ export function getPidFilePath(): string {
   return join(getCapaDir(), 'server.pid');
 }
 
+export function getRegistriesDir(): string {
+  return join(getCapaDir(), 'registries');
+}
+
 export async function ensureCapaDir(): Promise<void> {
   const capaDir = getCapaDir();
   if (!existsSync(capaDir)) {
     await mkdir(capaDir, { recursive: true });
+  }
+  const registriesDir = getRegistriesDir();
+  if (!existsSync(registriesDir)) {
+    await mkdir(registriesDir, { recursive: true });
   }
 }
 

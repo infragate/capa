@@ -11,6 +11,8 @@ import { GitIntegrationManager } from './git-integration-manager';
 import { TokenRefreshScheduler } from './token-refresh-scheduler';
 import type { Capabilities, MCPServer, ToolMCPDefinition, ToolCommandDefinition } from '../types/capabilities';
 import { extractAllVariables } from '../shared/variable-resolver';
+import { RegistryManager } from '../shared/registries/manager';
+import type { RegistryCapability } from '../types/registry';
 import { VERSION } from '../version';
 import { logger } from '../shared/logger';
 
@@ -29,6 +31,7 @@ class CapaServer {
   private mcpServers = new Map<string, CapaMCPServer>();
   /** Claude-style OAuth callback servers: port -> { server, idleTimer }; closed after completion or 5 min idle */
   private oauthCallbackServers = new Map<number, { server: HttpServer; idleTimer: ReturnType<typeof setTimeout> }>();
+  private registryManager = new RegistryManager();
   private startTime: number = Date.now();
   private logger = logger.child('CapaServer');
 
@@ -320,6 +323,26 @@ class CapaServer {
       const platform = disconnectMatch[1];
       const host = disconnectMatch[2];
       return this.handleDisconnectIntegration(platform, host);
+    }
+
+    // --- Registry endpoints ---
+
+    if (path === '/api/registries' && request.method === 'GET') {
+      return this.handleGetRegistries();
+    }
+
+    const registrySearchMatch = path.match(/^\/api\/registries\/([^/]+)\/search$/);
+    if (registrySearchMatch && request.method === 'GET') {
+      const registryId = decodeURIComponent(registrySearchMatch[1]);
+      return this.handleRegistrySearch(registryId, url);
+    }
+
+    // view uses a wildcard tail so item IDs containing slashes work (e.g. "owner/repo/slug")
+    const registryViewMatch = path.match(/^\/api\/registries\/([^/]+)\/view\/(.+)$/);
+    if (registryViewMatch && request.method === 'GET') {
+      const registryId = decodeURIComponent(registryViewMatch[1]);
+      const itemId = decodeURIComponent(registryViewMatch[2]);
+      return this.handleRegistryView(registryId, itemId, url);
     }
 
     return new Response('Not Found', { status: 404 });
@@ -1444,6 +1467,70 @@ class CapaServer {
       return new Response(
         JSON.stringify({ error: error.message }),
         { status: 500, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+  }
+
+  // --- Registry handlers ---
+
+  private async handleGetRegistries(): Promise<Response> {
+    const apiLogger = this.logger.child('API');
+    apiLogger.info('List registries');
+    try {
+      const manifests = await this.registryManager.list();
+      return new Response(
+        JSON.stringify({ registries: manifests }),
+        { headers: { 'Content-Type': 'application/json' } }
+      );
+    } catch (error: any) {
+      apiLogger.failure(`Error listing registries: ${error.message}`);
+      return new Response(
+        JSON.stringify({ error: error.message }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+  }
+
+  private async handleRegistrySearch(registryId: string, url: URL): Promise<Response> {
+    const apiLogger = this.logger.child('API');
+    apiLogger.info(`Registry search: ${registryId}`);
+    try {
+      const capability = (url.searchParams.get('capability') ?? 'skills') as RegistryCapability;
+      const query = url.searchParams.get('q') ?? undefined;
+      const limit = url.searchParams.has('limit') ? Number(url.searchParams.get('limit')) : undefined;
+      const cursor = url.searchParams.get('cursor') ?? undefined;
+
+      const result = await this.registryManager.search(registryId, { capability, query, limit, cursor });
+      return new Response(
+        JSON.stringify(result),
+        { headers: { 'Content-Type': 'application/json' } }
+      );
+    } catch (error: any) {
+      apiLogger.failure(`Registry search error: ${error.message}`);
+      const status = error.message.includes('not found') ? 404 : 502;
+      return new Response(
+        JSON.stringify({ error: error.message, registry: registryId }),
+        { status, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+  }
+
+  private async handleRegistryView(registryId: string, itemId: string, url: URL): Promise<Response> {
+    const apiLogger = this.logger.child('API');
+    apiLogger.info(`Registry view: ${registryId} / ${itemId}`);
+    try {
+      const capability = (url.searchParams.get('capability') ?? 'skills') as RegistryCapability;
+      const detail = await this.registryManager.view(registryId, { capability, id: itemId });
+      return new Response(
+        JSON.stringify(detail),
+        { headers: { 'Content-Type': 'application/json' } }
+      );
+    } catch (error: any) {
+      apiLogger.failure(`Registry view error: ${error.message}`);
+      const status = error.message.includes('not found') ? 404 : 502;
+      return new Response(
+        JSON.stringify({ error: error.message, registry: registryId }),
+        { status, headers: { 'Content-Type': 'application/json' } }
       );
     }
   }

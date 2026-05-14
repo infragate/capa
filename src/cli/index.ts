@@ -12,6 +12,7 @@ import { authCommand } from './commands/auth';
 import { upgradeCommand } from './commands/upgrade';
 import { shellCommand } from './commands/sh';
 import { cacheInfoCommand, cacheCleanCommand } from './commands/cache';
+import { registryListCommand, registryPathCommand } from './commands/registry';
 import { checkForUpdates } from './utils/version-check';
 import { VERSION } from '../version';
 
@@ -138,6 +139,27 @@ if (process.argv[2] === '__server__') {
       .description('Remove all cached repositories and snapshots')
       .action(async () => {
         await cacheCleanCommand();
+      });
+
+    const registryCmd = program
+      .command('registry')
+      .description('Manage third-party registries for browsing skills and plugins')
+      .action(async () => {
+        await registryListCommand();
+      });
+
+    registryCmd
+      .command('list')
+      .description('List all configured registries and their capabilities')
+      .action(async () => {
+        await registryListCommand();
+      });
+
+    registryCmd
+      .command('path')
+      .description('Print the registries directory path')
+      .action(async () => {
+        await registryPathCommand();
       });
 
     await program.parseAsync();
