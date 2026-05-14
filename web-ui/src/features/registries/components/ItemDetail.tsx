@@ -328,7 +328,7 @@ export function ItemDetail({ registryId, registryName, capability, itemId }: Ite
       {previewHtml && (
         <div className="min-h-0 flex-1">
           <div
-            className="registry-markdown text-sm text-text-secondary"
+            className="registry-markdown overflow-hidden text-sm text-text-secondary"
             dangerouslySetInnerHTML={{ __html: previewHtml }}
           />
         </div>
