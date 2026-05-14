@@ -3,6 +3,7 @@ import { initReactI18next } from 'react-i18next';
 import commonEn from '../locales/en/common.json';
 import projectsEn from '../locales/en/projects.json';
 import integrationsEn from '../locales/en/integrations.json';
+import registriesEn from '../locales/en/registries.json';
 
 const LOCALE_KEY = 'capa-locale';
 
@@ -20,6 +21,7 @@ i18n.use(initReactI18next).init({
       common: commonEn,
       projects: projectsEn,
       integrations: integrationsEn,
+      registries: registriesEn,
     },
   },
   lng: getStoredLocale(),

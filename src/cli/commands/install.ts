@@ -12,6 +12,7 @@ import { getQualifiedToolName, normalizeToolReference } from '../../types/capabi
 import { createAuthenticatedFetch, AuthenticatedFetch } from '../../shared/authenticated-fetch';
 import { displayIntegrationPrompt, getIntegrationsUrl, parseRepoUrl } from '../utils/integration-helper';
 import { getProvider, getAllProviders } from '../../shared/providers';
+import { parseSkillMd } from '../../shared/skill-md';
 import { resolveProvidersForInstall } from '../../shared/providers/resolve';
 import { VERSION } from '../../version';
 import { registerMCPServer, unregisterMCPServer, registerSubAgentMCPServer, unregisterSubAgentMCPServer, purgeCursorSubAgentMCPEntries } from '../utils/mcp-client-manager';
@@ -269,8 +270,10 @@ async function getRepoSnapshot(
 }
 
 /**
- * Recursively find all SKILL.md files in a directory
- * Returns a map of skill name (directory name) to the SKILL.md file path
+ * Recursively find all SKILL.md files in a directory.
+ * Returns a map of skill identifier to the SKILL.md file path.
+ * Each skill is indexed by its directory basename AND by the `name`
+ * field from the SKILL.md frontmatter (if it differs from the dirname).
  */
 function findSkillsInDirectory(dir: string): Map<string, string> {
   const skills = new Map<string, string>();
@@ -294,9 +297,17 @@ function findSkillsInDirectory(dir: string): Map<string, string> {
           // Check if this directory contains SKILL.md
           const skillMdPath = join(fullPath, 'SKILL.md');
           if (existsSync(skillMdPath)) {
-            // Use directory name as skill identifier
-            const skillName = entry.name;
-            skills.set(skillName, skillMdPath);
+            skills.set(entry.name, skillMdPath);
+
+            try {
+              const content = readFileSync(skillMdPath, 'utf-8');
+              const { metadata } = parseSkillMd(content);
+              if (metadata.name && metadata.name !== entry.name) {
+                skills.set(metadata.name, skillMdPath);
+              }
+            } catch {
+              // Frontmatter parse failed — directory name is still indexed
+            }
           }
           
           // Continue searching subdirectories
@@ -1144,7 +1155,7 @@ async function installSkills(
               `Skill "${skillTarget}" not found in repository.\n` +
               `    Repository: ${repoPath}\n` +
               `    Available skills: ${available.join(', ') || 'none'}\n` +
-              `    Tip: The "@" separator matches by directory basename. ` +
+              `    Tip: The "@" separator matches by directory basename and SKILL.md frontmatter name. ` +
               `For an exact path, use "${repoPath}::path/to/${skillTarget}" instead.`
             );
           }

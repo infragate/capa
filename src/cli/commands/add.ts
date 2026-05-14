@@ -1,7 +1,9 @@
 import { detectCapabilitiesFile } from '../../shared/paths';
 import { parseCapabilitiesFile, writeCapabilitiesFile } from '../../shared/capabilities';
 import { installCommand } from './install';
+import { RegistryManager } from '../../shared/registries/manager';
 import type { Skill } from '../../types/capabilities';
+import type { RegistryCapability } from '../../types/registry';
 import { resolve, basename, join, relative } from 'path';
 import { readFile, access } from 'fs/promises';
 import { constants } from 'fs';
@@ -231,6 +233,44 @@ export async function addCommand(source: string, options: { id?: string; install
     capabilitiesFile.format
   );
   
+  // Check if source matches registry syntax: <registryId>:<itemId>
+  // The first segment before the first colon is the registry id; the rest is the item id.
+  // We distinguish from GitHub "owner/repo" and local paths by requiring the registry id
+  // to NOT contain slashes and NOT start with "http" or "." or "/" or a drive letter.
+  const registryMatch = source.match(/^([a-zA-Z][\w-]*):([\s\S]+)$/);
+  if (registryMatch && !source.startsWith('http') && !source.startsWith('.') && !source.startsWith('/') && !/^[A-Za-z]:[\\/]/.test(source)) {
+    const [, registryId, itemId] = registryMatch;
+    // Possibly a registry reference — attempt resolution
+    const manager = new RegistryManager();
+    const adapter = await manager.getAdapter(registryId);
+    if (adapter) {
+      console.log(`Resolving from registry "${adapter.manifest.name}"...`);
+      const capability: RegistryCapability = 'skills';
+      const detail = await manager.view(registryId, { capability, id: itemId });
+      const snippet = detail.installSnippet as Skill;
+      const skillId = options.id ?? snippet.id ?? itemId.split('/').pop() ?? 'registry-skill';
+
+      const existingSkill = capabilities.skills.find(s => s.id === skillId);
+      if (existingSkill) {
+        console.error(`\u2717 Skill with id "${skillId}" already exists in capabilities file.`);
+        console.error('  Use a different ID with --id <name> or remove the existing skill first.');
+        process.exit(1);
+      }
+
+      const newSkill: Skill = { ...snippet, id: skillId };
+      capabilities.skills.push(newSkill);
+
+      await writeCapabilitiesFile(capabilitiesFile.path, capabilitiesFile.format, capabilities);
+
+      console.log(`\u2713 Added skill "${skillId}" from registry "${registryId}" to ${capabilitiesFile.path}`);
+      console.log(`  Type: ${newSkill.type}`);
+      console.log('\n\u{1F4E6} Running installation...\n');
+      await installCommand();
+      return;
+    }
+    // If no adapter matched, fall through to normal parsing
+  }
+
   // Parse the skill source
   let skillDef: ParsedSkillSource;
   try {
