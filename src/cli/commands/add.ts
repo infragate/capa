@@ -1,7 +1,10 @@
 import { detectCapabilitiesFile } from '../../shared/paths';
 import { parseCapabilitiesFile, writeCapabilitiesFile } from '../../shared/capabilities';
 import { installCommand } from './install';
+import { RegistryManager } from '../../shared/registries/manager';
 import type { Skill } from '../../types/capabilities';
+import type { Plugin } from '../../types/plugin';
+import type { RegistryCapability } from '../../types/registry';
 import { resolve, basename, join, relative } from 'path';
 import { readFile, access } from 'fs/promises';
 import { constants } from 'fs';
@@ -231,6 +234,71 @@ export async function addCommand(source: string, options: { id?: string; install
     capabilitiesFile.format
   );
   
+  // Check if source matches registry syntax: <registryId>:<itemId>
+  // Reserve all URI-like prefixes used by parseSkillSource so they are never
+  // interpreted as registry IDs. Keep in sync with schemes above.
+  const RESERVED_PREFIXES = /^(github|gitlab|bitbucket|npm|file|http|https):/i;
+  const registryMatch = source.match(/^([a-zA-Z][\w-]*):([\s\S]+)$/);
+  if (registryMatch && !RESERVED_PREFIXES.test(source) && !source.startsWith('.') && !source.startsWith('/') && !/^[A-Za-z]:[\\/]/.test(source)) {
+    const [, registryId, itemId] = registryMatch;
+    const manager = new RegistryManager();
+    const adapter = await manager.getAdapter(registryId);
+    if (adapter) {
+      console.log(`Resolving from registry "${adapter.manifest.name}"...`);
+
+      // Probe each capability the adapter supports until view() succeeds
+      let detail: Awaited<ReturnType<typeof manager.view>> | undefined;
+      let resolvedCapability: RegistryCapability | undefined;
+      for (const cap of adapter.manifest.capabilities) {
+        try {
+          detail = await manager.view(registryId, { capability: cap, id: itemId });
+          resolvedCapability = cap;
+          break;
+        } catch {
+          // item not found under this capability, try next
+        }
+      }
+      if (!detail || !resolvedCapability) {
+        throw new Error(
+          `Item "${itemId}" not found in registry "${registryId}" under any capability ` +
+          `(tried: ${adapter.manifest.capabilities.join(', ')}).`
+        );
+      }
+
+      const snippet = detail.installSnippet;
+      const itemName = options.id ?? (snippet as any).id ?? itemId.split('/').pop() ?? 'registry-item';
+
+      if (resolvedCapability === 'skills') {
+        const existing = capabilities.skills.find(s => s.id === itemName);
+        if (existing) {
+          console.error(`\u2717 Skill with id "${itemName}" already exists in capabilities file.`);
+          console.error('  Use a different ID with --id <name> or remove the existing skill first.');
+          process.exit(1);
+        }
+        const newSkill: Skill = { ...(snippet as Skill), id: itemName };
+        capabilities.skills.push(newSkill);
+      } else if (resolvedCapability === 'plugins') {
+        if (!capabilities.plugins) capabilities.plugins = [];
+        const existing = capabilities.plugins.find(p => (p as any).id === itemName || (p.def?.uri && (snippet as Plugin).def?.uri && p.def.uri === (snippet as Plugin).def.uri));
+        if (existing) {
+          console.error(`\u2717 Plugin "${itemName}" already exists in capabilities file.`);
+          console.error('  Use a different ID with --id <name> or remove the existing plugin first.');
+          process.exit(1);
+        }
+        const newPlugin: Plugin = { ...(snippet as Plugin) };
+        capabilities.plugins.push(newPlugin);
+      }
+
+      await writeCapabilitiesFile(capabilitiesFile.path, capabilitiesFile.format, capabilities);
+
+      console.log(`\u2713 Added ${resolvedCapability.slice(0, -1)} "${itemName}" from registry "${registryId}" to ${capabilitiesFile.path}`);
+      console.log('\n\u{1F4E6} Running installation...\n');
+      await installCommand();
+      return;
+    }
+    // If no adapter matched, fall through to normal parsing
+  }
+
   // Parse the skill source
   let skillDef: ParsedSkillSource;
   try {
