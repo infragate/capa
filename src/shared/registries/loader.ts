@@ -39,6 +39,12 @@ function isValidAdapter(obj: unknown): obj is RegistryAdapter {
  * Scans ~/.capa/registries/ for .ts/.js/.mjs files and dynamic-imports each
  * one. Validates that the default export conforms to RegistryAdapter.
  * Caches by file mtime so repeated calls are cheap.
+ *
+ * NOTE: Node/Bun's ESM loader caches modules by URL. We use a `?t=<mtime>`
+ * cache-buster to pick up file changes, but old module instances remain in the
+ * loader's internal cache for the lifetime of the process. For long-running
+ * servers where adapters are edited frequently, restart the server to reclaim
+ * memory.
  */
 export class RegistryLoader {
   private cache = new Map<string, LoadedRegistry>();
