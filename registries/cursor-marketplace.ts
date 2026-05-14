@@ -14,12 +14,42 @@
  *   full list regardless of `query`. Filtering is done in-memory here.
  */
 
-import type {
-  RegistryAdapter,
-  RegistryItemSummary,
-  RegistryItemDetail,
-  RegistryCapability,
-} from '../../src/types/registry';
+/* ---- Inline type definitions (keep adapter files self-contained) ---- */
+
+type RegistryCapability = 'skills' | 'plugins';
+
+interface RegistryManifest {
+  id: string;
+  name: string;
+  description?: string;
+  homepage?: string;
+  icon?: string;
+  capabilities: RegistryCapability[];
+}
+
+interface RegistryItemSummary {
+  id: string;
+  capability: RegistryCapability;
+  title: string;
+  description?: string;
+  author?: string;
+  version?: string;
+  icon?: string;
+  tags?: string[];
+  homepage?: string;
+}
+
+interface RegistryItemDetail extends RegistryItemSummary {
+  preview: string;
+  installSnippet: Record<string, unknown>;
+  files?: string[];
+}
+
+interface RegistryAdapter {
+  manifest: RegistryManifest;
+  search(args: { capability: RegistryCapability; query?: string; limit?: number }): Promise<{ items: RegistryItemSummary[]; total?: number }>;
+  view(args: { capability: RegistryCapability; id: string }): Promise<RegistryItemDetail>;
+}
 
 function str(v: unknown): string | undefined {
   if (v == null) return undefined;
