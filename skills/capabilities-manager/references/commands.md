@@ -82,8 +82,8 @@ DatabaseUrl=postgresql://localhost:5432/db
 ## Add Skills & Plugins
 
 ```bash
-capa add <source> [--id <custom-id>]
-capa add --plugin <source> [--id <custom-id>]
+capa add [--plugin|--skill] <source>
+capa add --plugin <source>
 ```
 
 Add a skill (default) or plugin from various sources. Without a flag, `--skill` is assumed for backward compatibility.
