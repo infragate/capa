@@ -79,24 +79,40 @@ DatabaseUrl=postgresql://localhost:5432/db
 
 ---
 
-## Add Skills
+## Add Skills & Plugins
 
 ```bash
 capa add <source> [--id <custom-id>]
+capa add --plugin <source> [--id <custom-id>]
 ```
 
-Add a skill from various sources:
+Add a skill (default) or plugin from various sources. Without a flag, `--skill` is assumed for backward compatibility.
+
+### Skills
+
 - **GitHub (search)**: `capa add owner/repo@skill-name` — capa searches the repo for a directory named `skill-name`. Use when the name is unique.
 - **GitHub (exact)**: `capa add owner/repo::skills/path/to/skill-name` — exact directory path inside the repo.
 - **GitLab (search)**: `capa add gitlab:group/repo@skill-name` (subgroups supported)
 - **GitLab (exact)**: `capa add gitlab:group/sub/repo::skills/path/skill-name`
 - **Pinning** (works with both `@` and `::`): append `:v1.2.3` for a tag/branch or `#abc1234` for a commit SHA — e.g. `capa add owner/repo@skill:v1.2.3`, `capa add gitlab:group/repo::skills/x/y#abc1234`.
-- **Registry**: `capa add <registryId>:<itemId>` — resolve the skill from a configured registry adapter. Example: `capa add skills-sh:vercel-labs/skills/find-skills`. The registry's `view()` method is called to fetch the install snippet, which is then added to `capabilities.yaml`.
-- **Installed**: `capa add <skill-id> --installed [--requires "tool1,tool2"]` — skill already installed by user; capa only acknowledges for tool binding
+- **Registry**: `capa add <registryId>:<itemId>` — resolve the skill from a configured registry adapter. Example: `capa add skills-sh:vercel-labs/skills/find-skills`.
+- **Installed (no CLI)**: declare `type: installed` directly in `capabilities.yaml` — capa only records the skill for tool binding, it does not fetch or install anything. Set `def.description` and `def.requires` on the entry. Same pattern for `type: plugin` (skills shipped by a configured plugin).
 - **Remote URL**: `capa add https://example.com/path/to/SKILL.md`
 - **Local path**: `capa add ./path/to/skill` — directory must contain `SKILL.md`; stored as type `local` so the file is read on each install
 
-**When to use**: Quickly adding community skills without manually editing the capabilities file. Prefer `@` for the common case (unique skill names); fall back to `::` to disambiguate or to keep the reference tied to a specific layout. Use the `<registryId>:<itemId>` syntax to install from a configured third-party registry.
+### Plugins
+
+Use `--plugin` to add a plugin entry (MCP server bundles, skills, hooks, etc.) instead of a skill:
+
+- **GitHub root**: `capa add --plugin slackapi/slack-mcp-plugin`
+- **GitHub subpath**: `capa add --plugin anthropics/claude-plugins-official::plugins/frontend-design`
+- **GitLab (nested groups)**: `capa add --plugin gitlab:acme/platform/team/services/devops-skills:v1.0.1`
+- **URL**: `capa add --plugin https://github.com/anthropics/claude-plugins-official/tree/main/plugins/code-review`
+- **Registry**: `capa add claude-plugins:frontend-design` — the registry adapter determines whether the item is a skill or plugin.
+
+The `--plugin` and `--skill` flags are mutually exclusive. When a source matches a registry (`<registryId>:<itemId>`), the registry adapter's resolved capability takes precedence; a conflicting flag emits a warning but install proceeds.
+
+**When to use**: Quickly adding community skills or plugins without manually editing the capabilities file. Use `<registryId>:<itemId>` to install from a configured third-party registry.
 
 ---
 

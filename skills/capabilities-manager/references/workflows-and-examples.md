@@ -495,16 +495,37 @@ providers:
   - cursor
 
 plugins:
-  - type: remote
+  - id: slack-mcp
+    type: github
     def:
-      uri: github:some-org/my-cursor-plugin:v1.0.0
+      repo: slackapi/slack-mcp-plugin
+    # Optional: rename the plugin's MCP server. Omit to keep the manifest key.
+    servers:
+      slack:
+        as: slack
 
-skills: []
+tools:
+  # Plugin tools are NOT auto-exposed. Declare each one explicitly,
+  # referencing the plugin's MCP server with `@server-id`.
+  - id: send_message
+    type: mcp
+    description: Send a message to a Slack channel
+    def:
+      server: "@slack"
+      tool: slack_send_message
+
+skills:
+  # `type: plugin` activates a skill shipped inside the plugin and binds tools to it.
+  - id: slack-messaging
+    type: plugin
+    def:
+      requires:
+        - "@slack.send_message"
+
 servers: []
-tools: []
 ```
 
-During `capa install`, the plugin manifest is fetched from the repository. Skills, servers, and tools defined in the manifest are merged into the project. Plugin-sourced items appear with attribution in the web UI.
+During `capa install`, the plugin manifest is fetched, its SKILL.md files are copied to each provider's skills folder, and its MCP servers are registered. The plugin contributes only the tools you declare in `tools:` and the skills you activate with `type: plugin`. Capa warns when a `type: plugin` skill id has no matching plugin manifest skill, and when a plugin server has no user-declared tool pointing at it.
 
 ### Example 8: Optional Providers
 

@@ -3,24 +3,22 @@ import { parseCapabilitiesFile, writeCapabilitiesFile } from '../../shared/capab
 import { installCommand } from './install';
 import { RegistryManager } from '../../shared/registries/manager';
 import type { Skill } from '../../types/capabilities';
-import type { Plugin } from '../../types/plugin';
+import type { Plugin, PluginDefinition } from '../../types/plugin';
 import type { RegistryCapability } from '../../types/registry';
+import { validatePluginDef } from '../../shared/plugin-source';
 import { resolve, basename, join, relative } from 'path';
-import { readFile, access } from 'fs/promises';
+import { access } from 'fs/promises';
 import { constants } from 'fs';
 
 interface ParsedSkillSource {
   id: string;
-  type: 'inline' | 'remote' | 'github' | 'gitlab' | 'local' | 'installed';
+  type: 'remote' | 'github' | 'gitlab' | 'local';
   def: {
     repo?: string;
     url?: string;
-    content?: string;
     path?: string;     // For local skills: path to directory containing SKILL.md
     version?: string;  // Tag or version like "1.2.1" or "v1.2.1"
     ref?: string;      // Commit SHA
-    description?: string;  // For installed skills
-    requires?: string[];   // For installed skills: tool IDs to bind
   };
 }
 
@@ -216,27 +214,190 @@ export async function parseSkillSource(source: string): Promise<ParsedSkillSourc
   );
 }
 
-export async function addCommand(source: string, options: { id?: string; installed?: boolean; requires?: string; description?: string }): Promise<void> {
+interface ParsedPluginSource {
+  type: 'github' | 'gitlab';
+  def: PluginDefinition;
+  idHint: string;
+}
+
+/**
+ * Parse a plugin source string into a structured plugin definition.
+ *
+ * Accepted grammars:
+ *   owner/repo                             — GitHub, plugin at repo root
+ *   owner/repo::subpath/in/repo            — GitHub, plugin pinned at an exact path
+ *   owner/repo@plugin-name                 — GitHub, recursive-search by basename or manifest "name"
+ *   owner/repo:v1.2.0 / owner/repo#sha     — version / ref pinning (any of the forms above)
+ *   gitlab:group/project[::sub|@name]     — GitLab (nested groups: ≥2 segments)
+ *   https://github.com/owner/repo          — URL form
+ *   https://github.com/owner/repo/tree/<ref>/<subpath>
+ *   https://gitlab.com/group/.../project/-/tree/<ref>/<subpath>
+ *
+ * Use `::` when you know the exact subpath; use `@` when the repo hosts many
+ * plugins and you'd rather match by directory basename or manifest `name`.
+ *
+ * @internal Exported for testing purposes
+ */
+export function parsePluginSource(source: string): ParsedPluginSource {
+  // GitHub URL: https://github.com/<owner>/<repo>[/tree/<ref>/<subpath>]
+  const ghUrlMatch = source.match(
+    /^https?:\/\/github\.com\/([\w.-]+)\/([\w.-]+?)(?:\.git)?(?:\/tree\/([\w.-]+)(?:\/([\w./-]+))?)?$/
+  );
+  if (ghUrlMatch) {
+    const [, owner, repo, refOrBranch, subpath] = ghUrlMatch;
+    const def: PluginDefinition = {
+      repo: subpath ? `${owner}/${repo}::${subpath}` : `${owner}/${repo}`,
+    };
+    if (refOrBranch) {
+      if (/^[a-f0-9]{7,40}$/i.test(refOrBranch)) def.ref = refOrBranch;
+      else if (/^v?\d+\.\d+/.test(refOrBranch)) def.version = refOrBranch;
+    }
+    return {
+      type: 'github',
+      def,
+      idHint: subpath ? basename(subpath) : repo,
+    };
+  }
+
+  // GitLab URL: https://gitlab.com/<group>/.../<project>[-/tree/<ref>/<subpath>]
+  const glUrlMatch = source.match(
+    /^https?:\/\/gitlab\.com\/([\w.-]+(?:\/[\w.-]+)+?)(?:\.git)?(?:\/-\/tree\/([\w.-]+)(?:\/([\w./-]+))?)?$/
+  );
+  if (glUrlMatch) {
+    const [, repoPath, refOrBranch, subpath] = glUrlMatch;
+    const def: PluginDefinition = {
+      repo: subpath ? `${repoPath}::${subpath}` : repoPath,
+    };
+    if (refOrBranch) {
+      if (/^[a-f0-9]{7,40}$/i.test(refOrBranch)) def.ref = refOrBranch;
+      else if (/^v?\d+\.\d+/.test(refOrBranch)) def.version = refOrBranch;
+    }
+    const repoSegments = repoPath.split('/');
+    return {
+      type: 'gitlab',
+      def,
+      idHint: subpath ? basename(subpath) : repoSegments[repoSegments.length - 1],
+    };
+  }
+
+  // GitLab `@name` search: gitlab:group/sub/project@plugin-name[:version|#sha]
+  const gitlabAtMatch = source.match(
+    /^gitlab:([\w.-]+(?:\/[\w.-]+)+)@([\w.-]+)(?::([\w.-]+))?(?:#([a-f0-9]{7,40}))?$/i
+  );
+  if (gitlabAtMatch) {
+    const [, repoPath, searchName, version, ref] = gitlabAtMatch;
+    const def: PluginDefinition = { repo: `${repoPath}@${searchName}` };
+    if (version) def.version = version;
+    if (ref) def.ref = ref;
+    return { type: 'gitlab', def, idHint: searchName };
+  }
+
+  // GitLab prefix (exact / root): gitlab:group/sub/project[::subpath][:version][#sha]
+  const gitlabMatch = source.match(
+    /^gitlab:([\w.-]+(?:\/[\w.-]+)+?)(?:::([\w./-]+?))?(?::([\w.-]+))?(?:#([a-f0-9]{7,40}))?$/i
+  );
+  if (gitlabMatch) {
+    const [, repoPath, subpath, version, ref] = gitlabMatch;
+    const def: PluginDefinition = {
+      repo: subpath ? `${repoPath}::${subpath}` : repoPath,
+    };
+    if (version) def.version = version;
+    if (ref) def.ref = ref;
+    const repoSegments = repoPath.split('/');
+    return {
+      type: 'gitlab',
+      def,
+      idHint: subpath ? basename(subpath) : repoSegments[repoSegments.length - 1],
+    };
+  }
+
+  // GitHub `@name` search: owner/repo@plugin-name[:version|#sha]
+  // `plugin-name` must be a single segment (no slashes) — exact paths use `::`.
+  const ghAtMatch = source.match(
+    /^([\w.-]+\/[\w.-]+)@([\w.-]+)(?::([\w.-]+))?(?:#([a-f0-9]{7,40}))?$/i
+  );
+  if (ghAtMatch) {
+    const [, repoPath, searchName, version, ref] = ghAtMatch;
+    const def: PluginDefinition = { repo: `${repoPath}@${searchName}` };
+    if (version) def.version = version;
+    if (ref) def.ref = ref;
+    const result: ParsedPluginSource = { type: 'github', def, idHint: searchName };
+    const validation = validatePluginDef({ type: result.type, def: result.def });
+    if ('error' in validation) throw new Error(validation.error);
+    return result;
+  }
+
+  // GitHub shorthand (exact / root): owner/repo[::subpath][:version][#sha]
+  const ghMatch = source.match(
+    /^([\w.-]+\/[\w.-]+?)(?:::([\w./-]+?))?(?::([\w.-]+))?(?:#([a-f0-9]{7,40}))?$/i
+  );
+  if (ghMatch) {
+    const [, repoPath, subpath, version, ref] = ghMatch;
+    const def: PluginDefinition = {
+      repo: subpath ? `${repoPath}::${subpath}` : repoPath,
+    };
+    if (version) def.version = version;
+    if (ref) def.ref = ref;
+
+    const result: ParsedPluginSource = {
+      type: 'github',
+      def,
+      idHint: subpath ? basename(subpath) : repoPath.split('/')[1],
+    };
+
+    // Validate through the standard plugin validator
+    const validation = validatePluginDef({ type: result.type, def: result.def });
+    if ('error' in validation) {
+      throw new Error(validation.error);
+    }
+    return result;
+  }
+
+  throw new Error(
+    `Unable to parse plugin source: ${source}\n\n` +
+    `Supported formats:\n` +
+    `  GitHub:\n` +
+    `    - Root:           owner/repo\n` +
+    `    - Exact subpath:  owner/repo::plugins/my-plugin\n` +
+    `    - Recursive @:    owner/repo@my-plugin  (matches a directory basename or the manifest "name" field)\n` +
+    `    - URL:            https://github.com/owner/repo/tree/main/plugins/my-plugin\n` +
+    `  GitLab:\n` +
+    `    - Root:           gitlab:group/project\n` +
+    `    - Nested groups:  gitlab:group/sub/project\n` +
+    `    - Exact subpath:  gitlab:group/project::plugins/my-plugin\n` +
+    `    - Recursive @:    gitlab:group/project@my-plugin\n` +
+    `    - URL:            https://gitlab.com/group/project/-/tree/main/plugins/my-plugin\n\n` +
+    `Pinning (any of the above):\n` +
+    `  - Tag:    capa add --plugin owner/repo@my-plugin:v1.2.3\n` +
+    `  - Commit: capa add --plugin owner/repo@my-plugin#abc123def\n\n` +
+    `When to use which:\n` +
+    `  Use "@" when the plugin's directory name (or manifest "name" field) is unique inside the repo.\n` +
+    `  Use "::" for exact paths or when two plugins share a basename.`
+  );
+}
+
+export async function addCommand(source: string, options: { plugin?: boolean; skill?: boolean }): Promise<void> {
+  if (options.plugin && options.skill) {
+    console.error('✗ Cannot pass both --skill and --plugin.');
+    process.exit(1);
+  }
+
   const projectPath = process.cwd();
-  
-  // Detect capabilities file
+
   const capabilitiesFile = await detectCapabilitiesFile(projectPath);
   if (!capabilitiesFile) {
     console.error('✗ No capabilities file found. Run "capa init" first.');
     process.exit(1);
   }
-  
+
   console.log(`Using ${capabilitiesFile.path}`);
-  
-  // Parse capabilities file
+
   const capabilities = await parseCapabilitiesFile(
     capabilitiesFile.path,
     capabilitiesFile.format
   );
-  
-  // Check if source matches registry syntax: <registryId>:<itemId>
-  // Reserve all URI-like prefixes used by parseSkillSource so they are never
-  // interpreted as registry IDs. Keep in sync with schemes above.
+
+  // --- Registry route (runs before --plugin / --skill branches) ---
   const RESERVED_PREFIXES = /^(github|gitlab|bitbucket|npm|file|http|https):/i;
   const registryMatch = source.match(/^([a-zA-Z][\w-]*):([\s\S]+)$/);
   if (registryMatch && !RESERVED_PREFIXES.test(source) && !source.startsWith('.') && !source.startsWith('/') && !/^[A-Za-z]:[\\/]/.test(source)) {
@@ -246,7 +407,6 @@ export async function addCommand(source: string, options: { id?: string; install
     if (adapter) {
       console.log(`Resolving from registry "${adapter.manifest.name}"...`);
 
-      // Probe each capability the adapter supports until view() succeeds
       let detail: Awaited<ReturnType<typeof manager.view>> | undefined;
       let resolvedCapability: RegistryCapability | undefined;
       for (const cap of adapter.manifest.capabilities) {
@@ -265,28 +425,40 @@ export async function addCommand(source: string, options: { id?: string; install
         );
       }
 
+      // Warn when a manual --plugin/--skill flag disagrees with the registry's verdict
+      if (options.plugin && resolvedCapability !== 'plugins') {
+        console.warn(`  ⚠ --plugin ignored: registry "${registryId}" resolved "${itemId}" as a ${resolvedCapability.slice(0, -1)}.`);
+      }
+      if (options.skill && resolvedCapability !== 'skills') {
+        console.warn(`  ⚠ --skill ignored: registry "${registryId}" resolved "${itemId}" as a ${resolvedCapability.slice(0, -1)}.`);
+      }
+
       const snippet = detail.installSnippet;
-      const itemName = options.id ?? (snippet as any).id ?? itemId.split('/').pop() ?? 'registry-item';
+      const itemName = (snippet as any).id ?? itemId.split('/').pop() ?? 'registry-item';
 
       if (resolvedCapability === 'skills') {
         const existing = capabilities.skills.find(s => s.id === itemName);
         if (existing) {
           console.error(`\u2717 Skill with id "${itemName}" already exists in capabilities file.`);
-          console.error('  Use a different ID with --id <name> or remove the existing skill first.');
+          console.error(`  Rename or remove the existing entry in ${capabilitiesFile.path} and try again.`);
           process.exit(1);
         }
         const newSkill: Skill = { ...(snippet as Skill), id: itemName };
         capabilities.skills.push(newSkill);
       } else if (resolvedCapability === 'plugins') {
         if (!capabilities.plugins) capabilities.plugins = [];
-        const existing = capabilities.plugins.find(p => (p as any).id === itemName || (p.def?.uri && (snippet as Plugin).def?.uri && p.def.uri === (snippet as Plugin).def.uri));
+        const newPlugin = snippet as Plugin;
+        const existing = capabilities.plugins.find(p =>
+          (p as any).id === itemName ||
+          (p.type === newPlugin.type
+            && p.def.repo === newPlugin.def.repo
+            && (p.def.subpath ?? '') === (newPlugin.def.subpath ?? '')));
         if (existing) {
           console.error(`\u2717 Plugin "${itemName}" already exists in capabilities file.`);
-          console.error('  Use a different ID with --id <name> or remove the existing plugin first.');
+          console.error(`  Rename or remove the existing entry in ${capabilitiesFile.path} and try again.`);
           process.exit(1);
         }
-        const newPlugin: Plugin = { ...(snippet as Plugin) };
-        capabilities.plugins.push(newPlugin);
+        capabilities.plugins.push({ ...newPlugin, id: itemName });
       }
 
       await writeCapabilitiesFile(capabilitiesFile.path, capabilitiesFile.format, capabilities);
@@ -299,60 +471,73 @@ export async function addCommand(source: string, options: { id?: string; install
     // If no adapter matched, fall through to normal parsing
   }
 
-  // Parse the skill source
+  // --- Plugin mode (--plugin flag) ---
+  if (options.plugin) {
+    let parsed: ParsedPluginSource;
+    try {
+      parsed = parsePluginSource(source);
+    } catch (error) {
+      console.error(`✗ ${error instanceof Error ? error.message : String(error)}`);
+      process.exit(1);
+    }
+
+    const id = parsed.idHint;
+    if (!capabilities.plugins) capabilities.plugins = [];
+    const dup = capabilities.plugins.find(p =>
+      p.id === id ||
+      (p.type === parsed.type
+        && p.def.repo === parsed.def.repo
+        && (p.def.subpath ?? '') === (parsed.def.subpath ?? '')));
+    if (dup) {
+      console.error(`✗ Plugin "${id}" already exists in capabilities file.`);
+      console.error(`  Rename or remove the existing entry in ${capabilitiesFile.path} and try again.`);
+      process.exit(1);
+    }
+
+    capabilities.plugins.push({ id, type: parsed.type, def: parsed.def });
+    await writeCapabilitiesFile(capabilitiesFile.path, capabilitiesFile.format, capabilities);
+
+    console.log(`✓ Added plugin "${id}" to ${capabilitiesFile.path}`);
+    console.log(`  Type: ${parsed.type}`);
+    console.log(`  Repo: ${parsed.def.repo}`);
+    if (parsed.def.version) console.log(`  Version: ${parsed.def.version}`);
+    if (parsed.def.ref) console.log(`  Ref: ${parsed.def.ref}`);
+
+    console.log('\n📦 Running installation...\n');
+    await installCommand();
+    return;
+  }
+
+  // --- Skill mode (default, or --skill flag) ---
   let skillDef: ParsedSkillSource;
   try {
-    if (options.installed) {
-      // Installed skill: source is the skill ID; capa only acknowledges for tool binding
-      const id = options.id || source;
-      const requires = options.requires
-        ? options.requires.split(',').map((r) => r.trim()).filter(Boolean)
-        : undefined;
-      skillDef = {
-        id,
-        type: 'installed',
-        def: {
-          ...(options.description && { description: options.description }),
-          ...(requires && requires.length > 0 && { requires })
-        }
-      };
-    } else {
-      skillDef = await parseSkillSource(source);
-    }
+    skillDef = await parseSkillSource(source);
   } catch (error) {
     console.error(`✗ ${error instanceof Error ? error.message : String(error)}`);
     process.exit(1);
   }
-  
-  // Allow custom ID override
-  if (options.id) {
-    skillDef.id = options.id;
-  }
-  
-  // Check if skill already exists
+
   const existingSkill = capabilities.skills.find(s => s.id === skillDef.id);
   if (existingSkill) {
     console.error(`✗ Skill with id "${skillDef.id}" already exists in capabilities file.`);
-    console.error('  Use a different ID with --id <name> or remove the existing skill first.');
+    console.error(`  Rename or remove the existing entry in ${capabilitiesFile.path} and try again.`);
     process.exit(1);
   }
-  
-  // Add skill to capabilities
+
   const newSkill: Skill = {
     id: skillDef.id,
     type: skillDef.type,
     def: skillDef.def
   };
-  
+
   capabilities.skills.push(newSkill);
-  
-  // Write updated capabilities file
+
   await writeCapabilitiesFile(
     capabilitiesFile.path,
     capabilitiesFile.format,
     capabilities
   );
-  
+
   console.log(`✓ Added skill "${skillDef.id}" to ${capabilitiesFile.path}`);
   console.log(`  Type: ${skillDef.type}`);
   if (skillDef.def.repo) {
@@ -361,16 +546,8 @@ export async function addCommand(source: string, options: { id?: string; install
     console.log(`  URL: ${skillDef.def.url}`);
   } else if (skillDef.def.path) {
     console.log(`  Path: ${skillDef.def.path}`);
-  } else if (skillDef.def.content) {
-    console.log(`  Source: inline`);
-  } else if (skillDef.type === 'installed') {
-    console.log(`  Source: installed (acknowledged for tool binding)`);
-    if (skillDef.def.requires?.length) {
-      console.log(`  Requires: ${skillDef.def.requires.join(', ')}`);
-    }
   }
-  
-  // Run install
+
   console.log('\n📦 Running installation...\n');
   await installCommand();
 }

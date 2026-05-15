@@ -67,7 +67,7 @@ Only properties that are present are applied. If a blocked phrase is detected du
 |--------|--------|
 | `capa init [--format json\|yaml]` | Create a new capabilities file |
 | `capa install [-e [file]] [-p <id>] [--no-cache]` | Install skills, agents, rules, register servers; prompt for credentials |
-| `capa add <source> [--id <id>]` | Add a skill (GitHub, GitLab, remote URL, local path, or `--installed`) |
+| `capa add <source> [--plugin\|--skill]` | Add a skill or plugin (GitHub, GitLab, registry, remote URL, or local path). `type: installed` / `type: plugin` skills are declared directly in `capabilities.yaml`. |
 | `capa clean` | Remove CAPA-installed skills, rules, and agent blocks |
 | `capa sh [group] [subcommand] [--arg value]` | List or run tools; unknown commands pass through to the OS shell |
 | `capa start \| stop \| restart \| status` | Manage the CAPA server |
@@ -80,13 +80,13 @@ Only properties that are present are applied. If a blocked phrase is detected du
 ## Capabilities File Structure (Summary)
 
 - **Providers**: Optional. When omitted, resolved at install time via `--provider` flag → DB memory → interactive prompt.
-- **Skills**: Six types — `inline`, `github`, `gitlab`, `remote`, `local`, `installed`. Each has `id`, `type`, `def` (and for inline, `content`; for others, `repo`/`url`/`path` plus optional `requires`, `description`).
+- **Skills**: Seven types — `inline`, `github`, `gitlab`, `remote`, `local`, `installed`, `plugin`. Each has `id`, `type`, `def` (and for inline, `content`; for others, `repo`/`url`/`path` plus optional `requires`, `description`). The `plugin` type binds tools to a skill shipped by a configured plugin.
 - **Servers**: `type: mcp` with `def.cmd`/`args`/`env` (local) or `def.url`/`headers` (remote). Optional `tlsSkipVerify: true`, `description`.
 - **Tools**: `type: mcp` (def: `server`, `tool`, optional `defaults`) or `type: command` (def: `run.cmd`/`args`, optional `init`, `group`, `description`).
 - **Agents**: Optional `base` (ref or type+def) and `additional` list (inline, remote, github, gitlab snippets). Managed files: `AGENTS.md` always; `CLAUDE.md` when a Claude provider is present.
 - **Subagents**: Named sub-agent configurations with filtered tool access, per-provider MCP endpoints and agent files.
 - **Rules**: Types `inline`, `remote`, `github`, `gitlab`. Each has `id`, optional `providers`, `appliesTo` (glob), `alwaysApply`, `description`. Installed as files (Cursor `.cursor/rules/`) or folded into instructions files.
-- **Plugins**: Remote packages (`type: remote`, `def.uri`) that bundle skills, servers, and tools from a provider manifest.
+- **Plugins**: Remote packages (`type: github` or `type: gitlab`, with `def.repo` + optional `def.subpath`) that bundle skills, servers, and tools from a provider manifest.
 
 **Full schema and YAML examples**: See `references/capabilities-schema.md`.
 
