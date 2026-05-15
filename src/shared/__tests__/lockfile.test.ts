@@ -31,10 +31,11 @@ const sampleSkill: LockSkillEntry = {
 };
 
 const samplePlugin: LockPluginEntry = {
-  id: 'my-plugin-5f8a3c2b',
+  id: 'my-plugin',
   source: 'github',
   repo: 'owner/plugin',
-  uri: 'github:owner/plugin',
+  subpath: null,
+  requestedSearchName: null,
   requestedVersion: null,
   requestedRef: null,
   resolvedRef: '5f8a3c2bcafe1234567890abcdef1234567890ab',
@@ -189,12 +190,54 @@ describe('lockfile', () => {
       expect(lf.skills[0].resolvedRef).toBe(updated.resolvedRef);
     });
 
-    it('findPlugin filters by uri + version + ref', () => {
+    it('findPlugin filters by source + repo + subpath + version + ref', () => {
       const initial: Lockfile = { ...emptyLockfile(), plugins: [samplePlugin] };
       const b = new LockfileBuilder(initial);
-      expect(b.findPlugin('github:owner/plugin', null, null)?.id).toBe(samplePlugin.id);
-      expect(b.findPlugin('github:other/plugin', null, null)).toBeNull();
-      expect(b.findPlugin('github:owner/plugin', 'v1.0.0', null)).toBeNull();
+      expect(b.findPlugin({ source: 'github', repo: 'owner/plugin', subpath: null, requestedVersion: null, requestedRef: null })?.id).toBe(samplePlugin.id);
+      expect(b.findPlugin({ source: 'github', repo: 'other/plugin', subpath: null, requestedVersion: null, requestedRef: null })).toBeNull();
+      expect(b.findPlugin({ source: 'github', repo: 'owner/plugin', subpath: null, requestedVersion: 'v1.0.0', requestedRef: null })).toBeNull();
+    });
+
+    it('findPlugin distinguishes entries by subpath', () => {
+      const pluginAtRoot = { ...samplePlugin, id: 'root-plugin', subpath: null };
+      const pluginAtSub = { ...samplePlugin, id: 'sub-plugin', subpath: 'plugins/frontend' };
+      const b = new LockfileBuilder({ ...emptyLockfile(), plugins: [pluginAtRoot, pluginAtSub] });
+      expect(b.findPlugin({ source: 'github', repo: 'owner/plugin', subpath: null, requestedVersion: null, requestedRef: null })?.id).toBe('root-plugin');
+      expect(b.findPlugin({ source: 'github', repo: 'owner/plugin', subpath: 'plugins/frontend', requestedVersion: null, requestedRef: null })?.id).toBe('sub-plugin');
+      expect(b.findPlugin({ source: 'github', repo: 'owner/plugin', subpath: 'plugins/other', requestedVersion: null, requestedRef: null })).toBeNull();
+    });
+
+    it('findPlugin pivots on requestedSearchName and ignores the resolved subpath', () => {
+      const searched: LockPluginEntry = {
+        ...samplePlugin,
+        id: 'searched-plugin',
+        subpath: 'plugins/code-review', // resolved from a previous walk
+        requestedSearchName: 'code-review',
+      };
+      const exact: LockPluginEntry = {
+        ...samplePlugin,
+        id: 'exact-plugin',
+        subpath: 'plugins/code-review',
+        requestedSearchName: null,
+      };
+      const b = new LockfileBuilder({ ...emptyLockfile(), plugins: [searched, exact] });
+
+      // Search query matches the search entry even though we pass subpath: null —
+      // when a search is requested the lockfile shouldn't gate the lookup on a
+      // resolved subpath (which the caller doesn't know yet).
+      expect(
+        b.findPlugin({ source: 'github', repo: 'owner/plugin', subpath: null, requestedSearchName: 'code-review', requestedVersion: null, requestedRef: null })?.id
+      ).toBe('searched-plugin');
+
+      // Exact-path query is unaffected and still matches the non-search entry.
+      expect(
+        b.findPlugin({ source: 'github', repo: 'owner/plugin', subpath: 'plugins/code-review', requestedSearchName: null, requestedVersion: null, requestedRef: null })?.id
+      ).toBe('exact-plugin');
+
+      // A search miss returns null even if the resolved subpath happens to collide.
+      expect(
+        b.findPlugin({ source: 'github', repo: 'owner/plugin', subpath: null, requestedSearchName: 'debugger', requestedVersion: null, requestedRef: null })
+      ).toBeNull();
     });
 
     it('pruneToIds drops entries not in the provided sets', () => {

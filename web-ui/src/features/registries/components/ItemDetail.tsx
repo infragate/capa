@@ -206,7 +206,7 @@ export function ItemDetail({ registryId, registryName, capability, itemId }: Ite
   const yamlSnippet = innerYaml
     ? `${capability}:\n` + innerYaml.split('\n').map((l, i) => i === 0 ? `  - ${l}` : `    ${l}`).join('\n')
     : '';
-  const showCli = capability === 'skills';
+  const showCli = capability === 'skills' || capability === 'plugins';
   const cliCommand = showCli ? `capa add ${registryId}:${detail.id}` : '';
 
   return (
