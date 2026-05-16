@@ -1,4 +1,5 @@
 import { existsSync, readdirSync, readFileSync } from 'fs';
+import type { Dirent } from 'fs';
 import { join, resolve, isAbsolute } from 'path';
 import type {
   PluginProvider,
@@ -355,7 +356,7 @@ export function discoverPluginEntries(
       break;
     }
 
-    let items: import('fs').Dirent[];
+    let items: Dirent[];
     try {
       items = readdirSync(currentDir, { withFileTypes: true });
     } catch {
