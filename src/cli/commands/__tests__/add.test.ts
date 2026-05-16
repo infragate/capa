@@ -792,6 +792,12 @@ describe('parsePluginSource', () => {
       );
       expect(result.def.version).toBe('v1.5.2');
     });
+
+    it('rejects ambiguous tree URL paths outside plugins/', () => {
+      expect(() =>
+        parsePluginSource('https://github.com/owner/repo/tree/feature/foo/extensions/my-plugin')
+      ).toThrow(/Ambiguous plugin tree URL path/);
+    });
   });
 
   describe('GitLab URL', () => {
@@ -817,6 +823,12 @@ describe('parsePluginSource', () => {
       expect(result.type).toBe('gitlab');
       expect(result.def.repo).toBe('group/sub/project::plugins/my-plugin');
       expect(result.idHint).toBe('my-plugin');
+    });
+
+    it('rejects ambiguous tree URL paths outside plugins/', () => {
+      expect(() =>
+        parsePluginSource('https://gitlab.com/group/sub/project/-/tree/feature/foo/packages/my-plugin')
+      ).toThrow(/Ambiguous plugin tree URL path/);
     });
   });
 
