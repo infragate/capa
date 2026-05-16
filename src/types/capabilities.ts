@@ -222,7 +222,7 @@ export interface Capabilities {
 
 export interface Skill {
   id: string;
-  type: 'inline' | 'remote' | 'github' | 'gitlab' | 'local' | 'installed';
+  type: 'inline' | 'remote' | 'github' | 'gitlab' | 'local' | 'installed' | 'plugin';
   def: SkillDefinition;
   sourcePlugin?: SourcePlugin;
 }
@@ -230,8 +230,11 @@ export interface Skill {
 export interface SkillDefinition {
   description?: string;
   requires?: string[]; // Tool IDs
-  // For installed skills: skill exists outside capa; capa only acknowledges it for tool binding
-  // No url, repo, content, or path — capa does not install or fetch
+  // For installed skills: skill exists outside capa; capa only acknowledges it for tool binding.
+  // No url, repo, content, or path — capa does not install or fetch.
+  // For plugin skills: same as installed but the skill is sourced from a configured plugin.
+  // Capa validates that the skill id matches a skill exposed by some plugin's manifest
+  // and warns if no match is found.
   // For remote skills (raw SKILL.md URL)
   url?: string;
   // For GitHub skills (e.g., "vercel-labs/agent-skills@find-skills")
@@ -253,6 +256,8 @@ export interface MCPServer {
   type: 'mcp';
   def: MCPServerDefinition;
   sourcePlugin?: SourcePlugin;
+  /** Original mcpServers key from the plugin manifest. Used to look up per-server config (alias, tool filter). */
+  sourcePluginServerKey?: string;
   /** User-facing name (e.g. "slack-server" for plugin servers); falls back to id if unset */
   displayName?: string;
   /** Human-readable description shown in capa sh */

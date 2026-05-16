@@ -67,6 +67,10 @@ export interface ResolvedPlugin {
   repository?: string;
   provider?: string;
   version?: string;
+  /** Skill IDs exposed by the plugin's manifest. */
+  skills?: string[];
+  /** Capa server IDs (after `as` rename) the plugin contributed. */
+  serverIds?: string[];
 }
 
 export interface SubAgent {

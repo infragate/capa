@@ -59,11 +59,9 @@ if (process.argv[2] === '__server__') {
 
     program
       .command('add <source>')
-      .description('Add a skill from various sources (GitHub, GitLab, Git URL, local path, or installed)')
-      .option('-i, --id <id>', 'Custom skill ID (defaults to auto-generated from source)')
-      .option('--installed', 'Add an installed skill (user installed outside capa; capa only acknowledges for tool binding)')
-      .option('--requires <tools>', 'Comma-separated tool IDs for installed skills (e.g. "@server.tool1,tool2")')
-      .option('-d, --description <text>', 'Description for installed skills')
+      .description('Add a skill or plugin from various sources (GitHub, GitLab, registry, local path, or remote URL)')
+      .option('--plugin', 'Treat <source> as a plugin (default is skill)')
+      .option('--skill', 'Treat <source> as a skill (default; flag exists for explicitness)')
       .action(async (source: string, options) => {
         await addCommand(source, options);
       });

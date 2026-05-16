@@ -67,12 +67,12 @@ function strArr(v: unknown): string[] | undefined {
   return v.map((x) => typeof x === 'string' ? x : str(x) ?? '').filter(Boolean);
 }
 
-function pluginUri(gitUrl: string | undefined): string | undefined {
+function pluginDef(gitUrl: string | undefined): { type: 'github' | 'gitlab'; def: { repo: string } } | undefined {
   if (!gitUrl) return undefined;
   const m = gitUrl.match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
-  if (m) return `github:${m[1]}/${m[2]}`;
+  if (m) return { type: 'github', def: { repo: `${m[1]}/${m[2]}` } };
   const g = gitUrl.match(/gitlab\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
-  if (g) return `gitlab:${g[1]}/${g[2]}`;
+  if (g) return { type: 'gitlab', def: { repo: `${g[1]}/${g[2]}` } };
   return undefined;
 }
 
@@ -95,9 +95,9 @@ function iconUrl(p: any): string | undefined {
 function toSummary(p: any): RegistryItemSummary {
   const publisherName = str(p.publisher) ?? '';
   return {
-    id: String(p.id ?? p.name),
+    id: p.name ?? String(p.id),
     capability: 'plugins' as RegistryCapability,
-    title: p.displayName ?? p.name ?? String(p.id),
+    title: p.displayName ?? p.name ?? p.id,
     description: str(p.description),
     author: publisherName,
     icon: iconUrl(p),
@@ -166,9 +166,15 @@ const adapter: RegistryAdapter = {
     const p = all.find((x: any) => String(x.id) === id || x.name === id);
     if (!p) throw new Error(`Plugin "${id}" not found`);
 
-    const uri = pluginUri(p.gitUrl);
     const publisherName = str(p.publisher) ?? '';
     const description = str(p.description) ?? '';
+    const itemId = p.name ?? String(p.id);
+    const resolved = pluginDef(p.gitUrl);
+    if (!resolved) {
+      throw new Error(
+        `Cursor marketplace plugin "${itemId}" does not expose a supported GitHub or GitLab repository URL.`
+      );
+    }
 
     const previewParts: string[] = [];
     previewParts.push(`# ${p.displayName ?? p.name}\n`);
@@ -187,16 +193,19 @@ const adapter: RegistryAdapter = {
       }
       previewParts.push('');
     }
+    previewParts.push('## Install\n');
+    previewParts.push('Install via capa:\n');
+    previewParts.push('```');
+    previewParts.push(`capa add cursor-marketplace:${itemId}`);
+    previewParts.push('```');
+    previewParts.push('');
+
+    const snippet: Record<string, unknown> = { id: itemId, type: resolved.type, def: resolved.def };
 
     const detail: RegistryItemDetail = {
       ...toSummary(p),
       preview: previewParts.join('\n'),
-      installSnippet: {
-        type: 'remote',
-        def: {
-          uri: uri ?? `github:${p.name ?? p.id}`,
-        },
-      },
+      installSnippet: snippet,
     };
 
     return detail;

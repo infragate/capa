@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { parseSkillSource } from '../add';
+import { parseSkillSource, parsePluginSource } from '../add';
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -262,7 +262,6 @@ describe('parseSkillSource', () => {
         expect(result.id).toBe('my-skill');
         expect(result.type).toBe('local');
         expect(result.def.path).toBe('my-skill');
-        expect(result.def.content).toBeUndefined();
       } finally {
         // Restore original working directory
         process.chdir(originalCwd);
@@ -284,7 +283,6 @@ describe('parseSkillSource', () => {
       expect(result.type).toBe('local');
       expect(result.def.path).toBeDefined();
       expect(result.def.path).toContain('abs-skill');
-      expect(result.def.content).toBeUndefined();
     });
 
     it('should throw when SKILL.md is missing', async () => {
@@ -677,6 +675,217 @@ describe('parseSkillSource', () => {
       
       expect(result.id).toBe('skill-v2');
       expect(result.def.version).toBe('1.0.0');
+    });
+  });
+});
+
+describe('parsePluginSource', () => {
+  describe('GitHub shorthand', () => {
+    it('parses owner/repo at root', () => {
+      const result = parsePluginSource('owner/repo');
+      expect(result.type).toBe('github');
+      expect(result.def.repo).toBe('owner/repo');
+      expect(result.def.subpath).toBeUndefined();
+      expect(result.idHint).toBe('repo');
+    });
+
+    it('encodes owner/repo::subpath into the repo string', () => {
+      const result = parsePluginSource('anthropics/claude-plugins-official::plugins/frontend-design');
+      expect(result.type).toBe('github');
+      expect(result.def.repo).toBe('anthropics/claude-plugins-official::plugins/frontend-design');
+      expect(result.def.subpath).toBeUndefined();
+      expect(result.idHint).toBe('frontend-design');
+    });
+
+    it('parses owner/repo with version', () => {
+      const result = parsePluginSource('owner/repo:v1.2.0');
+      expect(result.def.version).toBe('v1.2.0');
+      expect(result.def.ref).toBeUndefined();
+    });
+
+    it('parses owner/repo with SHA ref', () => {
+      const result = parsePluginSource('owner/repo#abc1234');
+      expect(result.def.ref).toBe('abc1234');
+      expect(result.def.version).toBeUndefined();
+    });
+
+    it('encodes owner/repo::subpath + version into repo + def.version', () => {
+      const result = parsePluginSource('owner/repo::plugins/a:v2.0.0');
+      expect(result.def.repo).toBe('owner/repo::plugins/a');
+      expect(result.def.subpath).toBeUndefined();
+      expect(result.def.version).toBe('v2.0.0');
+    });
+
+    it('encodes owner/repo::subpath + SHA into repo + def.ref', () => {
+      const result = parsePluginSource('owner/repo::plugins/a#abc1234');
+      expect(result.def.repo).toBe('owner/repo::plugins/a');
+      expect(result.def.subpath).toBeUndefined();
+      expect(result.def.ref).toBe('abc1234');
+    });
+  });
+
+  describe('GitLab prefix', () => {
+    it('parses gitlab:group/project', () => {
+      const result = parsePluginSource('gitlab:group/project');
+      expect(result.type).toBe('gitlab');
+      expect(result.def.repo).toBe('group/project');
+      expect(result.idHint).toBe('project');
+    });
+
+    it('parses gitlab nested groups', () => {
+      const result = parsePluginSource('gitlab:acme/platform/team/services/devops-skills');
+      expect(result.type).toBe('gitlab');
+      expect(result.def.repo).toBe('acme/platform/team/services/devops-skills');
+      expect(result.idHint).toBe('devops-skills');
+    });
+
+    it('parses gitlab with version', () => {
+      const result = parsePluginSource('gitlab:group/project:v1.0.1');
+      expect(result.def.version).toBe('v1.0.1');
+    });
+
+    it('encodes gitlab subpath into the repo string', () => {
+      const result = parsePluginSource('gitlab:group/project::sub/path');
+      expect(result.def.repo).toBe('group/project::sub/path');
+      expect(result.def.subpath).toBeUndefined();
+      expect(result.idHint).toBe('path');
+    });
+  });
+
+  describe('GitHub URL', () => {
+    it('parses GitHub repo URL at root', () => {
+      const result = parsePluginSource('https://github.com/slackapi/slack-mcp-plugin');
+      expect(result.type).toBe('github');
+      expect(result.def.repo).toBe('slackapi/slack-mcp-plugin');
+      expect(result.idHint).toBe('slack-mcp-plugin');
+    });
+
+    it('parses GitHub tree URL with subpath into the combined repo form', () => {
+      const result = parsePluginSource(
+        'https://github.com/anthropics/claude-plugins-official/tree/main/plugins/code-review'
+      );
+      expect(result.type).toBe('github');
+      expect(result.def.repo).toBe('anthropics/claude-plugins-official::plugins/code-review');
+      expect(result.def.subpath).toBeUndefined();
+      expect(result.idHint).toBe('code-review');
+    });
+
+    it('parses GitHub tree URL when the branch name contains slashes', () => {
+      const result = parsePluginSource(
+        'https://github.com/owner/repo/tree/feature/foo/plugins/my-plugin'
+      );
+      expect(result.type).toBe('github');
+      expect(result.def.repo).toBe('owner/repo::plugins/my-plugin');
+      expect(result.idHint).toBe('my-plugin');
+    });
+
+    it('infers SHA ref from tree URL', () => {
+      const result = parsePluginSource(
+        'https://github.com/owner/repo/tree/abc1234def5/plugins/x'
+      );
+      expect(result.def.ref).toBe('abc1234def5');
+    });
+
+    it('infers version from tree URL', () => {
+      const result = parsePluginSource(
+        'https://github.com/owner/repo/tree/v1.5.2/plugins/x'
+      );
+      expect(result.def.version).toBe('v1.5.2');
+    });
+
+    it('rejects ambiguous tree URL paths outside plugins/', () => {
+      expect(() =>
+        parsePluginSource('https://github.com/owner/repo/tree/feature/foo/extensions/my-plugin')
+      ).toThrow(/Ambiguous plugin tree URL path/);
+    });
+  });
+
+  describe('GitLab URL', () => {
+    it('parses GitLab repo URL', () => {
+      const result = parsePluginSource('https://gitlab.com/group/project');
+      expect(result.type).toBe('gitlab');
+      expect(result.def.repo).toBe('group/project');
+    });
+
+    it('parses GitLab tree URL with subpath into the combined repo form', () => {
+      const result = parsePluginSource(
+        'https://gitlab.com/group/sub/project/-/tree/main/plugins/my-plugin'
+      );
+      expect(result.type).toBe('gitlab');
+      expect(result.def.repo).toBe('group/sub/project::plugins/my-plugin');
+      expect(result.def.subpath).toBeUndefined();
+    });
+
+    it('parses GitLab tree URL when the branch name contains slashes', () => {
+      const result = parsePluginSource(
+        'https://gitlab.com/group/sub/project/-/tree/feature/foo/plugins/my-plugin'
+      );
+      expect(result.type).toBe('gitlab');
+      expect(result.def.repo).toBe('group/sub/project::plugins/my-plugin');
+      expect(result.idHint).toBe('my-plugin');
+    });
+
+    it('rejects ambiguous tree URL paths outside plugins/', () => {
+      expect(() =>
+        parsePluginSource('https://gitlab.com/group/sub/project/-/tree/feature/foo/packages/my-plugin')
+      ).toThrow(/Ambiguous plugin tree URL path/);
+    });
+  });
+
+  describe('GitHub @ recursive-search syntax', () => {
+    it('encodes owner/repo@plugin-name into the repo string', () => {
+      const result = parsePluginSource('anthropics/claude-code@code-review');
+      expect(result.type).toBe('github');
+      expect(result.def.repo).toBe('anthropics/claude-code@code-review');
+      expect(result.def.subpath).toBeUndefined();
+      expect(result.idHint).toBe('code-review');
+    });
+
+    it('accepts a version suffix after @name', () => {
+      const result = parsePluginSource('anthropics/claude-code@code-review:v1.2.0');
+      expect(result.def.repo).toBe('anthropics/claude-code@code-review');
+      expect(result.def.version).toBe('v1.2.0');
+      expect(result.def.ref).toBeUndefined();
+    });
+
+    it('accepts a commit SHA suffix after @name', () => {
+      const result = parsePluginSource('anthropics/claude-code@code-review#abc1234');
+      expect(result.def.repo).toBe('anthropics/claude-code@code-review');
+      expect(result.def.ref).toBe('abc1234');
+      expect(result.def.version).toBeUndefined();
+    });
+
+    it('rejects slashes in the search target (steers users to ::)', () => {
+      expect(() => parsePluginSource('anthropics/claude-code@plugins/code-review')).toThrow();
+    });
+  });
+
+  describe('GitLab @ recursive-search syntax', () => {
+    it('encodes gitlab:group/project@plugin-name into the repo string', () => {
+      const result = parsePluginSource('gitlab:acme/platform/devtools@reviewer');
+      expect(result.type).toBe('gitlab');
+      expect(result.def.repo).toBe('acme/platform/devtools@reviewer');
+      expect(result.def.subpath).toBeUndefined();
+      expect(result.idHint).toBe('reviewer');
+    });
+
+    it('accepts version and ref suffixes', () => {
+      const a = parsePluginSource('gitlab:group/project@my-plugin:v2.0.0');
+      expect(a.def.repo).toBe('group/project@my-plugin');
+      expect(a.def.version).toBe('v2.0.0');
+      const b = parsePluginSource('gitlab:group/project@my-plugin#deadbeef');
+      expect(b.def.repo).toBe('group/project@my-plugin');
+      expect(b.def.ref).toBe('deadbeef');
+    });
+  });
+
+  describe('rejection cases', () => {
+    it('rejects bare @ syntax (no owner/repo)', () => {
+      expect(() => parsePluginSource('@my-skill')).toThrow(/Unable to parse plugin source/);
+    });
+
+    it('rejects invalid source', () => {
+      expect(() => parsePluginSource('just-a-word')).toThrow(/Unable to parse plugin source/);
     });
   });
 });

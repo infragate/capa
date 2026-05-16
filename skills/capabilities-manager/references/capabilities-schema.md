@@ -1,6 +1,6 @@
 # Capabilities File Schema
 
-Full reference for `capabilities.yaml` / `capabilities.json` structure: basic layout, skills (all six types), servers, tools, rules, plugins, security, `requiresCommands`, the `agents` section, and sub-agents.
+Full reference for `capabilities.yaml` / `capabilities.json` structure: basic layout, skills (all seven types), servers, tools, rules, plugins, security, `requiresCommands`, the `agents` section, and sub-agents.
 
 ## Basic Structure (YAML)
 
@@ -20,7 +20,7 @@ options:
 
 skills:
   - id: skill-id
-    type: inline|remote|github|gitlab|local|installed
+    type: inline|remote|github|gitlab|local|installed|plugin
     def: { ... }
 
 servers:
@@ -35,19 +35,24 @@ tools:
 
 # rules: [ { id, type, content?, url?, def?, providers?, appliesTo?, alwaysApply?, description? } ]
 
-# plugins: [ { type: remote, def: { uri } } ]
+# plugins: [ { id?, type: github|gitlab, def: { repo, subpath?, version?, ref?, description? }, servers?: { <manifestKey>: { as?: <serverId> } } } ]
+# `def.repo` mirrors the skill grammar:
+#   - `owner/repo`                    — manifest at the repo root
+#   - `owner/repo@plugin-name`        — recursive search by basename / manifest name
+#   - `owner/repo::path/inside/repo`  — exact subpath
 
 # subagents: [ { id, description?, skills, tools, instructions? } ]
 ```
 
-## Skills Section (six types)
+## Skills Section (seven types)
 
 - **inline**: Embed SKILL.md content in `def.content`. Use `requires: ['@server_id.tool_id']` for MCP tools, plain ID for command tools.
 - **github**: `def.repo: owner/repo@skill-name` (search) or `owner/repo::path/to/skill-name` (exact). See "Repo string format" below for details.
 - **gitlab**: `def.repo: group/subgroup/repo@skill-name` (search) or `group/subgroup/repo::path/to/skill-name` (exact). Subgroups are supported.
 - **remote**: `def.url` to a SKILL.md URL.
 - **local**: `def.path` to a directory containing SKILL.md (read on each install).
-- **installed**: User installed the skill elsewhere; capa only records it for tool binding. CLI: `capa add <id> --installed [--requires "..."]`.
+- **installed**: User installed the skill elsewhere; capa only records it for tool binding. Declare directly in capabilities.yaml (no CLI shortcut) — set `def.description` and `def.requires` as needed.
+- **plugin**: Binds tools to a skill shipped by a configured plugin (the plugin installs the SKILL.md). Capa does not fetch or install anything from this entry; it warns at install time if the id does not match any plugin manifest skill.
 
 ## Repo string format (`@` vs `::`)
 
@@ -207,24 +212,90 @@ rules:
 
 ## Plugins Section
 
-Remote plugin packages that bundle skills, servers, and tools from a provider manifest.
+Remote plugin packages that bundle skills, servers, and tools from a provider manifest. Plugin tools and skills are NOT auto-exposed — declare the tools you want under the top-level `tools` section and the skills you want under `skills` with `type: plugin`.
 
 **Fields:**
-- `id` (optional): Stable identifier; derived from name + ref if absent.
-- `type` (required): `remote`.
-- `def.uri` (required): Plugin URI. Format: `github:owner/repo`, `github:owner/repo:v1.0.0`, or `github:owner/repo#sha`. GitLab URIs also supported (`gitlab:...`).
+- `id` (optional): Stable identifier; derived from the `@`/`::` suffix in `def.repo` or from the last repo segment when absent.
+- `type` (required): `github` or `gitlab`.
+- `def.repo` (required): Repository reference. Three accepted shapes (same grammar as skills):
+  - `owner/repo` — manifest at the repo root
+  - `owner/repo@plugin-name` — recursive search; matches a plugin directory's basename or the manifest's `name` field. Single segment, no slashes.
+  - `owner/repo::path/inside/repo` — exact subpath inside the repo
+  GitLab nested groups (`group/subgroup/project[...]`) are supported in all three shapes.
+- `def.subpath` (optional, legacy): Equivalent to writing `def.repo: owner/repo::<subpath>`. Kept for back-compat — `capa add` always emits the combined-string form. Cannot be combined with a `::` / `@` suffix in `def.repo`.
+- `def.version` (optional): Tag or branch to checkout.
+- `def.ref` (optional): Commit SHA to pin to.
+- `def.description` (optional): Human-readable description.
+- `servers` (optional): Per-server aliasing, keyed by the server name in the plugin manifest's `mcpServers` section.
+  - `as`: Stable capa server id override. Defaults to the manifest server key when omitted (e.g. a plugin manifest server keyed as `slack` is reachable at `@slack` by default).
+
+> CLI shortcut: `capa add --plugin owner/repo@code-review` writes `def.repo: owner/repo@code-review`, and `capa add --plugin owner/repo::plugins/code-review` writes `def.repo: owner/repo::plugins/code-review`. Both accept `:version` / `#sha` pinning suffixes (stored separately in `def.version` / `def.ref`).
 
 ```yaml
 plugins:
-  - type: remote
+  - id: my-plugin
+    type: github
     def:
-      uri: github:some-org/my-plugin:v1.0.0
+      repo: some-org/my-plugin
+      version: v1.0.0
 
-  - type: remote
+  - id: tools-bundle
+    type: github
     def:
-      uri: github:another-org/tools-bundle#abc123
+      repo: another-org/tools-bundle
+      ref: abc123def0
+
+  - id: frontend-design
+    type: github
+    def:
+      repo: anthropics/claude-plugins-official::plugins/frontend-design
+
+  # Recursive search alternative: capa walks the snapshot for any plugin
+  # manifest whose containing-directory basename or `name` field is
+  # "code-review". Useful for multi-plugin repos where the path may shift.
+  - id: code-review
+    type: github
+    def:
+      repo: anthropics/claude-code@code-review
+
+  - id: slack-plugin
+    type: github
+    def:
+      repo: slackapi/slack-mcp-plugin
+    # The 'servers' clause can be omitted entirely. Include it only to
+    # rename a plugin server (e.g. to resolve collisions).
+    servers:
+      slack-server:
+        as: slack
+
+  - id: devops-skills
+    type: gitlab
+    def:
+      repo: acme/platform/team/services/devops-skills
+      version: v1.0.1
 ```
 
-Plugins are resolved during `capa install`. The plugin manifest is fetched from the repository and its skills, servers, and tools are merged into the capabilities. Plugin-sourced items are tagged with `sourcePlugin` attribution for display.
+Plugins are resolved during `capa install`. The plugin manifest is fetched from the repository, skill files are copied onto disk for each provider, and the MCP servers it declares are registered under capa. Plugin tools must be declared explicitly in the top-level `tools` section using `@server-id` references; plugin skills are activated via `type: plugin` skill entries (capa warns when a `type: plugin` skill id does not match any plugin manifest skill).
+
+The `servers` field lets you rename plugin servers so skills can `requires:`-bind to plugin tools via stable aliases:
+
+```yaml
+tools:
+  - id: post_message
+    type: mcp
+    description: Post a message to a Slack channel
+    def:
+      server: "@slack"
+      tool: slack_post_message
+
+skills:
+  - id: my-slack-helper
+    type: github
+    def:
+      repo: my-org/skills@slack-helper
+      requires:
+        - "@slack.post_message"
+        - "@slack.list_channels"
+```
 
 For full YAML examples of every skill type, server type, security block, requiresCommands, tool defaults/group, rules, plugins, and agents schema, see the original capability file docs or the examples in `references/workflows-and-examples.md`.

@@ -65,12 +65,11 @@ export class SessionManager {
 
     const skillIds = JSON.parse(dbSession.skill_ids);
     const skillTools = this.getToolsForSkills(dbSession.project_id, skillIds);
-    const pluginToolIds = this.getPluginToolIds(dbSession.project_id);
     const sessionInfo: SessionInfo = {
       sessionId: dbSession.session_id,
       projectId: dbSession.project_id,
       activeSkills: skillIds,
-      availableTools: [...new Set([...skillTools, ...pluginToolIds])],
+      availableTools: [...new Set(skillTools)],
       createdAt: dbSession.created_at,
       lastActivity: dbSession.last_activity,
     };
@@ -120,8 +119,7 @@ export class SessionManager {
     const mergedSkills = [...new Set([...session.activeSkills, ...skillIds])];
     session.activeSkills = mergedSkills;
     const skillTools = this.getToolsForSkills(session.projectId, mergedSkills);
-    const pluginToolIds = this.getPluginToolIds(session.projectId);
-    session.availableTools = [...new Set([...skillTools, ...pluginToolIds])];
+    session.availableTools = [...new Set(skillTools)];
     session.lastActivity = Date.now();
 
     this.logger.debug(`Available tools: ${session.availableTools.join(', ')}`);
@@ -181,8 +179,10 @@ export class SessionManager {
   }
 
   /**
-   * Get all tools required by any skill in a project, plus all plugin MCP tool ids.
+   * Get all tools required by any skill in a project.
    * Used for 'expose-all' mode to show all available tools upfront.
+   * Plugin tools must be declared by the user in `tools:` and referenced from
+   * a skill's `requires` to be exposed — they are not auto-included.
    */
   getAllRequiredToolsForProject(projectId: string): string[] {
     const capabilities = this.getProjectCapabilities(projectId);
@@ -201,21 +201,7 @@ export class SessionManager {
       }
     }
 
-    // Include all tools from plugin MCP servers (plugins don't declare which tools skills use)
-    for (const id of this.getPluginToolIds(projectId)) {
-      requiredTools.add(id);
-    }
-
     return Array.from(requiredTools);
-  }
-
-  /**
-   * Get tool ids for all tools that came from plugins (sourcePlugin set).
-   */
-  getPluginToolIds(projectId: string): string[] {
-    const capabilities = this.getProjectCapabilities(projectId);
-    if (!capabilities) return [];
-    return capabilities.tools.filter((t) => t.sourcePlugin).map((t) => getQualifiedToolName(t));
   }
 
   /**

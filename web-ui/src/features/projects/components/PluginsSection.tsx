@@ -24,14 +24,27 @@ export function PluginsSection({ plugins, skills = [], tools = [], servers = [] 
 
   const statsMap = useMemo(() => {
     const map: Record<string, PluginStats> = {};
+    // Capa server id → plugin name (for counting user-declared tools that
+    // reference plugin servers, since plugin tools are now user-declared).
+    const serverIdToPluginName: Record<string, string> = {};
     for (const p of plugins) {
       map[p.name] = { skills: 0, tools: 0, servers: 0 };
+      for (const id of p.serverIds ?? []) {
+        serverIdToPluginName[id] = p.name;
+      }
     }
     for (const s of skills) {
       if (s.sourcePlugin?.name && map[s.sourcePlugin.name]) map[s.sourcePlugin.name].skills++;
     }
     for (const t of tools) {
-      if (t.sourcePlugin?.name && map[t.sourcePlugin.name]) map[t.sourcePlugin.name].tools++;
+      // Prefer explicit attribution; fall back to server reference for user-declared MCP tools.
+      if (t.sourcePlugin?.name && map[t.sourcePlugin.name]) {
+        map[t.sourcePlugin.name].tools++;
+      } else if (t.type === 'mcp' && t.mcpServer) {
+        const serverId = t.mcpServer.replace(/^@/, '');
+        const pluginName = serverIdToPluginName[serverId];
+        if (pluginName && map[pluginName]) map[pluginName].tools++;
+      }
     }
     for (const s of servers) {
       if (s.sourcePlugin?.name && map[s.sourcePlugin.name]) map[s.sourcePlugin.name].servers++;
