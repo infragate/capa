@@ -234,9 +234,17 @@ function splitTreeRefAndSubpath(treePath: string): { refOrBranch: string; subpat
     };
   }
 
+  if (segments.length > 1) {
+    throw new Error(
+      `Ambiguous plugin tree URL path "${treePath}". ` +
+      `For tree URLs, capa only auto-splits when the plugin path starts with "plugins/". ` +
+      `Use "owner/repo::path/to/plugin" or "gitlab:group/project::path/to/plugin" syntax to disambiguate.`
+    );
+  }
+
   return {
     refOrBranch: segments[0],
-    subpath: segments.length > 1 ? segments.slice(1).join('/') : undefined,
+    subpath: undefined,
   };
 }
 
