@@ -102,7 +102,8 @@ async function verifyRequiredCommands(commands: RequiredCommand[]): Promise<bool
 /**
  * Get tool IDs that are not exposed to MCP clients because no skill requires them.
  * In both expose-all and on-demand modes, only tools required by at least one skill
- * (or from a plugin) are exposed.
+ * are exposed. Plugin tools follow the same rule — the user must declare them in
+ * `tools:` and reference them from a skill's `requires` to expose them.
  */
 function getUnexposedToolIds(capabilities: Capabilities): string[] {
   const requiredBySkills = new Set<string>();
@@ -113,13 +114,71 @@ function getUnexposedToolIds(capabilities: Capabilities): string[] {
       }
     }
   }
-  const pluginToolIds = new Set(
-    capabilities.tools.filter((t) => t.sourcePlugin).map((t) => getQualifiedToolName(t))
-  );
-  const exposed = new Set([...requiredBySkills, ...pluginToolIds]);
   return capabilities.tools
     .map((t) => getQualifiedToolName(t))
-    .filter((id) => !exposed.has(id));
+    .filter((id) => !requiredBySkills.has(id));
+}
+
+/**
+ * Warn for each user-declared `type: plugin` skill whose id is not exposed by
+ * any resolved plugin manifest. Does not fail the install — the warning lets
+ * the user catch typos and stale references after a plugin upgrade.
+ */
+function validatePluginSkillReferences(capabilities: Capabilities): void {
+  const pluginSkills = capabilities.skills.filter((s) => s.type === 'plugin');
+  if (pluginSkills.length === 0) return;
+
+  const exposedSkillIds = new Set<string>();
+  for (const plugin of capabilities.resolvedPlugins ?? []) {
+    for (const id of plugin.skills ?? []) {
+      exposedSkillIds.add(id);
+    }
+  }
+
+  for (const skill of pluginSkills) {
+    if (!skill.sourcePlugin && !exposedSkillIds.has(skill.id)) {
+      const available = exposedSkillIds.size > 0
+        ? `Plugin skills available: ${Array.from(exposedSkillIds).sort().join(', ')}`
+        : 'No plugin currently exposes any skill.';
+      console.warn(
+        `\n⚠ Plugin skill "${skill.id}" is declared but no configured plugin exposes a skill with that id.\n  ${available}`
+      );
+    }
+  }
+}
+
+/**
+ * Warn when a plugin server contributes tools but no user-declared tool references
+ * it. With explicit tool declarations replacing auto-discovery, an unreferenced
+ * plugin server is almost always a misconfiguration.
+ */
+function warnUnreferencedPluginServers(capabilities: Capabilities): void {
+  const resolved = capabilities.resolvedPlugins ?? [];
+  if (resolved.length === 0) return;
+
+  const referencedServerIds = new Set<string>();
+  for (const tool of capabilities.tools) {
+    if (tool.type !== 'mcp') continue;
+    const mcpDef = tool.def as { server?: string };
+    if (mcpDef.server) {
+      referencedServerIds.add(mcpDef.server.replace(/^@/, ''));
+    }
+  }
+
+  for (const plugin of resolved) {
+    const orphanServers = (plugin.serverIds ?? []).filter((id) => !referencedServerIds.has(id));
+    if (orphanServers.length === 0) continue;
+    console.warn(
+      `\n⚠ Plugin "${plugin.id}" exposes server(s) [${orphanServers.join(', ')}] but no user-declared tool references them.\n  ` +
+      `Define entries in the \`tools\` section to expose plugin capabilities, e.g.:\n` +
+      `    tools:\n` +
+      `      - id: my_tool\n` +
+      `        type: mcp\n` +
+      `        def:\n` +
+      `          server: "@${orphanServers[0]}"\n` +
+      `          tool: <remote_tool_name>`
+    );
+  }
 }
 
 /**
@@ -487,7 +546,17 @@ export async function installCommand(
       process.exit(1);
     }
   }
-  
+
+  // Validate `type: plugin` skills against the resolved plugin manifests.
+  // Skills declared with `type: plugin` must match an id exposed by some plugin's
+  // manifest. Mismatches surface a warning but do not fail the install.
+  validatePluginSkillReferences(capabilitiesToUse);
+
+  // Warn about plugin servers that aren't referenced by any user-declared tool.
+  // With explicit tool declarations being the new contract, an "orphan" plugin
+  // server is usually a sign the user forgot to expose the tools they need.
+  warnUnreferencedPluginServers(capabilitiesToUse);
+
   // providers is guaranteed non-empty after resolveProvidersForInstall
   const providers = capabilitiesToUse.providers ?? resolvedProviders;
   capabilitiesToUse.providers = providers;
@@ -1024,6 +1093,15 @@ async function installSkills(
       // Installed skill - user installed it outside capa; capa only acknowledges for tool binding
       console.log(`    Acknowledging installed skill (no install needed)`);
       continue;
+    } else if (skill.type === 'plugin') {
+      // Plugin skill - the plugin already installed the SKILL.md to disk; this
+      // capabilities entry binds tools to that skill via `requires`.
+      if (skill.sourcePlugin) {
+        console.log(`    Bound to plugin "${skill.sourcePlugin.name}" (no install needed)`);
+      } else {
+        console.log(`    Acknowledging plugin skill (no install needed)`);
+      }
+      continue;
     } else if (skill.type === 'inline' && skill.def.content) {
       // Inline skill - use provided SKILL.md content
       skillMarkdown = skill.def.content;
@@ -1200,8 +1278,8 @@ async function installSkills(
       // Provide detailed error message about what's wrong
       console.error(`  ✗ Invalid skill definition: ${skill.id}`);
       
-      if (!skill.type || !['inline', 'remote', 'github', 'gitlab', 'local', 'installed'].includes(skill.type)) {
-        console.error(`    ⮡ Invalid or missing 'type'. Must be one of: 'inline', 'remote', 'github', 'gitlab', 'local', 'installed'`);
+      if (!skill.type || !['inline', 'remote', 'github', 'gitlab', 'local', 'installed', 'plugin'].includes(skill.type)) {
+        console.error(`    ⮡ Invalid or missing 'type'. Must be one of: 'inline', 'remote', 'github', 'gitlab', 'local', 'installed', 'plugin'`);
         console.error(`    ⮡ Current value: ${skill.type || '(not set)'}`);
       } else if (skill.type === 'inline') {
         console.error(`    ⮡ Type is 'inline' but 'def.content' is missing`);
@@ -1226,6 +1304,8 @@ async function installSkills(
         console.error(`    ⮡ For remote skills, provide the URL to SKILL.md in 'def.url'`);
       } else if (skill.type === 'installed') {
         console.error(`    ⮡ Type is 'installed' — skill must exist outside capa; def only needs optional description and requires`);
+      } else if (skill.type === 'plugin') {
+        console.error(`    ⮡ Type is 'plugin' — skill id must match a skill exposed by a configured plugin; def only needs optional description and requires`);
       }
       
       console.error(`\n    Example configurations:`);
@@ -1235,6 +1315,7 @@ async function installSkills(
       console.error(`    - Remote:    { "id": "my-skill", "type": "remote", "def": { "url": "https://..." } }`);
       console.error(`    - Local:     { "id": "my-skill", "type": "local", "def": { "path": "./my-skill" } }`);
       console.error(`    - Installed: { "id": "my-skill", "type": "installed", "def": { "description": "...", "requires": ["@server.tool"] } }`);
+      console.error(`    - Plugin:    { "id": "plugin-skill", "type": "plugin", "def": { "requires": ["@server.tool"] } }`);
       
       continue;
     }

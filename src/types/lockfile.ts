@@ -35,17 +35,25 @@ export interface LockSkillEntry {
 }
 
 /**
- * Locked entry for a remote plugin.
+ * Locked entry for a github/gitlab plugin.
  */
 export interface LockPluginEntry {
-  /** Stable plugin install id (slug + short ref). Matches `SourcePlugin.id`. */
+  /** Stable plugin install id. Matches `SourcePlugin.id`. */
   id: string;
   /** Source type. */
   source: LockSource;
-  /** "owner/repo" path. */
+  /** Multi-segment repo path (GitLab nested groups allowed). */
   repo: string;
-  /** Plugin URI as written in capabilities (e.g. "github:owner/repo:v1.0.0"). */
-  uri: string;
+  /**
+   * Path inside the repo where the plugin manifest lives — either pinned via
+   * `def.subpath` or resolved from a `def.search` walk. null when at root.
+   */
+  subpath: string | null;
+  /**
+   * `def.search` value from the capabilities file (recursive-search target).
+   * null when the user pinned to an exact subpath or to the repo root.
+   */
+  requestedSearchName: string | null;
   /** Version requested in capabilities. null if not specified. */
   requestedVersion: string | null;
   /** Commit SHA explicitly requested in capabilities. null if not specified. */

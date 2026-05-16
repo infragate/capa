@@ -247,3 +247,4 @@ export default adapter;
 |------|----------|-------------|-------|
 | `skills-sh.ts` | [skills.sh](https://skills.sh) | Skills | Server-side search via API |
 | `cursor-marketplace.ts` | [Cursor Marketplace](https://cursor.com/marketplace) | Plugins | Client-side filtering with in-memory cache |
+| `claude-plugins.ts` | [Claude Plugins](https://claude.com/plugins) | Plugins | Scrapes the Webflow-rendered directory; resolves source repos via `marketplace.json` |

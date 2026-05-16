@@ -2,10 +2,16 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 import type { Capabilities, Skill, MCPServer, SourcePlugin, ResolvedPluginInfo } from '../../types/capabilities';
+import type { UnifiedPluginManifest } from '../../types/plugin';
 import type { CapaDatabase } from '../../db/database';
 import type { AuthenticatedFetch } from '../../shared/authenticated-fetch';
-import { parsePluginUri, getRepoPath, getPluginInstallId } from '../../shared/plugin-uri';
-import { detectAndParseManifest, resolvePluginServerDef } from '../../shared/plugin-manifest';
+import { validatePluginDef, getPluginInstallId } from '../../shared/plugin-source';
+import {
+  detectAndParseManifest,
+  discoverPluginEntries,
+  findPluginInDirectory,
+  resolvePluginServerDef,
+} from '../../shared/plugin-manifest';
 import { getProvider } from '../../shared/providers';
 import {
   loadBlockedPhrases,
@@ -164,25 +170,42 @@ export async function resolvePlugins(
   const pluginsBase = getPluginsTempBase(projectId);
   const currentPluginIds = new Set<string>();
 
-  for (const pluginRef of plugins) {
-    if (pluginRef.type !== 'remote' || !pluginRef.def?.uri) continue;
+  const registeredServerIds = new Set(mergedServers.map(s => s.id));
 
-    const parsed = parsePluginUri(pluginRef.def.uri);
-    if (!parsed) {
-      console.warn(`  ⚠ Invalid plugin URI: ${pluginRef.def.uri}`);
+  // Map of user-declared `type: plugin` skills by id. We attach `sourcePlugin`
+  // to these when a matching plugin manifest skill is found, and avoid auto-adding
+  // a duplicate auto-merged entry for the same id.
+  const userPluginSkills = new Map<string, Skill>();
+  for (const skill of mergedSkills) {
+    if (skill.type === 'plugin') {
+      userPluginSkills.set(skill.id, skill);
+    }
+  }
+
+  for (const pluginRef of plugins) {
+    if (pluginRef.type !== 'github' && pluginRef.type !== 'gitlab') continue;
+    if (!pluginRef.def?.repo) continue;
+
+    const validated = validatePluginDef(pluginRef);
+    if ('error' in validated) {
+      console.warn(`  ⚠ Invalid plugin entry ${pluginRef.id ?? pluginRef.def.repo}: ${validated.error}`);
       continue;
     }
 
-    const repoPath = getRepoPath(parsed);
-    const platform: CachePlatform = parsed.platform === 'github' ? 'github' : 'gitlab';
-    const version = pluginRef.def.version ?? parsed.version;
-    const ref = pluginRef.def.ref ?? parsed.ref;
+    const { platform, repoPath, subpath, search, version, ref } = validated;
 
     let snapshot: GetSnapshotResult;
     try {
       const lockEntry = noCache
         ? null
-        : lockBuilder.findPlugin(pluginRef.def.uri, version ?? null, ref ?? null);
+        : lockBuilder.findPlugin({
+            source: platform,
+            repo: repoPath,
+            subpath: subpath || null,
+            requestedSearchName: search ?? null,
+            requestedVersion: version ?? null,
+            requestedRef: ref ?? null,
+          });
       const pinnedSha = lockEntry?.resolvedRef;
       snapshot = await getRepoSnapshot(platform, repoPath, authFetch, {
         version,
@@ -195,33 +218,65 @@ export async function resolvePlugins(
       continue;
     }
 
-    const sourceDir = snapshot.snapshotDir;
-
-    const manifest = detectAndParseManifest(sourceDir, providers);
-    if (!manifest) {
-      console.warn(`  ⚠ No plugin manifest found in ${repoPath}`);
-      continue;
+    // Resolve the manifest root. Three modes:
+    //   • `search`  — walk the snapshot for a manifest dir matching the name.
+    //   • `subpath` — exact path inside the repo (already provided by the user).
+    //   • neither   — the repo root itself is the plugin.
+    let manifestRoot: string;
+    let resolvedSubpath: string;
+    let manifest: UnifiedPluginManifest | null;
+    if (search) {
+      const located = findPluginInDirectory(snapshot.snapshotDir, search, providers);
+      if (!located) {
+        const available = discoverPluginEntries(snapshot.snapshotDir, providers)
+          .map((e) => e.manifestName || e.dirName)
+          .filter(Boolean)
+          .sort();
+        const availableList = available.length > 0 ? available.join(', ') : 'none';
+        console.warn(
+          `  ⚠ Plugin "${search}" not found in ${repoPath}.\n` +
+          `    Available plugins: ${availableList}\n` +
+          `    Tip: use \`subpath: <path>\` to pin an exact location, or @ to match either the directory name or the manifest's "name" field.`
+        );
+        continue;
+      }
+      manifestRoot = located.entry.subpath
+        ? join(snapshot.snapshotDir, located.entry.subpath)
+        : snapshot.snapshotDir;
+      resolvedSubpath = located.entry.subpath;
+      manifest = located.manifest;
+    } else {
+      manifestRoot = subpath ? join(snapshot.snapshotDir, subpath) : snapshot.snapshotDir;
+      if (subpath && !existsSync(manifestRoot)) {
+        console.warn(`  ⚠ Plugin subpath not found: ${subpath} in ${repoPath}`);
+        continue;
+      }
+      resolvedSubpath = subpath;
+      manifest = detectAndParseManifest(manifestRoot, providers);
+      if (!manifest) {
+        console.warn(`  ⚠ No plugin manifest found in ${repoPath}${subpath ? `/${subpath}` : ''}`);
+        continue;
+      }
     }
 
-    const refOrVersion = ref ?? version ?? '';
-    const pluginInstallId = getPluginInstallId(manifest.name, refOrVersion);
+    const pluginInstallId = getPluginInstallId(pluginRef.id ?? manifest.name);
     currentPluginIds.add(pluginInstallId);
 
     const pluginStablePath = join(pluginsBase, pluginInstallId);
     try {
       if (existsSync(pluginStablePath)) rmSync(pluginStablePath, { recursive: true, force: true });
-      copyPluginToStable(sourceDir, pluginStablePath);
+      copyPluginToStable(manifestRoot, pluginStablePath);
     } catch (err: any) {
       console.error(`  ✗ Failed to copy plugin to ${pluginStablePath}: ${err.message}`);
       continue;
     }
 
-    // Record this plugin in the lockfile.
     const lockPluginEntry: LockPluginEntry = {
       id: pluginInstallId,
       source: platform,
       repo: repoPath,
-      uri: pluginRef.def.uri,
+      subpath: resolvedSubpath || null,
+      requestedSearchName: search ?? null,
       requestedVersion: version ?? null,
       requestedRef: ref ?? null,
       resolvedRef: snapshot.resolvedSha,
@@ -231,19 +286,27 @@ export async function resolvePlugins(
     };
     lockBuilder.upsertPlugin(lockPluginEntry);
 
-    const repository = `https://${parsed.platform}.com/${parsed.owner}/${parsed.repo}`;
+    const refish = ref ?? version ?? 'HEAD';
+    const repository = resolvedSubpath
+      ? `https://${platform}.com/${repoPath}/tree/${refish}/${resolvedSubpath}`
+      : `https://${platform}.com/${repoPath}`;
     const sourcePlugin: SourcePlugin = {
       id: pluginInstallId,
       name: manifest.name,
       provider: manifest.provider,
     };
-    resolvedPlugins.push({
+    const pluginSkillIds: string[] = [];
+    const pluginServerIds: string[] = [];
+    const resolvedPluginInfo: ResolvedPluginInfo = {
       id: pluginInstallId,
       name: manifest.name,
       version: manifest.version,
       provider: manifest.provider,
       repository,
-    });
+      skills: pluginSkillIds,
+      serverIds: pluginServerIds,
+    };
+    resolvedPlugins.push(resolvedPluginInfo);
 
     const security = capabilities.options?.security;
     const blockPhrasesEnabled = isBlockedPhrasesEnabled(security);
@@ -255,6 +318,8 @@ export async function resolvePlugins(
     for (const entry of manifest.skillEntries) {
       const srcSkillDir = join(pluginStablePath, entry.relativePath);
       if (!existsSync(join(srcSkillDir, 'SKILL.md'))) continue;
+
+      pluginSkillIds.push(entry.id);
 
       for (const client of providers) {
         const providerEntry = getProvider(client);
@@ -289,20 +354,39 @@ export async function resolvePlugins(
         }
       }
 
-      const firstProviderDir = getProvider(providers[0])?.skillsDir;
-      const localPath = firstProviderDir ? join(firstProviderDir, entry.id) : entry.id;
+      // If the user has declared a `type: plugin` skill with this id, attach the
+      // sourcePlugin attribution to their entry and skip the auto-merge.
+      const userEntry = userPluginSkills.get(entry.id);
+      if (userEntry) {
+        userEntry.sourcePlugin = sourcePlugin;
+        continue;
+      }
+
+      // Auto-merge: the plugin contributed this skill and the user didn't
+      // declare it explicitly. We still surface it as `type: plugin` so the
+      // UI and any downstream tooling can tell where it came from. No
+      // `requires` are inferred — declare a `type: plugin` entry in
+      // capabilities.yaml to bind tools to the skill.
       mergedSkills.push({
         id: entry.id,
-        type: 'local',
-        def: { path: localPath },
+        type: 'plugin',
+        def: {},
         sourcePlugin,
       });
     }
 
     for (const [serverKey, serverDef] of Object.entries(manifest.mcpServers)) {
+      const config = pluginRef.servers?.[serverKey];
+      const serverId = config?.as ?? serverKey;
+
+      if (registeredServerIds.has(serverId)) {
+        console.warn(`  ⚠ Plugin server id "${serverId}" collides with an existing server; skipping. Rename with \`servers.${serverKey}.as\` in the plugin entry.`);
+        continue;
+      }
+      registeredServerIds.add(serverId);
+      pluginServerIds.push(serverId);
+
       const resolvedDef = resolvePluginServerDef(serverDef, pluginStablePath);
-      const serverId = `plugin-${pluginInstallId}-${serverKey}`;
-      const displayName = `${serverKey}-server`;
       if (resolvedDef.url) {
         mergedServers.push({
           id: serverId,
@@ -313,7 +397,8 @@ export async function resolvePlugins(
             oauth2: resolvedDef.oauth2,
           },
           sourcePlugin,
-          displayName,
+          sourcePluginServerKey: serverKey,
+          displayName: serverKey,
         });
       } else if (resolvedDef.cmd) {
         mergedServers.push({
@@ -326,8 +411,21 @@ export async function resolvePlugins(
             cwd: pluginStablePath,
           },
           sourcePlugin,
-          displayName,
+          sourcePluginServerKey: serverKey,
+          displayName: serverKey,
         });
+      }
+    }
+
+    if (pluginRef.servers) {
+      const manifestKeys = Object.keys(manifest.mcpServers);
+      for (const configKey of Object.keys(pluginRef.servers)) {
+        if (!manifest.mcpServers[configKey]) {
+          const available = manifestKeys.length > 0
+            ? `Available servers: ${manifestKeys.join(', ')}`
+            : 'The plugin manifest declares no MCP servers.';
+          console.warn(`  ⚠ Plugin "${pluginInstallId}": servers config key "${configKey}" does not match any server in the plugin manifest. ${available}`);
+        }
       }
     }
   }

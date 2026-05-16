@@ -597,20 +597,7 @@ class CapaServer {
       // Store capabilities
       this.sessionManager.setProjectCapabilities(projectId, capabilities);
 
-      // Enrich with tools from plugin MCP servers (list tools from each server with sourcePlugin)
-      let capabilitiesToUse = capabilities;
-      const pluginServers = capabilities.servers.filter((s) => s.sourcePlugin);
-      if (pluginServers.length > 0) {
-        try {
-          const mcpServer = this.getOrCreateMCPServer(projectId);
-          if (mcpServer) {
-            capabilitiesToUse = await mcpServer.enrichCapabilitiesWithPluginTools(capabilities);
-            this.sessionManager.setProjectCapabilities(projectId, capabilitiesToUse);
-          }
-        } catch (error: any) {
-          apiLogger.warn(`Plugin tool discovery failed: ${error.message}`);
-        }
-      }
+      const capabilitiesToUse = capabilities;
 
       // Detect OAuth2 requirements for HTTP-based MCP servers
       apiLogger.info('Detecting OAuth2 requirements...');

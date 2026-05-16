@@ -168,18 +168,31 @@ export class LockfileBuilder {
   }
 
   /**
-   * Look up a plugin entry by URI. Returns the entry only if its requested
-   * version/ref still matches.
+   * Look up a plugin entry by structured key.
+   *
+   * Match precedence:
+   *   • When `requestedSearchName` is set, the lookup pivots on that field and
+   *     ignores `subpath` (which is whatever the previous walk resolved to —
+   *     not a stable identity).
+   *   • Otherwise the lookup compares `subpath` directly.
    */
-  findPlugin(
-    uri: string,
-    requestedVersion: string | null,
-    requestedRef: string | null
-  ): LockPluginEntry | null {
+  findPlugin(query: {
+    source: string;
+    repo: string;
+    subpath: string | null;
+    requestedSearchName?: string | null;
+    requestedVersion: string | null;
+    requestedRef: string | null;
+  }): LockPluginEntry | null {
+    const wantedSearch = query.requestedSearchName ?? null;
     for (const entry of this.plugins.values()) {
-      if (entry.uri !== uri) continue;
-      if ((entry.requestedVersion ?? null) !== (requestedVersion ?? null)) continue;
-      if ((entry.requestedRef ?? null) !== (requestedRef ?? null)) continue;
+      if (entry.source !== query.source) continue;
+      if (entry.repo !== query.repo) continue;
+      const entrySearch = entry.requestedSearchName ?? null;
+      if (entrySearch !== wantedSearch) continue;
+      if (wantedSearch === null && (entry.subpath ?? null) !== (query.subpath ?? null)) continue;
+      if ((entry.requestedVersion ?? null) !== (query.requestedVersion ?? null)) continue;
+      if ((entry.requestedRef ?? null) !== (query.requestedRef ?? null)) continue;
       return entry;
     }
     return null;
