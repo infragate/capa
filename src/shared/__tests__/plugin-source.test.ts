@@ -191,6 +191,12 @@ describe('validatePluginDef', () => {
       expect('error' in result).toBe(true);
       if ('error' in result) expect(result.error).toContain('cannot be combined');
     });
+
+    it('rejects def.repo values that mix @<name> with ::<path>', () => {
+      const result = validatePluginDef(mkPlugin({ type: 'github', def: { repo: 'owner/repo@v1::sub' } }));
+      expect('error' in result).toBe(true);
+      if ('error' in result) expect(result.error).toContain('cannot combine');
+    });
   });
 });
 

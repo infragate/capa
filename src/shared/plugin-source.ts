@@ -58,13 +58,19 @@ export interface PluginDefError {
  * Pinning suffixes (`:version` / `#sha`) are NOT accepted here; plugins keep
  * those in dedicated `def.version` / `def.ref` fields.
  */
-function splitRepoString(raw: string): { repoPath: string; subpath?: string; search?: string } {
+function splitRepoString(raw: string): { repoPath: string; subpath?: string; search?: string; error?: string } {
   let s = raw.replace(/\.git$/, '');
   const exactIdx = s.indexOf('::');
+  const atIdx = s.indexOf('@');
+  if (exactIdx !== -1 && atIdx !== -1 && atIdx < exactIdx) {
+    return {
+      repoPath: s,
+      error: `Invalid repo selector in "${raw}": cannot combine "@<name>" and "::<path>" in the same def.repo value.`,
+    };
+  }
   if (exactIdx !== -1) {
     return { repoPath: s.slice(0, exactIdx), subpath: s.slice(exactIdx + 2) };
   }
-  const atIdx = s.indexOf('@');
   if (atIdx !== -1) {
     return { repoPath: s.slice(0, atIdx), search: s.slice(atIdx + 1) };
   }
@@ -81,7 +87,10 @@ export function validatePluginDef(plugin: Plugin): ValidatedPluginDef | PluginDe
     return { error: 'Missing required field: def.repo' };
   }
 
-  const { repoPath, subpath: repoSubpath, search: repoSearch } = splitRepoString(def.repo);
+  const { repoPath, subpath: repoSubpath, search: repoSearch, error: repoError } = splitRepoString(def.repo);
+  if (repoError) {
+    return { error: repoError };
+  }
   if (!isValidPath(repoPath, 2)) {
     return { error: `Invalid repo path: "${def.repo}". Must be at least two segments (e.g. "owner/repo").` };
   }
