@@ -387,7 +387,6 @@ export async function resolvePlugins(
       pluginServerIds.push(serverId);
 
       const resolvedDef = resolvePluginServerDef(serverDef, pluginStablePath);
-      // const displayName = `${serverKey}-server`;
       if (resolvedDef.url) {
         mergedServers.push({
           id: serverId,
