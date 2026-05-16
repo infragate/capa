@@ -770,6 +770,15 @@ describe('parsePluginSource', () => {
       expect(result.idHint).toBe('code-review');
     });
 
+    it('parses GitHub tree URL when the branch name contains slashes', () => {
+      const result = parsePluginSource(
+        'https://github.com/owner/repo/tree/feature/foo/plugins/my-plugin'
+      );
+      expect(result.type).toBe('github');
+      expect(result.def.repo).toBe('owner/repo::plugins/my-plugin');
+      expect(result.idHint).toBe('my-plugin');
+    });
+
     it('infers SHA ref from tree URL', () => {
       const result = parsePluginSource(
         'https://github.com/owner/repo/tree/abc1234def5/plugins/x'
@@ -799,6 +808,15 @@ describe('parsePluginSource', () => {
       expect(result.type).toBe('gitlab');
       expect(result.def.repo).toBe('group/sub/project::plugins/my-plugin');
       expect(result.def.subpath).toBeUndefined();
+    });
+
+    it('parses GitLab tree URL when the branch name contains slashes', () => {
+      const result = parsePluginSource(
+        'https://gitlab.com/group/sub/project/-/tree/feature/foo/plugins/my-plugin'
+      );
+      expect(result.type).toBe('gitlab');
+      expect(result.def.repo).toBe('group/sub/project::plugins/my-plugin');
+      expect(result.idHint).toBe('my-plugin');
     });
   });
 

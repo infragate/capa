@@ -166,10 +166,15 @@ const adapter: RegistryAdapter = {
     const p = all.find((x: any) => String(x.id) === id || x.name === id);
     if (!p) throw new Error(`Plugin "${id}" not found`);
 
-    const resolved = pluginDef(p.gitUrl);
     const publisherName = str(p.publisher) ?? '';
     const description = str(p.description) ?? '';
     const itemId = p.name ?? String(p.id);
+    const resolved = pluginDef(p.gitUrl);
+    if (!resolved) {
+      throw new Error(
+        `Cursor marketplace plugin "${itemId}" does not expose a supported GitHub or GitLab repository URL.`
+      );
+    }
 
     const previewParts: string[] = [];
     previewParts.push(`# ${p.displayName ?? p.name}\n`);
@@ -195,9 +200,7 @@ const adapter: RegistryAdapter = {
     previewParts.push('```');
     previewParts.push('');
 
-    const snippet: Record<string, unknown> = resolved
-      ? { id: itemId, type: resolved.type, def: resolved.def }
-      : { id: itemId, type: 'github', def: { repo: `${p.name ?? p.id}` } };
+    const snippet: Record<string, unknown> = { id: itemId, type: resolved.type, def: resolved.def };
 
     const detail: RegistryItemDetail = {
       ...toSummary(p),

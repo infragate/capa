@@ -220,6 +220,26 @@ interface ParsedPluginSource {
   idHint: string;
 }
 
+function splitTreeRefAndSubpath(treePath: string): { refOrBranch: string; subpath?: string } {
+  const segments = treePath.split('/').filter(Boolean);
+  if (segments.length === 0) {
+    return { refOrBranch: '' };
+  }
+
+  const pluginRootIndex = segments.findIndex((segment) => segment === 'plugins');
+  if (pluginRootIndex > 0) {
+    return {
+      refOrBranch: segments.slice(0, pluginRootIndex).join('/'),
+      subpath: segments.slice(pluginRootIndex).join('/'),
+    };
+  }
+
+  return {
+    refOrBranch: segments[0],
+    subpath: segments.length > 1 ? segments.slice(1).join('/') : undefined,
+  };
+}
+
 /**
  * Parse a plugin source string into a structured plugin definition.
  *
@@ -241,10 +261,13 @@ interface ParsedPluginSource {
 export function parsePluginSource(source: string): ParsedPluginSource {
   // GitHub URL: https://github.com/<owner>/<repo>[/tree/<ref>/<subpath>]
   const ghUrlMatch = source.match(
-    /^https?:\/\/github\.com\/([\w.-]+)\/([\w.-]+?)(?:\.git)?(?:\/tree\/([\w.-]+)(?:\/([\w./-]+))?)?$/
+    /^https?:\/\/github\.com\/([\w.-]+)\/([\w.-]+?)(?:\.git)?(?:\/tree\/([\w./-]+))?$/
   );
   if (ghUrlMatch) {
-    const [, owner, repo, refOrBranch, subpath] = ghUrlMatch;
+    const [, owner, repo, treePath] = ghUrlMatch;
+    const { refOrBranch, subpath } = treePath
+      ? splitTreeRefAndSubpath(treePath)
+      : { refOrBranch: undefined, subpath: undefined };
     const def: PluginDefinition = {
       repo: subpath ? `${owner}/${repo}::${subpath}` : `${owner}/${repo}`,
     };
@@ -261,10 +284,13 @@ export function parsePluginSource(source: string): ParsedPluginSource {
 
   // GitLab URL: https://gitlab.com/<group>/.../<project>[-/tree/<ref>/<subpath>]
   const glUrlMatch = source.match(
-    /^https?:\/\/gitlab\.com\/([\w.-]+(?:\/[\w.-]+)+?)(?:\.git)?(?:\/-\/tree\/([\w.-]+)(?:\/([\w./-]+))?)?$/
+    /^https?:\/\/gitlab\.com\/([\w.-]+(?:\/[\w.-]+)+?)(?:\.git)?(?:\/-\/tree\/([\w./-]+))?$/
   );
   if (glUrlMatch) {
-    const [, repoPath, refOrBranch, subpath] = glUrlMatch;
+    const [, repoPath, treePath] = glUrlMatch;
+    const { refOrBranch, subpath } = treePath
+      ? splitTreeRefAndSubpath(treePath)
+      : { refOrBranch: undefined, subpath: undefined };
     const def: PluginDefinition = {
       repo: subpath ? `${repoPath}::${subpath}` : repoPath,
     };
