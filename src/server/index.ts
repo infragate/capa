@@ -15,6 +15,7 @@ import { RegistryManager } from '../shared/registries/manager';
 import type { RegistryCapability } from '../types/registry';
 import { VERSION } from '../version';
 import { logger } from '../shared/logger';
+import { projectUiUrl } from '../shared/ui-urls';
 
 // Import the React SPA bundle as text at compile time - this bundles it into the binary
 import spaHtml from '../../web-ui/dist/index.html' with { type: 'text' };
@@ -719,7 +720,7 @@ class CapaServer {
         if (needsOAuth2Connection) {
           apiLogger.warn(`OAuth2 connections needed: ${oauth2Servers.filter(s => !s.isConnected).map(s => s.serverId).join(', ')}`);
         }
-        const credentialsUrl = `http://${this.settings.server.host}:${this.settings.server.port}/ui?project=${projectId}`;
+        const credentialsUrl = projectUiUrl(this.uiOrigin(), projectId);
         
         return new Response(
           JSON.stringify({
@@ -870,6 +871,10 @@ class CapaServer {
     );
   }
 
+  private uiOrigin(): string {
+    return `http://${this.settings.server.host}:${this.settings.server.port}`;
+  }
+
   /** Close and remove the callback server for a port (after completion or idle timeout). */
   private closeOAuthCallbackServer(port: number): void {
     const entry = this.oauthCallbackServers.get(port);
@@ -889,7 +894,7 @@ class CapaServer {
     if (this.oauthCallbackServers.has(port)) return;
     const self = this;
     const IDLE_MS = 5 * 60 * 1000; // 5 minutes
-    const mainBase = `http://${this.settings.server.host}:${this.settings.server.port}`;
+    const mainBase = this.uiOrigin();
     const server = createServer((req, res) => {
       if (req.method !== 'GET' || !req.url) {
         res.writeHead(405);
@@ -914,12 +919,21 @@ class CapaServer {
       const error = reqUrl.searchParams.get('error');
       const apiLogger = self.logger.child('API');
 
-      const redirectToUi = (projectId: string | undefined, success: boolean, message?: string) => {
+      const redirectToUi = (
+        projectId: string | undefined,
+        success: boolean,
+        message?: string,
+        serverId?: string
+      ) => {
         closeWhenDone(); // register before sending so 'finish' fires reliably
-        const q = new URLSearchParams();
-        if (projectId) q.set('project', projectId);
-        q.set(success ? 'oauth_success' : 'oauth_error', message ?? (success ? 'true' : 'Unknown error'));
-        const loc = `${mainBase}/ui?${q.toString()}`;
+        const loc = projectId
+          ? projectUiUrl(mainBase, projectId, {
+              ...(success
+                ? { oauth_success: message ?? 'true' }
+                : { oauth_error: message ?? 'Unknown error' }),
+              ...(serverId ? { server: serverId } : {}),
+            })
+          : `${mainBase}/`;
         res.writeHead(302, { Location: loc });
         res.end();
       };
@@ -948,13 +962,7 @@ class CapaServer {
           return;
         }
         apiLogger.success(`OAuth2 flow completed for server: ${result.serverId}`);
-        closeWhenDone(); // register before sending so 'finish' fires reliably
-        const q = new URLSearchParams();
-        if (result.projectId) q.set('project', result.projectId);
-        q.set('oauth_success', 'true');
-        if (result.serverId) q.set('server', result.serverId);
-        res.writeHead(302, { Location: `${mainBase}/ui?${q.toString()}` });
-        res.end();
+        redirectToUi(result.projectId, true, 'true', result.serverId);
       }).catch((err: any) => {
         apiLogger.failure(`Callback error: ${err.message}`);
         redirectToUi(undefined, false, err.message ?? 'Token exchange failed');
@@ -1051,8 +1059,7 @@ class CapaServer {
 
       if (error) {
         apiLogger.error(`OAuth2 callback error: ${error}`);
-        // Redirect to UI with error
-        const redirectUrl = `http://${this.settings.server.host}:${this.settings.server.port}/ui?project=${projectId}&oauth_error=${encodeURIComponent(error)}`;
+        const redirectUrl = projectUiUrl(this.uiOrigin(), projectId, { oauth_error: error });
         return new Response(null, {
           status: 302,
           headers: { Location: redirectUrl },
@@ -1072,7 +1079,9 @@ class CapaServer {
       
       if (!result.success) {
         apiLogger.failure(`Callback failed: ${result.error}`);
-        const redirectUrl = `http://${this.settings.server.host}:${this.settings.server.port}/ui?project=${projectId}&oauth_error=${encodeURIComponent(result.error || 'Unknown error')}`;
+        const redirectUrl = projectUiUrl(this.uiOrigin(), projectId, {
+          oauth_error: result.error || 'Unknown error',
+        });
         return new Response(null, {
           status: 302,
           headers: { Location: redirectUrl },
@@ -1080,9 +1089,11 @@ class CapaServer {
       }
 
       apiLogger.success(`OAuth2 flow completed for server: ${result.serverId}`);
-      
-      // Redirect back to UI with success
-      const redirectUrl = `http://${this.settings.server.host}:${this.settings.server.port}/ui?project=${projectId}&oauth_success=true&server=${result.serverId}`;
+
+      const redirectUrl = projectUiUrl(this.uiOrigin(), projectId, {
+        oauth_success: 'true',
+        ...(result.serverId ? { server: result.serverId } : {}),
+      });
       return new Response(null, {
         status: 302,
         headers: { Location: redirectUrl },
@@ -1090,7 +1101,9 @@ class CapaServer {
     } catch (error: any) {
       const apiLogger = this.logger.child('API');
       apiLogger.failure(`Error: ${error.message}`);
-      const redirectUrl = `http://${this.settings.server.host}:${this.settings.server.port}/ui?project=${projectId}&oauth_error=${encodeURIComponent(error.message)}`;
+      const redirectUrl = projectUiUrl(this.uiOrigin(), projectId, {
+        oauth_error: error.message,
+      });
       return new Response(null, {
         status: 302,
         headers: { Location: redirectUrl },
