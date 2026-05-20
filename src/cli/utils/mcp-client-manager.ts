@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, unlinkSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from 'fs';
 import { join, dirname } from 'path';
 import { getProvider, getAllProviders } from '../../shared/providers';
 import { readTomlFile, writeTomlFile, setNestedKey, deleteNestedKey } from '../../shared/toml-io';
@@ -156,10 +156,17 @@ export async function unregisterSubAgentMCPServer(
 }
 
 /**
- * Remove any stale capa-{agentId} sub-agent entries from Cursor's MCP config.
- * Also cleans up legacy .cursor/rules/*.mdc files from old capa versions.
+ * Remove stale capa-{agentId} sub-agent entries from Cursor's MCP config and
+ * legacy per-sub-agent `.cursor/rules/{agentId}.mdc` scoping files from older
+ * capa versions. Does not touch capa-managed capability rules.
+ *
+ * @param removedSubAgentIds - Sub-agent ids dropped from the capabilities file
+ *   since the last install; only their legacy `.mdc` files are removed.
  */
-export async function purgeCursorSubAgentMCPEntries(projectPath: string): Promise<void> {
+export async function purgeCursorSubAgentMCPEntries(
+  projectPath: string,
+  removedSubAgentIds: string[] = []
+): Promise<void> {
   const configPath = join(projectPath, '.cursor', 'mcp.json');
   if (!existsSync(configPath)) return;
 
@@ -181,15 +188,20 @@ export async function purgeCursorSubAgentMCPEntries(projectPath: string): Promis
     }
   }
 
+  if (removedSubAgentIds.length === 0) return;
+
   const rulesDir = join(projectPath, '.cursor', 'rules');
-  if (existsSync(rulesDir)) {
-    const staleRules = readdirSync(rulesDir).filter((f) => f.endsWith('.mdc'));
-    for (const file of staleRules) {
-      unlinkSync(join(rulesDir, file));
-    }
-    if (staleRules.length > 0) {
-      console.log(`  ✓ Removed ${staleRules.length} stale .cursor/rules/*.mdc file(s)`);
-    }
+  let removedLegacyRules = 0;
+  for (const agentId of removedSubAgentIds) {
+    const legacyPath = join(rulesDir, `${agentId}.mdc`);
+    if (!existsSync(legacyPath)) continue;
+    unlinkSync(legacyPath);
+    removedLegacyRules++;
+  }
+  if (removedLegacyRules > 0) {
+    console.log(
+      `  ✓ Removed ${removedLegacyRules} legacy sub-agent rule file(s) from .cursor/rules/`
+    );
   }
 }
 
