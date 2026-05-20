@@ -5,6 +5,7 @@ import { tmpdir } from 'os';
 import {
   registerMCPServer,
   unregisterMCPServer,
+  purgeCursorSubAgentMCPEntries,
   getSupportedMCPClients,
   getMCPClientDisplayName,
 } from '../mcp-client-manager';
@@ -386,6 +387,42 @@ describe('mcp-client-manager', () => {
       const config = JSON.parse(readFileSync(configPath, 'utf-8'));
       
       expect(config.mcpServers['capa']).toBeDefined();
+    });
+  });
+
+  describe('purgeCursorSubAgentMCPEntries', () => {
+    it('removes legacy sub-agent .mdc only for removed agent ids, not capa rules', async () => {
+      const rulesDir = join(projectPath, '.cursor', 'rules');
+      mkdirSync(rulesDir, { recursive: true });
+      writeFileSync(join(rulesDir, 'code-style.mdc'), '# capa rule', 'utf-8');
+      writeFileSync(join(rulesDir, 'researcher.mdc'), '# legacy sub-agent scope', 'utf-8');
+      writeFileSync(join(rulesDir, 'user-custom.mdc'), '# user file', 'utf-8');
+
+      mkdirSync(join(projectPath, '.cursor'), { recursive: true });
+      writeFileSync(
+        join(projectPath, '.cursor', 'mcp.json'),
+        JSON.stringify({ mcpServers: { 'capa-old-agent': { url: 'http://x/mcp' } } }, null, 2),
+        'utf-8'
+      );
+
+      await purgeCursorSubAgentMCPEntries(projectPath, ['researcher']);
+
+      expect(existsSync(join(rulesDir, 'code-style.mdc'))).toBe(true);
+      expect(existsSync(join(rulesDir, 'user-custom.mdc'))).toBe(true);
+      expect(existsSync(join(rulesDir, 'researcher.mdc'))).toBe(false);
+
+      const config = JSON.parse(readFileSync(join(projectPath, '.cursor', 'mcp.json'), 'utf-8'));
+      expect(config.mcpServers['capa-old-agent']).toBeUndefined();
+    });
+
+    it('does not touch .cursor/rules when no sub-agents were removed', async () => {
+      const rulesDir = join(projectPath, '.cursor', 'rules');
+      mkdirSync(rulesDir, { recursive: true });
+      writeFileSync(join(rulesDir, 'code-style.mdc'), '# capa rule', 'utf-8');
+
+      await purgeCursorSubAgentMCPEntries(projectPath, []);
+
+      expect(existsSync(join(rulesDir, 'code-style.mdc'))).toBe(true);
     });
   });
 
