@@ -10,6 +10,16 @@ interface LoadedRegistry {
   mtime: number;
 }
 
+export interface RegistryLoadFailure {
+  path: string;
+  error: string;
+}
+
+export interface RegistryLoadResult {
+  adapters: Map<string, RegistryAdapter>;
+  failures?: RegistryLoadFailure[];
+}
+
 const VALID_EXTENSIONS = new Set(['.ts', '.js', '.mjs']);
 
 const registryLogger = logger.child('Registries');
@@ -49,15 +59,16 @@ function isValidAdapter(obj: unknown): obj is RegistryAdapter {
 export class RegistryLoader {
   private cache = new Map<string, LoadedRegistry>();
 
-  async loadAll(): Promise<Map<string, RegistryAdapter>> {
+  async loadAll(): Promise<RegistryLoadResult> {
     const dir = getRegistriesDir();
-    const result = new Map<string, RegistryAdapter>();
+    const adapters = new Map<string, RegistryAdapter>();
+    const failures: RegistryLoadFailure[] = [];
 
     let files: string[];
     try {
       files = readdirSync(dir);
     } catch {
-      return result;
+      return { adapters };
     }
 
     const seen = new Set<string>();
@@ -82,7 +93,7 @@ export class RegistryLoader {
           continue;
         }
         seen.add(id);
-        result.set(id, cached.adapter);
+        adapters.set(id, cached.adapter);
         continue;
       }
 
@@ -107,10 +118,12 @@ export class RegistryLoader {
 
         seen.add(id);
         this.cache.set(filePath, { adapter, filePath, mtime });
-        result.set(id, adapter);
+        adapters.set(id, adapter);
         registryLogger.info(`Loaded registry "${id}" from ${file}`);
-      } catch (err: any) {
-        registryLogger.warn(`Failed to load ${file}: ${err.message}`);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(`Failed to load registry adapter ${filePath}: ${message}`);
+        failures.push({ path: filePath, error: message });
       }
     }
 
@@ -122,6 +135,6 @@ export class RegistryLoader {
       }
     }
 
-    return result;
+    return failures.length > 0 ? { adapters, failures } : { adapters };
   }
 }

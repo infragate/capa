@@ -1,9 +1,7 @@
 #!/usr/bin/env bun
 /**
- * Update version in install scripts (install.sh and install.ps1)
- * 
- * This script replaces the APP_VERSION variable in the install scripts
- * with the version from the git tag or package.json
+ * Update FALLBACK_VERSION in install.sh and install.ps1 to match the
+ * release tag (GITHUB_REF) or package.json when run locally.
  */
 
 import { readFileSync, writeFileSync } from 'fs';
@@ -56,22 +54,19 @@ function updateInstallScript(filePath: string, version: string) {
   let pattern: RegExp;
   
   if (filePath.endsWith('.ps1')) {
-    // PowerShell: $APP_VERSION = "..."
-    pattern = /^(\$APP_VERSION\s*=\s*)"[^"]*"/m;
+    pattern = /^(\$FALLBACK_VERSION\s*=\s*)"[^"]*"/m;
     updated = content.replace(pattern, `$1"${version}"`);
   } else {
-    // Shell script: APP_VERSION="..."
-    pattern = /^(APP_VERSION=)"[^"]*"/m;
+    pattern = /^(FALLBACK_VERSION=)"[^"]*"/m;
     updated = content.replace(pattern, `$1"${version}"`);
   }
   
   if (content === updated) {
-    // No change needed - version is already correct
     const match = content.match(pattern);
     if (match) {
       console.log(`✓ ${filePath} already at version ${version}`);
     } else {
-      console.warn(`⚠ No APP_VERSION found in ${filePath}`);
+      console.warn(`⚠ No FALLBACK_VERSION found in ${filePath}`);
     }
     return;
   }

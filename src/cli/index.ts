@@ -15,6 +15,7 @@ import { cacheInfoCommand, cacheCleanCommand } from './commands/cache';
 import { registryListCommand, registryPathCommand } from './commands/registry';
 import { checkForUpdates } from './utils/version-check';
 import { VERSION } from '../version';
+import { setFlags, ExitCode, error } from './ui';
 
 // Check if running as server
 if (process.argv[2] === '__server__') {
@@ -25,6 +26,7 @@ if (process.argv[2] === '__server__') {
   });
 } else {
   (async () => {
+    try {
     // Start version check in the background while the command runs
     const isUpgradeCommand = process.argv[2] === 'upgrade';
     const updateCheckPromise = isUpgradeCommand ? Promise.resolve(null) : checkForUpdates();
@@ -34,7 +36,23 @@ if (process.argv[2] === '__server__') {
     program
       .name('capa')
       .description('An agentic skills and tools package manager')
-      .version(VERSION);
+      .version(VERSION)
+      .option('--json', 'Machine-readable output')
+      .option('-q, --quiet', 'Suppress non-essential output')
+      .option('-v, --verbose', 'Verbose output')
+      .option('--no-color', 'Disable colored output')
+      .option('-y, --yes', 'Auto-accept all confirms');
+
+    program.hook('preAction', () => {
+      const opts = program.opts();
+      setFlags({
+        json: Boolean(opts.json),
+        quiet: Boolean(opts.quiet),
+        verbose: Boolean(opts.verbose),
+        noColor: !opts.color,
+        yes: Boolean(opts.yes),
+      });
+    });
 
     program
       .command('init')
@@ -167,6 +185,11 @@ if (process.argv[2] === '__server__') {
     if (updateInfo?.hasUpdate) {
       console.log(`\n  A new version of capa is available: ${updateInfo.latestVersion} (current: ${updateInfo.currentVersion})`);
       console.log('  Run "capa upgrade" to update.\n');
+    }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      error(message);
+      process.exit(ExitCode.SYSTEM_ERROR);
     }
   })();
 }

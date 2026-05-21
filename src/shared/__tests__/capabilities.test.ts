@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach, spyOn } from 'bun:test';
 import {
   parseCapabilitiesFile,
   createDefaultCapabilities,
   writeCapabilitiesFile,
+  normalizeCapabilities,
 } from '../capabilities';
 import { mkdtempSync, rmSync } from 'fs';
 import { join } from 'path';
@@ -18,6 +19,100 @@ describe('capabilities', () => {
 
   afterEach(() => {
     rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  describe('normalizeCapabilities', () => {
+    it('throws a clear error for null input', () => {
+      expect(() => normalizeCapabilities(null)).toThrow(
+        'capabilities file is empty or not a YAML/JSON object'
+      );
+    });
+
+    it('throws a clear error for undefined input', () => {
+      expect(() => normalizeCapabilities(undefined)).toThrow(
+        'capabilities file is empty or not a YAML/JSON object'
+      );
+    });
+
+    it('throws a clear error for non-object input', () => {
+      expect(() => normalizeCapabilities('not-an-object')).toThrow(
+        'capabilities file is empty or not a YAML/JSON object'
+      );
+      expect(() => normalizeCapabilities([])).toThrow(
+        'capabilities file is empty or not a YAML/JSON object'
+      );
+    });
+
+    it('defaults missing skills to an empty array', () => {
+      const result = normalizeCapabilities({});
+      expect(result.skills).toEqual([]);
+    });
+
+    it('defaults missing servers, tools, plugins, rules, and subagents to empty arrays', () => {
+      const result = normalizeCapabilities({});
+      expect(result.servers).toEqual([]);
+      expect(result.tools).toEqual([]);
+      expect(result.plugins).toEqual([]);
+      expect(result.rules).toEqual([]);
+      expect(result.subagents).toEqual([]);
+    });
+
+    it('defaults missing options to an empty object', () => {
+      const result = normalizeCapabilities({});
+      expect(result.options).toEqual({});
+    });
+
+    it('keeps unknown top-level keys and warns', () => {
+      const warnSpy = spyOn(console, 'warn').mockImplementation(() => {});
+      const result = normalizeCapabilities({ unknownKey: 'value', skills: [] }) as Capabilities & {
+        unknownKey: string;
+      };
+      expect(result.unknownKey).toBe('value');
+      expect(warnSpy).toHaveBeenCalledWith(
+        'capabilities: unknown top-level key "unknownKey"'
+      );
+      warnSpy.mockRestore();
+    });
+
+    it('passes through a fully populated valid capabilities object unchanged', () => {
+      const capabilities: Capabilities = {
+        providers: ['cursor'],
+        skills: [
+          {
+            id: 'my-skill',
+            type: 'inline',
+            def: { content: '# Skill' },
+          },
+        ],
+        servers: [
+          {
+            id: 'my-server',
+            type: 'mcp',
+            def: { url: 'http://localhost:3000' },
+          },
+        ],
+        tools: [
+          {
+            id: 'my-tool',
+            type: 'mcp',
+            def: { server: '@my-server', tool: 'search' },
+          },
+        ],
+        plugins: [{ id: 'my-plugin', type: 'github', def: { repo: 'owner/repo' } }],
+        options: { toolExposure: 'on-demand' },
+        subagents: [
+          {
+            id: 'researcher',
+            skills: ['my-skill'],
+            tools: ['my-tool'],
+          },
+        ],
+        rules: [{ id: 'my-rule', type: 'inline', content: 'Always be helpful.' }],
+      };
+
+      const result = normalizeCapabilities(capabilities);
+      expect(result).toEqual(capabilities);
+    });
   });
 
   describe('createDefaultCapabilities', () => {
@@ -58,8 +153,13 @@ describe('capabilities', () => {
       
       await writeCapabilitiesFile(filePath, 'json', capabilities);
       const parsed = await parseCapabilitiesFile(filePath, 'json');
-      
-      expect(parsed).toEqual(capabilities);
+
+      expect(parsed).toEqual({
+        ...capabilities,
+        plugins: [],
+        rules: [],
+        subagents: [],
+      });
     });
 
     it('should write and parse YAML capabilities file', async () => {
@@ -68,8 +168,13 @@ describe('capabilities', () => {
       
       await writeCapabilitiesFile(filePath, 'yaml', capabilities);
       const parsed = await parseCapabilitiesFile(filePath, 'yaml');
-      
-      expect(parsed).toEqual(capabilities);
+
+      expect(parsed).toEqual({
+        ...capabilities,
+        plugins: [],
+        rules: [],
+        subagents: [],
+      });
     });
 
     it('should write JSON with proper formatting', async () => {

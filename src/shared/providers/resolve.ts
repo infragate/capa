@@ -1,5 +1,5 @@
 import { getProvider, getAllProviders } from './index';
-import { selectPrompt, type SelectOption } from '../../cli/utils/select-prompt';
+import { prompt, type SelectOption } from '../../cli/ui';
 import type { CapaDatabase } from '../../db/database';
 
 /**
@@ -81,9 +81,10 @@ export async function resolveProvidersForInstall(
 
   console.log('');
   console.log('No provider detected in capabilities file.');
-  const selected = await selectPrompt(
+  const selected = await prompt.select(
     'Which provider do you want to install for?',
-    options
+    options,
+    '--provider <id>',
   );
   return [selected];
 }

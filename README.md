@@ -55,7 +55,7 @@ The Registries tab pulls skills and plugins from external catalogs. Cursor Marke
 - Any CLI command can be wrapped as an MCP tool the agent (and `capa sh`) can call.
 - Rules go to each provider's native location: Cursor `.cursor/rules/`, Windsurf `.windsurf/rules/`, Copilot's instructions file, or a managed marker block in `AGENTS.md` / `CLAUDE.md` for providers without a rules directory. Glob scoping works.
 - Sub-agents get their own filtered MCP endpoint that exposes only the tools the specialist actually needs.
-- Skills and plugins are browsable from `capa add` and the web UI. Bundled registries: skills.sh and the Cursor Marketplace. Drop a registry adapter in the repo and it shows up too.
+- Skills and plugins are browsable from `capa add` and the web UI. Bundled registries: skills.sh, the Cursor Marketplace, and Claude Plugins. Drop a registry adapter in the repo and it shows up too.
 - `capabilities.lock` records resolved commit SHAs. A SHA-keyed content cache makes repeat installs near instant.
 - Credentials are encrypted at rest, edited in the web UI, or read from `.env`.
 - Blocked-phrase enforcement, tool output sanitisation, and CLI prerequisite checks all run before any install touches your filesystem.
