@@ -29,6 +29,14 @@ export function getIntegratedProviders(): ProviderIntegration[] {
   return Object.values(providers).filter((p) => p.mcp !== undefined);
 }
 
+/**
+ * Resolve a registry entry by its plugin-manifest provider id (e.g. `claude` → `claude-code`).
+ */
+export function getProviderByPluginProviderId(id: string): ProviderIntegration | undefined {
+  const needle = id.toLowerCase();
+  return getAllProviders().find((p) => p.pluginProviderId?.toLowerCase() === needle);
+}
+
 export type { ProviderIntegration } from '../../types/providers';
 export type {
   McpIntegration,

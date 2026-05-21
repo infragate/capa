@@ -40,6 +40,28 @@ import type { LockSkillEntry } from '../../types/lockfile';
 
 const execAsync = promisify(exec);
 
+const VALID_REQUIRES_COMMAND_CLI = /^[a-zA-Z0-9_.+-]+$/;
+
+function assertValidRequiresCommandCli(cli: string): void {
+  if (!VALID_REQUIRES_COMMAND_CLI.test(cli)) {
+    throw new Error(
+      `Invalid command name in capabilities requiresCommands: ${cli}. Only [a-zA-Z0-9_.+-] characters are allowed.`
+    );
+  }
+}
+
+function gitOAuthHelpText(): string {
+  return (
+    'CAPA requires Git to clone repositories and install skills.\n\n' +
+    'Please install Git:\n' +
+    '• Windows: https://git-scm.com/download/win\n' +
+    '• macOS:   brew install git  (or download from https://git-scm.com)\n' +
+    '• Linux:   sudo apt install git  (Ubuntu/Debian)\n' +
+    '           sudo yum install git  (CentOS/RHEL)\n\n' +
+    'After installing Git, run: capa install'
+  );
+}
+
 export interface InstallOptions {
   /** Path to a .env file (or boolean true to use ./.env). Mirrors the existing API. */
   envFile?: string | boolean;
@@ -68,6 +90,7 @@ async function verifyRequiredCommands(commands: RequiredCommand[]): Promise<bool
   const results: CheckResult[] = [];
 
   for (const cmd of commands) {
+    assertValidRequiresCommandCli(cmd.cli);
     const isWindows = process.platform === 'win32';
     const checkCmd = isWindows ? `where ${cmd.cli}` : `which ${cmd.cli}`;
     let available = false;
@@ -239,13 +262,7 @@ function explainGitError(
       error?.code === 'ENOENT') {
     return new Error(
       `Git is not installed on your system.\n\n` +
-      `    CAPA requires Git to clone repositories and install skills.\n\n` +
-      `    Please install Git:\n` +
-      `    • Windows: https://git-scm.com/download/win\n` +
-      `    • macOS:   brew install git  (or download from https://git-scm.com)\n` +
-      `    • Linux:   sudo apt install git  (Ubuntu/Debian)\n` +
-      `               sudo yum install git  (CentOS/RHEL)\n\n` +
-      `    After installing Git, run: capa install`
+      gitOAuthHelpText().split('\n').map((line) => (line ? `    ${line}` : '')).join('\n')
     );
   }
 
@@ -337,7 +354,12 @@ async function getRepoSnapshot(
  */
 function findSkillsInDirectory(dir: string): Map<string, string> {
   const skills = new Map<string, string>();
-  
+  const providerHiddenDirs = new Set(
+    getAllProviders()
+      .map((p) => dirname(p.skillsDir) || p.skillsDir)
+      .filter((d) => d.startsWith('.'))
+  );
+
   function searchDir(currentDir: string) {
     try {
       const entries = readdirSync(currentDir, { withFileTypes: true });
@@ -346,7 +368,7 @@ function findSkillsInDirectory(dir: string): Map<string, string> {
         const fullPath = join(currentDir, entry.name);
         
         // Skip hidden directories and common non-skill directories
-        if (entry.name.startsWith('.') && entry.name !== '.agents' && entry.name !== '.cursor' && entry.name !== '.claude' && entry.name !== '.cline') {
+        if (entry.name.startsWith('.') && !providerHiddenDirs.has(entry.name)) {
           continue;
         }
         if (entry.name === 'node_modules' || entry.name === '.git') {
@@ -475,7 +497,7 @@ export async function installCommand(
   const settings = await loadSettings();
   const dbPath = getDatabasePath(settings);
   const db = new CapaDatabase(dbPath);
-  
+  try {
   // Register project
   db.upsertProject({ id: projectId, path: projectPath });
 
@@ -490,7 +512,6 @@ export async function installCommand(
     });
   } catch (err: any) {
     console.error(`✗ ${err.message}`);
-    db.close();
     process.exit(1);
   }
   capabilities.providers = resolvedProviders;
@@ -534,7 +555,6 @@ export async function installCommand(
       }
     } catch (err: any) {
       if (err instanceof BlockedPhraseError) {
-        db.close();
         reportBlockedPhraseAndExit(
           err.skillId,
           err.filePath,
@@ -543,7 +563,6 @@ export async function installCommand(
         );
       }
       console.error(`✗ Plugin resolution failed: ${err.message}`);
-      db.close();
       process.exit(1);
     }
   }
@@ -582,7 +601,6 @@ export async function installCommand(
       console.error(`✗ Environment file not found: ${envFilePath}`);
       console.error('\n  When using -e or --env flag, the specified .env file must exist.');
       console.error('  Please create the file or run without the flag to use the web UI.\n');
-      db.close();
       process.exit(1);
     }
     
@@ -594,7 +612,6 @@ export async function installCommand(
       console.log(`   Found ${Object.keys(envVariables).length} variable(s) in env file`);
     } catch (error: any) {
       console.error(`✗ Failed to parse env file: ${error.message}`);
-      db.close();
       process.exit(1);
     }
     
@@ -625,7 +642,6 @@ export async function installCommand(
       console.error(`\n✗ Missing required variables: ${missingVars.join(', ')}`);
       console.error('  These variables are required but were not found in the env file.');
       console.error('  Please add them to your env file and try again.\n');
-      db.close();
       process.exit(1);
     }
     
@@ -706,7 +722,6 @@ export async function installCommand(
       );
     } catch (err: any) {
       console.error(`  ✗ Failed to install agent instructions files: ${err.message}`);
-      db.close();
       process.exit(1);
     }
   }
@@ -798,7 +813,6 @@ export async function installCommand(
       console.log(`\n  ✓ ${currentRules.length} rule(s) installed`);
     } catch (err: any) {
       console.error(`  ✗ Failed to install rules: ${err.message}`);
-      db.close();
       process.exit(1);
     }
   }
@@ -816,7 +830,6 @@ export async function installCommand(
   if (!response.ok) {
     const error = await response.text();
     console.error('✗ Failed to configure project:', error);
-    db.close();
     process.exit(1);
   }
   
@@ -898,7 +911,15 @@ export async function installCommand(
         : '\n🤖 Cleaning up removed sub-agents...'
     );
 
-    if (providers.some((p) => p.toLowerCase() === 'cursor')) {
+    if (
+      providers.some((id) => {
+        const provider = getProvider(id);
+        return (
+          provider &&
+          (provider.mcp?.supportsSubAgentEntries === false || provider.purgeStaleSubAgentMcp === true)
+        );
+      })
+    ) {
       await purgeCursorSubAgentMCPEntries(projectPath);
     }
 
@@ -939,8 +960,6 @@ export async function installCommand(
     }
   }
 
-  db.close();
-  
   // Step 6: Check if credential setup is needed
   if (result.needsCredentials && result.credentialsUrl) {
     const hasVariables = result.missingVariables && result.missingVariables.length > 0;
@@ -985,6 +1004,11 @@ export async function installCommand(
   
   // Step 7: Display MCP endpoint
   console.log(`\n📡 MCP Endpoint: ${mcpUrl}`);
+  } finally {
+    try {
+      db.close();
+    } catch {}
+  }
 }
 
 /**
@@ -1074,14 +1098,13 @@ async function installSkills(
     // Check if git is installed before attempting to clone
     const gitInstalled = await checkGitInstalled();
     if (!gitInstalled) {
-      console.error('\n✗ Git is not installed on your system.');
-      console.error('\n  CAPA requires Git to install skills from GitHub and GitLab.');
-      console.error('\n  Please install Git:');
-      console.error('  • Windows: https://git-scm.com/download/win');
-      console.error('  • macOS:   brew install git  (or download from https://git-scm.com)');
-      console.error('  • Linux:   sudo apt install git  (Ubuntu/Debian)');
-      console.error('             sudo yum install git  (CentOS/RHEL)');
-      console.error('\n  After installing Git, run: capa install');
+      console.error('\n✗ Git is not installed on your system.\n');
+      for (const line of gitOAuthHelpText().split('\n')) {
+        console.error(line ? `  ${line}` : '');
+      }
+      try {
+        db.close();
+      } catch {}
       process.exit(1);
     }
   }
@@ -1182,6 +1205,9 @@ async function installSkills(
               const integrationsUrl = getIntegrationsUrl(settings.server.host, settings.server.port);
               console.error(`\n  ✗ ${error.message}`);
               displayIntegrationPrompt(platformLabel, integrationsUrl);
+              try {
+                db.close();
+              } catch {}
               process.exit(1);
             }
             throw error;
@@ -1270,6 +1296,9 @@ async function installSkills(
               const integrationsUrl = getIntegrationsUrl(settings.server.host, settings.server.port);
               console.error(`\n  ✗ Unable to access URL (it may require authentication)`);
               displayIntegrationPrompt(repoInfo.platform === 'github' ? 'GitHub' : 'GitLab', integrationsUrl);
+              try {
+                db.close();
+              } catch {}
               process.exit(1);
             }
           }
@@ -1385,6 +1414,9 @@ async function installSkills(
           console.error(`    - ${agent.displayName.padEnd(maxDisplayNameLength)} (${agent.name})`);
         }
 
+        try {
+          db.close();
+        } catch {}
         process.exit(1);
       }
 
@@ -1401,6 +1433,9 @@ async function installSkills(
             `  ✗ Directory already exists and is not managed by capa: ${skillDir}`
           );
           console.error('    Please delete it manually and run "capa install" again.');
+          try {
+            db.close();
+          } catch {}
           process.exit(1);
         }
         // Clean up existing directory

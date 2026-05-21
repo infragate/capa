@@ -1,20 +1,32 @@
 import { existsSync, readdirSync, readFileSync } from 'fs';
 import type { Dirent } from 'fs';
-import { join, resolve, isAbsolute } from 'path';
+import { join, resolve, isAbsolute, dirname } from 'path';
 import type {
   PluginProvider,
   UnifiedPluginManifest,
   UnifiedSkillEntry,
   NormalizedPluginMCPServerDef,
 } from '../types/plugin';
-import { getProvider, getAllProviders } from './providers';
+import { getProvider, getAllProviders, getProviderByPluginProviderId } from './providers';
 
 /** Map capabilities provider names to plugin provider (manifest) names */
 function toPluginProvider(provider: string): PluginProvider | null {
+  const entry = getProvider(provider) ?? getProviderByPluginProviderId(provider);
+  if (entry?.pluginProviderId) {
+    return entry.pluginProviderId as PluginProvider;
+  }
   const p = provider.toLowerCase();
   if (p === 'cursor') return 'cursor';
   if (p === 'claude-code' || p === 'claude') return 'claude';
   return null;
+}
+
+function getPluginManifestContainerDirs(): Set<string> {
+  return new Set(
+    getAllProviders()
+      .flatMap((p) => (p.pluginManifestPaths ?? []).map((mp) => dirname(mp)))
+      .filter((d) => d && d !== '.')
+  );
 }
 
 /**
@@ -203,7 +215,11 @@ function mergeMcpEntries(
  * Load MCP servers from manifest: mcpServers can be a path (string), inline object,
  * or array of paths/inline configs (Cursor format).
  */
-function parseMcpServers(repoRoot: string, manifest: unknown): Record<string, NormalizedPluginMCPServerDef> {
+function parseMcpServers(
+  repoRoot: string,
+  manifest: unknown,
+  defaultMcpFallbackPath?: string
+): Record<string, NormalizedPluginMCPServerDef> {
   const result: Record<string, NormalizedPluginMCPServerDef> = {};
   if (!isPlainObject(manifest)) return result;
 
@@ -232,8 +248,8 @@ function parseMcpServers(repoRoot: string, manifest: unknown): Record<string, No
     mergeMcpEntries(result, raw);
   }
 
-  if (Object.keys(result).length === 0) {
-    const defaultObj = loadMcpConfigFromPath(repoRoot, '.mcp.json');
+  if (Object.keys(result).length === 0 && defaultMcpFallbackPath) {
+    const defaultObj = loadMcpConfigFromPath(repoRoot, defaultMcpFallbackPath);
     if (defaultObj) mergeMcpEntries(result, defaultObj);
   }
 
@@ -244,7 +260,8 @@ function parseCursorManifest(repoRoot: string, data: unknown): UnifiedPluginMani
   const record = isPlainObject(data) ? data : {};
   const name = typeof record.name === 'string' ? record.name : 'unknown';
   const skills = parseSkillsField(repoRoot, parseSkillsRaw(record.skills), 'skills');
-  const mcpServers = parseMcpServers(repoRoot, data);
+  const fallback = getProvider('cursor')?.mcp?.defaultMcpFallbackPath;
+  const mcpServers = parseMcpServers(repoRoot, data, fallback);
 
   return {
     name,
@@ -260,7 +277,10 @@ function parseClaudeManifest(repoRoot: string, data: unknown): UnifiedPluginMani
   const record = isPlainObject(data) ? data : {};
   const name = typeof record.name === 'string' ? record.name : 'unknown';
   const skills = parseSkillsField(repoRoot, parseSkillsRaw(record.skills), 'skills');
-  const mcpServers = parseMcpServers(repoRoot, data);
+  const fallback =
+    getProvider('claude-code')?.mcp?.defaultMcpFallbackPath ??
+    getProviderByPluginProviderId('claude')?.mcp?.defaultMcpFallbackPath;
+  const mcpServers = parseMcpServers(repoRoot, data, fallback);
 
   return {
     name,
@@ -289,6 +309,10 @@ export function detectAndParseManifest(
     try {
       const content = readFileSync(fullPath, 'utf-8');
       const data = JSON.parse(content);
+      const reg = getProvider(provider) ?? getProviderByPluginProviderId(provider);
+      if (reg?.parsePluginManifest) {
+        return reg.parsePluginManifest(repoRoot, data) as UnifiedPluginManifest;
+      }
       if (provider === 'cursor') return parseCursorManifest(repoRoot, data);
       if (provider === 'claude') return parseClaudeManifest(repoRoot, data);
     } catch {
@@ -298,7 +322,11 @@ export function detectAndParseManifest(
 
   // Fallback: no manifest — discover skills/ and .mcp.json as claude-style
   const skillEntries = getSkillEntriesFromPath(repoRoot, 'skills');
-  const defaultMcpPath = join(repoRoot, '.mcp.json');
+  const defaultMcpRel =
+    getProvider('claude-code')?.mcp?.defaultMcpFallbackPath ??
+    getProviderByPluginProviderId('claude')?.mcp?.defaultMcpFallbackPath ??
+    '.mcp.json';
+  const defaultMcpPath = join(repoRoot, defaultMcpRel);
   let mcpServers: Record<string, NormalizedPluginMCPServerDef> = {};
   if (existsSync(defaultMcpPath)) {
     try {
@@ -347,6 +375,8 @@ const PLUGIN_WALK_SKIP = new Set([
   'node_modules', '.git', '.github', '.gitlab', '.vscode', '.idea',
   'dist', 'build', 'out', 'target', '__tests__',
 ]);
+
+const PLUGIN_MANIFEST_CONTAINER_DIRS = getPluginManifestContainerDirs();
 
 /**
  * Walk `repoRoot` recursively and return every directory containing a recognized
@@ -400,10 +430,10 @@ export function discoverPluginEntries(
       if (!item.isDirectory()) continue;
       const name = item.name;
       if (PLUGIN_WALK_SKIP.has(name)) continue;
-      // Skip dotfiles except the plugin manifest dirs themselves (handled above).
-      if (name.startsWith('.') && name !== '.claude-plugin' && name !== '.cursor-plugin') continue;
-      // Don't descend into manifest dirs — we've already recorded their parent.
-      if (name === '.claude-plugin' || name === '.cursor-plugin') continue;
+      // Skip dotfiles except plugin manifest container dirs (handled above at parent level).
+      if (name.startsWith('.') && !PLUGIN_MANIFEST_CONTAINER_DIRS.has(name)) continue;
+      // Don't descend into manifest container dirs — we've already recorded their parent.
+      if (PLUGIN_MANIFEST_CONTAINER_DIRS.has(name)) continue;
       visit(join(currentDir, name), relPath ? `${relPath}/${name}` : name);
     }
   }

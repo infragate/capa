@@ -177,27 +177,33 @@ export async function unregisterSubAgentMCPServer(
 }
 
 /**
- * Remove stale capa-{agentId} sub-agent entries from Cursor's MCP config.
- * Cursor does not use per-sub-agent MCP server entries; capa no longer writes them.
+ * Remove stale capa-{agentId} sub-agent entries from MCP configs for providers
+ * that opt in via `purgeStaleSubAgentMcp`.
  */
 export async function purgeCursorSubAgentMCPEntries(projectPath: string): Promise<void> {
-  const configPath = join(projectPath, '.cursor', 'mcp.json');
-  if (!existsSync(configPath)) return;
+  for (const provider of getAllProviders()) {
+    if (!provider.purgeStaleSubAgentMcp || !provider.mcp) continue;
 
-  const config = parseJsonConfig(readFileSync(configPath, 'utf-8'));
-  if (config === null) return;
+    const configPath = join(projectPath, provider.mcp.configPath);
+    if (!existsSync(configPath)) continue;
 
-  const mcpServers = config.mcpServers;
-  if (isPlainObject(mcpServers)) {
-    const servers = mcpServers as Record<string, McpServerEntry>;
+    const config = parseJsonConfig(readFileSync(configPath, 'utf-8'));
+    if (config === null) continue;
+
+    const serversObj = config[provider.mcp.serversKey];
+    if (!isPlainObject(serversObj)) continue;
+
+    const servers = serversObj as Record<string, McpServerEntry>;
     const staleKeys = Object.keys(servers).filter((k) => k.startsWith('capa-'));
-    if (staleKeys.length > 0) {
-      for (const key of staleKeys) {
-        delete servers[key];
-      }
-      writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
-      console.log(`  ✓ Removed ${staleKeys.length} stale sub-agent MCP entr${staleKeys.length === 1 ? 'y' : 'ies'} from .cursor/mcp.json`);
+    if (staleKeys.length === 0) continue;
+
+    for (const key of staleKeys) {
+      delete servers[key];
     }
+    writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
+    console.log(
+      `  ✓ Removed ${staleKeys.length} stale sub-agent MCP entr${staleKeys.length === 1 ? 'y' : 'ies'} from ${provider.mcp.configPath}`
+    );
   }
 }
 

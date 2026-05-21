@@ -106,6 +106,21 @@ jobs:
             mv capa ../capa-${{ matrix.target }}
           fi
 
+      - name: Generate SHA256 checksum
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            ARTIFACT="capa-${{ matrix.target }}.exe"
+            HASH=$(powershell -Command "(Get-FileHash '$ARTIFACT' -Algorithm SHA256).Hash.ToLower()")
+            echo "$HASH  $ARTIFACT" > "${ARTIFACT}.sha256"
+          elif command -v sha256sum >/dev/null 2>&1; then
+            ARTIFACT="capa-${{ matrix.target }}"
+            sha256sum "$ARTIFACT" > "${ARTIFACT}.sha256"
+          else
+            ARTIFACT="capa-${{ matrix.target }}"
+            shasum -a 256 "$ARTIFACT" > "${ARTIFACT}.sha256"
+          fi
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -128,10 +143,17 @@ jobs:
       - name: Display structure of downloaded files
         run: ls -R artifacts
 
+      - name: Generate SHA256SUMS.txt
+        run: |
+          find artifacts -name '*.sha256' -type f -exec cat {} \; | LC_ALL=C sort -k2 > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: artifacts/**/*
+          files: |
+            artifacts/**/*
+            SHA256SUMS.txt
           draft: false
           prerelease: false
           generate_release_notes: true

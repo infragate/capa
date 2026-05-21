@@ -80,8 +80,17 @@ if (process.argv[2] === '__server__') {
       .description('Add a skill or plugin from various sources (GitHub, GitLab, registry, local path, or remote URL)')
       .option('--plugin', 'Treat <source> as a plugin (default is skill)')
       .option('--skill', 'Treat <source> as a skill (default; flag exists for explicitness)')
+      .option('-e, --env [file]', 'Load variables from .env file (defaults to .env if no file specified)')
+      .option('-p, --provider <id>', 'Install for a single provider (e.g. "cursor", "claude-code")')
+      .option('--no-cache', 'Bypass the on-disk cache and lockfile; re-resolve every remote source')
       .action(async (source: string, options) => {
-        await addCommand(source, options);
+        await addCommand(source, {
+          plugin: options.plugin,
+          skill: options.skill,
+          envFile: options.env,
+          provider: options.provider,
+          noCache: options.cache === false,
+        });
       });
 
     program

@@ -15,8 +15,7 @@ import { buildSubAgentFile as buildSubAgentFileContent } from '../../shared/prov
 import type { AuthenticatedFetch } from '../../shared/authenticated-fetch';
 import { fetchRepoFile, fetchTextFile, type RepoSnapshotResolver } from '../../shared/repo-file';
 
-export const AGENTS_FILENAME = 'AGENTS.md';
-export const CLAUDE_FILENAME = 'CLAUDE.md';
+const UNIVERSAL_AGENTS_FILENAME = 'AGENTS.md';
 
 const MARKER_START = (id: string) => `<!-- capa:start:${id} -->`;
 const MARKER_END = (id: string) => `<!-- capa:end:${id} -->`;
@@ -45,7 +44,7 @@ function buildBlock(id: string, body: string): string {
  * AGENTS.md is always included as the universal baseline.
  */
 export function getTargetFilenames(providers: string[]): string[] {
-  const filenames = new Set<string>([AGENTS_FILENAME]);
+  const filenames = new Set<string>([UNIVERSAL_AGENTS_FILENAME]);
   const list = providers.length > 0 ? providers.map(getProvider).filter(Boolean) : getAllProviders();
   for (const p of list) {
     if (p?.instructions) {
@@ -512,6 +511,60 @@ function refSuffix(ref: string): string {
 // Sub-agent instructions — registry-driven
 // ---------------------------------------------------------------------------
 
+function writesSubAgentInstructionsContext(provider: NonNullable<ReturnType<typeof getProvider>>): boolean {
+  if (!provider.instructions) return false;
+  if (provider.foldSubAgentsIntoInstructions === true) return true;
+  if (
+    provider.subagents &&
+    provider.instructions.filename !== UNIVERSAL_AGENTS_FILENAME
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function upsertSubAgentInstructionsSnippet(
+  projectPath: string,
+  provider: NonNullable<ReturnType<typeof getProvider>>,
+  subAgent: SubAgent
+): void {
+  if (!provider.instructions) return;
+
+  const mcpServerKey = `capa-${subAgent.id}`;
+  const snippetId = `sub-agent:${subAgent.id}`;
+  const bodyLines = [
+    `## Agent: ${subAgent.id}`,
+    ...(subAgent.description ? ['', subAgent.description] : []),
+    '',
+    `**MCP server key:** \`${mcpServerKey}\``,
+    `**Skills:** ${subAgent.skills.length > 0 ? subAgent.skills.join(', ') : '(none)'}`,
+  ];
+  if (subAgent.instructions) {
+    bodyLines.push('', subAgent.instructions.trimEnd());
+  }
+
+  const filename = provider.instructions.filename;
+  let content = readMdFile(projectPath, filename);
+  content = upsertSnippet(content, snippetId, bodyLines.join('\n'));
+  writeMdFile(projectPath, filename, content);
+  console.log(`  ✓ ${filename} updated with sub-agent "${subAgent.id}" instructions`);
+}
+
+function removeSubAgentInstructionsSnippet(
+  projectPath: string,
+  provider: NonNullable<ReturnType<typeof getProvider>>,
+  agentId: string
+): void {
+  if (!provider.instructions) return;
+
+  const snippetId = `sub-agent:${agentId}`;
+  const filename = provider.instructions.filename;
+  const content = readMdFile(projectPath, filename);
+  if (content) {
+    writeMdFile(projectPath, filename, removeSnippet(content, snippetId));
+    console.log(`  ✓ Removed sub-agent "${agentId}" instructions from ${filename}`);
+  }
+}
 /**
  * Write a sub-agent definition file using the provider's subagents integration.
  */
@@ -556,8 +609,8 @@ function removeSubAgentFile(projectPath: string, providerId: string, agentId: st
  * For providers with a `subagents` integration, writes the agent file using
  * the provider-specific format (markdown frontmatter or TOML).
  *
- * For providers with an `instructions` integration, also upserts a context
- * block into the instructions file (e.g. CLAUDE.md for claude-code).
+ * For providers without separate sub-agent files, folds context into the
+ * instructions file when `foldSubAgentsIntoInstructions` is set.
  */
 export function installSubAgentInstructions(
   projectPath: string,
@@ -569,33 +622,11 @@ export function installSubAgentInstructions(
     const provider = getProvider(pid);
     if (!provider) continue;
 
-    const mcpServerKey = `capa-${subAgent.id}`;
-
-    // Write the sub-agent definition file
     if (provider.subagents) {
       writeSubAgentFile(projectPath, pid, subAgent, capabilities);
     }
-
-    // For providers with a distinct instructions file (e.g. CLAUDE.md),
-    // add a context block so the main agent knows about the sub-agent.
-    if (provider.instructions && provider.instructions.filename !== AGENTS_FILENAME) {
-      const snippetId = `sub-agent:${subAgent.id}`;
-      const bodyLines = [
-        `## Agent: ${subAgent.id}`,
-        ...(subAgent.description ? ['', subAgent.description] : []),
-        '',
-        `**MCP server key:** \`${mcpServerKey}\``,
-        `**Skills:** ${subAgent.skills.length > 0 ? subAgent.skills.join(', ') : '(none)'}`,
-      ];
-      if (subAgent.instructions) {
-        bodyLines.push('', subAgent.instructions.trimEnd());
-      }
-
-      const filename = provider.instructions.filename;
-      let content = readMdFile(projectPath, filename);
-      content = upsertSnippet(content, snippetId, bodyLines.join('\n'));
-      writeMdFile(projectPath, filename, content);
-      console.log(`  ✓ ${filename} updated with sub-agent "${subAgent.id}" instructions`);
+    if (writesSubAgentInstructionsContext(provider)) {
+      upsertSubAgentInstructionsSnippet(projectPath, provider, subAgent);
     }
   }
 }
@@ -615,15 +646,8 @@ export function removeSubAgentInstructions(
     if (provider.subagents) {
       removeSubAgentFile(projectPath, pid, agentId);
     }
-
-    if (provider.instructions && provider.instructions.filename !== AGENTS_FILENAME) {
-      const snippetId = `sub-agent:${agentId}`;
-      const filename = provider.instructions.filename;
-      const content = readMdFile(projectPath, filename);
-      if (content) {
-        writeMdFile(projectPath, filename, removeSnippet(content, snippetId));
-        console.log(`  ✓ Removed sub-agent "${agentId}" instructions from ${filename}`);
-      }
+    if (writesSubAgentInstructionsContext(provider)) {
+      removeSubAgentInstructionsSnippet(projectPath, provider, agentId);
     }
   }
 }
