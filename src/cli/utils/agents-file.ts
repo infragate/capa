@@ -16,6 +16,7 @@ import type { AuthenticatedFetch } from '../../shared/authenticated-fetch';
 import { fetchRepoFile, fetchTextFile, type RepoSnapshotResolver } from '../../shared/repo-file';
 import { parseGitRawUrl } from '../../shared/git-providers/registry';
 import { refSuffix } from '../../shared/git-providers/parsers';
+import { taskLog } from '../ui';
 
 const UNIVERSAL_AGENTS_FILENAME = 'AGENTS.md';
 
@@ -144,7 +145,7 @@ async function resolveRepoSnippet(
       `This is a bug; please report it.`
     );
   }
-  console.log(`  Fetching ${platform} snippet "${id}" from ${snippet.def.repo}`);
+  taskLog(`  Fetching ${platform} snippet "${id}" from ${snippet.def.repo}`);
   const result = await fetchRepoFile(
     platform,
     snippet.def.repo,
@@ -191,7 +192,7 @@ function applyConfigToFile(
 
     for (const id of listCapaSnippetIds(content)) {
       if (!currentIds.has(id)) {
-        console.log(`  Removing stale agent snippet "${id}" from ${filename}`);
+        taskLog(`  Removing stale agent snippet "${id}" from ${filename}`);
         content = removeSnippet(content, id);
       }
     }
@@ -254,7 +255,7 @@ export async function installAgentsFile(
           `agents.base local file not found: ${resolvedPath} (resolved from path "${config.base.path}")`
         );
       }
-      console.log(`  Using base agents file from ${resolvedPath}`);
+      taskLog(`  Using base agents file from ${resolvedPath}`);
       baseContent = readFileSync(resolvedPath, 'utf8');
     } else if (baseType === 'github' || baseType === 'gitlab') {
       if (!config.base.def?.repo) {
@@ -269,7 +270,7 @@ export async function installAgentsFile(
           `This is a bug; please report it.`
         );
       }
-      console.log(`  Fetching base agents file from ${baseType}:${config.base.def.repo}`);
+      taskLog(`  Fetching base agents file from ${baseType}:${config.base.def.repo}`);
       const result = await fetchRepoFile(
         baseType,
         config.base.def.repo,
@@ -283,7 +284,7 @@ export async function installAgentsFile(
       // snapshot path so private repos work without manual reconfiguration.
       const repoCoords = detectRepoCoordsFromRawUrl(config.base.ref);
       if (repoCoords && ctx.authFetch && ctx.getRepoSnapshot) {
-        console.log(
+        taskLog(
           `  Fetching base agents file from ${repoCoords.platform}:${repoCoords.repoString} ` +
           `(detected from raw URL)`
         );
@@ -296,7 +297,7 @@ export async function installAgentsFile(
         );
         baseContent = result.content;
       } else {
-        console.log(`  Fetching base agents file from ${config.base.ref}`);
+        taskLog(`  Fetching base agents file from ${config.base.ref}`);
         baseContent = await fetchRemoteContent(config.base.ref, {
           authFetch: ctx.authFetch,
           sourceLabel: 'agents.base',
@@ -328,7 +329,7 @@ export async function installAgentsFile(
 
       const repoCoords = detectRepoCoordsFromRawUrl(snippet.url);
       if (repoCoords && ctx.authFetch && ctx.getRepoSnapshot) {
-        console.log(
+        taskLog(
           `  Fetching remote snippet "${resolvedId}" from ${repoCoords.platform}:${repoCoords.repoString} ` +
           `(detected from raw URL)`
         );
@@ -341,7 +342,7 @@ export async function installAgentsFile(
         );
         body = result.content;
       } else {
-        console.log(`  Fetching remote snippet "${resolvedId}" from ${snippet.url}`);
+        taskLog(`  Fetching remote snippet "${resolvedId}" from ${snippet.url}`);
         body = await fetchRemoteContent(snippet.url, {
           authFetch: ctx.authFetch,
           sourceLabel: `agents snippet "${resolvedId}"`,
@@ -361,7 +362,7 @@ export async function installAgentsFile(
   const hasBase = !!config.base;
   for (const filename of targetFiles) {
     applyConfigToFile(projectPath, filename, hasBase, snippetBodies);
-    console.log(`  ✓ ${filename} updated`);
+    taskLog(`  ✓ ${filename} updated`);
   }
 }
 
@@ -442,7 +443,7 @@ function upsertSubAgentInstructionsSnippet(
   let content = readMdFile(projectPath, filename);
   content = upsertSnippet(content, snippetId, bodyLines.join('\n'));
   writeMdFile(projectPath, filename, content);
-  console.log(`  ✓ ${filename} updated with sub-agent "${subAgent.id}" instructions`);
+  taskLog(`  ✓ ${filename} updated with sub-agent "${subAgent.id}" instructions`);
 }
 
 function removeSubAgentInstructionsSnippet(
@@ -457,7 +458,7 @@ function removeSubAgentInstructionsSnippet(
   const content = readMdFile(projectPath, filename);
   if (content) {
     writeMdFile(projectPath, filename, removeSnippet(content, snippetId));
-    console.log(`  ✓ Removed sub-agent "${agentId}" instructions from ${filename}`);
+    taskLog(`  ✓ Removed sub-agent "${agentId}" instructions from ${filename}`);
   }
 }
 /**
@@ -480,7 +481,7 @@ function writeSubAgentFile(
   const content = buildSubAgentFileContent(provider, subAgent, capabilities);
   writeFileSync(filePath, content, 'utf8');
 
-  console.log(`  ✓ ${sa.dir}/${subAgent.id}${sa.extension} written`);
+  taskLog(`  ✓ ${sa.dir}/${subAgent.id}${sa.extension} written`);
 }
 
 /**
@@ -494,7 +495,7 @@ function removeSubAgentFile(projectPath: string, providerId: string, agentId: st
   const filePath = join(projectPath, sa.dir, `${agentId}${sa.extension}`);
   if (existsSync(filePath)) {
     unlinkSync(filePath);
-    console.log(`  ✓ Removed ${sa.dir}/${agentId}${sa.extension}`);
+    taskLog(`  ✓ Removed ${sa.dir}/${agentId}${sa.extension}`);
   }
 }
 
@@ -562,10 +563,10 @@ export function cleanAgentsFile(projectPath: string, providers: string[]): void 
 
     if (cleaned.trim() === '') {
       deleteMdFile(projectPath, filename);
-      console.log(`  ✓ Removed ${filename} (was entirely capa-managed)`);
+      taskLog(`  ✓ Removed ${filename} (was entirely capa-managed)`);
     } else {
       writeMdFile(projectPath, filename, cleaned + '\n');
-      console.log(`  ✓ Removed capa snippets from ${filename}`);
+      taskLog(`  ✓ Removed capa snippets from ${filename}`);
     }
   }
 }

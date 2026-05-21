@@ -3,6 +3,7 @@ import { join, dirname } from 'path';
 import { getProvider, getAllProviders } from '../../shared/providers';
 import { readTomlFile, writeTomlFile, setNestedKey, deleteNestedKey } from '../../shared/toml-io';
 import { getMcpConfigPath, buildMcpEntry } from '../../shared/providers/handlers';
+import { taskLog } from '../ui';
 
 interface McpServerEntry {
   url?: string;
@@ -82,8 +83,8 @@ export async function registerMCPServer(
         writeTomlFile(configPath, config);
       }
 
-      console.log(`  ✓ Registered MCP server with ${provider.displayName}`);
-      console.log(`    Config: ${configPath}`);
+      taskLog(`  ✓ Registered MCP server with ${provider.displayName}`);
+      taskLog(`    Config: ${configPath}`);
     } catch (error) {
       console.error(`  ✗ Failed to register MCP server with ${provider.displayName}:`, error);
     }
@@ -129,7 +130,7 @@ export async function registerSubAgentMCPServer(
         writeTomlFile(configPath, config);
       }
 
-      console.log(`  ✓ Registered sub-agent "${agentId}" MCP server with ${provider.displayName} (key: ${serverKey})`);
+      taskLog(`  ✓ Registered sub-agent "${agentId}" MCP server with ${provider.displayName} (key: ${serverKey})`);
     } catch (error) {
       console.error(`  ✗ Failed to register sub-agent MCP server with ${provider.displayName}:`, error);
     }
@@ -169,7 +170,7 @@ export async function unregisterSubAgentMCPServer(
         writeTomlFile(configPath, config);
       }
 
-      console.log(`  ✓ Unregistered sub-agent "${agentId}" MCP server from ${provider.displayName}`);
+      taskLog(`  ✓ Unregistered sub-agent "${agentId}" MCP server from ${provider.displayName}`);
     } catch (error) {
       console.error(`  ✗ Failed to unregister sub-agent MCP server from ${provider.displayName}:`, error);
     }
@@ -201,7 +202,7 @@ export async function purgeCursorSubAgentMCPEntries(projectPath: string): Promis
       delete servers[key];
     }
     writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
-    console.log(
+    taskLog(
       `  ✓ Removed ${staleKeys.length} stale sub-agent MCP entr${staleKeys.length === 1 ? 'y' : 'ies'} from ${provider.mcp.configPath}`
     );
   }
@@ -227,7 +228,7 @@ export async function unregisterMCPServer(
       const configPath = getMcpConfigPath(provider, projectPath);
 
       if (!existsSync(configPath)) {
-        console.log(`  - No ${provider.displayName} config found (already removed)`);
+        taskLog(`  - No ${provider.displayName} config found (already removed)`);
         continue;
       }
 
@@ -239,7 +240,7 @@ export async function unregisterMCPServer(
         }
         const servers = config[mcp.serversKey];
         if (!isPlainObject(servers) || !(mcp.serverKey in servers)) {
-          console.log(`  - MCP server not registered with ${provider.displayName} (already removed)`);
+          taskLog(`  - MCP server not registered with ${provider.displayName} (already removed)`);
           continue;
         }
         delete (servers as Record<string, McpServerEntry>)[mcp.serverKey];
@@ -247,13 +248,13 @@ export async function unregisterMCPServer(
       } else if (mcp.format === 'toml') {
         const config = readTomlFile(configPath);
         if (!deleteNestedKey(config, [mcp.serversKey, mcp.serverKey])) {
-          console.log(`  - MCP server not registered with ${provider.displayName} (already removed)`);
+          taskLog(`  - MCP server not registered with ${provider.displayName} (already removed)`);
           continue;
         }
         writeTomlFile(configPath, config);
       }
 
-      console.log(`  ✓ Unregistered MCP server from ${provider.displayName}`);
+      taskLog(`  ✓ Unregistered MCP server from ${provider.displayName}`);
     } catch (error) {
       console.error(`  ✗ Failed to unregister MCP server from ${provider.displayName}:`, error);
     }

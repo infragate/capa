@@ -248,10 +248,8 @@ async function checkGitInstalled(): Promise<boolean> {
   }
 }
 
-/**
- * Translate raw git/exec errors into the same friendly messages capa
- * has historically surfaced from `cloneRepository`.
- */
+// Returns short, actionable messages; callers wrap them into the per-skill
+// error block which already prefixes `Skill "<id>" failed:`.
 function explainGitError(
   error: any,
   platform: CachePlatform,
@@ -259,68 +257,37 @@ function explainGitError(
   hasAuth: boolean
 ): Error {
   const errorMessage: string = error?.stderr || error?.message || '';
+  const platformName = getGitProvider(platform)?.displayName ?? platform;
+  const repoUrl = `https://${platform}.com/${repoPath}`;
 
   if (errorMessage.includes('git: command not found') ||
       errorMessage.includes("'git' is not recognized") ||
       errorMessage.includes('git: not found') ||
       error?.code === 'ENOENT') {
-    return new Error(
-      `Git is not installed on your system.\n\n` +
-      gitOAuthHelpText().split('\n').map((line) => (line ? `    ${line}` : '')).join('\n')
-    );
+    return new Error('Git is not installed — install git and re-run `capa install` (https://git-scm.com/downloads).');
   }
 
   if (errorMessage.includes('could not be found') ||
       errorMessage.includes('not found') ||
       errorMessage.includes("don't have permission")) {
-    const platformName = getGitProvider(platform)?.displayName ?? platform;
-    const repoUrl = `https://${platform}.com/${repoPath}`;
-    let friendlyMessage = `Repository not accessible: ${repoPath}\n\n`;
-    if (hasAuth) {
-      friendlyMessage += `    Possible reasons:\n`;
-      friendlyMessage += `    • Repository doesn't exist at ${repoUrl}\n`;
-      friendlyMessage += `    • Repository path is misspelled (check owner/repo)\n`;
-      friendlyMessage += `    • Your ${platformName} token doesn't have access to this repository\n`;
-      friendlyMessage += `    • Repository is in a different ${platformName} instance (use self-managed for enterprise)\n\n`;
-      friendlyMessage += `    Please verify:\n`;
-      friendlyMessage += `    1. The repository exists and the path is correct\n`;
-      friendlyMessage += `    2. Your ${platformName} account has access to the repository\n`;
-      friendlyMessage += `    3. The repository is on ${platform}.com (not a self-managed instance)`;
-    } else {
-      friendlyMessage += `    This repository appears to be private or doesn't exist.\n\n`;
-      friendlyMessage += `    If this is a private repository:\n`;
-      friendlyMessage += `    1. Run: capa start\n`;
-      friendlyMessage += `    2. Open the integrations page in your browser\n`;
-      friendlyMessage += `    3. Connect your ${platformName} account\n`;
-      friendlyMessage += `    4. Run: capa install (again)\n\n`;
-      friendlyMessage += `    If this is a public repository:\n`;
-      friendlyMessage += `    • Verify the repository path: ${repoUrl}`;
-    }
-    return new Error(friendlyMessage);
+    const hint = hasAuth
+      ? `Check the path, or ensure your ${platformName} token has access.`
+      : `Check the path, or connect ${platformName} if the repo is private.`;
+    return new Error(`${platformName} repository not accessible: ${repoPath}\n${repoUrl}\n${hint}`);
   }
 
   if (errorMessage.includes('Authentication failed') ||
       errorMessage.includes('could not read Username')) {
-    return new Error(
-      `Authentication failed for ${platform}.com\n\n` +
-      `    Your access token may have expired or been revoked.\n` +
-      `    Please reconnect your ${getGitProvider(platform)?.displayName ?? platform} account in the integrations page.`
-    );
+    return new Error(`${platformName} authentication failed — token may be expired; reconnect in the integrations page.`);
   }
 
   if (errorMessage.includes('unable to access') ||
       errorMessage.includes('Could not resolve host')) {
-    return new Error(
-      `Network error: Unable to connect to ${platform}.com\n\n` +
-      `    Please check your internet connection and try again.`
-    );
+    return new Error(`Network error: cannot reach ${platform}.com — check your internet connection.`);
   }
 
-  return new Error(
-    `Failed to clone repository: ${repoPath}\n\n` +
-    `    Git error: ${errorMessage.split('\n').find((line: string) => line.includes('fatal:') || line.includes('error:')) || 'Unknown error'}\n` +
-    `    Repository: https://${platform}.com/${repoPath}`
-  );
+  const fatal = errorMessage.split('\n').find((line: string) => line.includes('fatal:') || line.includes('error:')) || 'Unknown error';
+  return new Error(`Failed to clone ${repoUrl}: ${fatal}`);
 }
 
 /**
@@ -443,14 +410,15 @@ function buildInstallTasks(reqCmds?: RequiredCommand[]): Task<InstallCtx>[] {
   if (reqCmds && reqCmds.length > 0) {
     tasks.push({
       title: 'Verifying prerequisites',
-      task: (_ctx, task) =>
-        task.newListr(
-          reqCmds.map((cmd) => ({
-            title: cmd.description ? `${cmd.cli} — ${cmd.description}` : cmd.cli,
-            task: () => checkRequiredCommand(cmd),
-          })),
-          { concurrent: false },
-        ),
+      task: async (_ctx, task) => {
+        const total = reqCmds.length;
+        for (let i = 0; i < total; i++) {
+          const cmd = reqCmds[i];
+          task.output = `[${i + 1}/${total}] ${cmd.cli}${cmd.description ? ` — ${cmd.description}` : ''}`;
+          await checkRequiredCommand(cmd);
+        }
+        task.title = `Verified ${total} prerequisite${total === 1 ? '' : 's'}`;
+      },
     });
   }
 
@@ -595,60 +563,50 @@ function buildInstallTasks(reqCmds?: RequiredCommand[]): Task<InstallCtx>[] {
         }
         const totalSkills = ctx.capabilities.skills.length;
         const failedBefore = ctx.failed;
-        await task.newListr(
-          ctx.capabilities.skills.map((skill) => ({
-            title: skill.id,
-            task: async (_ctx, subtask) => {
-              let outcome: 'installed' | 'failed' | 'skipped' | undefined;
-              try {
-                outcome = await installOneSkill(
-                  skill,
-                  ctx.projectPath,
-                  ctx.projectId,
-                  providers,
-                  ctx.db,
-                  ctx.settings,
-                  ctx.capabilitiesToUse,
-                  ctx.capabilitiesFile.path,
-                  ctx.lockBuilder,
-                  ctx.noCache,
-                  ctx.resolvedRepos,
-                );
-              } catch (err: unknown) {
-                ctx.failed++;
-                const message = err instanceof Error ? err.message : String(err);
-                subtask.title = `${skill.id} — ${message.split('\n')[0]}`;
-                // Capture the FULL error message — not just the first line — into
-                // ctx.errors so it's printed by the post-tree summary block. Without
-                // this, a skill that failed (e.g. private repo + disconnected
-                // integration) was only visible via a transient subtask title that
-                // listr2 collapses once the parent task finishes, making the install
-                // look successful overall.
-                ctx.errors.push(`Skill "${skill.id}" failed:\n${indentLines(message, '    ')}`);
-                throw err;
-              }
-              if (outcome === 'installed') ctx.added++;
-              else if (outcome === 'skipped') ctx.skipped++;
-              else {
-                ctx.failed++;
-                ctx.errors.push(`Skill "${skill.id}" failed (see logs above)`);
-                throw new Error(`${skill.id} failed (see logs above)`);
-              }
-            },
-          })),
-          { concurrent: false, exitOnError: false, rendererOptions: { collapseSubtasks: false } },
-        );
+
+        for (let i = 0; i < totalSkills; i++) {
+          const skill = ctx.capabilities.skills[i];
+          task.output = `[${i + 1}/${totalSkills}] ${skill.id}`;
+
+          let outcome: SkillInstallOutcome | undefined;
+          try {
+            outcome = await installOneSkill(
+              skill,
+              ctx.projectPath,
+              ctx.projectId,
+              providers,
+              ctx.db,
+              ctx.settings,
+              ctx.capabilitiesToUse,
+              ctx.capabilitiesFile.path,
+              ctx.lockBuilder,
+              ctx.noCache,
+              ctx.resolvedRepos,
+            );
+          } catch (err: unknown) {
+            ctx.failed++;
+            const message = err instanceof Error ? err.message : String(err);
+            ctx.errors.push(`Skill "${skill.id}" failed:\n${indentLines(message, '    ')}`);
+            continue;
+          }
+
+          if (outcome === 'installed') ctx.added++;
+          else if (outcome === 'skipped') ctx.skipped++;
+          else {
+            ctx.failed++;
+            ctx.errors.push(`Skill "${skill.id}" failed (see logs above)`);
+          }
+        }
+
         const failedInTask = ctx.failed - failedBefore;
         if (failedInTask > 0) {
-          // Mark the parent task as failed so the user can't miss the ✗ at the
-          // root of the tree. With exitOnError:false above, listr2 would otherwise
-          // leave "Installing skills" with a ✔ even when subtasks failed.
           task.title = `Installing skills — ${failedInTask} of ${totalSkills} failed`;
           throw new Error(
             `${failedInTask} of ${totalSkills} skill(s) failed to install. ` +
             `See the errors above for details.`
           );
         }
+        task.title = `Installed ${totalSkills} skill${totalSkills === 1 ? '' : 's'}`;
       },
     },
     {
@@ -748,62 +706,89 @@ function buildInstallTasks(reqCmds?: RequiredCommand[]): Task<InstallCtx>[] {
         const providers = ctx.capabilitiesToUse.providers ?? ctx.resolvedProviders;
         ctx.ruleBodies = new Map();
 
-        await task.newListr(
-          currentRules.map((rule) => ({
-            title: rule.id,
-            task: async () => {
-              let body: string;
-              if (rule.type === 'inline') {
-                if (!rule.content) throw new Error(`Rule "${rule.id}" is type 'inline' but has no content.`);
-                body = rule.content;
-              } else if (rule.type === 'remote') {
-                if (!rule.url) throw new Error(`Rule "${rule.id}" is type 'remote' but has no url.`);
-                body = await fetchTextFile(rule.url, {
-                  authFetch: repoFetchAuth,
-                  sourceLabel: `rule "${rule.id}"`,
-                });
-              } else if (rule.type === 'github' || rule.type === 'gitlab') {
-                if (!rule.def?.repo) throw new Error(`Rule "${rule.id}" is type '${rule.type}' but missing def.repo.`);
-                const result = await fetchRepoFile(
-                  rule.type,
-                  rule.def.repo,
-                  repoFetchCtx.getRepoSnapshot,
-                  repoFetchAuth,
-                  { noCache: ctx.noCache },
-                );
-                body = result.content;
-              } else {
-                throw new Error(`Unknown rule type: ${(rule as any).type}`);
-              }
-              const security = ctx.capabilitiesToUse.options?.security;
-              if (isBlockedPhrasesEnabled(security)) {
-                const blockedPhrases = loadBlockedPhrases(security, ctx.capabilitiesFile.path);
-                const check = checkBlockedPhrases(body, blockedPhrases);
-                if (check.blocked) {
-                  reportBlockedPhraseAndExit(rule.id, `rule:${rule.id}`, check.phrase!);
-                }
-              }
-              if (isCharacterSanitizationEnabled(security)) {
-                const allowedChars = getAllowedCharacters(security);
-                if (allowedChars !== null) {
-                  body = sanitizeContent(body, allowedChars);
-                }
-              }
-              ctx.ruleBodies!.set(rule.id, body);
-            },
-          })),
-          { concurrent: false },
-        );
+        const totalRules = currentRules.length;
+        for (let i = 0; i < totalRules; i++) {
+          const rule = currentRules[i];
+          task.output = `[${i + 1}/${totalRules}] ${rule.id}`;
 
+          let body: string;
+          if (rule.type === 'inline') {
+            if (!rule.content) throw new Error(`Rule "${rule.id}" is type 'inline' but has no content.`);
+            body = rule.content;
+          } else if (rule.type === 'remote') {
+            if (!rule.url) throw new Error(`Rule "${rule.id}" is type 'remote' but has no url.`);
+            body = await fetchTextFile(rule.url, {
+              authFetch: repoFetchAuth,
+              sourceLabel: `rule "${rule.id}"`,
+            });
+          } else if (rule.type === 'github' || rule.type === 'gitlab') {
+            if (!rule.def?.repo) throw new Error(`Rule "${rule.id}" is type '${rule.type}' but missing def.repo.`);
+            const result = await fetchRepoFile(
+              rule.type,
+              rule.def.repo,
+              repoFetchCtx.getRepoSnapshot,
+              repoFetchAuth,
+              { noCache: ctx.noCache },
+            );
+            body = result.content;
+          } else {
+            throw new Error(`Unknown rule type: ${(rule as any).type}`);
+          }
+          const security = ctx.capabilitiesToUse.options?.security;
+          if (isBlockedPhrasesEnabled(security)) {
+            const blockedPhrases = loadBlockedPhrases(security, ctx.capabilitiesFile.path);
+            const check = checkBlockedPhrases(body, blockedPhrases);
+            if (check.blocked) {
+              reportBlockedPhraseAndExit(rule.id, `rule:${rule.id}`, check.phrase!);
+            }
+          }
+          if (isCharacterSanitizationEnabled(security)) {
+            const allowedChars = getAllowedCharacters(security);
+            if (allowedChars !== null) {
+              body = sanitizeContent(body, allowedChars);
+            }
+          }
+          ctx.ruleBodies.set(rule.id, body);
+        }
+
+        task.output = 'writing files…';
         installRules(ctx.projectPath, currentRules, providers, ctx.ruleBodies, {
           onFileWritten: (filePath) => ctx.db.addManagedFile(ctx.projectId, filePath),
         });
         ctx.added += currentRules.length;
+        task.title = `Installed ${totalRules} rule${totalRules === 1 ? '' : 's'}`;
       },
     },
     {
       title: 'Configuring tools',
       task: async (ctx, task) => {
+        const tools = ctx.capabilitiesToUse.tools ?? [];
+        const mcpTools = tools.filter((t) => t.type === 'mcp');
+        const cmdTools = tools.filter((t) => t.type === 'command');
+        const mcpServerIds = new Set<string>();
+        for (const t of mcpTools) {
+          const def = t.def as { server?: string };
+          if (def.server) {
+            mcpServerIds.add(def.server.startsWith('@') ? def.server.slice(1) : def.server);
+          }
+        }
+
+        if (tools.length === 0) {
+          task.output = 'no tools configured';
+        } else {
+          const parts: string[] = [];
+          if (mcpTools.length > 0) {
+            parts.push(
+              `${mcpTools.length} MCP tool${mcpTools.length === 1 ? '' : 's'} across ` +
+                `${mcpServerIds.size} server${mcpServerIds.size === 1 ? '' : 's'}`,
+            );
+          }
+          if (cmdTools.length > 0) {
+            parts.push(`${cmdTools.length} command tool${cmdTools.length === 1 ? '' : 's'}`);
+          }
+          task.output = `validating ${parts.join(' + ')}…`;
+        }
+
         const response = await fetch(
           `${ctx.serverStatus.url}/api/projects/${ctx.projectId}/configure`,
           {
@@ -818,6 +803,7 @@ function buildInstallTasks(reqCmds?: RequiredCommand[]): Task<InstallCtx>[] {
           throw new Error(`Failed to configure project: ${errorText}`);
         }
 
+        task.output = 'parsing validation results…';
         ctx.configureResult = await response.json();
 
         const result = ctx.configureResult as {
@@ -835,6 +821,24 @@ function buildInstallTasks(reqCmds?: RequiredCommand[]): Task<InstallCtx>[] {
           const successful = result.toolValidation.filter((t) => t.success && !t.pendingAuth);
           const failed = result.toolValidation.filter((t) => !t.success && !t.pendingAuth);
           const pendingAuth = result.toolValidation.filter((t) => t.pendingAuth);
+
+          const breakdown: string[] = [];
+          if (successful.length > 0) {
+            breakdown.push(`✓ ${successful.length} validated`);
+          }
+          if (pendingAuth.length > 0) {
+            const pendingServers = new Set<string>();
+            for (const t of pendingAuth) {
+              if (t.serverId) pendingServers.add(`@${t.serverId}`);
+            }
+            const suffix =
+              pendingServers.size > 0 ? ` (${[...pendingServers].sort().join(', ')})` : '';
+            breakdown.push(`⏳ ${pendingAuth.length} pending OAuth2${suffix}`);
+          }
+          if (failed.length > 0) {
+            breakdown.push(`✗ ${failed.length} failed`);
+          }
+          task.output = breakdown.join(' · ');
 
           if (failed.length > 0) {
             ctx.failed += failed.length;
@@ -894,61 +898,57 @@ function buildInstallTasks(reqCmds?: RequiredCommand[]): Task<InstallCtx>[] {
           .map(({ agent_id }) => agent_id);
         return removedSubAgentIds.length > 0 || currentSubagents.length > 0;
       },
-      task: (ctx, task) => {
+      task: async (ctx, task) => {
         const providers = ctx.capabilitiesToUse.providers ?? ctx.resolvedProviders;
         const installedAgents = ctx.db.getSubAgents(ctx.projectId);
         const currentSubagents = ctx.capabilitiesToUse.subagents ?? [];
         const currentAgentIds = new Set(currentSubagents.map((a) => a.id));
+        const removedAgents = installedAgents.filter(({ agent_id }) => !currentAgentIds.has(agent_id));
 
-        const subTasks: Task<InstallCtx>[] = [];
+        const needsPurge = providers.some((id) => {
+          const provider = getProvider(id);
+          return (
+            provider &&
+            (provider.mcp?.supportsSubAgentEntries === false || provider.purgeStaleSubAgentMcp === true)
+          );
+        });
 
-        if (
-          providers.some((id) => {
-            const provider = getProvider(id);
-            return (
-              provider &&
-              (provider.mcp?.supportsSubAgentEntries === false || provider.purgeStaleSubAgentMcp === true)
-            );
-          })
-        ) {
-          subTasks.push({
-            title: 'Purging stale sub-agent MCP entries',
-            task: () => purgeCursorSubAgentMCPEntries(ctx.projectPath),
-          });
+        const total = (needsPurge ? 1 : 0) + removedAgents.length + currentSubagents.length;
+        let step = 0;
+
+        if (needsPurge) {
+          step++;
+          task.output = `[${step}/${total}] purging stale sub-agent MCP entries`;
+          await purgeCursorSubAgentMCPEntries(ctx.projectPath);
         }
 
-        for (const { agent_id } of installedAgents) {
-          if (!currentAgentIds.has(agent_id)) {
-            subTasks.push({
-              title: `Remove ${agent_id}`,
-              task: async () => {
-                await unregisterSubAgentMCPServer(ctx.projectPath, agent_id, providers);
-                removeSubAgentInstructions(ctx.projectPath, agent_id, providers);
-                ctx.db.removeSubAgent(ctx.projectId, agent_id);
-              },
-            });
-          }
+        for (const { agent_id } of removedAgents) {
+          step++;
+          task.output = `[${step}/${total}] removing ${agent_id}`;
+          await unregisterSubAgentMCPServer(ctx.projectPath, agent_id, providers);
+          removeSubAgentInstructions(ctx.projectPath, agent_id, providers);
+          ctx.db.removeSubAgent(ctx.projectId, agent_id);
         }
 
         for (const subAgent of currentSubagents) {
-          subTasks.push({
-            title: subAgent.id,
-            task: async () => {
-              const agentMcpUrl = `${ctx.serverStatus.url}/${ctx.projectId}/agents/${subAgent.id}/mcp`;
-              await registerSubAgentMCPServer(ctx.projectPath, subAgent.id, agentMcpUrl, providers);
-              installSubAgentInstructions(
-                ctx.projectPath,
-                subAgent,
-                ctx.capabilitiesToUse,
-                providers,
-              );
-              ctx.db.upsertSubAgent(ctx.projectId, subAgent.id);
-              ctx.added++;
-            },
-          });
+          step++;
+          task.output = `[${step}/${total}] ${subAgent.id}`;
+          const agentMcpUrl = `${ctx.serverStatus.url}/${ctx.projectId}/agents/${subAgent.id}/mcp`;
+          await registerSubAgentMCPServer(ctx.projectPath, subAgent.id, agentMcpUrl, providers);
+          installSubAgentInstructions(
+            ctx.projectPath,
+            subAgent,
+            ctx.capabilitiesToUse,
+            providers,
+          );
+          ctx.db.upsertSubAgent(ctx.projectId, subAgent.id);
+          ctx.added++;
         }
 
-        return task.newListr(subTasks, { concurrent: false, rendererOptions: { collapseSubtasks: false } });
+        const installed = currentSubagents.length;
+        task.title = installed > 0
+          ? `Installed ${installed} sub-agent${installed === 1 ? '' : 's'}`
+          : 'Sub-agents up to date';
       },
     },
     {
@@ -957,33 +957,33 @@ function buildInstallTasks(reqCmds?: RequiredCommand[]): Task<InstallCtx>[] {
         const result = ctx.configureResult as any;
         return !!(result?.needsCredentials && result?.credentialsUrl);
       },
-      task: async (ctx) => {
+      task: async (ctx, task) => {
         const result = ctx.configureResult as any;
         const hasVariables = result.missingVariables && result.missingVariables.length > 0;
         const hasOAuth2 = result.oauth2Servers && result.oauth2Servers.length > 0;
         const needsOAuth2Connection = hasOAuth2 && result.oauth2Servers.some((s: any) => !s.isConnected);
 
-        if (hasVariables && needsOAuth2Connection) {
-          info('Credentials and OAuth2 connections required');
-        } else if (needsOAuth2Connection) {
-          info('OAuth2 connections required');
-        } else {
-          info('Credentials required');
-        }
-
+        // Deferred to ctx.warnings so they print after the spinner clears.
         if (hasVariables) {
-          info(`Missing variables: ${result.missingVariables.join(', ')}`);
+          ctx.warnings.push(
+            `Missing variables: ${result.missingVariables.join(', ')}`,
+          );
         }
         if (needsOAuth2Connection) {
           const disconnectedServers = result.oauth2Servers.filter((s: any) => !s.isConnected);
-          info(`OAuth2 servers need connection: ${disconnectedServers.map((s: any) => s.serverId).join(', ')}`);
+          ctx.warnings.push(
+            `OAuth2 servers need connection: ${disconnectedServers
+              .map((s: any) => s.serverId)
+              .join(', ')}`,
+          );
         }
 
+        task.output = 'opening browser';
         const opened = await openBrowser(result.credentialsUrl);
-        if (opened) {
-          info(`Browser opened: ${result.credentialsUrl}`);
-        } else {
-          info(`Could not open browser automatically. Open manually: ${result.credentialsUrl}`);
+        if (!opened) {
+          ctx.warnings.push(
+            `Could not open browser automatically. Open manually: ${result.credentialsUrl}`,
+          );
         }
       },
     },
@@ -1059,10 +1059,7 @@ export async function installCommand(
     process.exit(1);
   }
 
-  // Hoisted outside the try/catch so the catch block can surface the
-  // diagnostics that listr2 tasks accumulated before throwing — without this,
-  // a failing skill subtask would only print `err.message` (one line) and
-  // ctx.errors would be lost on the floor.
+  // Hoisted so the catch block can surface ctx.errors accumulated before the throw.
   const initialCtx: InstallCtx = {
     projectPath,
     projectId,
@@ -1102,17 +1099,11 @@ export async function installCommand(
       skipped: ctx.skipped,
       elapsedMs: Date.now() - startedAt,
     });
-    // A run can complete the listr2 tree without throwing yet still have
-    // accumulated subtask failures (e.g. skill install errors with
-    // exitOnError:false). Exit non-zero in that case so CI / scripted callers
-    // see the failure.
+    // Exit non-zero on accumulated per-task failures (continue-on-error mode).
     if (initialCtx.failed > 0) {
       process.exit(1);
     }
   } catch (err: unknown) {
-    // Surface anything the tasks managed to accumulate before the throw, then
-    // print the throwing error itself. This way a private-repo clone failure
-    // shows up as a full diagnostic block instead of a single cryptic line.
     for (const e of initialCtx.errors) error(e);
     for (const w of initialCtx.warnings) warn(w);
     summary({
@@ -1309,26 +1300,13 @@ async function installOneSkill(
             });
             resolvedRepos.set(repoKey, snapshot);
           } catch (err: any) {
-            // Re-throw with a friendlier prefix. The previous integration-prompt
-            // branch keyed off `error.message.includes('Unable to clone repository')`
-            // but `explainGitError` never emits that exact string anymore — it
-            // produces "Repository not accessible", "Authentication failed", etc.
-            // The dead check meant private-repo failures (no token) fell through
-            // to a plain `throw`, which only surfaced as a truncated subtask
-            // title once listr2 collapsed the tree. The friendly multi-line
-            // message from `explainGitError` (which already includes the
-            // "Run: capa start → connect integration" instructions when the user
-            // has no auth) now propagates intact to ctx.errors via the skill
-            // subtask catch and is printed in the post-tree summary.
-            const integrationsUrl = getIntegrationsUrl(settings.server.host, settings.server.port);
             const message: string = err?.message ?? String(err);
             const hasAuth = authFetch.hasAuth(`https://${platform}.com/${repoPath}`);
             const suggestsIntegration =
-              !hasAuth &&
-              (message.includes('Repository not accessible') ||
-                message.includes('Authentication failed'));
+              (!hasAuth && message.includes('not accessible')) ||
+              message.includes('authentication failed');
             const suffix = suggestsIntegration
-              ? `\n    Connect your ${platformLabel} integration at: ${integrationsUrl}`
+              ? `\nConnect ${platformLabel} at: ${getIntegrationsUrl(settings.server.host, settings.server.port)}`
               : '';
             throw new Error(`${message}${suffix}`);
           }
@@ -1399,7 +1377,7 @@ async function installOneSkill(
         additionalFiles = skillData.additionalFiles;
 
       } catch (error: any) {
-        throw new Error(`Failed to install skill from ${platformLabel}: ${error.message || error}`);
+        throw error instanceof Error ? error : new Error(String(error));
       }
     } else if (skill.type === 'remote' && skill.def.url) {
       // Remote skill - fetch SKILL.md from URL
