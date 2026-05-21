@@ -114,42 +114,73 @@ function parseSkillsField(
   return entries;
 }
 
+interface ParsedMcpServerEntry {
+  url?: string;
+  command?: string;
+  cmd?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  type?: string;
+  headers?: Record<string, string>;
+  oauth2?: unknown;
+  oauth?: unknown;
+  auth?: unknown;
+}
+
+function isPlainObject(x: unknown): x is Record<string, unknown> {
+  return x !== null && typeof x === 'object' && !Array.isArray(x);
+}
+
+function asParsedMcpServerEntry(entry: unknown): ParsedMcpServerEntry | null {
+  if (!isPlainObject(entry)) return null;
+  return entry as ParsedMcpServerEntry;
+}
+
+function parseSkillsRaw(raw: unknown): string | string[] | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw === 'string') return raw;
+  if (Array.isArray(raw) && raw.every((p) => typeof p === 'string')) return raw;
+  return undefined;
+}
+
 /**
  * Normalize one MCP server entry from manifest.
  * Supports subprocess (command/cmd + args/env) and remote HTTP (url + headers/oauth).
  */
-function normalizeMcpServerEntry(entry: any): NormalizedPluginMCPServerDef | null {
-  if (!entry || typeof entry !== 'object') return null;
+function normalizeMcpServerEntry(entry: unknown): NormalizedPluginMCPServerDef | null {
+  const parsed = asParsedMcpServerEntry(entry);
+  if (!parsed) return null;
 
-  const url = entry.url;
+  const url = parsed.url;
   if (typeof url === 'string' && url.length > 0) {
     return {
       url,
-      headers: entry.headers && typeof entry.headers === 'object' ? entry.headers : undefined,
-      oauth2: entry.oauth2 ?? entry.oauth ?? entry.auth,
+      headers: isPlainObject(parsed.headers) ? (parsed.headers as Record<string, string>) : undefined,
+      oauth2: parsed.oauth2 ?? parsed.oauth ?? parsed.auth,
     };
   }
 
-  const command = entry.command ?? entry.cmd;
+  const command = parsed.command ?? parsed.cmd;
   if (typeof command !== 'string') return null;
   return {
     cmd: command,
-    args: Array.isArray(entry.args) ? entry.args : undefined,
-    env: entry.env && typeof entry.env === 'object' ? entry.env : undefined,
+    args: Array.isArray(parsed.args) ? parsed.args : undefined,
+    env: isPlainObject(parsed.env) ? (parsed.env as Record<string, string>) : undefined,
   };
 }
 
 /**
  * Load one MCP config (object keyed by server id) from a path or return null.
  */
-function loadMcpConfigFromPath(repoRoot: string, path: string): Record<string, any> | null {
+function loadMcpConfigFromPath(repoRoot: string, path: string): Record<string, unknown> | null {
   const fullPath = path.startsWith('./') ? join(repoRoot, path) : join(repoRoot, `./${path}`);
   if (!existsSync(fullPath)) return null;
   try {
     const content = readFileSync(fullPath, 'utf-8');
-    const data = JSON.parse(content);
+    const data: unknown = JSON.parse(content);
+    if (!isPlainObject(data)) return null;
     const obj = data.mcpServers ?? data;
-    return obj && typeof obj === 'object' && !Array.isArray(obj) ? obj : null;
+    return isPlainObject(obj) ? obj : null;
   } catch {
     return null;
   }
@@ -160,9 +191,8 @@ function loadMcpConfigFromPath(repoRoot: string, path: string): Record<string, a
  */
 function mergeMcpEntries(
   result: Record<string, NormalizedPluginMCPServerDef>,
-  obj: Record<string, any>
+  obj: Record<string, unknown>
 ): void {
-  if (!obj || typeof obj !== 'object') return;
   for (const [key, value] of Object.entries(obj)) {
     const normalized = normalizeMcpServerEntry(value);
     if (normalized) result[key] = normalized;
@@ -173,9 +203,11 @@ function mergeMcpEntries(
  * Load MCP servers from manifest: mcpServers can be a path (string), inline object,
  * or array of paths/inline configs (Cursor format).
  */
-function parseMcpServers(repoRoot: string, manifest: any): Record<string, NormalizedPluginMCPServerDef> {
-  const raw = manifest.mcpServers ?? manifest.mcp;
+function parseMcpServers(repoRoot: string, manifest: unknown): Record<string, NormalizedPluginMCPServerDef> {
   const result: Record<string, NormalizedPluginMCPServerDef> = {};
+  if (!isPlainObject(manifest)) return result;
+
+  const raw = manifest.mcpServers ?? manifest.mcp;
 
   if (typeof raw === 'string') {
     const obj = loadMcpConfigFromPath(repoRoot, raw);
@@ -186,7 +218,7 @@ function parseMcpServers(repoRoot: string, manifest: any): Record<string, Normal
       if (typeof item === 'string') {
         const obj = loadMcpConfigFromPath(repoRoot, item);
         if (obj) mergeMcpEntries(result, obj);
-      } else if (item && typeof item === 'object' && !Array.isArray(item)) {
+      } else if (isPlainObject(item)) {
         const hasCommand = 'command' in item || 'cmd' in item;
         if (hasCommand) {
           const normalized = normalizeMcpServerEntry(item);
@@ -196,7 +228,7 @@ function parseMcpServers(repoRoot: string, manifest: any): Record<string, Normal
         }
       }
     }
-  } else if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+  } else if (isPlainObject(raw)) {
     mergeMcpEntries(result, raw);
   }
 
@@ -208,30 +240,32 @@ function parseMcpServers(repoRoot: string, manifest: any): Record<string, Normal
   return result;
 }
 
-function parseCursorManifest(repoRoot: string, data: any): UnifiedPluginManifest {
-  const name = typeof data.name === 'string' ? data.name : 'unknown';
-  const skills = parseSkillsField(repoRoot, data.skills, 'skills');
+function parseCursorManifest(repoRoot: string, data: unknown): UnifiedPluginManifest {
+  const record = isPlainObject(data) ? data : {};
+  const name = typeof record.name === 'string' ? record.name : 'unknown';
+  const skills = parseSkillsField(repoRoot, parseSkillsRaw(record.skills), 'skills');
   const mcpServers = parseMcpServers(repoRoot, data);
 
   return {
     name,
-    version: typeof data.version === 'string' ? data.version : undefined,
-    description: typeof data.description === 'string' ? data.description : undefined,
+    version: typeof record.version === 'string' ? record.version : undefined,
+    description: typeof record.description === 'string' ? record.description : undefined,
     provider: 'cursor',
     skillEntries: skills,
     mcpServers,
   };
 }
 
-function parseClaudeManifest(repoRoot: string, data: any): UnifiedPluginManifest {
-  const name = typeof data.name === 'string' ? data.name : 'unknown';
-  const skills = parseSkillsField(repoRoot, data.skills, 'skills');
+function parseClaudeManifest(repoRoot: string, data: unknown): UnifiedPluginManifest {
+  const record = isPlainObject(data) ? data : {};
+  const name = typeof record.name === 'string' ? record.name : 'unknown';
+  const skills = parseSkillsField(repoRoot, parseSkillsRaw(record.skills), 'skills');
   const mcpServers = parseMcpServers(repoRoot, data);
 
   return {
     name,
-    version: typeof data.version === 'string' ? data.version : undefined,
-    description: typeof data.description === 'string' ? data.description : undefined,
+    version: typeof record.version === 'string' ? record.version : undefined,
+    description: typeof record.description === 'string' ? record.description : undefined,
     provider: 'claude',
     skillEntries: skills,
     mcpServers,

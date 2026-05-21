@@ -11,6 +11,7 @@ import type {
 } from '../types/oauth';
 import { generateCodeVerifier, generateCodeChallenge, generateState } from '../utils/pkce';
 import { logger } from '../shared/logger';
+import { shouldSkipTlsVerify } from '../shared/tls-skip-verify';
 
 export class OAuth2Manager {
   private db: CapaDatabase;
@@ -38,7 +39,10 @@ export class OAuth2Manager {
   }
 
   async detectOAuth2Requirement(serverUrl: string, options?: { tlsSkipVerify?: boolean }): Promise<OAuth2Config | null> {
-    const tlsSkipVerify = options?.tlsSkipVerify;
+    const tlsSkipVerify = shouldSkipTlsVerify(
+      !!options?.tlsSkipVerify,
+      `OAuth2 detection (${serverUrl})`
+    );
     try {
       this.logger.info(`Detecting OAuth2 requirement for: ${serverUrl}`);
       

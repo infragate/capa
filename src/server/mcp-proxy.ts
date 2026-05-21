@@ -8,6 +8,7 @@ import { resolveVariablesInObject, hasUnresolvedVariables } from '../shared/vari
 import { VERSION } from '../version';
 import { OAuth2Manager } from './oauth-manager';
 import { logger } from '../shared/logger';
+import { shouldSkipTlsVerify } from '../shared/tls-skip-verify';
 
 export interface MCPToolResult {
   success: boolean;
@@ -324,6 +325,7 @@ class HttpMCPTransport implements Transport {
   private db: CapaDatabase;
   private oauth2Manager: OAuth2Manager;
   private serverDefinition: MCPServerDefinition;
+  private skipTlsVerify: boolean;
   private logger = logger.child('HttpTransport');
   public sessionId?: string;
   public onclose?: () => void;
@@ -344,6 +346,10 @@ class HttpMCPTransport implements Transport {
     this.db = db;
     this.oauth2Manager = oauth2Manager;
     this.serverDefinition = serverDefinition;
+    this.skipTlsVerify = shouldSkipTlsVerify(
+      !!serverDefinition.tlsSkipVerify,
+      `MCP HTTP transport (${serverId})`
+    );
   }
 
   async start(): Promise<void> {
@@ -382,7 +388,7 @@ class HttpMCPTransport implements Transport {
         }
       }
 
-      const tlsOptions = this.serverDefinition.tlsSkipVerify
+      const tlsOptions = this.skipTlsVerify
         ? ({ tls: { rejectUnauthorized: false } } as object)
         : {};
 

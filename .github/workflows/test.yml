@@ -32,20 +32,11 @@ jobs:
         run: bun run build:web
       
       - name: Run tests
-        run: bun test src/
+        run: bun test
       
       - name: Run tests with coverage
-        run: bun test src/ --coverage
-      
-      - name: Check coverage threshold
-        run: |
-          bun test src/ --coverage > coverage.txt 2>&1 || true
-          cat coverage.txt
-          
-          # Extract coverage percentage and check if it meets 80% threshold
-          # Bun's coverage output format should show overall coverage percentage
-          # This is a basic check - adjust as needed based on actual Bun output format
-          echo "Coverage report generated. Please review to ensure 80% threshold is met."
+        if: matrix.os == 'ubuntu-latest'
+        run: bun test --coverage
       
       - name: Upload coverage reports
         uses: actions/upload-artifact@v4

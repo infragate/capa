@@ -45,6 +45,28 @@ interface RegistryItemDetail extends RegistryItemSummary {
   files?: string[];
 }
 
+interface CursorMarketplaceSkill {
+  name?: string;
+  description?: string;
+}
+
+interface CursorMarketplaceMcpServer {
+  name?: string;
+}
+
+interface CursorMarketplacePlugin {
+  id: string | number;
+  name?: string;
+  displayName?: string;
+  description?: unknown;
+  logoUrl?: string;
+  publisher?: unknown;
+  gitUrl?: string;
+  skills?: CursorMarketplaceSkill[];
+  mcpServers?: CursorMarketplaceMcpServer[];
+  curatedCategoryKeys?: unknown;
+}
+
 interface RegistryAdapter {
   manifest: RegistryManifest;
   search(args: { capability: RegistryCapability; query?: string; limit?: number }): Promise<{ items: RegistryItemSummary[]; total?: number }>;
@@ -106,11 +128,11 @@ function toSummary(p: any): RegistryItemSummary {
   };
 }
 
-let cachedPlugins: any[] | null = null;
+let cachedPlugins: CursorMarketplacePlugin[] | null = null;
 let cacheTime = 0;
 const CACHE_TTL = 5 * 60 * 1000;
 
-async function fetchAll(): Promise<any[]> {
+async function fetchAll(): Promise<CursorMarketplacePlugin[]> {
   if (cachedPlugins && Date.now() - cacheTime < CACHE_TTL) return cachedPlugins;
   const res = await fetch('https://cursor.com/api/dashboard/list-marketplace-plugins', {
     method: 'POST',
@@ -118,10 +140,16 @@ async function fetchAll(): Promise<any[]> {
     body: JSON.stringify({ query: '', limit: 500 }),
   });
   if (!res.ok) throw new Error(`Cursor marketplace fetch failed: ${res.status}`);
-  const data: any = await res.json();
-  cachedPlugins = data.plugins ?? [];
+  const data: unknown = await res.json();
+  cachedPlugins =
+    data !== null &&
+    typeof data === 'object' &&
+    'plugins' in data &&
+    Array.isArray((data as { plugins: unknown }).plugins)
+      ? ((data as { plugins: unknown[] }).plugins as CursorMarketplacePlugin[])
+      : [];
   cacheTime = Date.now();
-  return cachedPlugins!;
+  return cachedPlugins;
 }
 
 const adapter: RegistryAdapter = {
