@@ -7,6 +7,57 @@ import {
 } from './types-helpers';
 
 /**
+ * Pull a value from `obj` matching any of the supplied case-insensitive keys.
+ * Plugin manifests authored by different ecosystems use wildly different
+ * spellings for the same OAuth field (Cursor: `CLIENT_ID`, Claude: `clientId`,
+ * raw OAuth2 spec: `client_id`), so we normalize them here.
+ */
+function pickField(obj: Record<string, unknown>, names: readonly string[]): unknown {
+  const lookup = new Map<string, unknown>();
+  for (const key of Object.keys(obj)) {
+    lookup.set(key.toLowerCase(), obj[key]);
+  }
+  for (const name of names) {
+    const found = lookup.get(name.toLowerCase());
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+
+/**
+ * Normalize an OAuth2 config block (under any of `oauth2`/`oauth`/`auth`) to
+ * the canonical capa shape: `client_id`, `client_secret`, `callback_port`,
+ * etc. Unknown/extra fields are preserved untouched so per-server quirks can
+ * still flow through to downstream consumers.
+ */
+function normalizeOAuth2Block(raw: unknown): Record<string, unknown> | undefined {
+  if (!isPlainObject(raw)) return raw === undefined ? undefined : (raw as Record<string, unknown>);
+  const result: Record<string, unknown> = { ...raw };
+
+  const clientId = pickField(raw, ['client_id', 'clientId', 'CLIENT_ID']);
+  if (typeof clientId === 'string' && clientId.length > 0) {
+    result.client_id = clientId;
+  }
+
+  const clientSecret = pickField(raw, ['client_secret', 'clientSecret', 'CLIENT_SECRET']);
+  if (typeof clientSecret === 'string' && clientSecret.length > 0) {
+    result.client_secret = clientSecret;
+  }
+
+  const callbackPort = pickField(raw, ['callback_port', 'callbackPort', 'CALLBACK_PORT']);
+  if (typeof callbackPort === 'number' && callbackPort > 0) {
+    result.callback_port = callbackPort;
+  } else if (typeof callbackPort === 'string') {
+    const parsed = Number(callbackPort);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      result.callback_port = parsed;
+    }
+  }
+
+  return result;
+}
+
+/**
  * Normalize one MCP server entry from manifest.
  * Supports subprocess (command/cmd + args/env) and remote HTTP (url + headers/oauth).
  */
@@ -16,10 +67,11 @@ export function normalizeMcpServerEntry(entry: unknown): NormalizedPluginMCPServ
 
   const url = parsed.url;
   if (typeof url === 'string' && url.length > 0) {
+    const rawOauth = parsed.oauth2 ?? parsed.oauth ?? parsed.auth;
     return {
       url,
       headers: isPlainObject(parsed.headers) ? (parsed.headers as Record<string, string>) : undefined,
-      oauth2: parsed.oauth2 ?? parsed.oauth ?? parsed.auth,
+      oauth2: normalizeOAuth2Block(rawOauth),
     };
   }
 
