@@ -17,7 +17,7 @@ import {
   rmSync,
   statSync,
 } from 'fs';
-import { join } from 'path';
+import { join, resolve, sep } from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { homedir } from 'os';
@@ -27,6 +27,23 @@ const execAsync = promisify(exec);
 
 export type CachePlatform = 'github' | 'gitlab';
 
+/** Reject user-controlled repo paths before filesystem or shell use. */
+function validateRepoPath(path: string): void {
+  if (!path || /[\x00-\x1f]/.test(path)) {
+    throw new Error(`Invalid repository path: ${path}`);
+  }
+  const segments = path.split(/[\\/]/);
+  if (segments.some((s) => s === '..')) {
+    throw new Error(`Invalid repository path: ${path}`);
+  }
+  const cacheRoot = join(getCacheDir(), 'git');
+  const resolved = resolve(cacheRoot, path);
+  const rootWithSep = cacheRoot.endsWith(sep) ? cacheRoot : cacheRoot + sep;
+  if (resolved !== cacheRoot && !resolved.startsWith(rootWithSep)) {
+    throw new Error(`Invalid repository path: ${path}`);
+  }
+}
+
 /** Root cache directory. Override via CAPA_CACHE_DIR for tests. */
 export function getCacheDir(): string {
   return process.env.CAPA_CACHE_DIR ?? join(homedir(), '.capa', 'cache');
@@ -34,6 +51,7 @@ export function getCacheDir(): string {
 
 /** Per-repo directory: ~/.capa/cache/git/<platform>/<owner>/<repo>/ */
 export function getRepoCacheDir(platform: CachePlatform, repoPath: string): string {
+  validateRepoPath(repoPath);
   return join(getCacheDir(), 'git', platform, repoPath);
 }
 
@@ -60,6 +78,7 @@ function buildAuthenticatedRepoUrl(
   repoPath: string,
   authFetch: AuthenticatedFetch
 ): string {
+  validateRepoPath(repoPath);
   const baseHost = `${platform}.com`;
   const probeUrl = `https://${baseHost}/${repoPath}`;
   const hasAuth = authFetch.hasAuth(probeUrl);
@@ -83,6 +102,7 @@ export async function ensureMirrorClone(
   authFetch: AuthenticatedFetch,
   repoUrl?: string
 ): Promise<string> {
+  validateRepoPath(repoPath);
   const mirrorDir = getRepoMirrorDir(platform, repoPath);
   if (existsSync(mirrorDir)) {
     return mirrorDir;
@@ -220,6 +240,7 @@ export async function materializeSnapshot(
   repoPath: string,
   sha: string
 ): Promise<string> {
+  validateRepoPath(repoPath);
   const snapshotDir = getSnapshotDir(platform, repoPath, sha);
   if (existsSync(snapshotDir)) return snapshotDir;
 
@@ -292,6 +313,7 @@ export async function getOrCreateSnapshot(
   opts: GetSnapshotOptions
 ): Promise<GetSnapshotResult> {
   const { platform, repoPath, authFetch, noCache } = opts;
+  validateRepoPath(repoPath);
 
   if (noCache) {
     // Wipe any existing per-repo cache so we re-clone fresh.

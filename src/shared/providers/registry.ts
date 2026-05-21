@@ -66,6 +66,7 @@ export const providers: Record<string, ProviderIntegration> = {
       serverKey: 'capa',
       entryUrlKey: 'url',
       supportsSubAgentEntries: true,
+      defaultMcpFallbackPath: '.mcp.json',
     },
     instructions: { filename: 'CLAUDE.md' },
     subagents: {
@@ -75,6 +76,8 @@ export const providers: Record<string, ProviderIntegration> = {
       fields: { model: 'inherit' },
     },
     pluginManifestPaths: ['.claude-plugin/plugin.json'],
+    pluginProviderId: 'claude',
+    foldSubAgentsIntoInstructions: false,
   },
   openclaw: {
     id: 'openclaw',
@@ -162,6 +165,7 @@ export const providers: Record<string, ProviderIntegration> = {
       serverKey: 'capa',
       entryUrlKey: 'url',
       supportsSubAgentEntries: false,
+      defaultMcpFallbackPath: '.cursor/mcp.json',
     },
     instructions: { filename: 'AGENTS.md' },
     rules: {
@@ -177,6 +181,8 @@ export const providers: Record<string, ProviderIntegration> = {
       fields: { model: 'inherit', readonly: false, is_background: false },
     },
     pluginManifestPaths: ['.cursor-plugin/plugin.json'],
+    pluginProviderId: 'cursor',
+    purgeStaleSubAgentMcp: true,
   },
   droid: {
     id: 'droid',

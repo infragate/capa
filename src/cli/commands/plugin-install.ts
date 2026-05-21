@@ -444,7 +444,9 @@ export async function resolvePlugins(
         const toRemove = join(pluginsDirFull, d.name);
         try {
           rmSync(toRemove, { recursive: true, force: true });
-        } catch {}
+        } catch (err) {
+          console.warn(`Failed to clean up plugin directory: ${(err as Error).message}`);
+        }
       }
     }
   }

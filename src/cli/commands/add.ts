@@ -410,7 +410,21 @@ export function parsePluginSource(source: string): ParsedPluginSource {
   );
 }
 
-export async function addCommand(source: string, options: { plugin?: boolean; skill?: boolean }): Promise<void> {
+export async function addCommand(
+  source: string,
+  options: {
+    plugin?: boolean;
+    skill?: boolean;
+    provider?: string;
+    envFile?: string | boolean;
+    noCache?: boolean;
+  }
+): Promise<void> {
+  const installOpts = {
+    envFile: options.envFile,
+    provider: options.provider,
+    noCache: options.noCache,
+  };
   if (options.plugin && options.skill) {
     console.error('✗ Cannot pass both --skill and --plugin.');
     process.exit(1);
@@ -499,7 +513,7 @@ export async function addCommand(source: string, options: { plugin?: boolean; sk
 
       console.log(`\u2713 Added ${resolvedCapability.slice(0, -1)} "${itemName}" from registry "${registryId}" to ${capabilitiesFile.path}`);
       console.log('\n\u{1F4E6} Running installation...\n');
-      await installCommand();
+      await installCommand(installOpts);
       return;
     }
     // If no adapter matched, fall through to normal parsing
@@ -538,7 +552,7 @@ export async function addCommand(source: string, options: { plugin?: boolean; sk
     if (parsed.def.ref) console.log(`  Ref: ${parsed.def.ref}`);
 
     console.log('\n📦 Running installation...\n');
-    await installCommand();
+    await installCommand(installOpts);
     return;
   }
 
@@ -583,5 +597,5 @@ export async function addCommand(source: string, options: { plugin?: boolean; sk
   }
 
   console.log('\n📦 Running installation...\n');
-  await installCommand();
+  await installCommand(installOpts);
 }
