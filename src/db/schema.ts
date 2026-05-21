@@ -142,4 +142,20 @@ export function initSchema(db: Database): void {
         FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
       )
     `);
+
+  db.run(`
+      CREATE TABLE IF NOT EXISTS registries (
+        slug TEXT PRIMARY KEY,
+        type TEXT NOT NULL CHECK(type IN ('github','gitlab','url')),
+        source TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        status TEXT NOT NULL DEFAULT 'pending'
+               CHECK(status IN ('pending','installed','failed','disabled')),
+        last_error TEXT,
+        resolved_ref TEXT,
+        installed_at INTEGER,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `);
 }

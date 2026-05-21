@@ -9,6 +9,8 @@ import type {
   GitIntegration,
   OAuthTokenRow,
   OAuthFlowStateRow,
+  RegistryRecord,
+  RegistryStatus,
 } from '../types/database';
 import { initSchema } from './schema';
 import { ProjectsRepo } from './projects';
@@ -21,6 +23,7 @@ import { GitIntegrationsRepo } from './git-integrations';
 import { ToolInitStateRepo } from './tool-init-state';
 import { SubAgentsRepo } from './sub-agents';
 import { MCPSubprocessesRepo } from './mcp-subprocesses';
+import { RegistriesRepo, type RegistryUpsertInput } from './registries';
 
 export class CapaDatabase {
   private db: Database;
@@ -34,6 +37,7 @@ export class CapaDatabase {
   private toolInitState: ToolInitStateRepo;
   private subAgents: SubAgentsRepo;
   private mcpSubprocesses: MCPSubprocessesRepo;
+  private registries: RegistriesRepo;
 
   constructor(dbPath: string) {
     // Ensure parent directory exists before creating database
@@ -53,6 +57,7 @@ export class CapaDatabase {
     this.toolInitState = new ToolInitStateRepo(this.db);
     this.subAgents = new SubAgentsRepo(this.db);
     this.mcpSubprocesses = new MCPSubprocessesRepo(this.db);
+    this.registries = new RegistriesRepo(this.db);
   }
 
   // Project operations
@@ -280,6 +285,31 @@ export class CapaDatabase {
 
   getAllGitOAuthTokens(): Array<GitIntegration & { provider: string }> {
     return this.gitIntegrations.getAllOAuthTokens();
+  }
+
+  // Registry operations
+  listRegistries(): RegistryRecord[] {
+    return this.registries.list();
+  }
+
+  getRegistry(slug: string): RegistryRecord | null {
+    return this.registries.get(slug);
+  }
+
+  upsertRegistry(input: RegistryUpsertInput): RegistryRecord {
+    return this.registries.upsert(input);
+  }
+
+  setRegistryStatus(slug: string, status: RegistryStatus, lastError: string | null = null): void {
+    return this.registries.setStatus(slug, status, lastError);
+  }
+
+  setRegistryEnabled(slug: string, enabled: boolean): void {
+    return this.registries.setEnabled(slug, enabled);
+  }
+
+  deleteRegistry(slug: string): void {
+    return this.registries.delete(slug);
   }
 
   close(): void {
