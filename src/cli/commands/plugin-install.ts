@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync, cpSync, statSync } from 'fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync, cpSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 import type { Capabilities, Skill, MCPServer, SourcePlugin, ResolvedPluginInfo, OAuth2Config } from '../../types/capabilities';
@@ -27,28 +27,11 @@ import {
 import type { GetSnapshotResult, CachePlatform } from '../../shared/cache';
 import type { LockfileBuilder } from '../../shared/lockfile';
 import type { LockPluginEntry } from '../../types/lockfile';
+import { copySkillTree } from '../../shared/skill-copy';
 
 /** Base under system temp for extracted plugin content (MCP cwd). Per-project so projects don't clash. */
 function getPluginsTempBase(projectId: string): string {
   return join(tmpdir(), 'capa-plugins', projectId);
-}
-
-/**
- * Copy a directory recursively (for environments where fs.cpSync may not exist).
- */
-function copyDirRecursive(src: string, dest: string): void {
-  mkdirSync(dest, { recursive: true });
-  const entries = readdirSync(src, { withFileTypes: true });
-  for (const e of entries) {
-    const srcPath = join(src, e.name);
-    const destPath = join(dest, e.name);
-    if (e.isDirectory()) {
-      copyDirRecursive(srcPath, destPath);
-    } else {
-      mkdirSync(resolve(destPath, '..'), { recursive: true });
-      writeFileSync(destPath, readFileSync(srcPath));
-    }
-  }
 }
 
 function copyPluginToStable(tempDir: string, pluginStablePath: string): void {
@@ -56,7 +39,7 @@ function copyPluginToStable(tempDir: string, pluginStablePath: string): void {
   try {
     cpSync(tempDir, pluginStablePath, { recursive: true });
   } catch {
-    copyDirRecursive(tempDir, pluginStablePath);
+    copySkillTree({ src: tempDir, dst: pluginStablePath });
   }
 }
 
@@ -73,20 +56,10 @@ function copySkillDirWithSecurity(
   allowedCharacters: string | null,
   pluginName?: string
 ): void {
-  mkdirSync(destSkillDir, { recursive: true });
-
-  function processEntry(relPath: string): void {
-    const srcPath = join(srcSkillDir, relPath);
-    const destPath = join(destSkillDir, relPath);
-    const stat = statSync(srcPath);
-
-    if (stat.isDirectory()) {
-      mkdirSync(destPath, { recursive: true });
-      for (const e of readdirSync(srcPath, { withFileTypes: true })) {
-        processEntry(join(relPath, e.name).replace(/\\/g, '/'));
-      }
-    } else {
-      mkdirSync(resolve(destPath, '..'), { recursive: true });
+  copySkillTree({
+    src: srcSkillDir,
+    dst: destSkillDir,
+    handleFile: ({ relPath, srcPath, destPath }) => {
       const filename = relPath.split(/[/\\]/).pop() ?? '';
 
       if (isTextFile(filename)) {
@@ -114,12 +87,8 @@ function copySkillDirWithSecurity(
       } else {
         writeFileSync(destPath, readFileSync(srcPath));
       }
-    }
-  }
-
-  for (const e of readdirSync(srcSkillDir, { withFileTypes: true })) {
-    processEntry(e.name);
-  }
+    },
+  });
 }
 
 export interface ResolvePluginsResult {
@@ -345,7 +314,7 @@ export async function resolvePlugins(
             try {
               cpSync(srcSkillDir, destSkillDir, { recursive: true });
             } catch {
-              copyDirRecursive(srcSkillDir, destSkillDir);
+              copySkillTree({ src: srcSkillDir, dst: destSkillDir });
             }
           }
           db.addManagedFile(projectId, destSkillDir);

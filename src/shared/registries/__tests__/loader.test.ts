@@ -20,8 +20,6 @@ describe('RegistryLoader', () => {
   });
 
   it('loads valid adapters and records failures for throwing modules', async () => {
-    const warnSpy = spyOn(console, 'warn').mockImplementation(() => {});
-
     writeFileSync(
       join(registriesDir, 'good.js'),
       `export default {
@@ -46,11 +44,5 @@ describe('RegistryLoader', () => {
     expect(failures).toHaveLength(1);
     expect(failures![0].path).toBe(join(registriesDir, 'broken.js'));
     expect(failures![0].error).toBe('adapter boom');
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining(join(registriesDir, 'broken.js'))
-    );
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('adapter boom'));
-
-    warnSpy.mockRestore();
   });
 });

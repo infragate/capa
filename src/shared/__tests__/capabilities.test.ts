@@ -5,6 +5,7 @@ import {
   writeCapabilitiesFile,
   normalizeCapabilities,
 } from '../capabilities';
+import { logger } from '../logger';
 import { mkdtempSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -63,7 +64,7 @@ describe('capabilities', () => {
     });
 
     it('keeps unknown top-level keys and warns', () => {
-      const warnSpy = spyOn(console, 'warn').mockImplementation(() => {});
+      const warnSpy = spyOn(logger, 'warn').mockImplementation(() => {});
       const result = normalizeCapabilities({ unknownKey: 'value', skills: [] }) as Capabilities & {
         unknownKey: string;
       };

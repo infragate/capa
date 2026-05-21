@@ -1,6 +1,7 @@
 import yaml from 'js-yaml';
 import { z } from 'zod';
 import type { Capabilities, CapabilitiesFormat } from '../types/capabilities';
+import { logger } from './logger';
 
 const KNOWN_CAPABILITY_KEYS = new Set([
   'providers',
@@ -46,7 +47,7 @@ export function normalizeCapabilities(parsed: unknown): Capabilities {
 
   for (const key of Object.keys(parsed)) {
     if (!KNOWN_CAPABILITY_KEYS.has(key)) {
-      console.warn(`capabilities: unknown top-level key "${key}"`);
+      logger.warn(`capabilities: unknown top-level key "${key}"`);
     }
   }
 

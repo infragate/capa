@@ -51,6 +51,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.4.15",
     "@tailwindcss/cli": "^4.2.4",
     "@types/bun": "latest",
     "@types/dompurify": "^3.0.5",

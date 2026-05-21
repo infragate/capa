@@ -1,6 +1,7 @@
 import { readFileSync, existsSync } from 'fs';
 import { resolve, dirname, sep } from 'path';
 import type { SecurityOptions } from '../types/capabilities';
+import { logger } from './logger';
 
 const RED = '\x1b[31m';
 const RESET = '\x1b[0m';
@@ -40,7 +41,7 @@ export function reportBlockedPhraseAndExit(
     `  Forbidden phrase: ${RED}"${phrase}"${RESET}\n\n` +
     `  Installation has been stopped. Remove the phrase from the skill or update\n` +
     `  your security configuration (options.security.blockedPhrases) and try again.\n`;
-  console.error(msg);
+  logger.error(msg);
   process.exit(1);
 }
 
