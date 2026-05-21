@@ -39,8 +39,35 @@ import { assertSafeRepoPath, fetchRepoFile, fetchTextFile } from '../../shared/r
 import { copySkillTree, forEachSkillFile } from '../../shared/skill-copy';
 import { parseRepoString } from '../../shared/repo-string';
 import type { LockSkillEntry } from '../../types/lockfile';
+import { runTasks, summary, info, isVerbose } from '../ui';
+import type { Task } from '../ui';
 
 const execAsync = promisify(exec);
+
+type SkillInstallOutcome = 'installed' | 'skipped' | 'failed';
+
+interface InstallCtx {
+  projectPath: string;
+  projectId: string;
+  capabilitiesFile: { path: string; format: 'json' | 'yaml' };
+  capabilities: Capabilities;
+  capabilitiesToUse: Capabilities;
+  envFile?: string | boolean;
+  flagProvider?: string;
+  noCache: boolean;
+  db: CapaDatabase;
+  settings: Awaited<ReturnType<typeof loadSettings>>;
+  serverStatus: { running: boolean; url: string };
+  resolvedProviders: string[];
+  lockBuilder: LockfileBuilder;
+  configureResult?: Record<string, unknown>;
+  mcpUrl: string;
+  ruleBodies?: Map<string, string>;
+  resolvedRepos: Map<string, GetSnapshotResult>;
+  added: number;
+  failed: number;
+  skipped: number;
+}
 
 const VALID_REQUIRES_COMMAND_CLI = /^[a-zA-Z0-9_.+-]+$/;
 
@@ -81,48 +108,16 @@ export type GetRepoSnapshotFn = (
   opts?: { version?: string; ref?: string; pinnedSha?: string; noCache?: boolean }
 ) => Promise<GetSnapshotResult>
 
-/**
- * Verify that all required CLI commands are available on the system.
- * Returns true if all checks pass, false otherwise.
- */
-async function verifyRequiredCommands(commands: RequiredCommand[]): Promise<boolean> {
-  console.log('\n🔍 Verifying prerequisites...');
-
-  interface CheckResult { cli: string; description?: string; available: boolean }
-  const results: CheckResult[] = [];
-
-  for (const cmd of commands) {
-    assertValidRequiresCommandCli(cmd.cli);
-    const isWindows = process.platform === 'win32';
-    const checkCmd = isWindows ? `where ${cmd.cli}` : `which ${cmd.cli}`;
-    let available = false;
-    try {
-      await execAsync(checkCmd);
-      available = true;
-    } catch {
-      available = false;
-    }
-    results.push({ cli: cmd.cli, description: cmd.description, available });
+async function checkRequiredCommand(cmd: RequiredCommand): Promise<void> {
+  assertValidRequiresCommandCli(cmd.cli);
+  const isWindows = process.platform === 'win32';
+  const checkCmd = isWindows ? `where ${cmd.cli}` : `which ${cmd.cli}`;
+  try {
+    await execAsync(checkCmd);
+  } catch {
+    const desc = cmd.description ? ` — ${cmd.description}` : '';
+    throw new Error(`${cmd.cli} not found${desc}`);
   }
-
-  let allPassed = true;
-  for (const r of results) {
-    if (r.available) {
-      console.log(`  ✓ ${r.cli}`);
-    } else {
-      allPassed = false;
-      const desc = r.description ? ` — ${r.description}` : '';
-      console.error(`  ✗ ${r.cli} not found${desc}`);
-    }
-  }
-
-  if (!allPassed) {
-    console.error('\n✗ Some required commands are missing. Please install them and try again.');
-  } else {
-    console.log('  All prerequisites satisfied');
-  }
-
-  return allPassed;
 }
 
 /**
@@ -435,6 +430,546 @@ function readSkillFromDirectory(skillMdPath: string): {
   return { markdown, additionalFiles };
 }
 
+function buildInstallTasks(reqCmds?: RequiredCommand[]): Task<InstallCtx>[] {
+  const tasks: Task<InstallCtx>[] = [];
+
+  if (reqCmds && reqCmds.length > 0) {
+    tasks.push({
+      title: 'Verifying prerequisites',
+      task: (_ctx, task) =>
+        task.newListr(
+          reqCmds.map((cmd) => ({
+            title: cmd.description ? `${cmd.cli} — ${cmd.description}` : cmd.cli,
+            task: () => checkRequiredCommand(cmd),
+          })),
+          { concurrent: false },
+        ),
+    });
+  }
+
+  tasks.push(
+    {
+      title: 'Resolving providers',
+      task: async (ctx) => {
+        ctx.db.upsertProject({ id: ctx.projectId, path: ctx.projectPath });
+        try {
+          ctx.resolvedProviders = await resolveProvidersForInstall({
+            flagProvider: ctx.flagProvider,
+            capabilitiesProviders: ctx.capabilities.providers,
+            db: ctx.db,
+            projectId: ctx.projectId,
+          });
+        } catch (err: any) {
+          throw new Error(err.message);
+        }
+        ctx.capabilities.providers = ctx.resolvedProviders;
+        ctx.capabilitiesToUse.providers = ctx.resolvedProviders;
+        ctx.db.setProjectProviders(ctx.projectId, ctx.resolvedProviders);
+      },
+    },
+    {
+      title: 'Resolving plugins',
+      enabled: (ctx) => !!(ctx.capabilities.plugins && ctx.capabilities.plugins.length > 0),
+      task: async (ctx) => {
+        const authFetch = createAuthenticatedFetch(ctx.db);
+        try {
+          const { mergedCapabilities, tempDirsToCleanup } = await resolvePlugins(
+            ctx.capabilities,
+            ctx.projectPath,
+            ctx.projectId,
+            authFetch,
+            ctx.db,
+            (platform, repoPath, auth, opts) =>
+              getRepoSnapshot(platform, repoPath, auth, opts),
+            ctx.capabilitiesFile.path,
+            ctx.lockBuilder,
+            { noCache: ctx.noCache },
+          );
+          ctx.capabilitiesToUse = mergedCapabilities;
+          for (const dir of tempDirsToCleanup) {
+            try {
+              rmSync(dir, { recursive: true, force: true });
+            } catch {}
+          }
+        } catch (err: any) {
+          if (err instanceof BlockedPhraseError) {
+            reportBlockedPhraseAndExit(
+              err.skillId,
+              err.filePath,
+              err.phrase,
+              err.pluginName,
+            );
+          }
+          throw new Error(`Plugin resolution failed: ${err.message}`);
+        }
+        validatePluginSkillReferences(ctx.capabilitiesToUse);
+        warnUnreferencedPluginServers(ctx.capabilitiesToUse);
+        const providers = ctx.capabilitiesToUse.providers ?? ctx.resolvedProviders;
+        ctx.capabilitiesToUse.providers = providers;
+      },
+    },
+    {
+      title: 'Validating plugin configuration',
+      enabled: (ctx) =>
+        !ctx.capabilities.plugins?.length &&
+        ((ctx.capabilitiesToUse.resolvedPlugins?.length ?? 0) > 0 ||
+          ctx.capabilitiesToUse.skills.some((s) => s.type === 'plugin')),
+      task: async (ctx) => {
+        validatePluginSkillReferences(ctx.capabilitiesToUse);
+        warnUnreferencedPluginServers(ctx.capabilitiesToUse);
+      },
+    },
+    {
+      title: 'Loading environment variables',
+      enabled: (ctx) => ctx.envFile !== undefined,
+      task: async (ctx) => {
+        let envFilePath: string;
+        if (typeof ctx.envFile === 'boolean' && ctx.envFile) {
+          envFilePath = resolve(ctx.projectPath, '.env');
+        } else if (typeof ctx.envFile === 'string') {
+          envFilePath = resolve(ctx.projectPath, ctx.envFile);
+        } else {
+          envFilePath = resolve(ctx.projectPath, '.env');
+        }
+
+        if (!existsSync(envFilePath)) {
+          throw new Error(
+            `Environment file not found: ${envFilePath}\n\n` +
+              '  When using -e or --env flag, the specified .env file must exist.\n' +
+              '  Please create the file or run without the flag to use the web UI.\n',
+          );
+        }
+
+        let envVariables: Record<string, string>;
+        try {
+          envVariables = parseEnvFile(envFilePath);
+        } catch (error: any) {
+          throw new Error(`Failed to parse env file: ${error.message}`);
+        }
+
+        const requiredVars = extractAllVariables(ctx.capabilitiesToUse);
+        for (const varName of requiredVars) {
+          if (envVariables[varName]) {
+            ctx.db.setVariable(ctx.projectId, varName, envVariables[varName]);
+          } else {
+            console.warn(`   ⚠  Variable ${varName} not found in env file`);
+          }
+        }
+
+        const missingVars: string[] = [];
+        for (const varName of requiredVars) {
+          const value = ctx.db.getVariable(ctx.projectId, varName);
+          if (!value) {
+            missingVars.push(varName);
+          }
+        }
+
+        if (missingVars.length > 0) {
+          throw new Error(
+            `Missing required variables: ${missingVars.join(', ')}\n` +
+              '  These variables are required but were not found in the env file.\n' +
+              '  Please add them to your env file and try again.\n',
+          );
+        }
+      },
+    },
+    {
+      title: 'Checking for removed skills',
+      task: async (ctx) => {
+        const providers = ctx.capabilitiesToUse.providers ?? ctx.resolvedProviders;
+        const stats = await cleanupRemovedSkills(
+          ctx.projectPath,
+          ctx.projectId,
+          ctx.capabilitiesToUse.skills,
+          providers,
+          ctx.db,
+        );
+        ctx.skipped += stats.skipped;
+        ctx.added += stats.removed;
+      },
+    },
+    {
+      title: 'Installing skills',
+      task: async (ctx, task) => {
+        const providers = ctx.capabilitiesToUse.providers ?? ctx.resolvedProviders;
+        const needsGit = ctx.capabilities.skills.some(
+          (skill) => skill.type === 'github' || skill.type === 'gitlab',
+        );
+        if (needsGit) {
+          const gitInstalled = await checkGitInstalled();
+          if (!gitInstalled) {
+            const lines = gitOAuthHelpText().split('\n');
+            throw new Error(
+              'Git is not installed on your system.\n\n' + lines.map((line) => (line ? `  ${line}` : '')).join('\n'),
+            );
+          }
+        }
+        await task.newListr(
+          ctx.capabilities.skills.map((skill) => ({
+            title: skill.id,
+            task: async (_ctx, subtask) => {
+              try {
+                const outcome = await installOneSkill(
+                  skill,
+                  ctx.projectPath,
+                  ctx.projectId,
+                  providers,
+                  ctx.db,
+                  ctx.settings,
+                  ctx.capabilitiesToUse,
+                  ctx.capabilitiesFile.path,
+                  ctx.lockBuilder,
+                  ctx.noCache,
+                  ctx.resolvedRepos,
+                );
+                if (outcome === 'installed') ctx.added++;
+                else if (outcome === 'failed') ctx.failed++;
+                else ctx.skipped++;
+              } catch (err: any) {
+                ctx.failed++;
+                subtask.output = err?.message ?? String(err);
+              }
+            },
+          })),
+          { concurrent: false, exitOnError: false, rendererOptions: { collapseSubtasks: false } },
+        );
+      },
+    },
+    {
+      title: 'Writing lockfile',
+      task: async (ctx) => {
+        const skillIdsForLock = new Set(
+          ctx.capabilities.skills
+            .filter((s) => s.type === 'github' || s.type === 'gitlab')
+            .map((s) => s.id),
+        );
+        const pluginIdsForLock = new Set(
+          (ctx.capabilitiesToUse.resolvedPlugins ?? []).map((p) => p.id),
+        );
+        ctx.lockBuilder.pruneToIds(skillIdsForLock, pluginIdsForLock);
+        const lockfileToSave = ctx.lockBuilder.build();
+        if (lockfileToSave.skills.length === 0 && lockfileToSave.plugins.length === 0) {
+          try {
+            const lockPath = join(ctx.projectPath, 'capabilities.lock');
+            if (existsSync(lockPath)) {
+              rmSync(lockPath, { force: true });
+            }
+          } catch {}
+        } else {
+          try {
+            await saveLockfile(ctx.projectPath, lockfileToSave);
+          } catch (err: any) {
+            console.warn(`  ⚠ Failed to write capabilities.lock: ${err.message}`);
+          }
+        }
+      },
+    },
+    {
+      title: 'Installing agent instructions',
+      enabled: (ctx) => !!ctx.capabilities.agents,
+      task: async (ctx) => {
+        const providers = ctx.capabilitiesToUse.providers ?? ctx.resolvedProviders;
+        const repoFetchAuth = createAuthenticatedFetch(ctx.db);
+        const repoFetchCtx = {
+          authFetch: repoFetchAuth,
+          getRepoSnapshot: (platform: CachePlatform, repoPath: string, auth: AuthenticatedFetch, opts: any) =>
+            getRepoSnapshot(platform, repoPath, auth, opts),
+          noCache: ctx.noCache,
+        };
+        try {
+          await installAgentsFile(
+            ctx.projectPath,
+            ctx.capabilities.agents!,
+            providers,
+            ctx.capabilitiesToUse.options?.security,
+            ctx.capabilitiesFile.path,
+            repoFetchCtx,
+          );
+        } catch (err: any) {
+          throw new Error(`Failed to install agent instructions files: ${err.message}`);
+        }
+      },
+    },
+    {
+      title: 'Pruning orphan rules',
+      enabled: (ctx) => (ctx.capabilitiesToUse.providers ?? ctx.resolvedProviders).length > 0,
+      task: async (ctx) => {
+        const providers = ctx.capabilitiesToUse.providers ?? ctx.resolvedProviders;
+        const currentRules = ctx.capabilitiesToUse.rules ?? [];
+        try {
+          const previouslyManaged = ctx.db.getManagedFiles(ctx.projectId);
+          const { removedFiles, removedMarkers } = pruneRules(
+            ctx.projectPath,
+            providers,
+            currentRules,
+            previouslyManaged,
+          );
+          for (const f of removedFiles) {
+            ctx.db.removeManagedFile(ctx.projectId, f);
+          }
+          if (removedFiles.length + removedMarkers.length > 0) {
+            ctx.added += removedFiles.length + removedMarkers.length;
+          }
+        } catch (err: any) {
+          console.warn(`  ⚠  Failed to prune orphan rules: ${err.message}`);
+        }
+      },
+    },
+    {
+      title: 'Installing rules',
+      enabled: (ctx) => (ctx.capabilitiesToUse.rules ?? []).length > 0,
+      task: async (ctx, task) => {
+        const currentRules = ctx.capabilitiesToUse.rules ?? [];
+        const repoFetchAuth = createAuthenticatedFetch(ctx.db);
+        const repoFetchCtx = {
+          authFetch: repoFetchAuth,
+          getRepoSnapshot: (platform: CachePlatform, repoPath: string, auth: AuthenticatedFetch, opts: any) =>
+            getRepoSnapshot(platform, repoPath, auth, opts),
+          noCache: ctx.noCache,
+        };
+        const providers = ctx.capabilitiesToUse.providers ?? ctx.resolvedProviders;
+        ctx.ruleBodies = new Map();
+
+        await task.newListr(
+          currentRules.map((rule) => ({
+            title: rule.id,
+            task: async () => {
+              let body: string;
+              if (rule.type === 'inline') {
+                if (!rule.content) throw new Error(`Rule "${rule.id}" is type 'inline' but has no content.`);
+                body = rule.content;
+              } else if (rule.type === 'remote') {
+                if (!rule.url) throw new Error(`Rule "${rule.id}" is type 'remote' but has no url.`);
+                body = await fetchTextFile(rule.url, {
+                  authFetch: repoFetchAuth,
+                  sourceLabel: `rule "${rule.id}"`,
+                });
+              } else if (rule.type === 'github' || rule.type === 'gitlab') {
+                if (!rule.def?.repo) throw new Error(`Rule "${rule.id}" is type '${rule.type}' but missing def.repo.`);
+                const result = await fetchRepoFile(
+                  rule.type,
+                  rule.def.repo,
+                  repoFetchCtx.getRepoSnapshot,
+                  repoFetchAuth,
+                  { noCache: ctx.noCache },
+                );
+                body = result.content;
+              } else {
+                throw new Error(`Unknown rule type: ${(rule as any).type}`);
+              }
+              const security = ctx.capabilitiesToUse.options?.security;
+              if (isBlockedPhrasesEnabled(security)) {
+                const blockedPhrases = loadBlockedPhrases(security, ctx.capabilitiesFile.path);
+                const check = checkBlockedPhrases(body, blockedPhrases);
+                if (check.blocked) {
+                  reportBlockedPhraseAndExit(rule.id, `rule:${rule.id}`, check.phrase!);
+                }
+              }
+              if (isCharacterSanitizationEnabled(security)) {
+                const allowedChars = getAllowedCharacters(security);
+                if (allowedChars !== null) {
+                  body = sanitizeContent(body, allowedChars);
+                }
+              }
+              ctx.ruleBodies!.set(rule.id, body);
+            },
+          })),
+          { concurrent: false },
+        );
+
+        installRules(ctx.projectPath, currentRules, providers, ctx.ruleBodies, {
+          onFileWritten: (filePath) => ctx.db.addManagedFile(ctx.projectId, filePath),
+        });
+        ctx.added += currentRules.length;
+      },
+    },
+    {
+      title: 'Configuring tools',
+      task: async (ctx) => {
+        const response = await fetch(
+          `${ctx.serverStatus.url}/api/projects/${ctx.projectId}/configure`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(ctx.capabilitiesToUse),
+          },
+        );
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`Failed to configure project: ${errorText}`);
+        }
+
+        ctx.configureResult = await response.json();
+
+        // TODO(#U2): migrate tool validation banner to structured listr output
+        const result = ctx.configureResult as any;
+        if (result.toolValidation && result.toolValidation.length > 0) {
+          const successfulTools = result.toolValidation.filter((t: any) => t.success && !t.pendingAuth);
+          const failedTools = result.toolValidation.filter((t: any) => !t.success && !t.pendingAuth);
+          const pendingAuthTools = result.toolValidation.filter((t: any) => t.pendingAuth);
+
+          if (failedTools.length > 0) {
+            console.log(`\n⚠️  Tool Validation Results:`);
+            console.log(`   ✓ ${successfulTools.length} of ${result.toolValidation.length} tools validated successfully`);
+            console.log(`   ✗ ${failedTools.length} tool(s) failed validation:\n`);
+            for (const failed of failedTools) {
+              console.log(`   • Tool: ${failed.toolId}`);
+              if (failed.serverId && failed.remoteTool) {
+                console.log(`     ⮡ Upstream tool "${failed.remoteTool}" not found on server "@${failed.serverId}"`);
+              }
+              if (failed.error) {
+                console.log(`     ⮡ ${failed.error}`);
+              }
+              console.log();
+            }
+            console.log(`   💡 Tip: Check your capabilities.json file and verify:`);
+            console.log(`      - Tool names match exactly what the MCP server provides`);
+            console.log(`      - Server IDs are correct (e.g., "@server-name")`);
+            console.log(`      - MCP servers are accessible and properly configured\n`);
+            ctx.failed += failedTools.length;
+          } else if (pendingAuthTools.length > 0 && pendingAuthTools.length < result.toolValidation.length) {
+            console.log(`\n✓ All ${successfulTools.length} non-OAuth2 tools validated successfully`);
+            console.log(`  ℹ ${pendingAuthTools.length} tool(s) will be validated after OAuth2 authentication`);
+          } else if (pendingAuthTools.length === 0) {
+            console.log(`\n✓ All ${result.toolValidation.length} tools validated successfully`);
+          }
+        }
+
+        const unexposedToolIds = getUnexposedToolIds(ctx.capabilitiesToUse);
+        if (unexposedToolIds.length > 0) {
+          console.warn('\n⚠️  Tools not exposed to MCP clients:');
+          console.warn('   The following tools are not required by any skill, so they will not be exposed');
+          console.warn('   (in both expose-all and on-demand mode only skill-required tools are available):');
+          for (const id of unexposedToolIds.sort()) {
+            console.warn(`   • ${id}`);
+          }
+          console.warn('\n   To expose a tool, add it to the "requires" list of at least one skill in your capabilities.\n');
+        }
+      },
+    },
+    {
+      title: 'Registering MCP server',
+      task: async (ctx) => {
+        const providers = ctx.capabilitiesToUse.providers ?? ctx.resolvedProviders;
+        const hasTools = ctx.capabilitiesToUse.tools.length > 0;
+        const hasSubagents = (ctx.capabilitiesToUse.subagents ?? []).length > 0;
+        if (hasTools || hasSubagents) {
+          await registerMCPServer(ctx.projectPath, ctx.projectId, ctx.mcpUrl, providers);
+        } else {
+          await unregisterMCPServer(ctx.projectPath, ctx.projectId, providers);
+        }
+      },
+    },
+    {
+      title: 'Installing sub-agents',
+      enabled: (ctx) => {
+        const installedAgents = ctx.db.getSubAgents(ctx.projectId);
+        const currentSubagents = ctx.capabilitiesToUse.subagents ?? [];
+        const currentAgentIds = new Set(currentSubagents.map((a) => a.id));
+        const removedSubAgentIds = installedAgents
+          .filter(({ agent_id }) => !currentAgentIds.has(agent_id))
+          .map(({ agent_id }) => agent_id);
+        return removedSubAgentIds.length > 0 || currentSubagents.length > 0;
+      },
+      task: (ctx, task) => {
+        const providers = ctx.capabilitiesToUse.providers ?? ctx.resolvedProviders;
+        const installedAgents = ctx.db.getSubAgents(ctx.projectId);
+        const currentSubagents = ctx.capabilitiesToUse.subagents ?? [];
+        const currentAgentIds = new Set(currentSubagents.map((a) => a.id));
+
+        const subTasks: Task<InstallCtx>[] = [];
+
+        if (
+          providers.some((id) => {
+            const provider = getProvider(id);
+            return (
+              provider &&
+              (provider.mcp?.supportsSubAgentEntries === false || provider.purgeStaleSubAgentMcp === true)
+            );
+          })
+        ) {
+          subTasks.push({
+            title: 'Purging stale sub-agent MCP entries',
+            task: () => purgeCursorSubAgentMCPEntries(ctx.projectPath),
+          });
+        }
+
+        for (const { agent_id } of installedAgents) {
+          if (!currentAgentIds.has(agent_id)) {
+            subTasks.push({
+              title: `Remove ${agent_id}`,
+              task: async () => {
+                await unregisterSubAgentMCPServer(ctx.projectPath, agent_id, providers);
+                removeSubAgentInstructions(ctx.projectPath, agent_id, providers);
+                ctx.db.removeSubAgent(ctx.projectId, agent_id);
+              },
+            });
+          }
+        }
+
+        for (const subAgent of currentSubagents) {
+          subTasks.push({
+            title: subAgent.id,
+            task: async () => {
+              const agentMcpUrl = `${ctx.serverStatus.url}/${ctx.projectId}/agents/${subAgent.id}/mcp`;
+              await registerSubAgentMCPServer(ctx.projectPath, subAgent.id, agentMcpUrl, providers);
+              installSubAgentInstructions(
+                ctx.projectPath,
+                subAgent,
+                ctx.capabilitiesToUse,
+                providers,
+              );
+              ctx.db.upsertSubAgent(ctx.projectId, subAgent.id);
+              ctx.added++;
+            },
+          });
+        }
+
+        return task.newListr(subTasks, { concurrent: false, rendererOptions: { collapseSubtasks: false } });
+      },
+    },
+    {
+      title: 'Opening credential setup',
+      enabled: (ctx) => {
+        const result = ctx.configureResult as any;
+        return !!(result?.needsCredentials && result?.credentialsUrl);
+      },
+      task: async (ctx) => {
+        const result = ctx.configureResult as any;
+        const hasVariables = result.missingVariables && result.missingVariables.length > 0;
+        const hasOAuth2 = result.oauth2Servers && result.oauth2Servers.length > 0;
+        const needsOAuth2Connection = hasOAuth2 && result.oauth2Servers.some((s: any) => !s.isConnected);
+
+        if (hasVariables && needsOAuth2Connection) {
+          info('Credentials and OAuth2 connections required');
+        } else if (needsOAuth2Connection) {
+          info('OAuth2 connections required');
+        } else {
+          info('Credentials required');
+        }
+
+        if (hasVariables) {
+          info(`Missing variables: ${result.missingVariables.join(', ')}`);
+        }
+        if (needsOAuth2Connection) {
+          const disconnectedServers = result.oauth2Servers.filter((s: any) => !s.isConnected);
+          info(`OAuth2 servers need connection: ${disconnectedServers.map((s: any) => s.serverId).join(', ')}`);
+        }
+
+        const opened = await openBrowser(result.credentialsUrl);
+        if (opened) {
+          info(`Browser opened: ${result.credentialsUrl}`);
+        } else {
+          info(`Could not open browser automatically. Open manually: ${result.credentialsUrl}`);
+        }
+      },
+    },
+  );
+
+  return tasks;
+}
+
 export async function installCommand(
   envFileOrOptions?: string | boolean | InstallOptions
 ): Promise<void> {
@@ -460,546 +995,67 @@ export async function installCommand(
     process.exit(1);
   }
   
-  console.log(`Using ${capabilitiesFile.path}`);
-  
-  // Parse capabilities file
   const capabilities = await parseCapabilitiesFile(
     capabilitiesFile.path,
-    capabilitiesFile.format
+    capabilitiesFile.format,
   );
-  
-  // Verify required CLI commands before proceeding
-  const reqCmds = capabilities.options?.requiresCommands;
-  if (reqCmds && reqCmds.length > 0) {
-    const passed = await verifyRequiredCommands(reqCmds);
-    if (!passed) {
-      process.exit(1);
-    }
-  }
 
-  // Generate project ID
+  const reqCmds = capabilities.options?.requiresCommands;
   const projectId = generateProjectId(projectPath);
-  console.log(`Project ID: ${projectId}`);
-  
-  // Ensure server is running
   const serverStatus = await ensureServer(VERSION);
-  
+
   if (!serverStatus.running || !serverStatus.url) {
     console.error('✗ Failed to start server');
     process.exit(1);
   }
-  
-  // Initialize database
+
+  const startedAt = Date.now();
   const settings = await loadSettings();
   const dbPath = getDatabasePath(settings);
   const db = new CapaDatabase(dbPath);
-  try {
-  // Register project
-  db.upsertProject({ id: projectId, path: projectPath });
-
-  // Resolve providers (flag > capabilities file > DB > interactive prompt)
-  let resolvedProviders: string[];
-  try {
-    resolvedProviders = await resolveProvidersForInstall({
-      flagProvider,
-      capabilitiesProviders: capabilities.providers,
-      db,
-      projectId,
-    });
-  } catch (err: any) {
-    console.error(`✗ ${err.message}`);
-    process.exit(1);
-  }
-  capabilities.providers = resolvedProviders;
-  db.setProjectProviders(projectId, resolvedProviders);
-  console.log(`Providers: ${resolvedProviders.join(', ')}`);
-
-  // Load existing lockfile (if any). When --no-cache is set we ignore it for
-  // resolution but still keep the existing entries as a starting point so the
-  // pruning logic at the end produces a clean lockfile.
   const existingLockfile = await loadLockfile(projectPath);
   const lockBuilder = new LockfileBuilder(noCache ? null : existingLockfile);
-  if (noCache) {
-    console.log('\n⚠  --no-cache: ignoring existing lockfile and on-disk cache');
-  } else if (existingLockfile) {
-    console.log(`Using lockfile: ${capabilitiesFile.path.replace(/capabilities\.(yaml|json)$/, 'capabilities.lock')}`);
-  }
-
-  // Resolve plugins first so merged capabilities (including plugin servers/tools) are used for env and configure
-  let capabilitiesToUse = capabilities;
-  if (capabilities.plugins && capabilities.plugins.length > 0) {
-    console.log('\n🔌 Resolving plugins...');
-    const authFetch = createAuthenticatedFetch(db);
-    try {
-      const { mergedCapabilities, tempDirsToCleanup } = await resolvePlugins(
-        capabilities,
-        projectPath,
-        projectId,
-        authFetch,
-        db,
-        (platform, repoPath, auth, opts) =>
-          getRepoSnapshot(platform, repoPath, auth, opts),
-        capabilitiesFile.path,
-        lockBuilder,
-        { noCache }
-      );
-      capabilitiesToUse = mergedCapabilities;
-      for (const dir of tempDirsToCleanup) {
-        try {
-          rmSync(dir, { recursive: true, force: true });
-        } catch {}
-      }
-    } catch (err: any) {
-      if (err instanceof BlockedPhraseError) {
-        reportBlockedPhraseAndExit(
-          err.skillId,
-          err.filePath,
-          err.phrase,
-          err.pluginName
-        );
-      }
-      console.error(`✗ Plugin resolution failed: ${err.message}`);
-      process.exit(1);
-    }
-  }
-
-  // Validate `type: plugin` skills against the resolved plugin manifests.
-  // Skills declared with `type: plugin` must match an id exposed by some plugin's
-  // manifest. Mismatches surface a warning but do not fail the install.
-  validatePluginSkillReferences(capabilitiesToUse);
-
-  // Warn about plugin servers that aren't referenced by any user-declared tool.
-  // With explicit tool declarations being the new contract, an "orphan" plugin
-  // server is usually a sign the user forgot to expose the tools they need.
-  warnUnreferencedPluginServers(capabilitiesToUse);
-
-  // providers is guaranteed non-empty after resolveProvidersForInstall
-  const providers = capabilitiesToUse.providers ?? resolvedProviders;
-  capabilitiesToUse.providers = providers;
-
-  // Handle .env file if provided
-  if (envFile !== undefined) {
-    // Determine the env file path
-    let envFilePath: string;
-    if (typeof envFile === 'boolean' && envFile) {
-      // -e flag without filename, use .env
-      envFilePath = resolve(projectPath, '.env');
-    } else if (typeof envFile === 'string') {
-      // -e with filename
-      envFilePath = resolve(projectPath, envFile);
-    } else {
-      // This shouldn't happen, but handle it gracefully
-      envFilePath = resolve(projectPath, '.env');
-    }
-    
-    // Check if env file exists
-    if (!existsSync(envFilePath)) {
-      console.error(`✗ Environment file not found: ${envFilePath}`);
-      console.error('\n  When using -e or --env flag, the specified .env file must exist.');
-      console.error('  Please create the file or run without the flag to use the web UI.\n');
-      process.exit(1);
-    }
-    
-    // Parse the env file
-    console.log(`\n📄 Loading variables from ${envFilePath}...`);
-    let envVariables: Record<string, string>;
-    try {
-      envVariables = parseEnvFile(envFilePath);
-      console.log(`   Found ${Object.keys(envVariables).length} variable(s) in env file`);
-    } catch (error: any) {
-      console.error(`✗ Failed to parse env file: ${error.message}`);
-      process.exit(1);
-    }
-    
-    // Extract all required variables from capabilities (merged with plugins when present)
-    const requiredVars = extractAllVariables(capabilitiesToUse);
-    console.log(`   Capabilities require ${requiredVars.length} variable(s): ${requiredVars.join(', ')}`);
-    
-    // Store the variables in the database
-    for (const varName of requiredVars) {
-      if (envVariables[varName]) {
-        db.setVariable(projectId, varName, envVariables[varName]);
-        console.log(`   ✓ Set ${varName}`);
-      } else {
-        console.warn(`   ⚠  Variable ${varName} not found in env file`);
-      }
-    }
-    
-    // Check if any required variables are still missing
-    const missingVars: string[] = [];
-    for (const varName of requiredVars) {
-      const value = db.getVariable(projectId, varName);
-      if (!value) {
-        missingVars.push(varName);
-      }
-    }
-    
-    if (missingVars.length > 0) {
-      console.error(`\n✗ Missing required variables: ${missingVars.join(', ')}`);
-      console.error('  These variables are required but were not found in the env file.');
-      console.error('  Please add them to your env file and try again.\n');
-      process.exit(1);
-    }
-    
-    console.log('   ✓ All required variables loaded from env file');
-  }
-  
-  // Step 1: Clean up removed skills
-  console.log('\n🧹 Checking for removed skills...');
-  await cleanupRemovedSkills(projectPath, projectId, capabilitiesToUse.skills, providers, db);
-  
-  // Step 2: Install skills (copy to client directories) — only base skills from file; plugin skills already installed in resolvePlugins
-  console.log('\n📦 Installing skills...');
-  await installSkills(
-    projectPath,
-    projectId,
-    capabilities.skills,
-    providers,
-    db,
-    settings,
-    capabilitiesToUse,
-    capabilitiesFile.path,
-    lockBuilder,
-    noCache
-  );
-
-  // Persist the lockfile after all remote resolutions are done. Prune entries
-  // for skills/plugins that are no longer in the capabilities file.
-  const skillIdsForLock = new Set(
-    capabilities.skills
-      .filter((s) => s.type === 'github' || s.type === 'gitlab')
-      .map((s) => s.id)
-  );
-  const pluginIdsForLock = new Set(
-    (capabilitiesToUse.resolvedPlugins ?? []).map((p) => p.id)
-  );
-  lockBuilder.pruneToIds(skillIdsForLock, pluginIdsForLock);
-  const lockfileToSave = lockBuilder.build();
-  if (lockfileToSave.skills.length === 0 && lockfileToSave.plugins.length === 0) {
-    // Nothing to lock; remove any pre-existing lockfile so the project doesn't
-    // carry stale entries forward.
-    try {
-      const lockPath = join(projectPath, 'capabilities.lock');
-      if (existsSync(lockPath)) {
-        rmSync(lockPath, { force: true });
-      }
-    } catch {}
-  } else {
-    try {
-      await saveLockfile(projectPath, lockfileToSave);
-      console.log(`  ✓ Wrote capabilities.lock (${lockfileToSave.skills.length} skill(s), ${lockfileToSave.plugins.length} plugin(s))`);
-    } catch (err: any) {
-      console.warn(`  ⚠ Failed to write capabilities.lock: ${err.message}`);
-    }
-  }
-  
-  // Auth + snapshot resolver shared by AGENTS.md and rule installation, so
-  // both paths can clone private GitHub/GitLab repos via OAuth instead of
-  // hitting raw URLs that silently return HTML login redirects.
-  const repoFetchAuth = createAuthenticatedFetch(db);
-  const repoFetchCtx = {
-    authFetch: repoFetchAuth,
-    getRepoSnapshot: (platform: CachePlatform, repoPath: string, auth: AuthenticatedFetch, opts: any) =>
-      getRepoSnapshot(platform, repoPath, auth, opts),
-    noCache,
-  };
-
-  // Step 3: Install agent instructions files (AGENTS.md and/or CLAUDE.md) if configured
-  if (capabilities.agents) {
-    console.log('\n📝 Installing agent instructions files...');
-    try {
-      await installAgentsFile(
-        projectPath,
-        capabilities.agents,
-        providers,
-        capabilitiesToUse.options?.security,
-        capabilitiesFile.path,
-        repoFetchCtx
-      );
-    } catch (err: any) {
-      console.error(`  ✗ Failed to install agent instructions files: ${err.message}`);
-      process.exit(1);
-    }
-  }
-
-  const currentRules = capabilitiesToUse.rules ?? [];
-
-  // Step 3.5: Prune rule artifacts that are no longer in the capabilities file.
-  // Runs before install so orphans are removed first; install then writes current rules.
-  if (providers.length > 0) {
-    try {
-      const previouslyManaged = db.getManagedFiles(projectId);
-      const { removedFiles, removedMarkers } = pruneRules(
-        projectPath,
-        providers,
-        currentRules,
-        previouslyManaged
-      );
-      for (const f of removedFiles) {
-        db.removeManagedFile(projectId, f);
-      }
-      if (removedFiles.length + removedMarkers.length > 0) {
-        const fileWord = removedFiles.length === 1 ? 'file' : 'files';
-        const blockWord = removedMarkers.length === 1 ? 'block' : 'blocks';
-        console.log(
-          `\n📏 Pruned ${removedFiles.length} orphan rule ${fileWord} and ` +
-          `${removedMarkers.length} orphan rule marker ${blockWord}`
-        );
-      }
-    } catch (err: any) {
-      console.error(`  ⚠  Failed to prune orphan rules: ${err.message}`);
-    }
-  }
-
-  // Step 3.6: Install rules across providers (gated on `rules.length > 0` — nothing to fetch otherwise)
-  if (currentRules.length > 0) {
-    console.log('\n📏 Installing rules...');
-    try {
-      const resolvedContent = new Map<string, string>();
-      for (const rule of currentRules) {
-        let body: string;
-        if (rule.type === 'inline') {
-          if (!rule.content) throw new Error(`Rule "${rule.id}" is type 'inline' but has no content.`);
-          body = rule.content;
-        } else if (rule.type === 'remote') {
-          if (!rule.url) throw new Error(`Rule "${rule.id}" is type 'remote' but has no url.`);
-          console.log(`  Fetching rule "${rule.id}" from ${rule.url}`);
-          body = await fetchTextFile(rule.url, {
-            authFetch: repoFetchAuth,
-            sourceLabel: `rule "${rule.id}"`,
-          });
-        } else if (rule.type === 'github' || rule.type === 'gitlab') {
-          if (!rule.def?.repo) throw new Error(`Rule "${rule.id}" is type '${rule.type}' but missing def.repo.`);
-          console.log(`  Fetching rule "${rule.id}" from ${rule.type}:${rule.def.repo}`);
-          const result = await fetchRepoFile(
-            rule.type,
-            rule.def.repo,
-            repoFetchCtx.getRepoSnapshot,
-            repoFetchAuth,
-            { noCache }
-          );
-          body = result.content;
-        } else {
-          throw new Error(`Unknown rule type: ${(rule as any).type}`);
-        }
-        const security = capabilitiesToUse.options?.security;
-        if (isBlockedPhrasesEnabled(security)) {
-          const blockedPhrases = loadBlockedPhrases(security, capabilitiesFile.path);
-          const check = checkBlockedPhrases(body, blockedPhrases);
-          if (check.blocked) {
-            reportBlockedPhraseAndExit(rule.id, `rule:${rule.id}`, check.phrase!);
-          }
-        }
-        if (isCharacterSanitizationEnabled(security)) {
-          const allowedChars = getAllowedCharacters(security);
-          if (allowedChars !== null) {
-            body = sanitizeContent(body, allowedChars);
-          }
-        }
-
-        resolvedContent.set(rule.id, body);
-      }
-
-      installRules(projectPath, currentRules, providers, resolvedContent, {
-        // Register every rule file we write so `pruneRules` (and `capa
-        // clean`) can find it later, even after the user removes the rule
-        // from the capabilities file.
-        onFileWritten: (filePath) => db.addManagedFile(projectId, filePath),
-      });
-      console.log(`\n  ✓ ${currentRules.length} rule(s) installed`);
-    } catch (err: any) {
-      console.error(`  ✗ Failed to install rules: ${err.message}`);
-      process.exit(1);
-    }
-  }
-
-  // Step 4: Submit capabilities to server (merged, including plugin-derived)
-  console.log('\n🔧 Configuring tools...');
-  const response = await fetch(`${serverStatus.url}/api/projects/${projectId}/configure`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(capabilitiesToUse),
-  });
-  
-  if (!response.ok) {
-    const error = await response.text();
-    console.error('✗ Failed to configure project:', error);
-    process.exit(1);
-  }
-  
-  const result = await response.json();
-  
-  // Display tool validation results
-  if (result.toolValidation && result.toolValidation.length > 0) {
-    const successfulTools = result.toolValidation.filter((t: any) => t.success && !t.pendingAuth);
-    const failedTools = result.toolValidation.filter((t: any) => !t.success && !t.pendingAuth);
-    const pendingAuthTools = result.toolValidation.filter((t: any) => t.pendingAuth);
-    
-    if (failedTools.length > 0) {
-      console.log(`\n⚠️  Tool Validation Results:`);
-      console.log(`   ✓ ${successfulTools.length} of ${result.toolValidation.length} tools validated successfully`);
-      console.log(`   ✗ ${failedTools.length} tool(s) failed validation:\n`);
-      
-      for (const failed of failedTools) {
-        console.log(`   • Tool: ${failed.toolId}`);
-        if (failed.serverId && failed.remoteTool) {
-          console.log(`     ⮡ Upstream tool "${failed.remoteTool}" not found on server "@${failed.serverId}"`);
-        }
-        if (failed.error) {
-          console.log(`     ⮡ ${failed.error}`);
-        }
-        console.log();
-      }
-      
-      console.log(`   💡 Tip: Check your capabilities.json file and verify:`);
-      console.log(`      - Tool names match exactly what the MCP server provides`);
-      console.log(`      - Server IDs are correct (e.g., "@server-name")`);
-      console.log(`      - MCP servers are accessible and properly configured\n`);
-    } else if (pendingAuthTools.length > 0 && pendingAuthTools.length < result.toolValidation.length) {
-      console.log(`\n✓ All ${successfulTools.length} non-OAuth2 tools validated successfully`);
-      console.log(`  ℹ ${pendingAuthTools.length} tool(s) will be validated after OAuth2 authentication`);
-    } else if (pendingAuthTools.length === 0) {
-      console.log(`\n✓ All ${result.toolValidation.length} tools validated successfully`);
-    }
-  }
-
-  // Warn about tools not exposed (not required by any skill)
-  const unexposedToolIds = getUnexposedToolIds(capabilitiesToUse);
-  if (unexposedToolIds.length > 0) {
-    console.warn('\n⚠️  Tools not exposed to MCP clients:');
-    console.warn('   The following tools are not required by any skill, so they will not be exposed');
-    console.warn('   (in both expose-all and on-demand mode only skill-required tools are available):');
-    for (const id of unexposedToolIds.sort()) {
-      console.warn(`   • ${id}`);
-    }
-    console.warn('\n   To expose a tool, add it to the "requires" list of at least one skill in your capabilities.\n');
-  }
-  
-  // Step 5: Register MCP server with client configurations (only when tools or subagents exist)
-  const hasTools = capabilitiesToUse.tools.length > 0;
-  const hasSubagents = (capabilitiesToUse.subagents ?? []).length > 0;
   const mcpUrl = `${serverStatus.url}/${projectId}/mcp`;
 
-  if (hasTools || hasSubagents) {
-    console.log('\n🔗 Registering MCP server with clients...');
-    await registerMCPServer(projectPath, projectId, mcpUrl, providers);
-  } else {
-    console.log('\n🔗 No tools or sub-agents configured, unregistering MCP server from clients...');
-    await unregisterMCPServer(projectPath, projectId, providers);
-  }
-
-  // Step 5a: Process sub-agents — cleanup removed, then register + write instruction blocks
-  const installedAgents = db.getSubAgents(projectId);
-  const currentSubagents = capabilitiesToUse.subagents ?? [];
-  const currentAgentIds = new Set(currentSubagents.map((a) => a.id));
-  const removedSubAgentIds = installedAgents
-    .filter(({ agent_id }) => !currentAgentIds.has(agent_id))
-    .map(({ agent_id }) => agent_id);
-  const needsSubagentCleanup = removedSubAgentIds.length > 0;
-  const needsSubagentInstall = currentSubagents.length > 0;
-
-  if (needsSubagentCleanup || needsSubagentInstall) {
-    console.log(
-      needsSubagentInstall
-        ? '\n🤖 Installing sub-agents...'
-        : '\n🤖 Cleaning up removed sub-agents...'
+  try {
+    const ctx = await runTasks(
+      buildInstallTasks(reqCmds),
+      { exitOnError: true },
+      {
+        projectPath,
+        projectId,
+        capabilitiesFile,
+        capabilities,
+        capabilitiesToUse: capabilities,
+        envFile,
+        flagProvider,
+        noCache,
+        db,
+        settings,
+        serverStatus: { running: true, url: serverStatus.url },
+        resolvedProviders: [],
+        lockBuilder,
+        mcpUrl,
+        resolvedRepos: new Map(),
+        added: 0,
+        failed: 0,
+        skipped: 0,
+      },
     );
 
-    if (
-      providers.some((id) => {
-        const provider = getProvider(id);
-        return (
-          provider &&
-          (provider.mcp?.supportsSubAgentEntries === false || provider.purgeStaleSubAgentMcp === true)
-        );
-      })
-    ) {
-      await purgeCursorSubAgentMCPEntries(projectPath);
+    info(`MCP Endpoint: ${ctx.mcpUrl}`);
+    summary({
+      added: ctx.added,
+      failed: ctx.failed,
+      skipped: ctx.skipped,
+      elapsedMs: Date.now() - startedAt,
+    });
+  } catch (err: unknown) {
+    if (err instanceof Error) {
+      console.error(`✗ ${err.message}`);
+      process.exit(1);
     }
-
-    for (const { agent_id } of installedAgents) {
-      if (!currentAgentIds.has(agent_id)) {
-        console.log(`  Removing sub-agent "${agent_id}" (no longer in capabilities)...`);
-        await unregisterSubAgentMCPServer(projectPath, agent_id, providers);
-        removeSubAgentInstructions(projectPath, agent_id, providers);
-        db.removeSubAgent(projectId, agent_id);
-      }
-    }
-
-    for (const subAgent of currentSubagents) {
-      console.log(`\n  Sub-agent: ${subAgent.id}${subAgent.description ? ` — ${subAgent.description}` : ''}`);
-
-      const agentMcpUrl = `${serverStatus.url}/${projectId}/agents/${subAgent.id}/mcp`;
-      await registerSubAgentMCPServer(
-        projectPath,
-        subAgent.id,
-        agentMcpUrl,
-        providers
-      );
-
-      installSubAgentInstructions(
-        projectPath,
-        subAgent,
-        capabilitiesToUse,
-        providers
-      );
-
-      db.upsertSubAgent(projectId, subAgent.id);
-    }
-
-    if (needsSubagentInstall) {
-      console.log(`\n  ✓ ${currentSubagents.length} sub-agent(s) installed`);
-    } else if (needsSubagentCleanup) {
-      console.log(`\n  ✓ Removed ${removedSubAgentIds.length} sub-agent(s)`);
-    }
-  }
-
-  // Step 6: Check if credential setup is needed
-  if (result.needsCredentials && result.credentialsUrl) {
-    const hasVariables = result.missingVariables && result.missingVariables.length > 0;
-    const hasOAuth2 = result.oauth2Servers && result.oauth2Servers.length > 0;
-    const needsOAuth2Connection = hasOAuth2 && result.oauth2Servers.some((s: any) => !s.isConnected);
-    
-    if (hasVariables && needsOAuth2Connection) {
-      console.log('\n🔐 Credentials and OAuth2 connections required!');
-    } else if (needsOAuth2Connection) {
-      console.log('\n🔐 OAuth2 connections required!');
-    } else {
-      console.log('\n🔑 Credentials required!');
-    }
-    
-    console.log(`Opening browser to configure credentials...`);
-    
-    if (hasVariables) {
-      console.log(`  • Missing variables: ${result.missingVariables.join(', ')}`);
-    }
-    if (needsOAuth2Connection) {
-      const disconnectedServers = result.oauth2Servers.filter((s: any) => !s.isConnected);
-      console.log(`  • OAuth2 servers need connection: ${disconnectedServers.map((s: any) => s.serverId).join(', ')}`);
-    }
-    
-    const opened = await openBrowser(result.credentialsUrl);
-    
-    if (opened) {
-      console.log(`\n✓ Browser opened: ${result.credentialsUrl}`);
-    } else {
-      console.log(`\n⚠ Could not open browser automatically.`);
-      console.log(`Please open this URL manually: ${result.credentialsUrl}`);
-    }
-    
-    if (needsOAuth2Connection) {
-      console.log('\nAfter configuring credentials and connecting OAuth2, the installation will be complete.');
-    } else {
-      console.log('\nAfter saving credentials, the installation will be complete.');
-    }
-  } else {
-    console.log('\n✓ Installation complete!');
-  }
-  
-  // Step 7: Display MCP endpoint
-  console.log(`\n📡 MCP Endpoint: ${mcpUrl}`);
+    throw err;
   } finally {
     try {
       db.close();
@@ -1016,13 +1072,12 @@ async function cleanupRemovedSkills(
   skills: Skill[],
   clients: string[],
   db: CapaDatabase
-): Promise<void> {
-  // Get all managed files/directories for this project
+): Promise<{ removed: number; skipped: number; failed: number }> {
+  const stats = { removed: 0, skipped: 0, failed: 0 };
   const managedFiles = db.getManagedFiles(projectId);
-  
+
   if (managedFiles.length === 0) {
-    console.log('  No managed skills to clean up');
-    return;
+    return stats;
   }
   
   // Build a set of skill IDs from the current capabilities
@@ -1050,85 +1105,70 @@ async function cleanupRemovedSkills(
   }
   
   if (dirsToRemove.length === 0) {
-    console.log('  No removed skills found');
-    return;
+    return stats;
   }
-  
-  // Remove the directories
+
   for (const dir of dirsToRemove) {
     if (existsSync(dir)) {
       try {
         rmSync(dir, { recursive: true, force: true });
-        console.log(`  ✓ Removed: ${dir}`);
-      } catch (error: any) {
-        console.error(`  ✗ Failed to remove ${dir}: ${error.message}`);
+        stats.removed++;
+      } catch {
+        stats.failed++;
         continue;
       }
     }
-    
-    // Remove from managed files tracking
+
     db.removeManagedFile(projectId, dir);
   }
-  
-  console.log(`  Cleaned up ${dirsToRemove.length} removed skill(s)`);
+
+  return stats;
 }
 
-async function installSkills(
+function buildInvalidSkillMessage(skill: Skill): string {
+  const lines = [`Invalid skill definition: ${skill.id}`];
+  if (!skill.type || !['inline', 'remote', 'github', 'gitlab', 'local', 'installed', 'plugin'].includes(skill.type)) {
+    lines.push(`  Invalid or missing 'type'. Must be one of: 'inline', 'remote', 'github', 'gitlab', 'local', 'installed', 'plugin'`);
+    lines.push(`  Current value: ${skill.type || '(not set)'}`);
+  } else if (skill.type === 'inline') {
+    lines.push(`  Type is 'inline' but 'def.content' is missing`);
+  } else if (skill.type === 'local') {
+    lines.push(`  Type is 'local' but 'def.path' is missing`);
+  } else if (skill.type === 'github') {
+    lines.push(`  Type is 'github' but 'def.repo' is missing or invalid`);
+    if (skill.def.repo) lines.push(`  Current value: '${skill.def.repo}'`);
+  } else if (skill.type === 'gitlab') {
+    lines.push(`  Type is 'gitlab' but 'def.repo' is missing or invalid`);
+    if (skill.def.repo) lines.push(`  Current value: '${skill.def.repo}'`);
+  } else if (skill.type === 'remote') {
+    lines.push(`  Type is 'remote' but 'def.url' is missing`);
+  }
+  return lines.join('\n');
+}
+
+async function installOneSkill(
+  skill: Skill,
   projectPath: string,
   projectId: string,
-  skills: Skill[],
   clients: string[],
   db: CapaDatabase,
   settings: any,
   capabilities: Capabilities,
   capabilitiesFilePath: string,
   lockBuilder: LockfileBuilder,
-  noCache: boolean
-): Promise<void> {
+  noCache: boolean,
+  resolvedRepos: Map<string, GetSnapshotResult>,
+): Promise<SkillInstallOutcome> {
   const authFetch = createAuthenticatedFetch(db);
-  
-  // Check if any skills require git (github or gitlab type)
-  const needsGit = skills.some(skill => skill.type === 'github' || skill.type === 'gitlab');
-  
-  if (needsGit) {
-    // Check if git is installed before attempting to clone
-    const gitInstalled = await checkGitInstalled();
-    if (!gitInstalled) {
-      console.error('\n✗ Git is not installed on your system.\n');
-      for (const line of gitOAuthHelpText().split('\n')) {
-        console.error(line ? `  ${line}` : '');
-      }
-      try {
-        db.close();
-      } catch {}
-      process.exit(1);
-    }
-  }
 
-  // Per-call cache so two skills coming from the same repo+ref share one
-  // resolution (saves a redundant `git fetch` even when both hit the cache).
-  const resolvedRepos = new Map<string, GetSnapshotResult>();
-
-  for (const skill of skills) {
-      console.log(`  Installing skill: ${skill.id}`);
-    
-    let skillMarkdown: string;
+  let skillMarkdown: string;
     let additionalFiles: Map<string, string> = new Map();
     let skillSourceDir: string | null = null;
     
     if (skill.type === 'installed') {
-      // Installed skill - user installed it outside capa; capa only acknowledges for tool binding
-      console.log(`    Acknowledging installed skill (no install needed)`);
-      continue;
+      return 'skipped';
     } else if (skill.type === 'plugin') {
-      // Plugin skill - the plugin already installed the SKILL.md to disk; this
-      // capabilities entry binds tools to that skill via `requires`.
-      if (skill.sourcePlugin) {
-        console.log(`    Bound to plugin "${skill.sourcePlugin.name}" (no install needed)`);
-      } else {
-        console.log(`    Acknowledging plugin skill (no install needed)`);
-      }
-      continue;
+      return 'skipped';
     } else if (skill.type === 'inline' && skill.def.content) {
       // Inline skill - use provided SKILL.md content
       skillMarkdown = skill.def.content;
@@ -1145,9 +1185,7 @@ async function installSkills(
         skillMarkdown = skillData.markdown;
         additionalFiles = skillData.additionalFiles;
       } catch (error: any) {
-        console.error(`  ✗ Failed to install local skill ${skill.id}:`);
-        console.error(`    ${error.message || error}`);
-        continue;
+        throw new Error(`Failed to install local skill ${skill.id}: ${error.message || error}`);
       }
     } else if ((skill.type === 'github' || skill.type === 'gitlab') && skill.def.repo) {
       // GitHub/GitLab skill - resolve a snapshot (cache + lockfile aware)
@@ -1188,7 +1226,9 @@ async function installSkills(
               : ref
                 ? ` (commit: ${ref})`
                 : '';
-          console.log(`    Resolving repository: ${repoPath}${sourceLabel}...`);
+          if (isVerbose()) {
+            console.log(`    Resolving repository: ${repoPath}${sourceLabel}...`);
+          }
 
           try {
             snapshot = await getRepoSnapshot(platform, repoPath, authFetch, {
@@ -1277,9 +1317,7 @@ async function installSkills(
         additionalFiles = skillData.additionalFiles;
 
       } catch (error: any) {
-        console.error(`  ✗ Failed to install skill from ${platformLabel}:`);
-        console.error(`    ${error.message || error}`);
-        continue;
+        throw new Error(`Failed to install skill from ${platformLabel}: ${error.message || error}`);
       }
     } else if (skill.type === 'remote' && skill.def.url) {
       // Remote skill - fetch SKILL.md from URL
@@ -1305,54 +1343,10 @@ async function installSkills(
         }
         skillMarkdown = await response.text();
       } catch (error: any) {
-        console.error(`  ✗ Failed to fetch skill ${skill.id}:`);
-        console.error(`    ${error.message || error}`);
-        continue;
+        throw new Error(`Failed to fetch skill ${skill.id}: ${error.message || error}`);
       }
     } else {
-      // Provide detailed error message about what's wrong
-      console.error(`  ✗ Invalid skill definition: ${skill.id}`);
-      
-      if (!skill.type || !['inline', 'remote', 'github', 'gitlab', 'local', 'installed', 'plugin'].includes(skill.type)) {
-        console.error(`    ⮡ Invalid or missing 'type'. Must be one of: 'inline', 'remote', 'github', 'gitlab', 'local', 'installed', 'plugin'`);
-        console.error(`    ⮡ Current value: ${skill.type || '(not set)'}`);
-      } else if (skill.type === 'inline') {
-        console.error(`    ⮡ Type is 'inline' but 'def.content' is missing`);
-        console.error(`    ⮡ For inline skills, provide the SKILL.md content in 'def.content'`);
-      } else if (skill.type === 'local') {
-        console.error(`    ⮡ Type is 'local' but 'def.path' is missing`);
-        console.error(`    ⮡ For local skills, provide the path to the directory containing SKILL.md in 'def.path'`);
-      } else if (skill.type === 'github') {
-        console.error(`    ⮡ Type is 'github' but 'def.repo' is missing or invalid`);
-        console.error(`    ⮡ For GitHub skills, provide 'def.repo' in format: 'owner/repo@skill-name'`);
-        if (skill.def.repo) {
-          console.error(`    ⮡ Current value: '${skill.def.repo}'`);
-        }
-      } else if (skill.type === 'gitlab') {
-        console.error(`    ⮡ Type is 'gitlab' but 'def.repo' is missing or invalid`);
-        console.error(`    ⮡ For GitLab skills, provide 'def.repo' in format: 'owner/repo@skill-name'`);
-        if (skill.def.repo) {
-          console.error(`    ⮡ Current value: '${skill.def.repo}'`);
-        }
-      } else if (skill.type === 'remote') {
-        console.error(`    ⮡ Type is 'remote' but 'def.url' is missing`);
-        console.error(`    ⮡ For remote skills, provide the URL to SKILL.md in 'def.url'`);
-      } else if (skill.type === 'installed') {
-        console.error(`    ⮡ Type is 'installed' — skill must exist outside capa; def only needs optional description and requires`);
-      } else if (skill.type === 'plugin') {
-        console.error(`    ⮡ Type is 'plugin' — skill id must match a skill exposed by a configured plugin; def only needs optional description and requires`);
-      }
-      
-      console.error(`\n    Example configurations:`);
-      console.error(`    - Inline:    { "id": "my-skill", "type": "inline", "def": { "content": "..." } }`);
-      console.error(`    - GitHub:    { "id": "my-skill", "type": "github", "def": { "repo": "owner/repo@skill-name" } }`);
-      console.error(`    - GitLab:    { "id": "my-skill", "type": "gitlab", "def": { "repo": "owner/repo@skill-name" } }`);
-      console.error(`    - Remote:    { "id": "my-skill", "type": "remote", "def": { "url": "https://..." } }`);
-      console.error(`    - Local:     { "id": "my-skill", "type": "local", "def": { "path": "./my-skill" } }`);
-      console.error(`    - Installed: { "id": "my-skill", "type": "installed", "def": { "description": "...", "requires": ["@server.tool"] } }`);
-      console.error(`    - Plugin:    { "id": "plugin-skill", "type": "plugin", "def": { "requires": ["@server.tool"] } }`);
-      
-      continue;
+      throw new Error(buildInvalidSkillMessage(skill));
     }
 
     // Security: blocked phrases and character sanitization (each can be disabled independently)
@@ -1365,8 +1359,7 @@ async function installSkills(
       try {
         blockedPhrases = loadBlockedPhrases(security, capabilitiesFilePath);
       } catch (err: any) {
-        console.error(`  ✗ Failed to load blocked phrases for skill ${skill.id}: ${err.message}`);
-        continue;
+        throw new Error(`Failed to load blocked phrases for skill ${skill.id}: ${err.message}`);
       }
       const mdCheck = checkBlockedPhrases(skillMarkdown, blockedPhrases);
       if (mdCheck.blocked) {
@@ -1464,10 +1457,8 @@ async function installSkills(
         }
       }
       
-      // Track skill directory as managed (not individual files)
       db.addManagedFile(projectId, skillDir);
-      
-      console.log(`    ✓ Installed to ${skillDir}`);
     }
-  }
+
+  return 'installed';
 }

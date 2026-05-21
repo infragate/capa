@@ -25,12 +25,25 @@ function isolateHome(): { restore: () => void } {
   };
 }
 
-function captureConsole<T>(fn: () => Promise<T> | T): Promise<{ stdout: string; result: T }> {
+function stripAnsi(text: string): string {
+  return text.replace(/\x1b\[[0-9;]*m/g, '');
+}
+
+function captureOutput<T>(fn: () => Promise<T> | T): Promise<{ stdout: string; result: T }> {
   return (async () => {
     const lines: string[] = [];
     const origLog = console.log;
     const origWarn = console.warn;
     const origErr = console.error;
+    const origStdoutWrite = process.stdout.write.bind(process.stdout);
+    const origStderrWrite = process.stderr.write.bind(process.stderr);
+
+    const capture = (chunk: unknown) => {
+      if (typeof chunk === 'string') {
+        lines.push(stripAnsi(chunk));
+      }
+    };
+
     console.log = (...args: unknown[]) => {
       lines.push(args.map(String).join(' '));
     };
@@ -40,6 +53,15 @@ function captureConsole<T>(fn: () => Promise<T> | T): Promise<{ stdout: string; 
     console.error = (...args: unknown[]) => {
       lines.push(args.map(String).join(' '));
     };
+    process.stdout.write = ((chunk, ...args: unknown[]) => {
+      capture(chunk);
+      return (origStdoutWrite as (...a: unknown[]) => boolean)(chunk, ...args);
+    }) as typeof process.stdout.write;
+    process.stderr.write = ((chunk, ...args: unknown[]) => {
+      capture(chunk);
+      return (origStderrWrite as (...a: unknown[]) => boolean)(chunk, ...args);
+    }) as typeof process.stderr.write;
+
     try {
       const result = await fn();
       return { stdout: lines.join('\n'), result };
@@ -47,6 +69,8 @@ function captureConsole<T>(fn: () => Promise<T> | T): Promise<{ stdout: string; 
       console.log = origLog;
       console.warn = origWarn;
       console.error = origErr;
+      process.stdout.write = origStdoutWrite;
+      process.stderr.write = origStderrWrite;
     }
   })();
 }
@@ -85,7 +109,7 @@ tools: []
   });
 
   it('exits cleanly when there are no managed files', async () => {
-    const { stdout } = await captureConsole(() => cleanCommand());
+    const { stdout } = await captureOutput(() => cleanCommand());
     expect(stdout).toContain('No files to clean.');
     expect(stdout).toContain('Cleanup complete!');
   });
