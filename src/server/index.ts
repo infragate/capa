@@ -713,19 +713,32 @@ class CapaServer {
               }
             }
             
-            // Merge: preserve client_id and callback_port from plugin/MCP config (e.g. Slack .mcp.json)
+            // Merge: preserve every embedded field from the plugin/MCP config (e.g. Slack
+            // .mcp.json) and overlay the discovered endpoints on top. Embedded values for
+            // `client_id` and `callback_port` always win — auth servers register specific
+            // (client_id, redirect_uri) pairs and dropping either breaks the flow.
+            const merged: any = { ...(existingOAuth ?? {}), ...oauth2Config };
             const embeddedClientId =
-              existingOAuth?.client_id ??
+              (existingOAuth as any)?.client_id ??
               (existingOAuth as any)?.clientId ??
-              (existingOAuth?.oauth as any)?.clientId;
-            if (embeddedClientId) {
-              oauth2Config.client_id = embeddedClientId;
+              (existingOAuth as any)?.CLIENT_ID ??
+              (existingOAuth as any)?.oauth?.clientId ??
+              (existingOAuth as any)?.oauth?.client_id;
+            if (embeddedClientId) merged.client_id = embeddedClientId;
+            const embeddedCallbackPort =
+              (existingOAuth as any)?.callback_port ??
+              (existingOAuth as any)?.callbackPort ??
+              (existingOAuth as any)?.CALLBACK_PORT;
+            if (typeof embeddedCallbackPort === 'number' && embeddedCallbackPort > 0) {
+              merged.callback_port = embeddedCallbackPort;
+            } else if (typeof embeddedCallbackPort === 'string') {
+              const parsed = Number(embeddedCallbackPort);
+              if (Number.isFinite(parsed) && parsed > 0) merged.callback_port = parsed;
             }
-            const callbackPort = (existingOAuth as any)?.callback_port ?? (existingOAuth as any)?.callbackPort;
-            if (typeof callbackPort === 'number' && callbackPort > 0) {
-              oauth2Config.callback_port = callbackPort;
-            }
-            server.def.oauth2 = oauth2Config;
+            apiLogger.debug(
+              `OAuth2 merged for ${server.id}: client_id=${merged.client_id ? 'set' : 'missing'} callback_port=${merged.callback_port ?? 'missing'} registrationEndpoint=${merged.registrationEndpoint ? 'set' : 'missing'}`,
+            );
+            server.def.oauth2 = merged;
             oauth2Servers.push({
               serverId: server.id,
               serverUrl: server.def.url,
@@ -1120,25 +1133,61 @@ class CapaServer {
         );
       }
 
-      const oauth2 = server.def.oauth2 as { client_id?: string; callback_port?: number; registrationEndpoint?: string; [k: string]: any };
-      // Claude-style only when dynamic client registration is not supported and .mcp.json provides client_id + callbackPort (e.g. Slack)
+      const oauth2 = server.def.oauth2 as {
+        client_id?: string; clientId?: string; CLIENT_ID?: string;
+        callback_port?: number | string; callbackPort?: number | string; CALLBACK_PORT?: number | string;
+        registrationEndpoint?: string;
+        [k: string]: any;
+      };
+      // Read embedded values with the same fallbacks the configure-handler accepts —
+      // older capabilities stored in the DB (pre-normalization) may still use camelCase
+      // or uppercase snake_case keys. Without this we silently fall back to the capa
+      // server callback URL, which auth servers reject as an unregistered redirect.
+      const effectiveClientId =
+        oauth2.client_id ??
+        oauth2.clientId ??
+        oauth2.CLIENT_ID ??
+        (oauth2 as any).oauth?.clientId ??
+        (oauth2 as any).oauth?.client_id;
+      const callbackPortRaw =
+        oauth2.callback_port ?? oauth2.callbackPort ?? oauth2.CALLBACK_PORT;
+      let effectiveCallbackPort: number | undefined;
+      if (typeof callbackPortRaw === 'number' && callbackPortRaw > 0) {
+        effectiveCallbackPort = callbackPortRaw;
+      } else if (typeof callbackPortRaw === 'string') {
+        const parsed = Number(callbackPortRaw);
+        if (Number.isFinite(parsed) && parsed > 0) effectiveCallbackPort = parsed;
+      }
+      // Claude-style only when dynamic client registration is not supported and .mcp.json
+      // provides client_id + callbackPort (e.g. Slack). Auth servers register specific
+      // (client_id, redirect_uri) pairs; falling back to the capa-server URL when the
+      // plugin embedded a callbackPort causes the auth server to reject the request.
       const useClaudeCallback =
-        oauth2.client_id &&
-        typeof oauth2.callback_port === 'number' &&
-        oauth2.callback_port > 0 &&
+        !!effectiveClientId &&
+        effectiveCallbackPort != null &&
         !oauth2.registrationEndpoint;
-      let callbackPort = oauth2.callback_port;
+      let callbackPort = effectiveCallbackPort;
       if (useClaudeCallback && callbackPort != null) {
         callbackPort = await this.ensureOAuthCallbackServer(callbackPort);
       }
       const redirectUri = useClaudeCallback
         ? `http://localhost:${callbackPort}/callback`
         : `http://${this.settings.server.host}:${this.settings.server.port}/api/projects/${projectId}/oauth/callback`;
+      apiLogger.debug(
+        `OAuth2 redirect for ${serverId}: ${redirectUri} (useClaudeCallback=${useClaudeCallback}, client_id=${effectiveClientId ? 'set' : 'missing'}, callback_port=${effectiveCallbackPort ?? 'missing'}, registrationEndpoint=${oauth2.registrationEndpoint ? 'set' : 'missing'})`,
+      );
+
+      // Ensure the OAuth2Config we hand to the manager has the canonical snake_case
+      // client_id populated so generateAuthorizationUrl emits the embedded app id.
+      const configForFlow: OAuth2Config = {
+        ...(server.def.oauth2 as OAuth2Config),
+        ...(effectiveClientId ? { client_id: effectiveClientId } : {}),
+      };
 
       const { url: authUrl, state } = await this.oauth2Manager.generateAuthorizationUrl(
         projectId,
         serverId,
-        server.def.oauth2 as OAuth2Config,
+        configForFlow,
         redirectUri
       );
 
