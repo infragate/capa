@@ -1,4 +1,5 @@
 import { getProvider, getAllProviders } from './index';
+import { logger } from '../logger';
 import { prompt, type SelectOption } from '../../cli/ui';
 import type { CapaDatabase } from '../../db/database';
 
@@ -79,8 +80,8 @@ export async function resolveProvidersForInstall(
           .sort((a, b) => a.displayName.localeCompare(b.displayName))
           .map((p) => ({ value: p.id, label: p.displayName }));
 
-  console.log('');
-  console.log('No provider detected in capabilities file.');
+  logger.info('');
+  logger.info('No provider detected in capabilities file.');
   const selected = await prompt.select(
     'Which provider do you want to install for?',
     options,

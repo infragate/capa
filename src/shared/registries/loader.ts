@@ -122,7 +122,7 @@ export class RegistryLoader {
         registryLogger.info(`Loaded registry "${id}" from ${file}`);
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
-        console.warn(`Failed to load registry adapter ${filePath}: ${message}`);
+        registryLogger.warn(`Failed to load registry adapter ${filePath}: ${message}`);
         failures.push({ path: filePath, error: message });
       }
     }

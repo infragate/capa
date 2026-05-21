@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync, existsSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import yaml from 'js-yaml';
+import { logger } from '../logger';
 import {
   LOCKFILE_NAME,
   LockfileBuilder,
@@ -147,7 +148,7 @@ describe('lockfile', () => {
     });
 
     it('skips malformed skill/plugin entries with a warning', async () => {
-      const warnSpy = spyOn(console, 'warn').mockImplementation(() => {});
+      const warnSpy = spyOn(logger, 'warn').mockImplementation(() => {});
       const lf = {
         version: 1,
         generator: 'capa@test',

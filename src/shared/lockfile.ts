@@ -7,6 +7,7 @@
  */
 
 import { existsSync } from 'fs';
+import { logger } from './logger';
 import { join } from 'path';
 import yaml from 'js-yaml';
 import type {
@@ -104,7 +105,7 @@ function filterLockEntries<T>(
     if (isValid(entry)) {
       valid.push(entry);
     } else {
-      console.warn(`Lockfile: skipping invalid ${label} entry at index ${i}`);
+      logger.warn(`Lockfile: skipping invalid ${label} entry at index ${i}`);
     }
   }
   return valid;

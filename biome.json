@@ -1,0 +1,24 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.4.15/schema.json",
+	"linter": {
+		"enabled": true,
+		"rules": {
+			"recommended": false,
+			"suspicious": {
+				"noConsole": {
+					"level": "warn",
+					"options": { "allow": ["info", "warn", "error"] }
+				}
+			}
+		}
+	},
+	"files": {
+		"includes": [
+			"**/src/server/**/*.ts",
+			"**/src/shared/**/*.ts",
+			"**/src/db/**/*.ts",
+			"!**/__tests__/**",
+			"!**/node_modules/**"
+		]
+	}
+}

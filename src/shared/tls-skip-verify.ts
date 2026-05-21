@@ -1,3 +1,5 @@
+import { logger } from './logger';
+
 const RED = '\x1b[31m';
 const BOLD = '\x1b[1m';
 const RESET = '\x1b[0m';
@@ -15,7 +17,7 @@ export function shouldSkipTlsVerify(requested: boolean, context: string): boolea
   if (!allowed) {
     if (!disabledWarned.has(context)) {
       disabledWarned.add(context);
-      console.warn(
+      logger.warn(
         'tlsSkipVerify requested but disabled — set CAPA_ALLOW_TLS_SKIP_VERIFY=1 to override (insecure)'
       );
     }
@@ -24,7 +26,7 @@ export function shouldSkipTlsVerify(requested: boolean, context: string): boolea
 
   if (!activeWarned.has(context)) {
     activeWarned.add(context);
-    console.warn(
+    logger.warn(
       `${RED}${BOLD}!! TLS certificate validation DISABLED for ${context} (CAPA_ALLOW_TLS_SKIP_VERIFY=1)${RESET}`
     );
   }

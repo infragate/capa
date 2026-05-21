@@ -107,8 +107,8 @@ export class CommandToolExecutor {
     // Determine working directory
     const cwd = spec.dir ? resolve(this.projectPath, spec.dir) : this.projectPath;
 
-    console.log(`          Running command: ${cmd}`);
-    console.log(`          Working directory: ${cwd}`);
+    this.logger.info(`          Running command: ${cmd}`);
+    this.logger.info(`          Working directory: ${cwd}`);
 
     // Execute command
     return new Promise((resolve) => {
@@ -131,7 +131,7 @@ export class CommandToolExecutor {
       });
 
       proc.on('error', (error) => {
-        console.error(`          Process error: ${error.message}`);
+        this.logger.error(`          Process error: ${error.message}`);
         resolve({
           success: false,
           error: error.message,
@@ -141,9 +141,9 @@ export class CommandToolExecutor {
       proc.on('exit', (code) => {
         if (code === 0) {
           const output = (stdout || stderr).replace(/\n$/, '');
-          console.log(`          Exit code: 0`);
+          this.logger.info(`          Exit code: 0`);
           if (output) {
-            console.log(`          Output: ${output.substring(0, 200)}${output.length > 200 ? '...' : ''}`);
+            this.logger.info(`          Output: ${output.substring(0, 200)}${output.length > 200 ? '...' : ''}`);
           }
           resolve({
             success: true,
@@ -151,8 +151,8 @@ export class CommandToolExecutor {
           });
         } else {
           const error = (stderr || stdout || `Command exited with code ${code}`).replace(/\n$/, '');
-          console.error(`          Exit code: ${code}`);
-          console.error(`          Error: ${error.substring(0, 200)}${error.length > 200 ? '...' : ''}`);
+          this.logger.error(`          Exit code: ${code}`);
+          this.logger.error(`          Error: ${error.substring(0, 200)}${error.length > 200 ? '...' : ''}`);
           resolve({
             success: false,
             error: error,

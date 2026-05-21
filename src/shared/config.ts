@@ -4,6 +4,7 @@ import { existsSync } from 'fs';
 import { mkdir } from 'fs/promises';
 import type { ServerSettings } from '../types/database';
 import { VERSION } from '../version';
+import { logger } from './logger';
 
 const DEFAULT_SETTINGS: ServerSettings = {
   version: VERSION,
@@ -69,7 +70,7 @@ export async function loadSettings(): Promise<ServerSettings> {
     const settings = await file.json();
     return { ...DEFAULT_SETTINGS, ...settings };
   } catch (error) {
-    console.error('Failed to load settings, using defaults:', error);
+    logger.error('Failed to load settings, using defaults:', error);
     return DEFAULT_SETTINGS;
   }
 }

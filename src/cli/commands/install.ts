@@ -36,6 +36,7 @@ import {
 import { getOrCreateSnapshot, type CachePlatform, type GetSnapshotResult } from '../../shared/cache';
 import { LockfileBuilder, loadLockfile, saveLockfile } from '../../shared/lockfile';
 import { assertSafeRepoPath, fetchRepoFile, fetchTextFile } from '../../shared/repo-file';
+import { copySkillTree, forEachSkillFile } from '../../shared/skill-copy';
 import { parseRepoString } from '../../shared/repo-string';
 import type { LockSkillEntry } from '../../types/lockfile';
 
@@ -416,27 +417,21 @@ function readSkillFromDirectory(skillMdPath: string): {
   const markdown = readFileSync(skillMdPath, 'utf-8');
   const skillDir = dirname(skillMdPath);
   const additionalFiles = new Map<string, string>();
-  
-  function collectFiles(dir: string, relativeBase: string): void {
-    try {
-      const entries = readdirSync(dir, { withFileTypes: true });
-      for (const entry of entries) {
-        const relativePath = relativeBase ? join(relativeBase, entry.name) : entry.name;
-        if (entry.isDirectory()) {
-          collectFiles(join(dir, entry.name), relativePath);
-        } else if (entry.isFile()) {
-          if (relativeBase === '' && entry.name === 'SKILL.md') continue;
-          const content = readFileSync(join(dir, entry.name), 'utf-8');
-          additionalFiles.set(relativePath, content);
-        }
+
+  try {
+    forEachSkillFile(skillDir, ({ relPath, srcPath }) => {
+      const normalized = relPath.replace(/\\/g, '/');
+      if (normalized === 'SKILL.md') return;
+      try {
+        additionalFiles.set(normalized, readFileSync(srcPath, 'utf-8'));
+      } catch {
+        // Can't read file, skip
       }
-    } catch (error) {
-      // Can't read directory, skip
-    }
+    });
+  } catch {
+    // Can't read directory, skip
   }
 
-  collectFiles(skillDir, '');
-  
   return { markdown, additionalFiles };
 }
 
@@ -1119,6 +1114,7 @@ async function installSkills(
     
     let skillMarkdown: string;
     let additionalFiles: Map<string, string> = new Map();
+    let skillSourceDir: string | null = null;
     
     if (skill.type === 'installed') {
       // Installed skill - user installed it outside capa; capa only acknowledges for tool binding
@@ -1144,6 +1140,7 @@ async function installSkills(
         if (!existsSync(skillMdPath)) {
           throw new Error(`SKILL.md not found at ${skillMdPath}`);
         }
+        skillSourceDir = skillDir;
         const skillData = readSkillFromDirectory(skillMdPath);
         skillMarkdown = skillData.markdown;
         additionalFiles = skillData.additionalFiles;
@@ -1275,6 +1272,7 @@ async function installSkills(
         }
 
         const skillData = readSkillFromDirectory(skillMdPath);
+        skillSourceDir = dirname(skillMdPath);
         skillMarkdown = skillData.markdown;
         additionalFiles = skillData.additionalFiles;
 
@@ -1443,20 +1441,27 @@ async function installSkills(
         rmSync(skillDir, { recursive: true, force: true });
       }
       
-      // Create skill directory
-      mkdirSync(skillDir, { recursive: true });
-      
-      // Write SKILL.md file
-      writeFileSync(skillMdPath, skillMarkdown, 'utf-8');
-      
-      // Write any additional files
-      for (const [filePath, content] of additionalFiles) {
-        const fullPath = join(skillDir, filePath);
-        const fileDir = join(fullPath, '..');
-        if (!existsSync(fileDir)) {
-          mkdirSync(fileDir, { recursive: true });
+      // Create skill directory and write payload
+      if (skillSourceDir) {
+        copySkillTree({ src: skillSourceDir, dst: skillDir });
+        writeFileSync(skillMdPath, skillMarkdown, 'utf-8');
+        for (const [filePath, content] of additionalFiles) {
+          if (!isTextFile(filePath)) continue;
+          const fullPath = join(skillDir, filePath);
+          mkdirSync(dirname(fullPath), { recursive: true });
+          writeFileSync(fullPath, content, 'utf-8');
         }
-        writeFileSync(fullPath, content, 'utf-8');
+      } else {
+        mkdirSync(skillDir, { recursive: true });
+        writeFileSync(skillMdPath, skillMarkdown, 'utf-8');
+        for (const [filePath, content] of additionalFiles) {
+          const fullPath = join(skillDir, filePath);
+          const fileDir = dirname(fullPath);
+          if (!existsSync(fileDir)) {
+            mkdirSync(fileDir, { recursive: true });
+          }
+          writeFileSync(fullPath, content, 'utf-8');
+        }
       }
       
       // Track skill directory as managed (not individual files)
