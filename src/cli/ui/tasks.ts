@@ -28,12 +28,8 @@ export async function runTasks<Ctx = Record<string, unknown>>(
     exitOnError: options.exitOnError ?? true,
     renderer,
     fallbackRenderer: 'simple',
+    ctx: initialCtx,
   })
 
-  if (initialCtx) {
-    Object.assign(listr.ctx as object, initialCtx)
-  }
-
-  await listr.run()
-  return listr.ctx as Ctx
+  return await listr.run()
 }
