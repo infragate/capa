@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from 'fs';
 import type { Dirent } from 'fs';
-import { join, dirname } from 'path';
+import { join, dirname, posix } from 'path';
 import type {
   PluginProvider,
   UnifiedPluginManifest,
@@ -93,11 +93,12 @@ export function detectAndParseManifest(
       const content = readFileSync(fullPath, 'utf-8');
       const data = JSON.parse(content);
       const reg = getProvider(provider) ?? getProviderByPluginProviderId(provider);
+      const manifestDir = posix.dirname(path.split(/[/\\]/).join('/')) || '.';
       if (reg?.parsePluginManifest) {
-        return reg.parsePluginManifest(repoRoot, data) as UnifiedPluginManifest;
+        return reg.parsePluginManifest(repoRoot, data, manifestDir) as UnifiedPluginManifest;
       }
-      if (provider === 'cursor') return parseCursorManifest(repoRoot, data);
-      if (provider === 'claude') return parseClaudeManifest(repoRoot, data);
+      if (provider === 'cursor') return parseCursorManifest(repoRoot, data, manifestDir);
+      if (provider === 'claude') return parseClaudeManifest(repoRoot, data, manifestDir);
     } catch {
       // skip invalid manifest
     }
