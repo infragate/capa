@@ -1,7 +1,7 @@
 /**
  * Example registry adapter for skills.sh
  *
- * Usage: copy this file into ~/.capa/registries/skills-sh.ts
+ * Usage: capa registry add infragate/capa@skills-sh
  *
  * API shape (confirmed against live responses):
  *   Search: GET https://skills.sh/api/search?q=<2+ chars>&limit=N

@@ -254,7 +254,7 @@ export default adapter;
 - **Type definitions are inline.** Each adapter file includes its own type definitions so it works anywhere — no external dependencies needed.
 - **The `id` in the manifest must be unique** across all loaded adapters. If two adapters declare the same `id`, the second one is skipped and surfaced as a failure on `capa registry list`.
 - **Capa caches adapters by `(file mtime, DB updated_at)`.** Re-running `capa registry refresh <slug>` (or hitting **Refresh** in the UI) re-downloads the adapter and bumps both — restart the server for a fully clean reload.
-- **Timeouts.** Each `search()` and `view()` call has a 15-second timeout. If your upstream API is slow, consider caching responses in the adapter (see `cursor-marketplace.ts` for an example with a 5-minute in-memory cache).
+- **Timeouts.** Each `search()` and `view()` call has a 15-second timeout. If your upstream API is slow, consider caching responses in the adapter (see `cursor-marketplace/adapter.ts` for an example with a 5-minute in-memory cache).
 - **Return early for unsupported capabilities.** If your adapter only supports `'skills'`, return `{ items: [] }` from `search()` and throw from `view()` when called with `'plugins'`.
 - **The `preview` field is rendered as Markdown** in the UI and sanitized with DOMPurify. You can return full SKILL.md content, or build a markdown string dynamically.
 - **CLI install.** Users can install items directly via `capa add <slug>:<itemId>` (for skills) where `<slug>` is the slug shown by `capa registry list`. For plugins, the YAML snippet in the UI is the primary install method.
@@ -263,6 +263,6 @@ export default adapter;
 
 | File | Registry | Capabilities | Notes |
 |------|----------|-------------|-------|
-| `skills-sh.ts` | [skills.sh](https://skills.sh) | Skills | Server-side search via API |
-| `cursor-marketplace.ts` | [Cursor Marketplace](https://cursor.com/marketplace) | Plugins | Client-side filtering with in-memory cache |
-| `claude-plugins.ts` | [Claude Plugins](https://claude.com/plugins) | Plugins | Scrapes the Webflow-rendered directory; resolves source repos via `marketplace.json` |
+| `skills-sh/adapter.ts` | [skills.sh](https://skills.sh) | Skills | Server-side search via API |
+| `cursor-marketplace/adapter.ts` | [Cursor Marketplace](https://cursor.com/marketplace) | Plugins | Client-side filtering with in-memory cache |
+| `claude-plugins/adapter.ts` | [Claude Plugins](https://claude.com/plugins) | Plugins | Scrapes the Webflow-rendered directory; resolves source repos via `marketplace.json` |

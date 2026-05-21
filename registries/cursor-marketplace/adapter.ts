@@ -1,7 +1,7 @@
 /**
  * Registry adapter for the Cursor marketplace
  *
- * Usage: copy this file into ~/.capa/registries/cursor-marketplace.ts
+ * Usage: capa registry add infragate/capa@cursor-marketplace
  *
  * API shape (confirmed against live responses):
  *   List: POST https://cursor.com/api/dashboard/list-marketplace-plugins
