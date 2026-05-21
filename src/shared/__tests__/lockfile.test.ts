@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach, spyOn } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync, existsSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -144,6 +144,34 @@ describe('lockfile', () => {
       writeFileSync(join(projectDir, LOCKFILE_NAME), '');
       const lf = await loadLockfile(projectDir);
       expect(lf).toBeNull();
+    });
+
+    it('skips malformed skill/plugin entries with a warning', async () => {
+      const warnSpy = spyOn(console, 'warn').mockImplementation(() => {});
+      const lf = {
+        version: 1,
+        generator: 'capa@test',
+        generatedAt: '2026-01-01T00:00:00.000Z',
+        skills: [
+          sampleSkill,
+          { id: 'bad-skill', source: 'github' },
+          null,
+        ],
+        plugins: [
+          samplePlugin,
+          { repo: 'owner/missing-id' },
+        ],
+      };
+      writeFileSync(join(projectDir, LOCKFILE_NAME), JSON.stringify(lf));
+      const loaded = await loadLockfile(projectDir);
+      expect(loaded!.skills).toHaveLength(1);
+      expect(loaded!.skills[0].id).toBe('my-skill');
+      expect(loaded!.plugins).toHaveLength(1);
+      expect(loaded!.plugins[0].id).toBe('my-plugin');
+      expect(warnSpy).toHaveBeenCalledWith('Lockfile: skipping invalid skill entry at index 1');
+      expect(warnSpy).toHaveBeenCalledWith('Lockfile: skipping invalid skill entry at index 2');
+      expect(warnSpy).toHaveBeenCalledWith('Lockfile: skipping invalid plugin entry at index 1');
+      warnSpy.mockRestore();
     });
   });
 

@@ -15,7 +15,7 @@ $ErrorActionPreference = "Stop"
 # Constants
 $APP_NAME = "capa"
 $GITHUB_REPO = "infragate/capa"
-$FALLBACK_VERSION = "1.1.1"  # Fallback version if API request fails
+$FALLBACK_VERSION = "1.0.0"  # Fallback version if API request fails
 
 # Environment variable overrides
 if ($env:CAPA_INSTALL_DIR) {

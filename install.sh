@@ -6,7 +6,7 @@ set -u
 
 APP_NAME="capa"
 GITHUB_REPO="infragate/capa"
-FALLBACK_VERSION="1.1.1"  # Fallback version if API request fails
+FALLBACK_VERSION="1.0.0"  # Fallback version if API request fails
 
 # Fetch latest release version from GitHub
 get_latest_version() {

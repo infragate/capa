@@ -18,6 +18,7 @@
     "test:coverage": "bun test --coverage"
   },
   "dependencies": {
+    "@clack/prompts": "^1.4.0",
     "@iarna/toml": "^2.2.5",
     "@modelcontextprotocol/sdk": "^1.0.4",
     "@radix-ui/react-collapsible": "^1.1.12",
@@ -35,16 +36,19 @@
     "dompurify": "^3.4.3",
     "i18next": "^26.0.10",
     "js-yaml": "^4.1.0",
+    "listr2": "^10.2.1",
     "lucide-react": "^1.14.0",
     "marked": "^18.0.3",
     "nanoid": "^5.0.8",
+    "picocolors": "^1.1.1",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "react-i18next": "^17.0.7",
     "react-icons": "^5.6.0",
     "react-router-dom": "^7.15.0",
     "tailwind-merge": "^3.5.0",
-    "xdg-basedir": "^5.1.0"
+    "xdg-basedir": "^5.1.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@tailwindcss/cli": "^4.2.4",

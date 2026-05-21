@@ -1,5 +1,5 @@
 import { readFileSync, existsSync } from 'fs';
-import { resolve, dirname } from 'path';
+import { resolve, dirname, sep } from 'path';
 import type { SecurityOptions } from '../types/capabilities';
 
 const RED = '\x1b[31m';
@@ -84,26 +84,49 @@ export function loadBlockedPhrases(
   }
 
   if (typeof blocked === 'object' && blocked !== null && 'file' in blocked && typeof blocked.file === 'string') {
-    const capabilitiesDir = dirname(capabilitiesFilePath);
-    const filePath = resolve(capabilitiesDir, blocked.file);
-    if (!existsSync(filePath)) {
-      throw new Error(
-        `Blocked phrases file not found: ${filePath}\n` +
-        `  Resolved from: ${blocked.file} (relative to ${capabilitiesDir})`
-      );
-    }
-    const content = readFileSync(filePath, 'utf-8');
-    return content
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0);
+    const capabilitiesDir = resolve(dirname(capabilitiesFilePath));
+    return loadBlockedPhrasesFromFile(blocked.file, capabilitiesDir);
   }
 
   return [];
 }
 
 /**
- * Check if content contains any blocked phrase (case-sensitive).
+ * Load blocked phrases from a file path (relative to or inside capabilitiesDir).
+ * Rejects paths that resolve outside capabilitiesDir.
+ */
+export function loadBlockedPhrasesFromFile(
+  filePath: string,
+  capabilitiesDir: string
+): string[] {
+  const rootResolved = resolve(capabilitiesDir);
+  const resolved = resolve(rootResolved, filePath);
+  const rootWithSep = rootResolved.endsWith(sep) ? rootResolved : rootResolved + sep;
+  if (resolved !== rootResolved && !resolved.startsWith(rootWithSep)) {
+    throw new Error(
+      `Blocked-phrases file path escapes the capabilities directory: ${filePath}`
+    );
+  }
+  if (!existsSync(resolved)) {
+    throw new Error(
+      `Blocked phrases file not found: ${resolved}\n` +
+      `  Resolved from: ${filePath} (relative to ${rootResolved})`
+    );
+  }
+  const content = readFileSync(resolved, 'utf-8');
+  return content
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+}
+
+/** NFKC + lowercase so fullwidth/homoglyph variants cannot bypass substring checks. */
+function normalizeForPhraseMatch(text: string): string {
+  return text.normalize('NFKC').toLowerCase();
+}
+
+/**
+ * Check if content contains any blocked phrase (case-insensitive, NFKC-normalized).
  */
 export function checkBlockedPhrases(
   content: string,
@@ -111,8 +134,9 @@ export function checkBlockedPhrases(
 ): { blocked: boolean; phrase?: string } {
   if (phrases.length === 0) return { blocked: false };
 
+  const haystack = normalizeForPhraseMatch(content);
   for (const phrase of phrases) {
-    if (content.includes(phrase)) {
+    if (haystack.includes(normalizeForPhraseMatch(phrase))) {
       return { blocked: true, phrase };
     }
   }

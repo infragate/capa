@@ -43,12 +43,22 @@ jobs:
             artifact_name: capa
             asset_name: capa-aarch64-apple-darwin
           
-          # Windows x86_64 (Windows ARM64 not supported by bun build --compile yet; see oven-sh/bun#9824)
+          # Windows x86_64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             bun_target: bun-windows-x64
             artifact_name: capa.exe
             asset_name: capa-x86_64-pc-windows-msvc.exe
+
+          # Windows aarch64 (ARM64)
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
+            bun_target: bun-windows-arm64
+            artifact_name: capa.exe
+            asset_name: capa-aarch64-pc-windows-msvc.exe
+
+          # install.ps1 also maps x86 -> i686-pc-windows-msvc, but bun build --compile
+          # has no bun-windows-i686 target; 32-bit Windows installs remain unsupported.
 
     steps:
       - name: Checkout code

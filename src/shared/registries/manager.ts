@@ -35,7 +35,8 @@ export class RegistryManager {
 
   /** Force a rescan of the registries directory. */
   async reload(): Promise<void> {
-    this.adapters = await this.loader.loadAll();
+    const { adapters } = await this.loader.loadAll();
+    this.adapters = adapters;
     this.lastLoadedAt = Date.now();
   }
 

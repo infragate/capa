@@ -287,6 +287,20 @@ function findPaginationToken(html: string): string | undefined {
   return m ? m[1] : undefined;
 }
 
+/** Warn when Webflow pagination markup is present but the token can't be parsed. */
+function warnPaginationParseFailure(html: string, token: string | undefined): void {
+  if (token) return;
+  if (!/w-pagination-next/.test(html)) return;
+
+  const nextLink =
+    html.match(/<a[^>]*class="[^"]*w-pagination-next[^"]*"[^>]*>[\s\S]{0,120}/)?.[0] ??
+    html.match(/<a[^>]*href="[^"]*_page=\d+"[^>]*>[\s\S]{0,120}/)?.[0] ??
+    'w-pagination-next present';
+  console.warn(
+    `[claude-plugins] pagination parsing failed; only first page returned (${nextLink.replace(/\s+/g, ' ').slice(0, 200)})`,
+  );
+}
+
 /* ---- Listing cache ---- */
 
 interface ListingCache {
@@ -312,6 +326,7 @@ async function loadListing(): Promise<ListingCache> {
     // fan out remaining pages in small concurrent batches.
     const page1Html = await fetchListingPage();
     const token = findPaginationToken(page1Html);
+    warnPaginationParseFailure(page1Html, token);
     all.push(...parseListing(page1Html));
 
     if (token) {
@@ -323,10 +338,9 @@ async function loadListing(): Promise<ListingCache> {
           batchPages.push(nextPage + i);
         }
         const batchHtmls = await Promise.all(
-          batchPages.map((p) => fetchListingPage(token, p).catch(() => '')),
+          batchPages.map((p) => fetchListingPage(token, p)),
         );
         for (const html of batchHtmls) {
-          if (!html) continue;
           const cards = parseListing(html);
           if (cards.length === 0) {
             stopped = true;
@@ -360,11 +374,27 @@ async function fetchListingPage(token?: string, page?: number): Promise<string> 
   if (token && page && page > 1) {
     url.searchParams.set(`${token}_page`, String(page));
   }
-  const res = await fetchWithTimeout(url.toString(), FETCH_TIMEOUT_MS);
-  if (!res.ok) {
-    throw new Error(`Claude plugins listing failed: ${res.status}`);
+  const urlStr = url.toString();
+  try {
+    const res = await fetchWithTimeout(urlStr, FETCH_TIMEOUT_MS);
+    if (!res.ok) {
+      console.warn(
+        `[claude-plugins] listing fetch failed: ${urlStr} (${res.status})`,
+      );
+      throw new Error(`Claude plugins listing failed: ${res.status}`);
+    }
+    return await res.text();
+  } catch (err) {
+    if (
+      err instanceof Error &&
+      err.message.startsWith('Claude plugins listing failed:')
+    ) {
+      throw err;
+    }
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[claude-plugins] listing fetch failed: ${urlStr} (${msg})`);
+    throw err;
   }
-  return await res.text();
 }
 
 /* ---- Marketplace manifest (anthropics/claude-plugins-official) ---- */

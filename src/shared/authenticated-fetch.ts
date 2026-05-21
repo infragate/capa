@@ -6,7 +6,23 @@
  */
 
 import type { CapaDatabase } from '../db/database';
+import type { GitIntegration } from '../types/database';
 import type { GitPlatform } from '../types/git-integration';
+
+const CLOUD_OAUTH_ENDPOINT = 'https://capa.infragate.ai/auth';
+
+const TOKEN_EXPIRED_MESSAGE =
+  'Git integration token has expired. Run `capa auth` again to re-authenticate.';
+
+function getExpiresAt(integration: GitIntegration): number | null {
+  const row = integration as GitIntegration & { expiresAt?: number | null };
+  return integration.expires_at ?? row.expiresAt ?? null;
+}
+
+function isTokenExpired(integration: GitIntegration): boolean {
+  const expiresAt = getExpiresAt(integration);
+  return expiresAt !== null && expiresAt < Date.now();
+}
 
 export class AuthenticatedFetch {
   private db: CapaDatabase;
@@ -49,6 +65,86 @@ export class AuthenticatedFetch {
     }
   }
 
+  private canRefresh(platform: GitPlatform): boolean {
+    return platform === 'github' || platform === 'gitlab';
+  }
+
+  /**
+   * Refresh an expired OAuth token via the cloud endpoint and persist to the DB.
+   */
+  private async refreshAccessToken(
+    platform: GitPlatform,
+    host: string | undefined,
+    integration: GitIntegration
+  ): Promise<boolean> {
+    if (!integration.refresh_token || !this.canRefresh(platform)) {
+      return false;
+    }
+
+    try {
+      const providerParam = platform === 'github' ? 'github.com' : 'gitlab.com';
+      const refreshUrl =
+        `${CLOUD_OAUTH_ENDPOINT}/refresh?provider=${providerParam}` +
+        `&refresh_token=${encodeURIComponent(integration.refresh_token)}`;
+
+      const response = await fetch(refreshUrl);
+      if (!response.ok) {
+        this.db.deleteGitIntegration(platform, host ?? null);
+        return false;
+      }
+
+      const tokenData = await response.json() as {
+        access_token?: string;
+        refresh_token?: string;
+        token_type?: string;
+        expires_in?: number;
+      };
+
+      if (!tokenData.access_token) {
+        return false;
+      }
+
+      const expiresAt = tokenData.expires_in
+        ? Date.now() + tokenData.expires_in * 1000
+        : null;
+
+      this.db.setGitIntegration(platform, {
+        host: host ?? null,
+        access_token: tokenData.access_token,
+        refresh_token: tokenData.refresh_token || integration.refresh_token,
+        token_type: tokenData.token_type || 'Bearer',
+        expires_at: expiresAt,
+      });
+
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Ensure the integration has a non-expired token, refreshing when possible.
+   */
+  private async ensureFreshIntegration(
+    platform: GitPlatform,
+    host: string | undefined,
+    integration: GitIntegration
+  ): Promise<GitIntegration> {
+    if (!isTokenExpired(integration)) {
+      return integration;
+    }
+
+    const refreshed = await this.refreshAccessToken(platform, host, integration);
+    if (refreshed) {
+      const updated = this.db.getGitIntegration(platform, host ?? null);
+      if (updated && !isTokenExpired(updated)) {
+        return updated;
+      }
+    }
+
+    throw new Error(TOKEN_EXPIRED_MESSAGE);
+  }
+
   /**
    * Get authentication headers for a URL
    */
@@ -65,22 +161,18 @@ export class AuthenticatedFetch {
       return null;
     }
 
-    // Check if token is expired (for OAuth platforms)
-    if (integration.expires_at && integration.expires_at < Date.now()) {
-      // Token expired, return null to trigger re-authentication
-      return null;
-    }
+    const fresh = await this.ensureFreshIntegration(platform, host, integration);
 
     // GitHub and GitHub Enterprise use "token" prefix
     if (platform === 'github' || platform === 'github-enterprise') {
       return {
-        'Authorization': `token ${integration.access_token}`,
+        'Authorization': `token ${fresh.access_token}`,
       };
     }
 
     // GitLab uses "Bearer" prefix
     return {
-      'Authorization': `Bearer ${integration.access_token}`,
+      'Authorization': `Bearer ${fresh.access_token}`,
     };
   }
 
@@ -119,7 +211,7 @@ export class AuthenticatedFetch {
     const { platform, host } = detected;
     const integration = this.db.getGitIntegration(platform, host || null);
     
-    return !!integration;
+    return !!integration && !isTokenExpired(integration);
   }
 
   /**
@@ -136,7 +228,11 @@ export class AuthenticatedFetch {
     const { platform, host } = detected;
     const integration = this.db.getGitIntegration(platform, host || null);
     
-    return integration?.access_token || null;
+    if (!integration || isTokenExpired(integration)) {
+      return null;
+    }
+
+    return integration.access_token;
   }
 
   /**
@@ -144,7 +240,7 @@ export class AuthenticatedFetch {
    * This should be called after a failed fetch attempt
    */
   static isPrivateRepoError(response: Response): boolean {
-    return response.status === 401 || response.status === 403 || response.status === 404;
+    return response.status === 401 || response.status === 403;
   }
 }
 
