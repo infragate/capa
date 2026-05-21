@@ -309,5 +309,79 @@ describe('plugin-manifest discovery', () => {
       };
       expect(spec.oauth2?.client_id).toBe('already-canonical');
     });
+
+    it('injects Cursor CLI loopback port 8787 for cursor-only plugins with embedded client_id', () => {
+      // Cursor-only plugin (no .claude-plugin variant). .cursor-mcp.json carries the
+      // OAuth client_id but no callback_port — Cursor itself uses the cursor://
+      // custom scheme which capa cannot receive, so capa must impersonate the
+      // Cursor CLI's loopback (http://localhost:8787/callback) for the same client_id.
+      mkdirSync(join(root, '.cursor-plugin'), { recursive: true });
+      writeFileSync(
+        join(root, '.cursor-plugin', 'plugin.json'),
+        JSON.stringify({
+          name: 'cursor-only',
+          mcpServers: {
+            example: {
+              url: 'https://example.com/mcp',
+              auth: { CLIENT_ID: 'cursor-app-id' },
+            },
+          },
+        }),
+      );
+
+      const manifest = detectAndParseManifest(root, ['cursor']);
+      expect(manifest).not.toBeNull();
+      expect(manifest!.provider).toBe('cursor');
+      const example = manifest!.mcpServers.example as {
+        oauth2?: Record<string, unknown>;
+      };
+      expect(example.oauth2?.client_id).toBe('cursor-app-id');
+      expect(example.oauth2?.callback_port).toBe(8787);
+    });
+
+    it('does not override an explicit callback_port set in a cursor manifest', () => {
+      mkdirSync(join(root, '.cursor-plugin'), { recursive: true });
+      writeFileSync(
+        join(root, '.cursor-plugin', 'plugin.json'),
+        JSON.stringify({
+          name: 'cursor-explicit',
+          mcpServers: {
+            example: {
+              url: 'https://example.com/mcp',
+              oauth2: { client_id: 'cursor-app-id', callback_port: 9999 },
+            },
+          },
+        }),
+      );
+
+      const manifest = detectAndParseManifest(root, ['cursor']);
+      expect(manifest).not.toBeNull();
+      const example = manifest!.mcpServers.example as {
+        oauth2?: Record<string, unknown>;
+      };
+      expect(example.oauth2?.callback_port).toBe(9999);
+    });
+
+    it('does not inject the cursor loopback when no client_id is embedded', () => {
+      // No client_id means dynamic registration is expected — capa's own server
+      // callback URL is correct in that case, so we must not preempt it.
+      mkdirSync(join(root, '.cursor-plugin'), { recursive: true });
+      writeFileSync(
+        join(root, '.cursor-plugin', 'plugin.json'),
+        JSON.stringify({
+          name: 'cursor-no-clientid',
+          mcpServers: {
+            example: { url: 'https://example.com/mcp' },
+          },
+        }),
+      );
+
+      const manifest = detectAndParseManifest(root, ['cursor']);
+      expect(manifest).not.toBeNull();
+      const example = manifest!.mcpServers.example as {
+        oauth2?: Record<string, unknown>;
+      };
+      expect(example.oauth2?.callback_port).toBeUndefined();
+    });
   });
 });
