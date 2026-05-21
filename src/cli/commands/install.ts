@@ -881,21 +881,25 @@ export async function installCommand(
     await unregisterMCPServer(projectPath, projectId, providers);
   }
 
-  // Step 5a: Process sub-agents — register filtered endpoints + write instruction blocks
-  if (capabilitiesToUse.subagents && capabilitiesToUse.subagents.length > 0) {
-    console.log('\n🤖 Installing sub-agents...');
+  // Step 5a: Process sub-agents — cleanup removed, then register + write instruction blocks
+  const installedAgents = db.getSubAgents(projectId);
+  const currentSubagents = capabilitiesToUse.subagents ?? [];
+  const currentAgentIds = new Set(currentSubagents.map((a) => a.id));
+  const removedSubAgentIds = installedAgents
+    .filter(({ agent_id }) => !currentAgentIds.has(agent_id))
+    .map(({ agent_id }) => agent_id);
+  const needsSubagentCleanup = removedSubAgentIds.length > 0;
+  const needsSubagentInstall = currentSubagents.length > 0;
 
-    // Clean up sub-agents that were removed since the last install
-    const installedAgents = db.getSubAgents(projectId);
-    const currentAgentIds = new Set(capabilitiesToUse.subagents.map((a) => a.id));
-    const removedSubAgentIds = installedAgents
-      .filter(({ agent_id }) => !currentAgentIds.has(agent_id))
-      .map(({ agent_id }) => agent_id);
+  if (needsSubagentCleanup || needsSubagentInstall) {
+    console.log(
+      needsSubagentInstall
+        ? '\n🤖 Installing sub-agents...'
+        : '\n🤖 Cleaning up removed sub-agents...'
+    );
 
-    // Cursor no longer uses per-sub-agent MCP entries — purge stale MCP keys and
-    // legacy `.cursor/rules/{agentId}.mdc` scoping files for removed sub-agents only
     if (providers.some((p) => p.toLowerCase() === 'cursor')) {
-      await purgeCursorSubAgentMCPEntries(projectPath, removedSubAgentIds);
+      await purgeCursorSubAgentMCPEntries(projectPath);
     }
 
     for (const { agent_id } of installedAgents) {
@@ -907,11 +911,9 @@ export async function installCommand(
       }
     }
 
-    // Install or update each sub-agent
-    for (const subAgent of capabilitiesToUse.subagents) {
+    for (const subAgent of currentSubagents) {
       console.log(`\n  Sub-agent: ${subAgent.id}${subAgent.description ? ` — ${subAgent.description}` : ''}`);
 
-      // Register filtered MCP endpoint
       const agentMcpUrl = `${serverStatus.url}/${projectId}/agents/${subAgent.id}/mcp`;
       await registerSubAgentMCPServer(
         projectPath,
@@ -920,7 +922,6 @@ export async function installCommand(
         providers
       );
 
-      // Write instruction block to CLAUDE.md / AGENTS.md
       installSubAgentInstructions(
         projectPath,
         subAgent,
@@ -928,11 +929,14 @@ export async function installCommand(
         providers
       );
 
-      // Track in DB for future cleanup
       db.upsertSubAgent(projectId, subAgent.id);
     }
 
-    console.log(`\n  ✓ ${capabilitiesToUse.subagents.length} sub-agent(s) installed`);
+    if (needsSubagentInstall) {
+      console.log(`\n  ✓ ${currentSubagents.length} sub-agent(s) installed`);
+    } else if (needsSubagentCleanup) {
+      console.log(`\n  ✓ Removed ${removedSubAgentIds.length} sub-agent(s)`);
+    }
   }
 
   db.close();

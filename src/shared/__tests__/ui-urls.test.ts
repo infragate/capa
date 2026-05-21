@@ -14,6 +14,12 @@ describe('ui-urls', () => {
     expect(path).toContain('server=slack');
   });
 
+  it('projectUiPath ignores id in query so projectId always wins', () => {
+    expect(projectUiPath('real-proj', { id: 'other-proj', oauth_success: 'true' })).toBe(
+      '/ui/project?oauth_success=true&id=real-proj'
+    );
+  });
+
   it('projectUiUrl builds absolute URL', () => {
     expect(projectUiUrl('http://127.0.0.1:5912', 'proj-1')).toBe(
       'http://127.0.0.1:5912/ui/project?id=proj-1'
