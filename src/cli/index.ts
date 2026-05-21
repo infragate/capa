@@ -12,7 +12,15 @@ import { authCommand } from './commands/auth';
 import { upgradeCommand } from './commands/upgrade';
 import { shellCommand } from './commands/sh';
 import { cacheInfoCommand, cacheCleanCommand } from './commands/cache';
-import { registryListCommand, registryPathCommand } from './commands/registry';
+import {
+  registryListCommand,
+  registryPathCommand,
+  registryAddCommand,
+  registryRemoveCommand,
+  registryRefreshCommand,
+  registrySetEnabledCommand,
+} from './commands/registry';
+import type { RegistrySourceType } from '../types/database';
 import { checkForUpdates } from './utils/version-check';
 import { VERSION } from '../version';
 import { setFlags, ExitCode, error } from './ui';
@@ -182,9 +190,58 @@ if (process.argv[2] === '__server__') {
 
     registryCmd
       .command('path')
-      .description('Print the registries directory path')
+      .description('Print the managed registries directory path')
       .action(async () => {
         await registryPathCommand();
+      });
+
+    registryCmd
+      .command('add <source> [slug]')
+      .description('Fetch a registry adapter from a git repo or HTTPS URL and install it')
+      .option(
+        '--type <type>',
+        'Source type: github, gitlab, or url (auto-detected from source by default)',
+      )
+      .option('--no-cache', 'Bypass the on-disk repo cache when fetching')
+      .action(async (source: string, slug: string | undefined, opts: { type?: string; cache?: boolean }) => {
+        let type: RegistrySourceType | undefined;
+        if (opts.type) {
+          if (opts.type !== 'github' && opts.type !== 'gitlab' && opts.type !== 'url') {
+            error(`Invalid --type "${opts.type}". Expected one of: github, gitlab, url.`);
+            process.exit(ExitCode.UsageError);
+          }
+          type = opts.type;
+        }
+        await registryAddCommand(source, slug, { type, noCache: opts.cache === false });
+      });
+
+    registryCmd
+      .command('remove <slug>')
+      .description('Remove a configured registry and its materialized adapter file')
+      .action(async (slug: string) => {
+        await registryRemoveCommand(slug);
+      });
+
+    registryCmd
+      .command('refresh <slug>')
+      .description('Re-fetch a registry from its original source')
+      .option('--no-cache', 'Bypass the on-disk repo cache when refreshing')
+      .action(async (slug: string, opts: { cache?: boolean }) => {
+        await registryRefreshCommand(slug, { noCache: opts.cache === false });
+      });
+
+    registryCmd
+      .command('enable <slug>')
+      .description('Enable a previously-disabled registry')
+      .action(async (slug: string) => {
+        await registrySetEnabledCommand(slug, true);
+      });
+
+    registryCmd
+      .command('disable <slug>')
+      .description('Disable a registry without removing it')
+      .action(async (slug: string) => {
+        await registrySetEnabledCommand(slug, false);
       });
 
     await program.parseAsync();
