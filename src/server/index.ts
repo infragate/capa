@@ -18,6 +18,7 @@ import { VERSION } from '../version';
 import { logger } from '../shared/logger';
 import { projectUiUrl } from '../shared/ui-urls';
 import { initAuth, requireAuth, isLoopbackHost } from './auth-middleware';
+import { oauthBridgeResponse } from './oauth-bridge';
 
 // Import the React SPA bundle as text at compile time - this bundles it into the binary
 import spaHtml from '../../web-ui/dist/index.html' with { type: 'text' };
@@ -1394,15 +1395,16 @@ class CapaServer {
         error = typeof body.error === 'string' ? body.error : null;
       } else {
         const url = new URL(request.url);
+        // Cloud OAuth provider redirects via GET with tokens in the query string. Serve
+        // a tiny HTML+JS bridge that strips tokens from the URL and re-issues the
+        // callback as a POST (the spec-compliant ingress hardened by #S3).
         if (
           url.searchParams.has('access_token') ||
           url.searchParams.has('refresh_token') ||
           url.searchParams.has('token')
         ) {
-          return new Response(
-            JSON.stringify({ error: 'Tokens must not be passed in URL query strings. Use POST with JSON body.' }),
-            { status: 405, headers: { 'Content-Type': 'application/json' } }
-          );
+          apiLogger.info('GitHub OAuth callback (cloud GET redirect) — serving bridge');
+          return oauthBridgeResponse('github');
         }
         error = url.searchParams.get('error');
       }
@@ -1510,15 +1512,16 @@ class CapaServer {
         error = typeof body.error === 'string' ? body.error : null;
       } else {
         const url = new URL(request.url);
+        // Cloud OAuth provider redirects via GET with tokens in the query string. Serve
+        // a tiny HTML+JS bridge that strips tokens from the URL and re-issues the
+        // callback as a POST (the spec-compliant ingress hardened by #S3).
         if (
           url.searchParams.has('access_token') ||
           url.searchParams.has('refresh_token') ||
           url.searchParams.has('token')
         ) {
-          return new Response(
-            JSON.stringify({ error: 'Tokens must not be passed in URL query strings. Use POST with JSON body.' }),
-            { status: 405, headers: { 'Content-Type': 'application/json' } }
-          );
+          apiLogger.info('GitLab OAuth callback (cloud GET redirect) — serving bridge');
+          return oauthBridgeResponse('gitlab');
         }
         error = url.searchParams.get('error');
       }
