@@ -208,20 +208,36 @@ Capa caches remote sources (GitHub/GitLab repositories) locally to speed up subs
 ## Registry Management
 
 ```bash
-capa registry              # List all configured registries (same as `capa registry list`)
-capa registry list         # List all configured registries and their capabilities
-capa registry path         # Print the registries directory path (~/.capa/registries/)
+capa registry                                              # List all configured registries (same as `capa registry list`)
+capa registry list                                         # List all configured registries with status, type, source
+capa registry path                                         # Print the managed registries directory (~/.capa/registries-managed/)
+
+capa registry add <source> [slug]                          # Fetch + install a registry adapter
+capa registry add infragate/capa@skills-sh                 # GitHub source, search-form (auto type=github)
+capa registry add gitlab/group/proj::registries/internal --type=gitlab
+capa registry add https://example.com/adapter.ts          # HTTPS URL source (type auto-detected from scheme)
+capa registry add owner/repo@my-reg my-reg                 # Explicit slug when the auto-derived one collides or you want a friendlier name
+
+capa registry remove <slug>                                # Delete the registry row and its materialized adapter file
+capa registry refresh <slug>                               # Re-fetch the adapter from the stored source (updates resolved_ref)
+capa registry enable <slug>                                # Re-enable a previously-disabled registry
+capa registry disable <slug>                               # Hide a registry without removing it
 ```
 
-Registries allow browsing and installing skills and plugins from third-party sources (e.g. skills.sh, internal company registries, JFrog). Each registry is a TypeScript file in `~/.capa/registries/` that exports a `RegistryAdapter` with `search()` and `view()` methods.
+Registries let you browse and install skills and plugins from third-party sources (e.g. skills.sh, internal company registries, JFrog). Each registry is tracked in capa's database; the adapter file is materialized into `~/.capa/registries-managed/<slug>/adapter.{ts,js,mjs}` after capa fetches and validates it.
 
 ### Setting up a registry
 
-1. Run `capa registry path` to find the registries directory
-2. Copy an adapter `.ts` file into that directory (see `examples/registries/` in the capa repo for reference adapters)
-3. Run `capa registry list` to verify the adapter loaded correctly
-4. Open the capa web UI — a "Registries" tab will appear in the navigation bar
-5. Browse and install from the web UI, or use `capa add <registryId>:<itemId>` from the CLI
+1. Run `capa registry add <source>` with one of:
+   - `owner/repo@<name>` — GitHub search-form (capa searches the repo for a folder named `<name>` containing `adapter.{ts,js,mjs}`)
+   - `owner/repo::path/to/<name>` — GitHub exact-path form
+   - The same forms prefixed with `--type=gitlab` (or autodetected from `gitlab.com/...` style sources)
+   - `https://...` — direct HTTPS URL to an adapter file (non-HTTPS URLs are rejected for security)
+2. Capa derives a slug from the source (`infragate/capa@skills-sh` → `skills-sh`); pass an explicit slug as the second argument to override.
+3. Run `capa registry list` to verify the registry shows `[ok]`.
+4. Open the capa web UI — the **Registries** nav link is always visible; choose a registry, then browse and install from there, or use `capa add <slug>:<itemId>` from the CLI.
+
+Registry management is also available from the web UI: navigate to **Registries → Manage registries** (or hit `/ui/registries/settings` directly) to add, refresh, enable/disable, or remove registries with a preview of the adapter source before installing.
 
 ### Installing from a registry
 
@@ -230,10 +246,10 @@ capa add skills-sh:vercel-labs/skills/find-skills     # Install a skill from ski
 capa add acme-internal:design-system/checkout          # Install from an internal registry
 ```
 
-The syntax is `<registryId>:<itemId>` where `registryId` matches the `manifest.id` of the adapter and `itemId` is the registry-specific identifier for the item.
+The syntax is `<slug>:<itemId>` where `slug` is the registry's slug from `capa registry list` and `itemId` is the registry-specific identifier for the item.
 
 ### Security
 
-Registry adapters are executable TypeScript files — only use adapters from sources you trust. Capa logs every loaded registry on startup. There is no auto-download of registry files from URLs.
+Registry adapters are executable TypeScript — only add sources you trust. Capa enforces HTTPS for URL sources (except `localhost` for testing) and validates the adapter shape before persisting the row; the UI also offers a "Preview" button that shows the raw adapter source before you confirm. There is no sandbox: the adapter runs in the same process as the capa server.
 
 **When to use**: When you want to browse, search, and install skills or plugins from public or private registries beyond GitHub/GitLab.

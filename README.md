@@ -32,7 +32,7 @@ Scrolling down the same page brings up sub-agents, rules, project options, and c
   <img src="https://github.com/user-attachments/assets/155f861d-cfc9-47a4-a584-c3d88cb9bc39" alt="CAPA project view: sub-agents, rules, options, and credentials" width="900" />
 </p>
 
-The Registries tab pulls skills and plugins from external catalogs. Cursor Marketplace and skills.sh are wired in by default. Need a private one? Drop a registry adapter into the repo and it shows up here too.
+The Registries tab pulls skills and plugins from external catalogs. Need a private one? Run `capa registry add owner/repo@my-adapter` (or use the **Manage registries** page) — capa fetches the adapter from GitHub, GitLab, or an HTTPS URL, validates it, and it shows up here too.
 
 <table align="center">
   <tr>
@@ -55,7 +55,7 @@ The Registries tab pulls skills and plugins from external catalogs. Cursor Marke
 - Any CLI command can be wrapped as an MCP tool the agent (and `capa sh`) can call.
 - Rules go to each provider's native location: Cursor `.cursor/rules/`, Windsurf `.windsurf/rules/`, Copilot's instructions file, or a managed marker block in `AGENTS.md` / `CLAUDE.md` for providers without a rules directory. Glob scoping works.
 - Sub-agents get their own filtered MCP endpoint that exposes only the tools the specialist actually needs.
-- Skills and plugins are browsable from `capa add` and the web UI. Bundled registries: skills.sh, the Cursor Marketplace, and Claude Plugins. Drop a registry adapter in the repo and it shows up too.
+- Skills and plugins are browsable from `capa add` and the web UI. Add a registry with `capa registry add owner/repo@my-adapter` (GitHub/GitLab/HTTPS sources, slug auto-derived, adapter validated before install) and it shows up too.
 - `capabilities.lock` records resolved commit SHAs. A SHA-keyed content cache makes repeat installs near instant.
 - Credentials are encrypted at rest, edited in the web UI, or read from `.env`.
 - Blocked-phrase enforcement, tool output sanitisation, and CLI prerequisite checks all run before any install touches your filesystem.
