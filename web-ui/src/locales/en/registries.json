@@ -6,7 +6,8 @@
   },
   "empty": {
     "title": "No registries configured",
-    "description": "Place adapter files (.ts) in ~/.capa/registries/ to connect third-party registries."
+    "description": "Add a registry from GitHub, GitLab, or an HTTPS URL to browse third-party skills and plugins.",
+    "manageLink": "Manage registries"
   },
   "tabs": {
     "skills": "Skills",
@@ -37,5 +38,77 @@
     "loadFailed": "Failed to load registries",
     "searchFailed": "Search failed",
     "viewFailed": "Failed to load item details"
+  },
+  "settings": {
+    "title": "Registry settings",
+    "subtitle": "Manage the third-party registries that supply skills and plugins.",
+    "browseLink": "Back to browse",
+    "addButton": "Add registry",
+    "noneTitle": "No registries yet",
+    "noneDescription": "Add your first registry to start browsing skills and plugins.",
+    "warningTitle": "Trust before adding",
+    "warningBody": "Registry adapters are executable TypeScript — only install them from sources you trust.",
+    "table": {
+      "name": "Registry",
+      "type": "Type",
+      "source": "Source",
+      "status": "Status",
+      "actions": "Actions"
+    },
+    "status": {
+      "installed": "Installed",
+      "failed": "Failed",
+      "pending": "Pending",
+      "disabled": "Disabled"
+    },
+    "actions": {
+      "refresh": "Refresh",
+      "delete": "Delete",
+      "enable": "Enable",
+      "disable": "Disable",
+      "deleteConfirm": "Remove registry \"{{slug}}\"? This deletes its row and any cached files."
+    },
+    "feedback": {
+      "added": "Registry \"{{slug}}\" added.",
+      "removed": "Registry \"{{slug}}\" removed.",
+      "refreshed": "Registry \"{{slug}}\" refreshed.",
+      "enabled": "Registry \"{{slug}}\" enabled.",
+      "disabled": "Registry \"{{slug}}\" disabled."
+    }
+  },
+  "addDialog": {
+    "title": "Add registry",
+    "description": "Fetch an adapter from a Git repository or HTTPS URL. The file is downloaded and validated before it is enabled.",
+    "fields": {
+      "type": "Source type",
+      "source": "Source",
+      "slug": "Slug",
+      "slugHint": "URL-safe identifier; auto-derived from the source if left blank."
+    },
+    "typeOptions": {
+      "github": "GitHub",
+      "gitlab": "GitLab",
+      "url": "HTTPS URL"
+    },
+    "sourcePlaceholders": {
+      "github": "owner/repo@adapter-name  or  owner/repo::path/to/adapter-name",
+      "gitlab": "group/project@adapter-name  or  group/project::path/to/adapter-name",
+      "url": "https://example.com/path/to/adapter.ts"
+    },
+    "preview": {
+      "button": "Preview",
+      "loading": "Fetching adapter...",
+      "title": "Adapter source",
+      "emptyHint": "Press Preview to fetch the adapter file and inspect it before installing.",
+      "resolvedRef": "Resolved ref: {{ref}}"
+    },
+    "trust": "I have reviewed the adapter source and trust this code.",
+    "submit": "Add registry",
+    "cancel": "Cancel",
+    "errors": {
+      "missingType": "Source type is required.",
+      "missingSource": "Source is required.",
+      "previewBeforeAdd": "Preview the adapter source and confirm trust before adding."
+    }
   }
 }

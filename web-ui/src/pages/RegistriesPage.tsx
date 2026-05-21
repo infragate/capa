@@ -1,5 +1,5 @@
 import { useEffect, useCallback } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { TopBar } from '../components/layout/TopBar';
 import { Page } from '../components/layout/Page';
@@ -96,7 +96,13 @@ export function RegistriesPage() {
         ) : !registries || registries.length === 0 ? (
           <div className="rounded-lg border border-border-primary bg-bg-secondary p-8 text-center">
             <h3 className="mb-2 text-base font-medium text-text-primary">{t('empty.title')}</h3>
-            <p className="text-sm text-text-secondary">{t('empty.description')}</p>
+            <p className="mb-4 text-sm text-text-secondary">{t('empty.description')}</p>
+            <Link
+              to="/ui/registries/settings"
+              className="inline-flex items-center rounded-sm border border-border-primary bg-bg-tertiary px-4 py-2 text-sm text-text-primary no-underline transition-colors hover:bg-hover-bg"
+            >
+              {t('empty.manageLink')}
+            </Link>
           </div>
         ) : (
           <RegistryTabs
