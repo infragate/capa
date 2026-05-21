@@ -13,6 +13,7 @@ import {
   resolvePluginServerDef,
 } from '../../shared/plugin-manifest';
 import { getProvider } from '../../shared/providers';
+import { getGitProvider } from '../../shared/git-providers/registry';
 import {
   loadBlockedPhrases,
   checkBlockedPhrases,
@@ -183,7 +184,7 @@ export async function resolvePlugins(
   }
 
   for (const pluginRef of plugins) {
-    if (pluginRef.type !== 'github' && pluginRef.type !== 'gitlab') continue;
+    if (!getGitProvider(pluginRef.type)) continue;
     if (!pluginRef.def?.repo) continue;
 
     const validated = validatePluginDef(pluginRef);
@@ -287,9 +288,11 @@ export async function resolvePlugins(
     lockBuilder.upsertPlugin(lockPluginEntry);
 
     const refish = ref ?? version ?? 'HEAD';
+    const gp = getGitProvider(platform);
+    const host = gp?.host ?? `${platform}.com`;
     const repository = resolvedSubpath
-      ? `https://${platform}.com/${repoPath}/tree/${refish}/${resolvedSubpath}`
-      : `https://${platform}.com/${repoPath}`;
+      ? `https://${host}/${repoPath}/tree/${refish}/${resolvedSubpath}`
+      : `https://${host}/${repoPath}`;
     const sourcePlugin: SourcePlugin = {
       id: pluginInstallId,
       name: manifest.name,

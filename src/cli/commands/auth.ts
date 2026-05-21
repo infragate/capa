@@ -2,6 +2,7 @@ import { loadSettings, getDatabasePath } from '../../shared/config';
 import { CapaDatabase } from '../../db/database';
 import { ensureServer } from '../utils/server-manager';
 import { VERSION } from '../../version';
+import { getGitProviderByHost } from '../../shared/git-providers/registry';
 
 /**
  * Manual authentication command
@@ -37,7 +38,7 @@ export async function authCommand(provider?: string): Promise<void> {
       console.log('  No providers connected yet.\n');
     } else {
       for (const token of tokens) {
-        const providerEmoji = token.provider === 'github.com' ? '🐙' : '🦊';
+        const providerEmoji = getGitProviderByHost(token.provider)?.emoji ?? '🔗';
         console.log(`  ${providerEmoji} ${token.provider}`);
         
         if (token.expires_at) {
@@ -129,19 +130,15 @@ export async function authCommand(provider?: string): Promise<void> {
   console.log(`Authenticating with: ${provider}\n`);
 
   try {
-    // Determine platform from provider
-    let platform: 'github' | 'gitlab';
-    if (provider === 'github.com') {
-      platform = 'github';
-    } else if (provider === 'gitlab.com') {
-      platform = 'gitlab';
-    } else {
-      console.error(`✗ Only github.com and gitlab.com are currently supported`);
+    const gitProvider = getGitProviderByHost(provider);
+    if (!gitProvider) {
+      console.error(`✗ Unknown git provider: ${provider}`);
       console.error('  For self-hosted instances, use the web UI at:');
       console.log(`  ${serverStatus.url}/ui/integrations`);
       db.close();
       process.exit(1);
     }
+    const platform = gitProvider.id as 'github' | 'gitlab';
 
     // Initiate OAuth flow
     const response = await fetch(`${serverStatus.url}/api/integrations/${platform}/oauth/start`, {

@@ -15,6 +15,7 @@ import { getProvider, getAllProviders } from '../../shared/providers';
 import { parseSkillMd } from '../../shared/skill-md';
 import { resolveProvidersForInstall } from '../../shared/providers/resolve';
 import { VERSION } from '../../version';
+import { getGitProvider } from '../../shared/git-providers/registry';
 import { registerMCPServer, unregisterMCPServer, registerSubAgentMCPServer, unregisterSubAgentMCPServer, purgeCursorSubAgentMCPEntries } from '../utils/mcp-client-manager';
 import { parseEnvFile } from '../../shared/env-parser';
 import { extractAllVariables } from '../../shared/variable-resolver';
@@ -269,7 +270,7 @@ function explainGitError(
   if (errorMessage.includes('could not be found') ||
       errorMessage.includes('not found') ||
       errorMessage.includes("don't have permission")) {
-    const platformName = platform === 'github' ? 'GitHub' : 'GitLab';
+    const platformName = getGitProvider(platform)?.displayName ?? platform;
     const repoUrl = `https://${platform}.com/${repoPath}`;
     let friendlyMessage = `Repository not accessible: ${repoPath}\n\n`;
     if (hasAuth) {
@@ -300,7 +301,7 @@ function explainGitError(
     return new Error(
       `Authentication failed for ${platform}.com\n\n` +
       `    Your access token may have expired or been revoked.\n` +
-      `    Please reconnect your ${platform === 'github' ? 'GitHub' : 'GitLab'} account in the integrations page.`
+      `    Please reconnect your ${getGitProvider(platform)?.displayName ?? platform} account in the integrations page.`
     );
   }
 
@@ -1154,7 +1155,7 @@ async function installSkills(
     } else if ((skill.type === 'github' || skill.type === 'gitlab') && skill.def.repo) {
       // GitHub/GitLab skill - resolve a snapshot (cache + lockfile aware)
       const platform: CachePlatform = skill.type;
-      const platformLabel = platform === 'github' ? 'GitHub' : 'GitLab';
+      const platformLabel = getGitProvider(platform)?.displayName ?? platform;
       try {
         // Parse "owner/repo@name" (recursive search) or
         // "owner/repo::path/to/skill" (exact path), with optional :version / #sha
@@ -1295,7 +1296,7 @@ async function installSkills(
             if (repoInfo && repoInfo.platform) {
               const integrationsUrl = getIntegrationsUrl(settings.server.host, settings.server.port);
               console.error(`\n  ✗ Unable to access URL (it may require authentication)`);
-              displayIntegrationPrompt(repoInfo.platform === 'github' ? 'GitHub' : 'GitLab', integrationsUrl);
+              displayIntegrationPrompt(getGitProvider(repoInfo.platform)?.displayName ?? repoInfo.platform, integrationsUrl);
               try {
                 db.close();
               } catch {}
