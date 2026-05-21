@@ -449,25 +449,6 @@ function buildInstallTasks(reqCmds?: RequiredCommand[]): Task<InstallCtx>[] {
 
   tasks.push(
     {
-      title: 'Resolving providers',
-      task: async (ctx) => {
-        ctx.db.upsertProject({ id: ctx.projectId, path: ctx.projectPath });
-        try {
-          ctx.resolvedProviders = await resolveProvidersForInstall({
-            flagProvider: ctx.flagProvider,
-            capabilitiesProviders: ctx.capabilities.providers,
-            db: ctx.db,
-            projectId: ctx.projectId,
-          });
-        } catch (err: any) {
-          throw new Error(err.message);
-        }
-        ctx.capabilities.providers = ctx.resolvedProviders;
-        ctx.capabilitiesToUse.providers = ctx.resolvedProviders;
-        ctx.db.setProjectProviders(ctx.projectId, ctx.resolvedProviders);
-      },
-    },
-    {
       title: 'Resolving plugins',
       enabled: (ctx) => !!(ctx.capabilities.plugins && ctx.capabilities.plugins.length > 0),
       task: async (ctx) => {
@@ -1029,6 +1010,26 @@ export async function installCommand(
   const lockBuilder = new LockfileBuilder(noCache ? null : existingLockfile);
   const mcpUrl = `${serverStatus.url}/${projectId}/mcp`;
 
+  let resolvedProviders: string[];
+  try {
+    db.upsertProject({ id: projectId, path: projectPath });
+    resolvedProviders = await resolveProvidersForInstall({
+      flagProvider,
+      capabilitiesProviders: capabilities.providers,
+      db,
+      projectId,
+    });
+    capabilities.providers = resolvedProviders;
+    db.setProjectProviders(projectId, resolvedProviders);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    error(message);
+    try {
+      db.close();
+    } catch {}
+    process.exit(1);
+  }
+
   try {
     const ctx = await runTasks(
       buildInstallTasks(reqCmds),
@@ -1045,7 +1046,7 @@ export async function installCommand(
         db,
         settings,
         serverStatus: { running: true, url: serverStatus.url },
-        resolvedProviders: [],
+        resolvedProviders,
         lockBuilder,
         mcpUrl,
         resolvedRepos: new Map(),
