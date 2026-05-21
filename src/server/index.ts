@@ -13,6 +13,14 @@ import type { Capabilities, MCPServer, ToolMCPDefinition, ToolCommandDefinition 
 import type { OAuth2Config } from '../types/oauth';
 import { extractAllVariables } from '../shared/variable-resolver';
 import { RegistryManager } from '../shared/registries/manager';
+import {
+  listRegistriesHandler,
+  createRegistryHandler,
+  deleteRegistryHandler,
+  patchRegistryHandler,
+  refreshRegistryHandler,
+  previewRegistryHandler,
+} from './registries-routes';
 import type { RegistryCapability } from '../types/registry';
 import { VERSION } from '../version';
 import { logger } from '../shared/logger';
@@ -414,6 +422,14 @@ class CapaServer {
       return this.handleGetRegistries();
     }
 
+    if (path === '/api/registries' && request.method === 'POST') {
+      return this.handleCreateRegistry(request);
+    }
+
+    if (path === '/api/registries/preview' && request.method === 'GET') {
+      return this.handlePreviewRegistry(url);
+    }
+
     const registrySearchMatch = path.match(/^\/api\/registries\/([^/]+)\/search$/);
     if (registrySearchMatch && request.method === 'GET') {
       const registryId = decodeURIComponent(registrySearchMatch[1]);
@@ -426,6 +442,22 @@ class CapaServer {
       const registryId = decodeURIComponent(registryViewMatch[1]);
       const itemId = decodeURIComponent(registryViewMatch[2]);
       return this.handleRegistryView(registryId, itemId, url);
+    }
+
+    const registryRefreshMatch = path.match(/^\/api\/registries\/([^/]+)\/refresh$/);
+    if (registryRefreshMatch && request.method === 'POST') {
+      const slug = decodeURIComponent(registryRefreshMatch[1]);
+      return this.handleRefreshRegistry(slug);
+    }
+
+    const registryItemMatch = path.match(/^\/api\/registries\/([^/]+)$/);
+    if (registryItemMatch && request.method === 'DELETE') {
+      const slug = decodeURIComponent(registryItemMatch[1]);
+      return this.handleDeleteRegistry(slug);
+    }
+    if (registryItemMatch && request.method === 'PATCH') {
+      const slug = decodeURIComponent(registryItemMatch[1]);
+      return this.handlePatchRegistry(slug, request);
     }
 
     return new Response('Not Found', { status: 404 });
@@ -1699,21 +1731,33 @@ class CapaServer {
   // --- Registry handlers ---
 
   private async handleGetRegistries(): Promise<Response> {
-    const apiLogger = this.logger.child('API');
-    apiLogger.info('List registries');
-    try {
-      const manifests = await this.registryManager.list();
-      return new Response(
-        JSON.stringify({ registries: manifests }),
-        { headers: { 'Content-Type': 'application/json' } }
-      );
-    } catch (error: any) {
-      apiLogger.failure(`Error listing registries: ${error.message}`);
-      return new Response(
-        JSON.stringify({ error: error.message }),
-        { status: 500, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
+    this.logger.child('API').info('List registries');
+    return listRegistriesHandler(this.db, this.registryManager);
+  }
+
+  private async handleCreateRegistry(request: Request): Promise<Response> {
+    this.logger.child('API').info('Install registry');
+    return createRegistryHandler(this.db, this.registryManager, request);
+  }
+
+  private async handleDeleteRegistry(slug: string): Promise<Response> {
+    this.logger.child('API').info(`Delete registry: ${slug}`);
+    return deleteRegistryHandler(this.db, this.registryManager, slug);
+  }
+
+  private async handlePatchRegistry(slug: string, request: Request): Promise<Response> {
+    this.logger.child('API').info(`Patch registry: ${slug}`);
+    return patchRegistryHandler(this.db, this.registryManager, slug, request);
+  }
+
+  private async handleRefreshRegistry(slug: string): Promise<Response> {
+    this.logger.child('API').info(`Refresh registry: ${slug}`);
+    return refreshRegistryHandler(this.db, this.registryManager, slug);
+  }
+
+  private async handlePreviewRegistry(url: URL): Promise<Response> {
+    this.logger.child('API').info('Preview registry');
+    return previewRegistryHandler(this.db, url);
   }
 
   private async handleRegistrySearch(registryId: string, url: URL): Promise<Response> {
