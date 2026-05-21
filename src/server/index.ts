@@ -10,6 +10,7 @@ import { OAuth2Manager } from './oauth-manager';
 import { GitIntegrationManager } from './git-integration-manager';
 import { TokenRefreshScheduler } from './token-refresh-scheduler';
 import type { Capabilities, MCPServer, ToolMCPDefinition, ToolCommandDefinition } from '../types/capabilities';
+import type { OAuth2Config } from '../types/oauth';
 import { extractAllVariables } from '../shared/variable-resolver';
 import { RegistryManager } from '../shared/registries/manager';
 import type { RegistryCapability } from '../types/registry';
@@ -19,6 +20,18 @@ import { projectUiUrl } from '../shared/ui-urls';
 
 // Import the React SPA bundle as text at compile time - this bundles it into the binary
 import spaHtml from '../../web-ui/dist/index.html' with { type: 'text' };
+
+function mcpHandlerHttpStatus(error: unknown): number {
+  if (error instanceof SyntaxError) {
+    return 400;
+  }
+  const status = (error as { status?: number; statusCode?: number })?.status
+    ?? (error as { status?: number; statusCode?: number })?.statusCode;
+  if (typeof status === 'number' && status >= 400 && status < 500) {
+    return status;
+  }
+  return 500;
+}
 
 function isAllowedOrigin(origin: string | null): { allowed: boolean; origin?: string } {
   if (!origin) {
@@ -314,7 +327,7 @@ class CapaServer {
     }
     
     const githubOAuthCallbackMatch = path.match(/^\/api\/integrations\/github\/oauth\/callback$/);
-    if (githubOAuthCallbackMatch && request.method === 'GET') {
+    if (githubOAuthCallbackMatch && (request.method === 'POST' || request.method === 'GET')) {
       return this.handleGitHubOAuthCallback(request);
     }
 
@@ -325,15 +338,23 @@ class CapaServer {
     }
 
     const gitlabOAuthCallbackMatch = path.match(/^\/api\/integrations\/gitlab\/oauth\/callback$/);
-    if (gitlabOAuthCallbackMatch && request.method === 'GET') {
+    if (gitlabOAuthCallbackMatch && (request.method === 'POST' || request.method === 'GET')) {
       return this.handleGitLabOAuthCallback(request);
     }
 
     // Git integration token refresh
     const gitTokenRefreshMatch = path.match(/^\/api\/integrations\/(github|gitlab)\/refresh$/);
-    if (gitTokenRefreshMatch && request.method === 'POST') {
-      const platform = gitTokenRefreshMatch[1] as 'github' | 'gitlab';
-      return this.handleGitTokenRefresh(platform);
+    if (gitTokenRefreshMatch) {
+      if (request.method === 'GET') {
+        return new Response(
+          JSON.stringify({ error: 'Method not allowed. Use POST.' }),
+          { status: 405, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      if (request.method === 'POST') {
+        const platform = gitTokenRefreshMatch[1] as 'github' | 'gitlab';
+        return this.handleGitTokenRefresh(platform);
+      }
     }
 
     // GitHub Enterprise PAT
@@ -880,7 +901,7 @@ class CapaServer {
         
         if (isConnected) {
           const tokenData = this.db.getOAuthToken(projectId, s.id);
-          expiresAt = tokenData?.expires_at;
+          expiresAt = tokenData?.expires_at ?? undefined;
         }
         
         return {
@@ -917,97 +938,124 @@ class CapaServer {
    * Ensure a Claude-style OAuth callback server is listening on the given port.
    * Serves GET /callback?code=...&state=... and redirects to main UI after token exchange.
    * Closed after completion or after 5 minutes idle. Used when a plugin provides client_id + callbackPort in .mcp.json (e.g. Slack).
+   * Binds directly and retries on EADDRINUSE (no separate port-availability check).
    */
-  private ensureOAuthCallbackServer(port: number): void {
-    if (this.oauthCallbackServers.has(port)) return;
+  private async ensureOAuthCallbackServer(startPort: number, maxAttempts = 10): Promise<number> {
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const port = startPort + attempt;
+      if (this.oauthCallbackServers.has(port)) {
+        return port;
+      }
+      try {
+        await this.bindOAuthCallbackServer(port);
+        return port;
+      } catch (err: any) {
+        if (err?.code === 'EADDRINUSE') {
+          this.logger.warn(`OAuth callback port ${port} in use, trying ${port + 1}`);
+          continue;
+        }
+        throw err;
+      }
+    }
+    throw new Error(
+      `Could not bind OAuth callback server after ${maxAttempts} attempts starting at ${startPort}`,
+    );
+  }
+
+  private bindOAuthCallbackServer(port: number): Promise<void> {
     const self = this;
     const IDLE_MS = 5 * 60 * 1000; // 5 minutes
     const mainBase = this.uiOrigin();
-    const server = createServer((req, res) => {
-      if (req.method !== 'GET' || !req.url) {
-        res.writeHead(405);
-        res.end();
-        return;
-      }
-      const reqUrl = new URL(req.url, `http://127.0.0.1:${port}`);
-      if (reqUrl.pathname !== '/callback') {
-        res.writeHead(404);
-        res.end();
-        return;
-      }
-      // Clear idle timer and close server after we send the response (clean up after completion)
-      const entry = self.oauthCallbackServers.get(port);
-      if (entry) clearTimeout(entry.idleTimer);
-      const closeWhenDone = () => {
-        res.on('finish', () => self.closeOAuthCallbackServer(port));
-      };
 
-      const code = reqUrl.searchParams.get('code');
-      const state = reqUrl.searchParams.get('state');
-      const error = reqUrl.searchParams.get('error');
-      const apiLogger = self.logger.child('API');
-
-      const redirectToUi = (
-        projectId: string | undefined,
-        success: boolean,
-        message?: string,
-        serverId?: string
-      ) => {
-        closeWhenDone(); // register before sending so 'finish' fires reliably
-        const loc = projectId
-          ? projectUiUrl(mainBase, projectId, {
-              ...(success
-                ? { oauth_success: message ?? 'true' }
-                : { oauth_error: message ?? 'Unknown error' }),
-              ...(serverId ? { server: serverId } : {}),
-            })
-          : `${mainBase}/`;
-        res.writeHead(302, { Location: loc });
-        res.end();
-      };
-
-      if (error) {
-        apiLogger.error(`OAuth2 callback error: ${error}`);
-        let projectId: string | undefined;
-        if (state) {
-          const flow = self.db.getFlowState(state);
-          projectId = flow?.project_id;
-        }
-        redirectToUi(projectId, false, error);
-        return;
-      }
-
-      if (!code || !state) {
-        redirectToUi(undefined, false, 'Missing code or state');
-        return;
-      }
-
-      apiLogger.info('OAuth2 callback (Claude-style) received');
-      self.oauth2Manager.handleCallback(code, state).then((result) => {
-        if (!result.success) {
-          apiLogger.failure(`Callback failed: ${result.error}`);
-          redirectToUi(result.projectId, false, result.error ?? 'Token exchange failed');
+    return new Promise((resolve, reject) => {
+      const server = createServer((req, res) => {
+        if (req.method !== 'GET' || !req.url) {
+          res.writeHead(405);
+          res.end();
           return;
         }
-        apiLogger.success(`OAuth2 flow completed for server: ${result.serverId}`);
-        redirectToUi(result.projectId, true, 'true', result.serverId);
-      }).catch((err: any) => {
-        apiLogger.failure(`Callback error: ${err.message}`);
-        redirectToUi(undefined, false, err.message ?? 'Token exchange failed');
+        const reqUrl = new URL(req.url, `http://127.0.0.1:${port}`);
+        if (reqUrl.pathname !== '/callback') {
+          res.writeHead(404);
+          res.end();
+          return;
+        }
+        const entry = self.oauthCallbackServers.get(port);
+        if (entry) clearTimeout(entry.idleTimer);
+        const closeWhenDone = () => {
+          res.on('finish', () => self.closeOAuthCallbackServer(port));
+        };
+
+        const code = reqUrl.searchParams.get('code');
+        const state = reqUrl.searchParams.get('state');
+        const error = reqUrl.searchParams.get('error');
+        const apiLogger = self.logger.child('API');
+
+        const redirectToUi = (
+          projectId: string | undefined,
+          success: boolean,
+          message?: string,
+          serverId?: string
+        ) => {
+          closeWhenDone();
+          const loc = projectId
+            ? projectUiUrl(mainBase, projectId, {
+                ...(success
+                  ? { oauth_success: message ?? 'true' }
+                  : { oauth_error: message ?? 'Unknown error' }),
+                ...(serverId ? { server: serverId } : {}),
+              })
+            : `${mainBase}/`;
+          res.writeHead(302, { Location: loc });
+          res.end();
+        };
+
+        if (error) {
+          apiLogger.error(`OAuth2 callback error: ${error}`);
+          let projectId: string | undefined;
+          if (state) {
+            const flow = self.db.getFlowState(state);
+            projectId = flow?.project_id;
+          }
+          redirectToUi(projectId, false, error);
+          return;
+        }
+
+        if (!code || !state) {
+          redirectToUi(undefined, false, 'Missing code or state');
+          return;
+        }
+
+        apiLogger.info('OAuth2 callback (Claude-style) received');
+        self.oauth2Manager.handleCallback(code, state).then((result) => {
+          if (!result.success) {
+            apiLogger.failure(`Callback failed: ${result.error}`);
+            redirectToUi(result.projectId, false, result.error ?? 'Token exchange failed');
+            return;
+          }
+          apiLogger.success(`OAuth2 flow completed for server: ${result.serverId}`);
+          redirectToUi(result.projectId, true, 'true', result.serverId);
+        }).catch((err: any) => {
+          apiLogger.failure(`Callback error: ${err.message}`);
+          redirectToUi(undefined, false, err.message ?? 'Token exchange failed');
+        });
+      });
+
+      server.once('error', reject);
+      server.listen(port, '127.0.0.1', () => {
+        self.logger.info(`OAuth callback server (Claude-style) listening on http://localhost:${port}/callback`);
+        const idleTimer = setTimeout(() => {
+          self.logger.debug(`OAuth callback server on port ${port} idle for 5 min, closing`);
+          self.closeOAuthCallbackServer(port);
+        }, IDLE_MS);
+        self.oauthCallbackServers.set(port, { server, idleTimer });
+        server.on('error', (err: any) => {
+          self.logger.failure(`OAuth callback server on port ${port}: ${err.message}`);
+          self.closeOAuthCallbackServer(port);
+        });
+        resolve();
       });
     });
-    server.listen(port, '127.0.0.1', () => {
-      self.logger.info(`OAuth callback server (Claude-style) listening on http://localhost:${port}/callback`);
-    });
-    server.on('error', (err: any) => {
-      self.logger.failure(`OAuth callback server on port ${port}: ${err.message}`);
-      self.oauthCallbackServers.delete(port);
-    });
-    const idleTimer = setTimeout(() => {
-      self.logger.debug(`OAuth callback server on port ${port} idle for 5 min, closing`);
-      self.closeOAuthCallbackServer(port);
-    }, IDLE_MS);
-    this.oauthCallbackServers.set(port, { server, idleTimer });
   }
 
   private async handleOAuth2Start(projectId: string, request: Request): Promise<Response> {
@@ -1048,18 +1096,18 @@ class CapaServer {
         typeof oauth2.callback_port === 'number' &&
         oauth2.callback_port > 0 &&
         !oauth2.registrationEndpoint;
-      const redirectUri = useClaudeCallback
-        ? `http://localhost:${oauth2.callback_port}/callback`
-        : `http://${this.settings.server.host}:${this.settings.server.port}/api/projects/${projectId}/oauth/callback`;
-
-      if (useClaudeCallback && oauth2.callback_port != null) {
-        this.ensureOAuthCallbackServer(oauth2.callback_port);
+      let callbackPort = oauth2.callback_port;
+      if (useClaudeCallback && callbackPort != null) {
+        callbackPort = await this.ensureOAuthCallbackServer(callbackPort);
       }
+      const redirectUri = useClaudeCallback
+        ? `http://localhost:${callbackPort}/callback`
+        : `http://${this.settings.server.host}:${this.settings.server.port}/api/projects/${projectId}/oauth/callback`;
 
       const { url: authUrl, state } = await this.oauth2Manager.generateAuthorizationUrl(
         projectId,
         serverId,
-        server.def.oauth2,
+        server.def.oauth2 as OAuth2Config,
         redirectUri
       );
 
@@ -1240,14 +1288,44 @@ class CapaServer {
     }
   }
 
+  /**
+   * GitHub OAuth callback. Tokens must be sent via POST JSON body, not URL query strings.
+   *
+   * POST /api/integrations/github/oauth/callback
+   * Body: { "access_token": "...", "refresh_token": "...", "expires_in": 3600 }
+   *
+   * GET is only supported for error redirects without tokens (?error=...).
+   */
   private async handleGitHubOAuthCallback(request: Request): Promise<Response> {
     const apiLogger = this.logger.child('API');
     try {
-      const url = new URL(request.url);
-      const accessToken = url.searchParams.get('access_token');
-      const refreshToken = url.searchParams.get('refresh_token');
-      const expiresIn = url.searchParams.get('expires_in');
-      const error = url.searchParams.get('error');
+      let accessToken: string | null = null;
+      let refreshToken: string | undefined;
+      let expiresIn: number | undefined;
+      let error: string | null = null;
+
+      if (request.method === 'POST') {
+        const body = await request.json() as Record<string, unknown>;
+        accessToken = typeof body.access_token === 'string' ? body.access_token : null;
+        refreshToken = typeof body.refresh_token === 'string' ? body.refresh_token : undefined;
+        if (body.expires_in != null) {
+          expiresIn = parseInt(String(body.expires_in), 10);
+        }
+        error = typeof body.error === 'string' ? body.error : null;
+      } else {
+        const url = new URL(request.url);
+        if (
+          url.searchParams.has('access_token') ||
+          url.searchParams.has('refresh_token') ||
+          url.searchParams.has('token')
+        ) {
+          return new Response(
+            JSON.stringify({ error: 'Tokens must not be passed in URL query strings. Use POST with JSON body.' }),
+            { status: 405, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        error = url.searchParams.get('error');
+      }
 
       if (error) {
         apiLogger.error(`GitHub OAuth callback error: ${error}`);
@@ -1270,8 +1348,8 @@ class CapaServer {
       const result = await this.gitIntegrationManager.handleCallback(
         accessToken,
         'github',
-        refreshToken || undefined,
-        expiresIn ? parseInt(expiresIn, 10) : undefined
+        refreshToken,
+        expiresIn
       );
 
       if (!result.success) {
@@ -1326,14 +1404,44 @@ class CapaServer {
     }
   }
 
+  /**
+   * GitLab OAuth callback. Tokens must be sent via POST JSON body, not URL query strings.
+   *
+   * POST /api/integrations/gitlab/oauth/callback
+   * Body: { "access_token": "...", "refresh_token": "...", "expires_in": 3600 }
+   *
+   * GET is only supported for error redirects without tokens (?error=...).
+   */
   private async handleGitLabOAuthCallback(request: Request): Promise<Response> {
     const apiLogger = this.logger.child('API');
     try {
-      const url = new URL(request.url);
-      const accessToken = url.searchParams.get('access_token');
-      const refreshToken = url.searchParams.get('refresh_token');
-      const expiresIn = url.searchParams.get('expires_in');
-      const error = url.searchParams.get('error');
+      let accessToken: string | null = null;
+      let refreshToken: string | undefined;
+      let expiresIn: number | undefined;
+      let error: string | null = null;
+
+      if (request.method === 'POST') {
+        const body = await request.json() as Record<string, unknown>;
+        accessToken = typeof body.access_token === 'string' ? body.access_token : null;
+        refreshToken = typeof body.refresh_token === 'string' ? body.refresh_token : undefined;
+        if (body.expires_in != null) {
+          expiresIn = parseInt(String(body.expires_in), 10);
+        }
+        error = typeof body.error === 'string' ? body.error : null;
+      } else {
+        const url = new URL(request.url);
+        if (
+          url.searchParams.has('access_token') ||
+          url.searchParams.has('refresh_token') ||
+          url.searchParams.has('token')
+        ) {
+          return new Response(
+            JSON.stringify({ error: 'Tokens must not be passed in URL query strings. Use POST with JSON body.' }),
+            { status: 405, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+        error = url.searchParams.get('error');
+      }
 
       if (error) {
         apiLogger.error(`GitLab OAuth callback error: ${error}`);
@@ -1356,8 +1464,8 @@ class CapaServer {
       const result = await this.gitIntegrationManager.handleCallback(
         accessToken,
         'gitlab',
-        refreshToken || undefined,
-        expiresIn ? parseInt(expiresIn, 10) : undefined
+        refreshToken,
+        expiresIn
       );
 
       if (!result.success) {
@@ -1385,6 +1493,11 @@ class CapaServer {
     }
   }
 
+  /**
+   * Refresh stored OAuth token for a git platform. Requires POST; tokens must not appear in URLs.
+   *
+   * curl -X POST http://localhost:3000/api/integrations/github/refresh
+   */
   private async handleGitTokenRefresh(platform: 'github' | 'gitlab'): Promise<Response> {
     const apiLogger = this.logger.child('API');
     apiLogger.info(`Refresh ${platform} token`);
@@ -1641,12 +1754,10 @@ class CapaServer {
             id: null
           }),
           {
-            status: 200,
+            status: mcpHandlerHttpStatus(error),
             headers: { 
               'Content-Type': 'application/json',
-              ...(originCheck.origin
-                ? { 'Access-Control-Allow-Origin': originCheck.origin }
-                : {}),
+              ...corsHeaders,
             },
           }
         );

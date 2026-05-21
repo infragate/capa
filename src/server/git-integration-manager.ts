@@ -4,8 +4,7 @@
 import type { CapaDatabase } from '../db/database';
 import type { GitPlatform, GitPATConfig } from '../types/git-integration';
 import { logger } from '../shared/logger';
-
-const CLOUD_OAUTH_ENDPOINT = 'https://capa.infragate.ai/auth';
+import { CAPA_CLOUD_OAUTH_URL } from '../shared/ui-urls';
 
 export class GitIntegrationManager {
   private db: CapaDatabase;
@@ -62,7 +61,7 @@ export class GitIntegrationManager {
 
     // Build cloud OAuth URL
     // The cloud will handle the OAuth flow and redirect back to our local server with the token
-    const cloudUrl = new URL(CLOUD_OAUTH_ENDPOINT);
+    const cloudUrl = new URL(CAPA_CLOUD_OAUTH_URL);
     cloudUrl.searchParams.set('provider', platform === 'github' ? 'github.com' : 'gitlab.com');
     cloudUrl.searchParams.set('redirect', localRedirectUri);
 
@@ -267,7 +266,10 @@ export class GitIntegrationManager {
   }
 
   /**
-   * Refresh access token using refresh token
+   * Refresh access token using refresh token via cloud OAuth proxy (POST + JSON body).
+   *
+   * POST https://capa.infragate.ai/auth/refresh
+   * Body: { "provider": "github.com", "refresh_token": "..." }
    */
   async refreshAccessToken(platform: GitPlatform, host?: string): Promise<boolean> {
     try {
@@ -284,13 +286,18 @@ export class GitIntegrationManager {
         return false;
       }
 
-      // Call cloud endpoint to refresh the token
       const providerParam = platform === 'github' ? 'github.com' : 'gitlab.com';
-      const refreshUrl = `${CLOUD_OAUTH_ENDPOINT}/refresh?provider=${providerParam}&refresh_token=${encodeURIComponent(integration.refresh_token)}`;
-      
-      this.logger.debug(`Refreshing token via: ${CLOUD_OAUTH_ENDPOINT}/refresh`);
-      
-      const response = await fetch(refreshUrl);
+
+      this.logger.debug(`Refreshing token via: ${CAPA_CLOUD_OAUTH_URL}/refresh`);
+
+      const response = await fetch(`${CAPA_CLOUD_OAUTH_URL}/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider: providerParam,
+          refresh_token: integration.refresh_token,
+        }),
+      });
       
       if (!response.ok) {
         const errorText = await response.text();

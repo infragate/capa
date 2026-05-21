@@ -4,6 +4,7 @@ import { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 import type { CapaDatabase } from '../db/database';
 import type { MCPServerDefinition, ToolMCPDefinition } from '../types/capabilities';
+import type { OAuth2Config } from '../types/oauth';
 import { resolveVariablesInObject, hasUnresolvedVariables } from '../shared/variable-resolver';
 import { VERSION } from '../version';
 import { OAuth2Manager } from './oauth-manager';
@@ -381,7 +382,7 @@ class HttpMCPTransport implements Transport {
         const accessToken = await this.oauth2Manager.getAccessToken(
           this.projectId,
           this.serverId,
-          this.serverDefinition.oauth2
+          this.serverDefinition.oauth2 as OAuth2Config
         );
         if (accessToken) {
           headers['Authorization'] = `Bearer ${accessToken}`;
@@ -407,7 +408,7 @@ class HttpMCPTransport implements Transport {
         const refreshed = await this.oauth2Manager.refreshAccessToken(
           this.projectId,
           this.serverId,
-          this.serverDefinition.oauth2
+          this.serverDefinition.oauth2 as OAuth2Config
         );
 
         if (refreshed) {
@@ -415,7 +416,7 @@ class HttpMCPTransport implements Transport {
           const newToken = await this.oauth2Manager.getAccessToken(
             this.projectId,
             this.serverId,
-            this.serverDefinition.oauth2
+            this.serverDefinition.oauth2 as OAuth2Config
           );
           if (newToken) {
             headers['Authorization'] = `Bearer ${newToken}`;

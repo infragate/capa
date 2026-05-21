@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync, cpSync, statSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
-import type { Capabilities, Skill, MCPServer, SourcePlugin, ResolvedPluginInfo } from '../../types/capabilities';
+import type { Capabilities, Skill, MCPServer, SourcePlugin, ResolvedPluginInfo, OAuth2Config } from '../../types/capabilities';
 import type { UnifiedPluginManifest } from '../../types/plugin';
 import type { CapaDatabase } from '../../db/database';
 import type { AuthenticatedFetch } from '../../shared/authenticated-fetch';
@@ -394,7 +394,7 @@ export async function resolvePlugins(
           def: {
             url: resolvedDef.url,
             headers: resolvedDef.headers,
-            oauth2: resolvedDef.oauth2,
+            oauth2: resolvedDef.oauth2 as OAuth2Config | undefined,
           },
           sourcePlugin,
           sourcePluginServerKey: serverKey,

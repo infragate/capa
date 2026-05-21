@@ -9,6 +9,8 @@ import type {
   MCPSubprocess,
   Session,
   GitIntegration,
+  OAuthTokenRow,
+  OAuthFlowStateRow,
 } from '../types/database';
 
 export class CapaDatabase {
@@ -457,10 +459,10 @@ export class CapaDatabase {
   }
 
   // OAuth2 token operations
-  getOAuthToken(projectId: string, serverId: string): any | null {
+  getOAuthToken(projectId: string, serverId: string): OAuthTokenRow | null {
     return this.db.query(
       'SELECT * FROM oauth_tokens WHERE project_id = ? AND server_id = ?'
-    ).get(projectId, serverId);
+    ).get(projectId, serverId) as OAuthTokenRow | null;
   }
 
   setOAuthToken(projectId: string, serverId: string, tokenData: {
@@ -498,10 +500,10 @@ export class CapaDatabase {
     );
   }
 
-  getAllOAuthTokens(projectId: string): any[] {
+  getAllOAuthTokens(projectId: string): OAuthTokenRow[] {
     return this.db.query(
       'SELECT * FROM oauth_tokens WHERE project_id = ?'
-    ).all(projectId);
+    ).all(projectId) as OAuthTokenRow[];
   }
 
   // OAuth2 flow state operations
@@ -520,10 +522,10 @@ export class CapaDatabase {
     );
   }
 
-  getFlowState(state: string): any | null {
+  getFlowState(state: string): OAuthFlowStateRow | null {
     return this.db.query(
       'SELECT * FROM oauth_flow_state WHERE state = ?'
-    ).get(state);
+    ).get(state) as OAuthFlowStateRow | null;
   }
 
   deleteFlowState(state: string): void {

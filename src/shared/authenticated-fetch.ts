@@ -83,11 +83,15 @@ export class AuthenticatedFetch {
 
     try {
       const providerParam = platform === 'github' ? 'github.com' : 'gitlab.com';
-      const refreshUrl =
-        `${CLOUD_OAUTH_ENDPOINT}/refresh?provider=${providerParam}` +
-        `&refresh_token=${encodeURIComponent(integration.refresh_token)}`;
 
-      const response = await fetch(refreshUrl);
+      const response = await fetch(`${CLOUD_OAUTH_ENDPOINT}/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider: providerParam,
+          refresh_token: integration.refresh_token,
+        }),
+      });
       if (!response.ok) {
         this.db.deleteGitIntegration(platform, host ?? null);
         return false;

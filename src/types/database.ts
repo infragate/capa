@@ -61,6 +61,28 @@ export interface GitIntegration {
   updated_at: number;
 }
 
+export interface OAuthTokenRow {
+  id: number;
+  project_id: string;
+  server_id: string;
+  access_token: string;
+  refresh_token: string | null;
+  token_type: string | null;
+  expires_at: number | null;
+  scope: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface OAuthFlowStateRow {
+  state: string;
+  project_id: string;
+  server_id: string;
+  code_verifier: string;
+  redirect_uri: string;
+  created_at: number;
+}
+
 export interface ServerSettings {
   version: string;
   server: {
