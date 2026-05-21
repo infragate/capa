@@ -405,22 +405,32 @@ export async function addCommand(
   const registryMatch = source.match(/^([a-zA-Z][\w-]*):([\s\S]+)$/);
   if (registryMatch && !RESERVED_PREFIXES.test(source) && !source.startsWith('.') && !source.startsWith('/') && !/^[A-Za-z]:[\\/]/.test(source)) {
     const [, registryId, itemId] = registryMatch;
-    const manager = new RegistryManager();
-    const adapter = await manager.getAdapter(registryId);
-    if (adapter) {
-      console.log(`Resolving from registry "${adapter.manifest.name}"...`);
-
-      let detail: Awaited<ReturnType<typeof manager.view>> | undefined;
-      let resolvedCapability: RegistryCapability | undefined;
-      for (const cap of adapter.manifest.capabilities) {
-        try {
-          detail = await manager.view(registryId, { capability: cap, id: itemId });
-          resolvedCapability = cap;
-          break;
-        } catch {
-          // item not found under this capability, try next
+    const { CapaDatabase } = await import('../../db/database');
+    const { loadSettings, getDatabasePath } = await import('../../shared/config');
+    const settings = await loadSettings();
+    const dbForRegistry = new CapaDatabase(getDatabasePath(settings));
+    const manager = new RegistryManager(dbForRegistry);
+    let adapter;
+    let detail: Awaited<ReturnType<typeof manager.view>> | undefined;
+    let resolvedCapability: RegistryCapability | undefined;
+    try {
+      adapter = await manager.getAdapter(registryId);
+      if (adapter) {
+        for (const cap of adapter.manifest.capabilities) {
+          try {
+            detail = await manager.view(registryId, { capability: cap, id: itemId });
+            resolvedCapability = cap;
+            break;
+          } catch {
+            // item not found under this capability, try next
+          }
         }
       }
+    } finally {
+      try { dbForRegistry.close(); } catch {}
+    }
+    if (adapter) {
+      console.log(`Resolving from registry "${adapter.manifest.name}"...`);
       if (!detail || !resolvedCapability) {
         throw new Error(
           `Item "${itemId}" not found in registry "${registryId}" under any capability ` +

@@ -75,7 +75,7 @@ class CapaServer {
   private mcpServers = new Map<string, CapaMCPServer>();
   /** Claude-style OAuth callback servers: port -> { server, idleTimer }; closed after completion or 5 min idle */
   private oauthCallbackServers = new Map<number, { server: HttpServer; idleTimer: ReturnType<typeof setTimeout> }>();
-  private registryManager = new RegistryManager();
+  private registryManager!: RegistryManager;
   private startTime: number = Date.now();
   private logger = logger.child('CapaServer');
 
@@ -96,6 +96,7 @@ class CapaServer {
     await this.cleanupMissingProjects();
 
     // Initialize managers
+    this.registryManager = new RegistryManager(this.db);
     this.sessionManager = new SessionManager(this.db);
     this.subprocessManager = new SubprocessManager(this.db);
     this.oauth2Manager = new OAuth2Manager(this.db);

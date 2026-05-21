@@ -1,4 +1,5 @@
 import { RegistryLoader } from './loader';
+import type { CapaDatabase } from '../../db/database';
 import type {
   RegistryAdapter,
   RegistryManifest,
@@ -29,11 +30,15 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): P
  * with per-call timeouts and result-size clamping.
  */
 export class RegistryManager {
-  private loader = new RegistryLoader();
+  private loader: RegistryLoader;
   private adapters = new Map<string, RegistryAdapter>();
   private lastLoadedAt = 0;
 
-  /** Force a rescan of the registries directory. */
+  constructor(db: CapaDatabase) {
+    this.loader = new RegistryLoader(db);
+  }
+
+  /** Force a re-query of the DB and a re-import of changed adapter files. */
   async reload(): Promise<void> {
     const { adapters } = await this.loader.loadAll();
     this.adapters = adapters;
@@ -41,7 +46,7 @@ export class RegistryManager {
   }
 
   private async ensureLoaded(): Promise<void> {
-    if (this.adapters.size === 0 || Date.now() - this.lastLoadedAt > LOAD_TTL_MS) {
+    if (this.lastLoadedAt === 0 || Date.now() - this.lastLoadedAt > LOAD_TTL_MS) {
       await this.reload();
     }
   }
