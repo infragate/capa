@@ -79,8 +79,14 @@ export async function cleanCommand(): Promise<void> {
       },
     },
     {
+      // Run unconditionally when providers are known: sub-agent integrations
+      // (Claude's `foldSubAgentsIntoInstructions`, Codex's `AGENTS.md`, etc.)
+      // write capa-managed snippets into these files independently of whether
+      // a top-level `agents:` block exists in capabilities.yaml, so gating the
+      // cleanup on `capabilities.agents` left CLAUDE.md / AGENTS.md behind for
+      // any project that only used sub-agents.
       title: 'Clean agent instructions',
-      enabled: () => Boolean(capabilities.agents),
+      enabled: () => providers.length > 0,
       task: async () => {
         cleanAgentsFile(projectPath, providers);
       },

@@ -94,6 +94,12 @@ function copySkillDirWithSecurity(
 export interface ResolvePluginsResult {
   mergedCapabilities: Capabilities;
   tempDirsToCleanup: string[];
+  /** Non-fatal diagnostics surfaced after the listr2 task tree completes (e.g.
+   * a per-client skill copy failed but the plugin itself resolved). Fatal
+   * problems (clone failed, manifest missing, copy failed) throw instead so
+   * the install task is marked as failed rather than silently skipping the
+   * plugin. */
+  warnings: string[];
 }
 
 /**
@@ -139,6 +145,7 @@ export async function resolvePlugins(
 
   const pluginsBase = getPluginsTempBase(projectId);
   const currentPluginIds = new Set<string>();
+  const warnings: string[] = [];
 
   const registeredServerIds = new Set(mergedServers.map(s => s.id));
 
@@ -158,8 +165,12 @@ export async function resolvePlugins(
 
     const validated = validatePluginDef(pluginRef);
     if ('error' in validated) {
-      console.warn(`  ⚠ Invalid plugin entry ${pluginRef.id ?? pluginRef.def.repo}: ${validated.error}`);
-      continue;
+      // The user explicitly listed this plugin — refusing to fail when the
+      // entry itself is unparseable produces "install succeeded" with the
+      // plugin silently missing, which is exactly the bug we're fixing.
+      throw new Error(
+        `Invalid plugin entry ${pluginRef.id ?? pluginRef.def.repo}: ${validated.error}`
+      );
     }
 
     const { platform, repoPath, subpath, search, version, ref } = validated;
@@ -184,8 +195,12 @@ export async function resolvePlugins(
         noCache,
       });
     } catch (err: any) {
-      console.error(`  ✗ Failed to clone plugin ${repoPath}: ${err.message}`);
-      continue;
+      // Surfaces auth / 404 / network failures from `explainGitError`. Previously
+      // we logged-and-continued, which made disconnected git integrations and
+      // typo'd repo paths look like a successful install.
+      throw new Error(
+        `Failed to clone plugin ${repoPath}: ${err.message}`
+      );
     }
 
     // Resolve the manifest root. Three modes:
@@ -203,12 +218,11 @@ export async function resolvePlugins(
           .filter(Boolean)
           .sort();
         const availableList = available.length > 0 ? available.join(', ') : 'none';
-        console.warn(
-          `  ⚠ Plugin "${search}" not found in ${repoPath}.\n` +
+        throw new Error(
+          `Plugin "${search}" not found in ${repoPath}.\n` +
           `    Available plugins: ${availableList}\n` +
           `    Tip: use \`subpath: <path>\` to pin an exact location, or @ to match either the directory name or the manifest's "name" field.`
         );
-        continue;
       }
       manifestRoot = located.entry.subpath
         ? join(snapshot.snapshotDir, located.entry.subpath)
@@ -218,14 +232,15 @@ export async function resolvePlugins(
     } else {
       manifestRoot = subpath ? join(snapshot.snapshotDir, subpath) : snapshot.snapshotDir;
       if (subpath && !existsSync(manifestRoot)) {
-        console.warn(`  ⚠ Plugin subpath not found: ${subpath} in ${repoPath}`);
-        continue;
+        throw new Error(`Plugin subpath not found: "${subpath}" in ${repoPath}`);
       }
       resolvedSubpath = subpath;
       manifest = detectAndParseManifest(manifestRoot, providers);
       if (!manifest) {
-        console.warn(`  ⚠ No plugin manifest found in ${repoPath}${subpath ? `/${subpath}` : ''}`);
-        continue;
+        throw new Error(
+          `No plugin manifest found in ${repoPath}${subpath ? `/${subpath}` : ''}.\n` +
+          `    Expected one of: .claude-plugin/plugin.json, .cursor-plugin/plugin.json.`
+        );
       }
     }
 
@@ -237,8 +252,9 @@ export async function resolvePlugins(
       if (existsSync(pluginStablePath)) rmSync(pluginStablePath, { recursive: true, force: true });
       copyPluginToStable(manifestRoot, pluginStablePath);
     } catch (err: any) {
-      console.error(`  ✗ Failed to copy plugin to ${pluginStablePath}: ${err.message}`);
-      continue;
+      throw new Error(
+        `Failed to copy plugin ${pluginInstallId} to ${pluginStablePath}: ${err.message}`
+      );
     }
 
     const lockPluginEntry: LockPluginEntry = {
@@ -322,7 +338,9 @@ export async function resolvePlugins(
           if (err instanceof BlockedPhraseError) {
             throw err;
           }
-          console.warn(`  ⚠ Failed to install skill ${entry.id} for ${client}: ${err.message}`);
+          // Non-fatal: the skill may still install for other clients. Surfaced
+          // post-tree via the `warnings` array so the user sees it.
+          warnings.push(`Failed to install skill "${entry.id}" for ${client}: ${err.message}`);
         }
       }
 
@@ -352,7 +370,10 @@ export async function resolvePlugins(
       const serverId = config?.as ?? serverKey;
 
       if (registeredServerIds.has(serverId)) {
-        console.warn(`  ⚠ Plugin server id "${serverId}" collides with an existing server; skipping. Rename with \`servers.${serverKey}.as\` in the plugin entry.`);
+        warnings.push(
+          `Plugin server id "${serverId}" collides with an existing server; skipping. ` +
+          `Rename with \`servers.${serverKey}.as\` in the plugin entry.`
+        );
         continue;
       }
       registeredServerIds.add(serverId);
@@ -396,7 +417,9 @@ export async function resolvePlugins(
           const available = manifestKeys.length > 0
             ? `Available servers: ${manifestKeys.join(', ')}`
             : 'The plugin manifest declares no MCP servers.';
-          console.warn(`  ⚠ Plugin "${pluginInstallId}": servers config key "${configKey}" does not match any server in the plugin manifest. ${available}`);
+          warnings.push(
+            `Plugin "${pluginInstallId}": servers config key "${configKey}" does not match any server in the plugin manifest. ${available}`
+          );
         }
       }
     }
@@ -431,5 +454,5 @@ export async function resolvePlugins(
     resolvedPlugins,
   };
 
-  return { mergedCapabilities, tempDirsToCleanup: tempDirs };
+  return { mergedCapabilities, tempDirsToCleanup: tempDirs, warnings };
 }

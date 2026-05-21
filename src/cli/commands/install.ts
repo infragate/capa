@@ -454,7 +454,7 @@ function buildInstallTasks(reqCmds?: RequiredCommand[]): Task<InstallCtx>[] {
       task: async (ctx) => {
         const authFetch = createAuthenticatedFetch(ctx.db);
         try {
-          const { mergedCapabilities, tempDirsToCleanup } = await resolvePlugins(
+          const { mergedCapabilities, tempDirsToCleanup, warnings: pluginWarnings } = await resolvePlugins(
             ctx.capabilities,
             ctx.projectPath,
             ctx.projectId,
@@ -467,6 +467,7 @@ function buildInstallTasks(reqCmds?: RequiredCommand[]): Task<InstallCtx>[] {
             { noCache: ctx.noCache },
           );
           ctx.capabilitiesToUse = mergedCapabilities;
+          ctx.warnings.push(...pluginWarnings);
           for (const dir of tempDirsToCleanup) {
             try {
               rmSync(dir, { recursive: true, force: true });
