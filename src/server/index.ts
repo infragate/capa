@@ -20,6 +20,34 @@ import { projectUiUrl } from '../shared/ui-urls';
 // Import the React SPA bundle as text at compile time - this bundles it into the binary
 import spaHtml from '../../web-ui/dist/index.html' with { type: 'text' };
 
+function isAllowedOrigin(origin: string | null): { allowed: boolean; origin?: string } {
+  if (!origin) {
+    return { allowed: false };
+  }
+
+  try {
+    const parsed = new URL(origin);
+    if (
+      parsed.protocol === 'http:' &&
+      (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1')
+    ) {
+      return { allowed: true, origin };
+    }
+  } catch {
+    // fall through to env allow-list
+  }
+
+  const extras =
+    process.env.CAPA_ALLOWED_ORIGINS?.split(',')
+      .map((o) => o.trim())
+      .filter(Boolean) ?? [];
+  if (extras.includes(origin)) {
+    return { allowed: true, origin };
+  }
+
+  return { allowed: false };
+}
+
 class CapaServer {
   private db!: CapaDatabase;
   private sessionManager!: SessionManager;
@@ -1564,8 +1592,25 @@ class CapaServer {
       mcpLogger.success('MCP server created');
     }
 
+    const requestOrigin = request.headers.get('Origin');
+    const originCheck = isAllowedOrigin(requestOrigin);
+    const corsHeaders: Record<string, string> = {
+      'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type',
+    };
+    if (originCheck.origin) {
+      corsHeaders['Access-Control-Allow-Origin'] = originCheck.origin;
+    }
+
     // Handle MCP protocol via HTTP (simplified without SSE)
     if (request.method === 'POST') {
+      if (requestOrigin && !originCheck.allowed) {
+        return new Response(
+          `Origin ${requestOrigin} not allowed. Set CAPA_ALLOWED_ORIGINS env var to include this origin.`,
+          { status: 403 }
+        );
+      }
+
       try {
         const message = await request.json();
         mcpLogger.debug(`${message.method || 'notification'} (id: ${message.id || 'none'})`);
@@ -1580,9 +1625,7 @@ class CapaServer {
             status: 200,
             headers: { 
               'Content-Type': 'application/json',
-              'Access-Control-Allow-Origin': '*',
-              'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
-              'Access-Control-Allow-Headers': 'Content-Type',
+              ...corsHeaders,
             },
           }
         );
@@ -1601,7 +1644,9 @@ class CapaServer {
             status: 200,
             headers: { 
               'Content-Type': 'application/json',
-              'Access-Control-Allow-Origin': '*',
+              ...(originCheck.origin
+                ? { 'Access-Control-Allow-Origin': originCheck.origin }
+                : {}),
             },
           }
         );
@@ -1610,13 +1655,16 @@ class CapaServer {
 
     // Handle OPTIONS for CORS
     if (request.method === 'OPTIONS') {
+      if (requestOrigin && !originCheck.allowed) {
+        return new Response(
+          `Origin ${requestOrigin} not allowed. Set CAPA_ALLOWED_ORIGINS env var to include this origin.`,
+          { status: 403 }
+        );
+      }
+
       return new Response(null, {
         status: 204,
-        headers: {
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type',
-        },
+        headers: corsHeaders,
       });
     }
 

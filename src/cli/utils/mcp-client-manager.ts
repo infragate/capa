@@ -4,6 +4,36 @@ import { getProvider, getAllProviders } from '../../shared/providers';
 import { readTomlFile, writeTomlFile, setNestedKey, deleteNestedKey } from '../../shared/toml-io';
 import { getMcpConfigPath, buildMcpEntry } from '../../shared/providers/handlers';
 
+interface McpServerEntry {
+  url?: string;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+}
+
+type McpJsonConfig = Record<string, unknown>;
+
+function isPlainObject(x: unknown): x is Record<string, unknown> {
+  return x !== null && typeof x === 'object' && !Array.isArray(x);
+}
+
+function parseJsonConfig(raw: string): McpJsonConfig | null {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return isPlainObject(parsed) ? parsed : {};
+  } catch {
+    return null;
+  }
+}
+
+function getServerMap(config: McpJsonConfig, serversKey: string): Record<string, McpServerEntry> {
+  const existing = config[serversKey];
+  if (!isPlainObject(existing)) {
+    config[serversKey] = {};
+  }
+  return config[serversKey] as Record<string, McpServerEntry>;
+}
+
 /**
  * Register MCP server with client configuration files
  */
@@ -34,19 +64,17 @@ export async function registerMCPServer(
       }
 
       if (mcp.format === 'json') {
-        let config: any = {};
+        let config: McpJsonConfig = {};
         if (existsSync(configPath)) {
-          try {
-            config = JSON.parse(readFileSync(configPath, 'utf-8'));
-          } catch {
+          const parsed = parseJsonConfig(readFileSync(configPath, 'utf-8'));
+          if (parsed === null) {
             console.warn(`  ⚠ Failed to parse existing ${provider.displayName} config, creating new one`);
-            config = {};
+          } else {
+            config = parsed;
           }
         }
-        if (!config[mcp.serversKey]) {
-          config[mcp.serversKey] = {};
-        }
-        config[mcp.serversKey][mcp.serverKey] = buildMcpEntry(mcp, mcpUrl);
+        const servers = getServerMap(config, mcp.serversKey);
+        servers[mcp.serverKey] = buildMcpEntry(mcp, mcpUrl) as McpServerEntry;
         writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
       } else if (mcp.format === 'toml') {
         const config = readTomlFile(configPath);
@@ -88,16 +116,12 @@ export async function registerSubAgentMCPServer(
       }
 
       if (mcp.format === 'json') {
-        let config: any = {};
+        let config: McpJsonConfig = {};
         if (existsSync(configPath)) {
-          try {
-            config = JSON.parse(readFileSync(configPath, 'utf-8'));
-          } catch {
-            config = {};
-          }
+          config = parseJsonConfig(readFileSync(configPath, 'utf-8')) ?? {};
         }
-        if (!config[mcp.serversKey]) config[mcp.serversKey] = {};
-        config[mcp.serversKey][serverKey] = buildMcpEntry(mcp, mcpUrl);
+        const servers = getServerMap(config, mcp.serversKey);
+        servers[serverKey] = buildMcpEntry(mcp, mcpUrl) as McpServerEntry;
         writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
       } else if (mcp.format === 'toml') {
         const config = readTomlFile(configPath);
@@ -133,14 +157,11 @@ export async function unregisterSubAgentMCPServer(
       if (!existsSync(configPath)) continue;
 
       if (mcp.format === 'json') {
-        let config: any;
-        try {
-          config = JSON.parse(readFileSync(configPath, 'utf-8'));
-        } catch {
-          continue;
-        }
-        if (!config[mcp.serversKey]?.[serverKey]) continue;
-        delete config[mcp.serversKey][serverKey];
+        const config = parseJsonConfig(readFileSync(configPath, 'utf-8'));
+        if (config === null) continue;
+        const servers = config[mcp.serversKey];
+        if (!isPlainObject(servers) || !(serverKey in servers)) continue;
+        delete (servers as Record<string, McpServerEntry>)[serverKey];
         writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
       } else if (mcp.format === 'toml') {
         const config = readTomlFile(configPath);
@@ -163,18 +184,16 @@ export async function purgeCursorSubAgentMCPEntries(projectPath: string): Promis
   const configPath = join(projectPath, '.cursor', 'mcp.json');
   if (!existsSync(configPath)) return;
 
-  let config: any;
-  try {
-    config = JSON.parse(readFileSync(configPath, 'utf-8'));
-  } catch {
-    return;
-  }
+  const config = parseJsonConfig(readFileSync(configPath, 'utf-8'));
+  if (config === null) return;
 
-  if (config.mcpServers) {
-    const staleKeys = Object.keys(config.mcpServers).filter((k) => k.startsWith('capa-'));
+  const mcpServers = config.mcpServers;
+  if (isPlainObject(mcpServers)) {
+    const servers = mcpServers as Record<string, McpServerEntry>;
+    const staleKeys = Object.keys(servers).filter((k) => k.startsWith('capa-'));
     if (staleKeys.length > 0) {
       for (const key of staleKeys) {
-        delete config.mcpServers[key];
+        delete servers[key];
       }
       writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
       console.log(`  ✓ Removed ${staleKeys.length} stale sub-agent MCP entr${staleKeys.length === 1 ? 'y' : 'ies'} from .cursor/mcp.json`);
@@ -207,18 +226,17 @@ export async function unregisterMCPServer(
       }
 
       if (mcp.format === 'json') {
-        let config: any;
-        try {
-          config = JSON.parse(readFileSync(configPath, 'utf-8'));
-        } catch {
+        const config = parseJsonConfig(readFileSync(configPath, 'utf-8'));
+        if (config === null) {
           console.warn(`  ⚠ Failed to parse ${provider.displayName} config, skipping removal`);
           continue;
         }
-        if (!config[mcp.serversKey] || !config[mcp.serversKey][mcp.serverKey]) {
+        const servers = config[mcp.serversKey];
+        if (!isPlainObject(servers) || !(mcp.serverKey in servers)) {
           console.log(`  - MCP server not registered with ${provider.displayName} (already removed)`);
           continue;
         }
-        delete config[mcp.serversKey][mcp.serverKey];
+        delete (servers as Record<string, McpServerEntry>)[mcp.serverKey];
         writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
       } else if (mcp.format === 'toml') {
         const config = readTomlFile(configPath);
