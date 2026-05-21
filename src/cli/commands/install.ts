@@ -39,7 +39,7 @@ import { assertSafeRepoPath, fetchRepoFile, fetchTextFile } from '../../shared/r
 import { copySkillTree, forEachSkillFile } from '../../shared/skill-copy';
 import { parseRepoString } from '../../shared/repo-string';
 import type { LockSkillEntry } from '../../types/lockfile';
-import { runTasks, summary, info, isVerbose } from '../ui';
+import { runTasks, summary, info, warn, error, isVerbose } from '../ui';
 import type { Task } from '../ui';
 
 const execAsync = promisify(exec);
@@ -67,6 +67,8 @@ interface InstallCtx {
   added: number;
   failed: number;
   skipped: number;
+  warnings: string[];
+  errors: string[];
 }
 
 const VALID_REQUIRES_COMMAND_CLI = /^[a-zA-Z0-9_.+-]+$/;
@@ -145,9 +147,9 @@ function getUnexposedToolIds(capabilities: Capabilities): string[] {
  * any resolved plugin manifest. Does not fail the install — the warning lets
  * the user catch typos and stale references after a plugin upgrade.
  */
-function validatePluginSkillReferences(capabilities: Capabilities): void {
+function collectPluginSkillWarnings(capabilities: Capabilities): string[] {
   const pluginSkills = capabilities.skills.filter((s) => s.type === 'plugin');
-  if (pluginSkills.length === 0) return;
+  if (pluginSkills.length === 0) return [];
 
   const exposedSkillIds = new Set<string>();
   for (const plugin of capabilities.resolvedPlugins ?? []) {
@@ -156,16 +158,18 @@ function validatePluginSkillReferences(capabilities: Capabilities): void {
     }
   }
 
+  const warnings: string[] = [];
   for (const skill of pluginSkills) {
     if (!skill.sourcePlugin && !exposedSkillIds.has(skill.id)) {
       const available = exposedSkillIds.size > 0
         ? `Plugin skills available: ${Array.from(exposedSkillIds).sort().join(', ')}`
         : 'No plugin currently exposes any skill.';
-      console.warn(
-        `\n⚠ Plugin skill "${skill.id}" is declared but no configured plugin exposes a skill with that id.\n  ${available}`
+      warnings.push(
+        `Plugin skill "${skill.id}" is declared but no configured plugin exposes a skill with that id. ${available}`,
       );
     }
   }
+  return warnings;
 }
 
 /**
@@ -173,9 +177,9 @@ function validatePluginSkillReferences(capabilities: Capabilities): void {
  * it. With explicit tool declarations replacing auto-discovery, an unreferenced
  * plugin server is almost always a misconfiguration.
  */
-function warnUnreferencedPluginServers(capabilities: Capabilities): void {
+function collectUnreferencedPluginServerWarnings(capabilities: Capabilities): string[] {
   const resolved = capabilities.resolvedPlugins ?? [];
-  if (resolved.length === 0) return;
+  if (resolved.length === 0) return [];
 
   const referencedServerIds = new Set<string>();
   for (const tool of capabilities.tools) {
@@ -186,20 +190,16 @@ function warnUnreferencedPluginServers(capabilities: Capabilities): void {
     }
   }
 
+  const warnings: string[] = [];
   for (const plugin of resolved) {
     const orphanServers = (plugin.serverIds ?? []).filter((id) => !referencedServerIds.has(id));
     if (orphanServers.length === 0) continue;
-    console.warn(
-      `\n⚠ Plugin "${plugin.id}" exposes server(s) [${orphanServers.join(', ')}] but no user-declared tool references them.\n  ` +
-      `Define entries in the \`tools\` section to expose plugin capabilities, e.g.:\n` +
-      `    tools:\n` +
-      `      - id: my_tool\n` +
-      `        type: mcp\n` +
-      `        def:\n` +
-      `          server: "@${orphanServers[0]}"\n` +
-      `          tool: <remote_tool_name>`
+    warnings.push(
+      `Plugin "${plugin.id}" exposes server(s) [${orphanServers.join(', ')}] but no user-declared tool references them. ` +
+        `Add entries in the \`tools\` section to expose them, e.g.: tools: - id: my_tool, type: mcp, def: { server: "@${orphanServers[0]}", tool: <remote_tool_name> }`,
     );
   }
+  return warnings;
 }
 
 /**
@@ -502,8 +502,8 @@ function buildInstallTasks(reqCmds?: RequiredCommand[]): Task<InstallCtx>[] {
           }
           throw new Error(`Plugin resolution failed: ${err.message}`);
         }
-        validatePluginSkillReferences(ctx.capabilitiesToUse);
-        warnUnreferencedPluginServers(ctx.capabilitiesToUse);
+        ctx.warnings.push(...collectPluginSkillWarnings(ctx.capabilitiesToUse));
+        ctx.warnings.push(...collectUnreferencedPluginServerWarnings(ctx.capabilitiesToUse));
         const providers = ctx.capabilitiesToUse.providers ?? ctx.resolvedProviders;
         ctx.capabilitiesToUse.providers = providers;
       },
@@ -515,8 +515,8 @@ function buildInstallTasks(reqCmds?: RequiredCommand[]): Task<InstallCtx>[] {
         ((ctx.capabilitiesToUse.resolvedPlugins?.length ?? 0) > 0 ||
           ctx.capabilitiesToUse.skills.some((s) => s.type === 'plugin')),
       task: async (ctx) => {
-        validatePluginSkillReferences(ctx.capabilitiesToUse);
-        warnUnreferencedPluginServers(ctx.capabilitiesToUse);
+        ctx.warnings.push(...collectPluginSkillWarnings(ctx.capabilitiesToUse));
+        ctx.warnings.push(...collectUnreferencedPluginServerWarnings(ctx.capabilitiesToUse));
       },
     },
     {
@@ -552,7 +552,7 @@ function buildInstallTasks(reqCmds?: RequiredCommand[]): Task<InstallCtx>[] {
           if (envVariables[varName]) {
             ctx.db.setVariable(ctx.projectId, varName, envVariables[varName]);
           } else {
-            console.warn(`   ⚠  Variable ${varName} not found in env file`);
+            ctx.warnings.push(`Variable ${varName} not found in env file`);
           }
         }
 
@@ -608,8 +608,9 @@ function buildInstallTasks(reqCmds?: RequiredCommand[]): Task<InstallCtx>[] {
           ctx.capabilities.skills.map((skill) => ({
             title: skill.id,
             task: async (_ctx, subtask) => {
+              let outcome: 'installed' | 'failed' | 'skipped' | undefined;
               try {
-                const outcome = await installOneSkill(
+                outcome = await installOneSkill(
                   skill,
                   ctx.projectPath,
                   ctx.projectId,
@@ -622,12 +623,17 @@ function buildInstallTasks(reqCmds?: RequiredCommand[]): Task<InstallCtx>[] {
                   ctx.noCache,
                   ctx.resolvedRepos,
                 );
-                if (outcome === 'installed') ctx.added++;
-                else if (outcome === 'failed') ctx.failed++;
-                else ctx.skipped++;
-              } catch (err: any) {
+              } catch (err: unknown) {
                 ctx.failed++;
-                subtask.output = err?.message ?? String(err);
+                const message = err instanceof Error ? err.message : String(err);
+                subtask.title = `${skill.id} — ${message.split('\n')[0]}`;
+                throw err;
+              }
+              if (outcome === 'installed') ctx.added++;
+              else if (outcome === 'skipped') ctx.skipped++;
+              else {
+                ctx.failed++;
+                throw new Error(`${skill.id} failed (see logs above)`);
               }
             },
           })),
@@ -658,8 +664,9 @@ function buildInstallTasks(reqCmds?: RequiredCommand[]): Task<InstallCtx>[] {
         } else {
           try {
             await saveLockfile(ctx.projectPath, lockfileToSave);
-          } catch (err: any) {
-            console.warn(`  ⚠ Failed to write capabilities.lock: ${err.message}`);
+          } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            ctx.warnings.push(`Failed to write capabilities.lock: ${message}`);
           }
         }
       },
@@ -710,8 +717,9 @@ function buildInstallTasks(reqCmds?: RequiredCommand[]): Task<InstallCtx>[] {
           if (removedFiles.length + removedMarkers.length > 0) {
             ctx.added += removedFiles.length + removedMarkers.length;
           }
-        } catch (err: any) {
-          console.warn(`  ⚠  Failed to prune orphan rules: ${err.message}`);
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err);
+          ctx.warnings.push(`Failed to prune orphan rules: ${message}`);
         }
       },
     },
@@ -785,7 +793,7 @@ function buildInstallTasks(reqCmds?: RequiredCommand[]): Task<InstallCtx>[] {
     },
     {
       title: 'Configuring tools',
-      task: async (ctx) => {
+      task: async (ctx, task) => {
         const response = await fetch(
           `${ctx.serverStatus.url}/api/projects/${ctx.projectId}/configure`,
           {
@@ -802,49 +810,53 @@ function buildInstallTasks(reqCmds?: RequiredCommand[]): Task<InstallCtx>[] {
 
         ctx.configureResult = await response.json();
 
-        // TODO(#U2): migrate tool validation banner to structured listr output
-        const result = ctx.configureResult as any;
-        if (result.toolValidation && result.toolValidation.length > 0) {
-          const successfulTools = result.toolValidation.filter((t: any) => t.success && !t.pendingAuth);
-          const failedTools = result.toolValidation.filter((t: any) => !t.success && !t.pendingAuth);
-          const pendingAuthTools = result.toolValidation.filter((t: any) => t.pendingAuth);
+        const result = ctx.configureResult as {
+          toolValidation?: Array<{
+            toolId: string;
+            success: boolean;
+            pendingAuth?: boolean;
+            serverId?: string;
+            remoteTool?: string;
+            error?: string;
+          }>;
+        };
 
-          if (failedTools.length > 0) {
-            console.log(`\n⚠️  Tool Validation Results:`);
-            console.log(`   ✓ ${successfulTools.length} of ${result.toolValidation.length} tools validated successfully`);
-            console.log(`   ✗ ${failedTools.length} tool(s) failed validation:\n`);
-            for (const failed of failedTools) {
-              console.log(`   • Tool: ${failed.toolId}`);
-              if (failed.serverId && failed.remoteTool) {
-                console.log(`     ⮡ Upstream tool "${failed.remoteTool}" not found on server "@${failed.serverId}"`);
+        if (result.toolValidation && result.toolValidation.length > 0) {
+          const successful = result.toolValidation.filter((t) => t.success && !t.pendingAuth);
+          const failed = result.toolValidation.filter((t) => !t.success && !t.pendingAuth);
+          const pendingAuth = result.toolValidation.filter((t) => t.pendingAuth);
+
+          if (failed.length > 0) {
+            ctx.failed += failed.length;
+            task.title = `Configuring tools — ${failed.length} of ${result.toolValidation.length} tool(s) failed validation`;
+            const lines: string[] = [];
+            lines.push(
+              `${failed.length} of ${result.toolValidation.length} tool(s) failed validation:`,
+            );
+            for (const t of failed) {
+              lines.push(`  • ${t.toolId}`);
+              if (t.serverId && t.remoteTool) {
+                lines.push(`      upstream tool "${t.remoteTool}" not found on server "@${t.serverId}"`);
               }
-              if (failed.error) {
-                console.log(`     ⮡ ${failed.error}`);
-              }
-              console.log();
+              if (t.error) lines.push(`      ${t.error}`);
             }
-            console.log(`   💡 Tip: Check your capabilities.json file and verify:`);
-            console.log(`      - Tool names match exactly what the MCP server provides`);
-            console.log(`      - Server IDs are correct (e.g., "@server-name")`);
-            console.log(`      - MCP servers are accessible and properly configured\n`);
-            ctx.failed += failedTools.length;
-          } else if (pendingAuthTools.length > 0 && pendingAuthTools.length < result.toolValidation.length) {
-            console.log(`\n✓ All ${successfulTools.length} non-OAuth2 tools validated successfully`);
-            console.log(`  ℹ ${pendingAuthTools.length} tool(s) will be validated after OAuth2 authentication`);
-          } else if (pendingAuthTools.length === 0) {
-            console.log(`\n✓ All ${result.toolValidation.length} tools validated successfully`);
+            lines.push('  Tip: check that tool names match what the MCP server provides,');
+            lines.push('  server IDs are correct (e.g. "@server-name"), and that the MCP');
+            lines.push('  servers are reachable.');
+            ctx.errors.push(lines.join('\n'));
+          } else if (pendingAuth.length > 0 && pendingAuth.length < result.toolValidation.length) {
+            task.title = `Configuring tools — ${successful.length} validated, ${pendingAuth.length} pending OAuth2`;
+          } else if (pendingAuth.length === 0) {
+            task.title = `Configuring tools — ${result.toolValidation.length} validated`;
           }
         }
 
-        const unexposedToolIds = getUnexposedToolIds(ctx.capabilitiesToUse);
-        if (unexposedToolIds.length > 0) {
-          console.warn('\n⚠️  Tools not exposed to MCP clients:');
-          console.warn('   The following tools are not required by any skill, so they will not be exposed');
-          console.warn('   (in both expose-all and on-demand mode only skill-required tools are available):');
-          for (const id of unexposedToolIds.sort()) {
-            console.warn(`   • ${id}`);
-          }
-          console.warn('\n   To expose a tool, add it to the "requires" list of at least one skill in your capabilities.\n');
+        const unexposed = getUnexposedToolIds(ctx.capabilitiesToUse);
+        if (unexposed.length > 0) {
+          ctx.warnings.push(
+            `${unexposed.length} tool(s) are not exposed to MCP clients (not required by any skill): ` +
+              `${unexposed.sort().join(', ')}. Add them to a skill's \`requires\` list to expose.`,
+          );
         }
       },
     },
@@ -1040,9 +1052,13 @@ export async function installCommand(
         added: 0,
         failed: 0,
         skipped: 0,
+        warnings: [],
+        errors: [],
       },
     );
 
+    for (const e of ctx.errors) error(e);
+    for (const w of ctx.warnings) warn(w);
     info(`MCP Endpoint: ${ctx.mcpUrl}`);
     summary({
       added: ctx.added,
