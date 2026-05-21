@@ -14,6 +14,8 @@ import { getProvider, getAllProviders } from '../../shared/providers';
 import { buildSubAgentFile as buildSubAgentFileContent } from '../../shared/providers/handlers';
 import type { AuthenticatedFetch } from '../../shared/authenticated-fetch';
 import { fetchRepoFile, fetchTextFile, type RepoSnapshotResolver } from '../../shared/repo-file';
+import { parseGitRawUrl } from '../../shared/git-providers/registry';
+import { refSuffix } from '../../shared/git-providers/parsers';
 
 const UNIVERSAL_AGENTS_FILENAME = 'AGENTS.md';
 
@@ -387,124 +389,17 @@ export async function installAgentsFile(
 export function detectRepoCoordsFromRawUrl(
   rawUrl: string
 ): { platform: 'github' | 'gitlab'; repoString: string } | null {
-  let parsed: URL;
-  try {
-    parsed = new URL(rawUrl);
-  } catch {
-    return null;
-  }
-  const host = parsed.hostname.toLowerCase();
-  const segments = parsed.pathname.split('/').filter(Boolean);
+  const parsed = parseGitRawUrl(rawUrl);
+  if (!parsed) return null;
 
-  if (host === 'raw.githubusercontent.com') {
-    if (segments.length < 4) return null;
-    const [owner, repo, ...rest] = segments;
-    const split = splitGithubRefAndPath(rest);
-    if (!split) return null;
-    return {
-      platform: 'github',
-      repoString: `${owner}/${repo}::${split.path}${refSuffix(split.ref)}`,
-    };
-  }
+  const repoPath = parsed.provider.id === 'gitlab'
+    ? parsed.owner
+    : `${parsed.owner}/${parsed.repo}`;
 
-  if (host === 'github.com') {
-    const rawIdx = segments.indexOf('raw');
-    if (rawIdx === -1 || rawIdx < 2 || segments.length < rawIdx + 3) return null;
-    const owner = segments[0];
-    const repo = segments[1];
-    const split = splitGithubRefAndPath(segments.slice(rawIdx + 1));
-    if (!owner || !repo || !split) return null;
-    return {
-      platform: 'github',
-      repoString: `${owner}/${repo}::${split.path}${refSuffix(split.ref)}`,
-    };
-  }
-
-  if (host === 'gitlab.com') {
-    const sepIdx = segments.indexOf('-');
-    if (sepIdx === -1 || sepIdx < 2) return null;
-    if (segments[sepIdx + 1] !== 'raw') return null;
-    if (segments.length < sepIdx + 4) return null;
-    const ownerRepo = segments.slice(0, sepIdx).join('/');
-    const ref = segments[sepIdx + 2];
-    const filepath = segments.slice(sepIdx + 3).join('/');
-    if (!ownerRepo || !ref || !filepath) return null;
-    return {
-      platform: 'gitlab',
-      repoString: `${ownerRepo}::${filepath}${refSuffix(ref)}`,
-    };
-  }
-
-  return null;
-}
-
-/**
- * Split the post-`<owner>/<repo>` (or post-`/raw`) tail of a GitHub URL into
- * its `(ref, path)` components. Handles both the bare `<branch>/<path>` form
- * and the fully-qualified `refs/heads/<branch>/<path>` and
- * `refs/tags/<tag>/<path>` forms that GitHub's "Raw" button produces.
- *
- * Limitation — multi-segment refs:
- *   GitHub allows branch names that contain `/` (e.g. `feature/foo`,
- *   `release/2024-Q4`). In a raw URL these slashes are usually written
- *   literally, which means `.../refs/heads/feature/foo/bar.md` is genuinely
- *   ambiguous: it could mean ref=`feature` + path=`foo/bar.md`, or
- *   ref=`feature/foo` + path=`bar.md`. Resolving that requires hitting the
- *   GitHub API, which we don't do at URL-detection time. We make the simple
- *   assumption that the first segment after `refs/heads|tags/` (or the
- *   first segment of a bare-ref tail) is the entire ref.
- *
- *   - Single-segment branches (`main`, `develop`, `feat-foo`) round-trip
- *     correctly. This covers the overwhelming majority of GitHub raw URLs.
- *   - Multi-segment branches with `/` URL-encoded as `%2F` are decoded here
- *     and round-trip correctly.
- *   - Multi-segment branches with literal `/` are mis-split; the resulting
- *     repo string will fail at clone-time, at which point the user should
- *     switch to a typed `github` source with an explicit `def.repo`.
- *
- * Returns `null` when the tail can't be split into a non-empty ref + path.
- */
-function splitGithubRefAndPath(
-  tail: string[]
-): { ref: string; path: string } | null {
-  if (
-    tail.length >= 4 &&
-    tail[0] === 'refs' &&
-    (tail[1] === 'heads' || tail[1] === 'tags')
-  ) {
-    const ref = decodeRefSegment(tail[2]);
-    const path = tail.slice(3).join('/');
-    if (!ref || !path) return null;
-    return { ref, path };
-  }
-  if (tail.length < 2) return null;
-  const ref = decodeRefSegment(tail[0]);
-  const path = tail.slice(1).join('/');
-  if (!ref || !path) return null;
-  return { ref, path };
-}
-
-/**
- * Percent-decode a single ref segment, e.g. `feature%2Ffoo` → `feature/foo`.
- * Tolerant of malformed encodings — falls back to the raw value rather than
- * throwing so a single bad URL doesn't crash the install.
- */
-function decodeRefSegment(seg: string): string {
-  try {
-    return decodeURIComponent(seg);
-  } catch {
-    return seg;
-  }
-}
-
-function refSuffix(ref: string): string {
-  if (!ref || ref === 'HEAD' || ref === 'main' || ref === 'master') return '';
-  // SHAs go after `#`, named refs after `:`. Use a heuristic: 7-40 hex chars
-  // ⇒ commit SHA; everything else ⇒ tag/branch.
-  if (/^[0-9a-f]{7,40}$/i.test(ref)) {
-    return `#${ref}`;
-  }
-  return `:${ref}`;
+  return {
+    platform: parsed.provider.id as 'github' | 'gitlab',
+    repoString: `${repoPath}::${parsed.path}${refSuffix(parsed.ref)}`,
+  };
 }
 
 // ---------------------------------------------------------------------------

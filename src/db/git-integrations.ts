@@ -1,5 +1,6 @@
 import type { Database } from 'bun:sqlite';
 import type { GitIntegration } from '../types/database';
+import { getGitProvider, getGitProviderByHost } from '../shared/git-providers/registry';
 
 export class GitIntegrationsRepo {
   constructor(private db: Database) {}
@@ -78,13 +79,7 @@ export class GitIntegrationsRepo {
   }
 
   getOAuthToken(provider: string): GitIntegration | null {
-    // Map provider string to platform
-    const platformMap: Record<string, 'github' | 'gitlab'> = {
-      'github.com': 'github',
-      'gitlab.com': 'gitlab',
-    };
-
-    const platform = platformMap[provider];
+    const platform = getGitProviderByHost(provider)?.id as 'github' | 'gitlab' | undefined;
     if (!platform) {
       return null;
     }
@@ -101,13 +96,7 @@ export class GitIntegrationsRepo {
       expires_at?: number | null;
     }
   ): void {
-    // Map provider string to platform
-    const platformMap: Record<string, 'github' | 'gitlab'> = {
-      'github.com': 'github',
-      'gitlab.com': 'gitlab',
-    };
-
-    const platform = platformMap[provider];
+    const platform = getGitProviderByHost(provider)?.id as 'github' | 'gitlab' | undefined;
     if (!platform) {
       throw new Error(`Unknown provider: ${provider}`);
     }
@@ -118,12 +107,11 @@ export class GitIntegrationsRepo {
   getAllOAuthTokens(): Array<GitIntegration & { provider: string }> {
     const integrations = this.getAll();
 
-    // Map platforms back to provider strings and filter for OAuth providers
     return integrations
-      .filter(i => i.platform === 'github' || i.platform === 'gitlab')
+      .filter(i => getGitProvider(i.platform))
       .map(integration => ({
         ...integration,
-        provider: integration.platform === 'github' ? 'github.com' : 'gitlab.com',
+        provider: getGitProvider(integration.platform)!.host,
       }));
   }
 }

@@ -8,6 +8,7 @@
 import type { CapaDatabase } from '../db/database';
 import type { GitIntegration } from '../types/database';
 import type { GitPlatform } from '../types/git-integration';
+import { getGitProvider, getGitProviderByHost } from './git-providers/registry';
 
 const CLOUD_OAUTH_ENDPOINT = 'https://capa.infragate.ai/auth';
 
@@ -39,12 +40,9 @@ export class AuthenticatedFetch {
       const urlObj = new URL(url);
       const host = urlObj.hostname;
 
-      if (host === 'github.com' || host === 'raw.githubusercontent.com' || host === 'api.github.com') {
-        return { platform: 'github' };
-      }
-
-      if (host === 'gitlab.com') {
-        return { platform: 'gitlab' };
+      const provider = getGitProviderByHost(host);
+      if (provider) {
+        return { platform: provider.id as GitPlatform };
       }
 
       // Check for self-managed instances
@@ -66,7 +64,7 @@ export class AuthenticatedFetch {
   }
 
   private canRefresh(platform: GitPlatform): boolean {
-    return platform === 'github' || platform === 'gitlab';
+    return !!getGitProvider(platform);
   }
 
   /**
@@ -82,13 +80,14 @@ export class AuthenticatedFetch {
     }
 
     try {
-      const providerParam = platform === 'github' ? 'github.com' : 'gitlab.com';
+      const gp = getGitProvider(platform);
+      if (!gp) return false;
 
       const response = await fetch(`${CLOUD_OAUTH_ENDPOINT}/refresh`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          provider: providerParam,
+          provider: gp.cloudOAuthProviderParam,
           refresh_token: integration.refresh_token,
         }),
       });
@@ -167,14 +166,20 @@ export class AuthenticatedFetch {
 
     const fresh = await this.ensureFreshIntegration(platform, host, integration);
 
-    // GitHub and GitHub Enterprise use "token" prefix
-    if (platform === 'github' || platform === 'github-enterprise') {
+    const gp = getGitProvider(platform);
+    if (gp) {
+      return {
+        'Authorization': gp.authHeader(fresh.access_token),
+      };
+    }
+
+    // Self-managed instances
+    if (platform === 'github-enterprise') {
       return {
         'Authorization': `token ${fresh.access_token}`,
       };
     }
 
-    // GitLab uses "Bearer" prefix
     return {
       'Authorization': `Bearer ${fresh.access_token}`,
     };
