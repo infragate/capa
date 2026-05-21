@@ -9,8 +9,25 @@ export interface RegistryManifest {
   capabilities: string[];
 }
 
+export type RegistrySourceType = 'github' | 'gitlab' | 'url';
+export type RegistryStatus = 'pending' | 'installed' | 'failed' | 'disabled';
+
+export interface RegistryAdminRecord {
+  slug: string;
+  type: RegistrySourceType;
+  source: string;
+  enabled: boolean;
+  status: RegistryStatus;
+  lastError: string | null;
+  resolvedRef: string | null;
+  installedAt: number | null;
+  createdAt: number;
+  updatedAt: number;
+  manifest: RegistryManifest | null;
+}
+
 export interface RegistriesResponse {
-  registries: RegistryManifest[];
+  registries: RegistryAdminRecord[];
 }
 
 export interface RegistryItemSummary {
@@ -41,8 +58,35 @@ export interface RegistryItemDetail extends RegistryItemSummary {
   files?: string[];
 }
 
+export interface RegistryPreviewResponse {
+  content: string;
+  resolvedRef: string | null;
+  derivedSlug: string | null;
+}
+
+export interface RegistryMutationResponse {
+  registry: RegistryAdminRecord;
+  manifest?: RegistryManifest | null;
+}
+
 export const registriesApi = {
   list: () => api.get<RegistriesResponse>('/api/registries'),
+
+  create: (input: { slug?: string; type: RegistrySourceType; source: string }) =>
+    api.post<RegistryMutationResponse>('/api/registries', input),
+
+  remove: (slug: string) => api.delete<void>(`/api/registries/${encodeURIComponent(slug)}`),
+
+  patch: (slug: string, body: { enabled: boolean }) =>
+    api.patch<RegistryMutationResponse>(`/api/registries/${encodeURIComponent(slug)}`, body),
+
+  refresh: (slug: string) =>
+    api.post<RegistryMutationResponse>(`/api/registries/${encodeURIComponent(slug)}/refresh`),
+
+  preview: (type: RegistrySourceType, source: string) => {
+    const params = new URLSearchParams({ type, source });
+    return api.get<RegistryPreviewResponse>(`/api/registries/preview?${params}`);
+  },
 
   search: (
     registryId: string,
