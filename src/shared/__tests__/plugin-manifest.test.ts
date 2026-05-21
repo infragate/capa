@@ -168,4 +168,90 @@ describe('plugin-manifest discovery', () => {
       expect(Object.keys(manifest!.mcpServers)).toEqual([]);
     });
   });
+
+  describe('detectAndParseManifest oauth2 client_id normalization', () => {
+    it('normalizes Cursor "auth.CLIENT_ID" (uppercase) to client_id', () => {
+      // Real-world layout from slackapi/slack-mcp-plugin's .cursor-mcp.json
+      mkdirSync(join(root, '.cursor-plugin'), { recursive: true });
+      writeFileSync(
+        join(root, '.cursor-plugin', 'plugin.json'),
+        JSON.stringify({
+          name: 'slack',
+          mcpServers: '../.cursor-mcp.json',
+        }),
+      );
+      writeFileSync(
+        join(root, '.cursor-mcp.json'),
+        JSON.stringify({
+          mcpServers: {
+            slack: {
+              url: 'https://mcp.slack.com/mcp',
+              auth: { CLIENT_ID: '3660753192626.8903469228982' },
+            },
+          },
+        }),
+      );
+
+      const manifest = detectAndParseManifest(root, ['cursor']);
+      expect(manifest).not.toBeNull();
+      const slack = manifest!.mcpServers.slack as {
+        oauth2?: Record<string, unknown>;
+      };
+      expect(slack.oauth2?.client_id).toBe('3660753192626.8903469228982');
+    });
+
+    it('normalizes Claude-style "oauth.clientId" (camelCase) and "callbackPort"', () => {
+      // Real-world layout from slackapi/slack-mcp-plugin's .mcp.json
+      mkdirSync(join(root, '.claude-plugin'), { recursive: true });
+      writeFileSync(
+        join(root, '.claude-plugin', 'plugin.json'),
+        JSON.stringify({ name: 'slack' }),
+      );
+      writeFileSync(
+        join(root, '.mcp.json'),
+        JSON.stringify({
+          mcpServers: {
+            slack: {
+              url: 'https://mcp.slack.com/mcp',
+              oauth: {
+                clientId: '1601185624273.8899143856786',
+                callbackPort: 3118,
+              },
+            },
+          },
+        }),
+      );
+
+      const manifest = detectAndParseManifest(root, ['claude-code']);
+      expect(manifest).not.toBeNull();
+      const slack = manifest!.mcpServers.slack as {
+        oauth2?: Record<string, unknown>;
+      };
+      expect(slack.oauth2?.client_id).toBe('1601185624273.8899143856786');
+      expect(slack.oauth2?.callback_port).toBe(3118);
+    });
+
+    it('leaves spec-compliant client_id untouched', () => {
+      mkdirSync(join(root, '.cursor-plugin'), { recursive: true });
+      writeFileSync(
+        join(root, '.cursor-plugin', 'plugin.json'),
+        JSON.stringify({
+          name: 'spec',
+          mcpServers: {
+            spec: {
+              url: 'https://example.com/mcp',
+              oauth2: { client_id: 'already-canonical' },
+            },
+          },
+        }),
+      );
+
+      const manifest = detectAndParseManifest(root, ['cursor']);
+      expect(manifest).not.toBeNull();
+      const spec = manifest!.mcpServers.spec as {
+        oauth2?: Record<string, unknown>;
+      };
+      expect(spec.oauth2?.client_id).toBe('already-canonical');
+    });
+  });
 });
