@@ -81,6 +81,13 @@ function assertValidRequiresCommandCli(cli: string): void {
   }
 }
 
+function indentLines(text: string, prefix: string): string {
+  return text
+    .split('\n')
+    .map((line) => (line.length > 0 ? `${prefix}${line}` : line))
+    .join('\n');
+}
+
 function gitOAuthHelpText(): string {
   return (
     'CAPA requires Git to clone repositories and install skills.\n\n' +
@@ -586,6 +593,8 @@ function buildInstallTasks(reqCmds?: RequiredCommand[]): Task<InstallCtx>[] {
             );
           }
         }
+        const totalSkills = ctx.capabilities.skills.length;
+        const failedBefore = ctx.failed;
         await task.newListr(
           ctx.capabilities.skills.map((skill) => ({
             title: skill.id,
@@ -609,18 +618,37 @@ function buildInstallTasks(reqCmds?: RequiredCommand[]): Task<InstallCtx>[] {
                 ctx.failed++;
                 const message = err instanceof Error ? err.message : String(err);
                 subtask.title = `${skill.id} — ${message.split('\n')[0]}`;
+                // Capture the FULL error message — not just the first line — into
+                // ctx.errors so it's printed by the post-tree summary block. Without
+                // this, a skill that failed (e.g. private repo + disconnected
+                // integration) was only visible via a transient subtask title that
+                // listr2 collapses once the parent task finishes, making the install
+                // look successful overall.
+                ctx.errors.push(`Skill "${skill.id}" failed:\n${indentLines(message, '    ')}`);
                 throw err;
               }
               if (outcome === 'installed') ctx.added++;
               else if (outcome === 'skipped') ctx.skipped++;
               else {
                 ctx.failed++;
+                ctx.errors.push(`Skill "${skill.id}" failed (see logs above)`);
                 throw new Error(`${skill.id} failed (see logs above)`);
               }
             },
           })),
           { concurrent: false, exitOnError: false, rendererOptions: { collapseSubtasks: false } },
         );
+        const failedInTask = ctx.failed - failedBefore;
+        if (failedInTask > 0) {
+          // Mark the parent task as failed so the user can't miss the ✗ at the
+          // root of the tree. With exitOnError:false above, listr2 would otherwise
+          // leave "Installing skills" with a ✔ even when subtasks failed.
+          task.title = `Installing skills — ${failedInTask} of ${totalSkills} failed`;
+          throw new Error(
+            `${failedInTask} of ${totalSkills} skill(s) failed to install. ` +
+            `See the errors above for details.`
+          );
+        }
       },
     },
     {
@@ -1031,32 +1059,38 @@ export async function installCommand(
     process.exit(1);
   }
 
+  // Hoisted outside the try/catch so the catch block can surface the
+  // diagnostics that listr2 tasks accumulated before throwing — without this,
+  // a failing skill subtask would only print `err.message` (one line) and
+  // ctx.errors would be lost on the floor.
+  const initialCtx: InstallCtx = {
+    projectPath,
+    projectId,
+    capabilitiesFile,
+    capabilities,
+    capabilitiesToUse: capabilities,
+    envFile,
+    flagProvider,
+    noCache,
+    db,
+    settings,
+    serverStatus: { running: true, url: serverStatus.url },
+    resolvedProviders,
+    lockBuilder,
+    mcpUrl,
+    resolvedRepos: new Map(),
+    added: 0,
+    failed: 0,
+    skipped: 0,
+    warnings: [],
+    errors: [],
+  };
+
   try {
     const ctx = await runTasks(
       buildInstallTasks(reqCmds),
       { exitOnError: true },
-      {
-        projectPath,
-        projectId,
-        capabilitiesFile,
-        capabilities,
-        capabilitiesToUse: capabilities,
-        envFile,
-        flagProvider,
-        noCache,
-        db,
-        settings,
-        serverStatus: { running: true, url: serverStatus.url },
-        resolvedProviders,
-        lockBuilder,
-        mcpUrl,
-        resolvedRepos: new Map(),
-        added: 0,
-        failed: 0,
-        skipped: 0,
-        warnings: [],
-        errors: [],
-      },
+      initialCtx,
     );
 
     for (const e of ctx.errors) error(e);
@@ -1068,7 +1102,25 @@ export async function installCommand(
       skipped: ctx.skipped,
       elapsedMs: Date.now() - startedAt,
     });
+    // A run can complete the listr2 tree without throwing yet still have
+    // accumulated subtask failures (e.g. skill install errors with
+    // exitOnError:false). Exit non-zero in that case so CI / scripted callers
+    // see the failure.
+    if (initialCtx.failed > 0) {
+      process.exit(1);
+    }
   } catch (err: unknown) {
+    // Surface anything the tasks managed to accumulate before the throw, then
+    // print the throwing error itself. This way a private-repo clone failure
+    // shows up as a full diagnostic block instead of a single cryptic line.
+    for (const e of initialCtx.errors) error(e);
+    for (const w of initialCtx.warnings) warn(w);
+    summary({
+      added: initialCtx.added,
+      failed: initialCtx.failed,
+      skipped: initialCtx.skipped,
+      elapsedMs: Date.now() - startedAt,
+    });
     if (err instanceof Error) {
       console.error(`✗ ${err.message}`);
       process.exit(1);
@@ -1256,17 +1308,29 @@ async function installOneSkill(
               noCache,
             });
             resolvedRepos.set(repoKey, snapshot);
-          } catch (error: any) {
-            if (error.message.includes('Unable to clone repository') && !authFetch.hasAuth(`https://${platform}.com/${repoPath}`)) {
-              const integrationsUrl = getIntegrationsUrl(settings.server.host, settings.server.port);
-              console.error(`\n  ✗ ${error.message}`);
-              displayIntegrationPrompt(platformLabel, integrationsUrl);
-              try {
-                db.close();
-              } catch {}
-              process.exit(1);
-            }
-            throw error;
+          } catch (err: any) {
+            // Re-throw with a friendlier prefix. The previous integration-prompt
+            // branch keyed off `error.message.includes('Unable to clone repository')`
+            // but `explainGitError` never emits that exact string anymore — it
+            // produces "Repository not accessible", "Authentication failed", etc.
+            // The dead check meant private-repo failures (no token) fell through
+            // to a plain `throw`, which only surfaced as a truncated subtask
+            // title once listr2 collapsed the tree. The friendly multi-line
+            // message from `explainGitError` (which already includes the
+            // "Run: capa start → connect integration" instructions when the user
+            // has no auth) now propagates intact to ctx.errors via the skill
+            // subtask catch and is printed in the post-tree summary.
+            const integrationsUrl = getIntegrationsUrl(settings.server.host, settings.server.port);
+            const message: string = err?.message ?? String(err);
+            const hasAuth = authFetch.hasAuth(`https://${platform}.com/${repoPath}`);
+            const suggestsIntegration =
+              !hasAuth &&
+              (message.includes('Repository not accessible') ||
+                message.includes('Authentication failed'));
+            const suffix = suggestsIntegration
+              ? `\n    Connect your ${platformLabel} integration at: ${integrationsUrl}`
+              : '';
+            throw new Error(`${message}${suffix}`);
           }
         }
 
