@@ -83,6 +83,35 @@ export interface OAuthFlowStateRow {
   created_at: number;
 }
 
+export type RegistrySourceType = 'github' | 'gitlab' | 'url';
+export type RegistryStatus = 'pending' | 'installed' | 'failed' | 'disabled';
+
+export interface RegistryRow {
+  slug: string;
+  type: RegistrySourceType;
+  source: string;
+  enabled: number;
+  status: RegistryStatus;
+  last_error: string | null;
+  resolved_ref: string | null;
+  installed_at: number | null;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface RegistryRecord {
+  slug: string;
+  type: RegistrySourceType;
+  source: string;
+  enabled: boolean;
+  status: RegistryStatus;
+  lastError: string | null;
+  resolvedRef: string | null;
+  installedAt: number | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface ServerSettings {
   version: string;
   server: {
