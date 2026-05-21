@@ -41,18 +41,19 @@ export function getPidFilePath(): string {
   return join(getCapaDir(), 'server.pid');
 }
 
-export function getRegistriesDir(): string {
-  return join(getCapaDir(), 'registries');
+/**
+ * Materialized adapters for DB-tracked registries live under
+ * `<capa>/registries-managed/<slug>/adapter.{ts,js,mjs}`. The dir is created
+ * lazily by the installer; ensureCapaDir does not pre-create it.
+ */
+export function getManagedRegistriesDir(): string {
+  return join(getCapaDir(), 'registries-managed');
 }
 
 export async function ensureCapaDir(): Promise<void> {
   const capaDir = getCapaDir();
   if (!existsSync(capaDir)) {
     await mkdir(capaDir, { recursive: true });
-  }
-  const registriesDir = getRegistriesDir();
-  if (!existsSync(registriesDir)) {
-    await mkdir(registriesDir, { recursive: true });
   }
 }
 
