@@ -1,5 +1,6 @@
 import { RegistryManager } from '../../shared/registries/manager';
 import { getRegistriesDir } from '../../shared/config';
+import { CAPA_DOCS_URL } from '../../shared/ui-urls';
 
 export async function registryListCommand(): Promise<void> {
   const manager = new RegistryManager();
@@ -8,7 +9,7 @@ export async function registryListCommand(): Promise<void> {
   if (manifests.length === 0) {
     console.log('No registries configured.');
     console.log(`\nPlace .ts adapter files in: ${getRegistriesDir()}`);
-    console.log('See https://capa.infragate.ai for examples.');
+    console.log(`See ${CAPA_DOCS_URL} for examples.`);
     return;
   }
 

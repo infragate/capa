@@ -1,7 +1,15 @@
 import { describe, it, expect } from 'bun:test';
-import { projectUiPath, projectUiUrl } from '../ui-urls';
+import { CAPA_CLOUD_OAUTH_URL, CAPA_DOCS_URL, projectUiPath, projectUiUrl } from '../ui-urls';
 
 describe('ui-urls', () => {
+  it('CAPA_DOCS_URL points to capa docs site', () => {
+    expect(CAPA_DOCS_URL).toBe('https://capa.infragate.ai');
+  });
+
+  it('CAPA_CLOUD_OAUTH_URL points to cloud OAuth endpoint', () => {
+    expect(CAPA_CLOUD_OAUTH_URL).toBe('https://capa.infragate.ai/auth');
+  });
+
   it('projectUiPath uses /ui/project with id query param', () => {
     expect(projectUiPath('my-proj-1234')).toBe('/ui/project?id=my-proj-1234');
   });

@@ -3,6 +3,27 @@
 import type { Plugin, SourcePlugin, ResolvedPluginInfo } from './plugin';
 import type { Rule } from './rules';
 
+/** OAuth2 settings on MCP server definitions (plugin manifest or auto-detected). */
+export interface OAuth2Config {
+  clientId?: string;
+  clientSecret?: string;
+  authorizationUrl?: string;
+  tokenUrl?: string;
+  scopes?: string[];
+  redirectUri?: string;
+  pkce?: boolean;
+  /** Auto-detected / runtime fields */
+  authorizationEndpoint?: string;
+  tokenEndpoint?: string;
+  resourceServer?: string;
+  registrationEndpoint?: string;
+  scope?: string;
+  client_id?: string;
+  callback_port?: number;
+  callbackPort?: number;
+  oauth?: { clientId?: string; [key: string]: unknown };
+}
+
 export type CapabilitiesFormat = 'json' | 'yaml';
 export type { Plugin, SourcePlugin, ResolvedPluginInfo } from './plugin';
 export type { Rule } from './rules';
@@ -277,7 +298,7 @@ export interface MCPServerDefinition {
   /** Working directory for subprocess (e.g. plugin root) */
   cwd?: string;
   // OAuth2 config (auto-detected, not user-specified)
-  oauth2?: any; // OAuth2Config from types/oauth.ts
+  oauth2?: OAuth2Config;
 }
 
 export interface Tool {
