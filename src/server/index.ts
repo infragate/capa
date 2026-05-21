@@ -17,6 +17,7 @@ import type { RegistryCapability } from '../types/registry';
 import { VERSION } from '../version';
 import { logger } from '../shared/logger';
 import { projectUiUrl } from '../shared/ui-urls';
+import { initAuth, requireAuth, isLoopbackHost } from './auth-middleware';
 
 // Import the React SPA bundle as text at compile time - this bundles it into the binary
 import spaHtml from '../../web-ui/dist/index.html' with { type: 'text' };
@@ -149,9 +150,27 @@ class CapaServer {
     }
   }
 
+  private authFailureResponse(request: Request, reason: string, status: number): Response {
+    const requestOrigin = request.headers.get('Origin');
+    const originCheck = isAllowedOrigin(requestOrigin);
+    const headers: Record<string, string> = {};
+    if (originCheck.origin) {
+      headers['Access-Control-Allow-Origin'] = originCheck.origin;
+    }
+    return new Response(reason, { status, headers });
+  }
+
   private async startHttpServer() {
     const { host, port } = this.settings.server;
     const self = this;
+
+    const authToken = initAuth(host);
+    if (authToken && !isLoopbackHost(host)) {
+      process.stderr.write(`capa: auth token = ${authToken}\n`);
+      process.stderr.write(
+        'capa: clients must send `Authorization: Bearer <token>` to /api/* and the MCP route\n'
+      );
+    }
 
     const server = Bun.serve({
       hostname: host,
@@ -195,6 +214,10 @@ class CapaServer {
     // API endpoints
     if (path.startsWith('/api/')) {
       this.logger.debug('API endpoint');
+      const auth = requireAuth(request, this.settings.server.host);
+      if (!auth.ok) {
+        return this.authFailureResponse(request, auth.reason, auth.status);
+      }
       return this.handleAPI(request);
     }
 
@@ -204,6 +227,10 @@ class CapaServer {
       const projectId = agentMcpMatch[1];
       const agentId = agentMcpMatch[2];
       this.logger.debug(`MCP endpoint for project: ${projectId}, sub-agent: ${agentId}`);
+      const auth = requireAuth(request, this.settings.server.host);
+      if (!auth.ok) {
+        return this.authFailureResponse(request, auth.reason, auth.status);
+      }
       return this.handleMCP(request, projectId, agentId);
     }
 
@@ -212,6 +239,10 @@ class CapaServer {
     if (mcpMatch) {
       const projectId = mcpMatch[1];
       this.logger.debug(`MCP endpoint for project: ${projectId}`);
+      const auth = requireAuth(request, this.settings.server.host);
+      if (!auth.ok) {
+        return this.authFailureResponse(request, auth.reason, auth.status);
+      }
       return this.handleMCP(request, projectId);
     }
 
