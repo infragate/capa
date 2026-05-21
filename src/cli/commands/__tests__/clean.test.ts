@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { cleanCommand } from '../clean';
@@ -112,5 +112,82 @@ tools: []
     const { stdout } = await captureOutput(() => cleanCommand());
     expect(stdout).toContain('No files to clean.');
     expect(stdout).toContain('Cleanup complete!');
+  });
+
+  it('removes capa-managed snippets from CLAUDE.md / AGENTS.md even when capabilities.yaml has no `agents:` block', async () => {
+    // Reproduces the bug where sub-agent integrations (e.g. Claude's
+    // foldSubAgentsIntoInstructions) wrote capa snippets into CLAUDE.md and
+    // AGENTS.md, but `capa clean` only ran the agents-file cleanup when a
+    // top-level `agents:` block existed in capabilities.yaml — so the files
+    // were left behind on every project that only used sub-agents.
+    writeFileSync(
+      join(projectDir, 'capabilities.yaml'),
+      `providers: [claude-code]
+options:
+  toolExposure: on-demand
+skills: []
+servers: []
+tools: []
+`,
+      'utf-8'
+    );
+    writeFileSync(
+      join(projectDir, 'CLAUDE.md'),
+      `<!-- capa:start:sub-agent:researcher -->
+## Agent: researcher
+
+**MCP server key:** \`capa-researcher\`
+<!-- capa:end:sub-agent:researcher -->
+`,
+      'utf-8'
+    );
+    writeFileSync(
+      join(projectDir, 'AGENTS.md'),
+      `<!-- capa:start:sub-agent:researcher -->
+researcher block
+<!-- capa:end:sub-agent:researcher -->
+`,
+      'utf-8'
+    );
+
+    await captureOutput(() => cleanCommand());
+
+    // Both files were entirely capa-managed, so they should now be gone.
+    expect(existsSync(join(projectDir, 'CLAUDE.md'))).toBe(false);
+    expect(existsSync(join(projectDir, 'AGENTS.md'))).toBe(false);
+  });
+
+  it('preserves non-capa content in CLAUDE.md while removing capa snippets', async () => {
+    writeFileSync(
+      join(projectDir, 'capabilities.yaml'),
+      `providers: [claude-code]
+options:
+  toolExposure: on-demand
+skills: []
+servers: []
+tools: []
+`,
+      'utf-8'
+    );
+    writeFileSync(
+      join(projectDir, 'CLAUDE.md'),
+      `# My project notes
+
+Hand-written content that should not be touched.
+
+<!-- capa:start:sub-agent:researcher -->
+capa managed
+<!-- capa:end:sub-agent:researcher -->
+`,
+      'utf-8'
+    );
+
+    await captureOutput(() => cleanCommand());
+
+    expect(existsSync(join(projectDir, 'CLAUDE.md'))).toBe(true);
+    const remaining = readFileSync(join(projectDir, 'CLAUDE.md'), 'utf-8');
+    expect(remaining).toContain('Hand-written content');
+    expect(remaining).not.toContain('capa managed');
+    expect(remaining).not.toContain('capa:start');
   });
 });
