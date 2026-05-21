@@ -45,46 +45,41 @@ export async function cleanCommand(): Promise<void> {
 
   const managedFiles = db.getManagedFiles(projectId);
 
+  // Collected from inside tasks; flushed after the spinner clears.
+  const deferredErrors: string[] = [];
+
   const tasks: Task[] = [
     {
       title: 'Remove managed files',
       task: async (_, task) => {
         if (managedFiles.length === 0) {
-          info('No files to clean.');
+          task.skip('No files to clean.');
           return;
         }
-        return task.newListr(
-          managedFiles.map((filePath) => ({
-            title: filePath,
-            task: async (__, subTask) => {
-              if (existsSync(filePath)) {
-                try {
-                  const stats = statSync(filePath);
-                  if (stats.isDirectory()) {
-                    rmSync(filePath, { recursive: true, force: true });
-                  } else {
-                    rmSync(filePath);
-                  }
-                } catch (err) {
-                  error(`Failed to remove ${filePath}: ${err}`);
-                }
+        const total = managedFiles.length;
+        for (let i = 0; i < total; i++) {
+          const filePath = managedFiles[i];
+          task.output = `[${i + 1}/${total}] ${filePath}`;
+          if (existsSync(filePath)) {
+            try {
+              const stats = statSync(filePath);
+              if (stats.isDirectory()) {
+                rmSync(filePath, { recursive: true, force: true });
               } else {
-                subTask.skip('Already removed');
+                rmSync(filePath);
               }
-              db.removeManagedFile(projectId, filePath);
-            },
-          })),
-          { exitOnError: false },
-        );
+            } catch (err) {
+              deferredErrors.push(`Failed to remove ${filePath}: ${err}`);
+            }
+          }
+          db.removeManagedFile(projectId, filePath);
+        }
+        task.title = `Removed ${total} managed file${total === 1 ? '' : 's'}`;
       },
     },
     {
-      // Run unconditionally when providers are known: sub-agent integrations
-      // (Claude's `foldSubAgentsIntoInstructions`, Codex's `AGENTS.md`, etc.)
-      // write capa-managed snippets into these files independently of whether
-      // a top-level `agents:` block exists in capabilities.yaml, so gating the
-      // cleanup on `capabilities.agents` left CLAUDE.md / AGENTS.md behind for
-      // any project that only used sub-agents.
+      // Sub-agent integrations write capa snippets independently of the top-level
+      // `agents:` block, so gate only on providers — not on `capabilities.agents`.
       title: 'Clean agent instructions',
       enabled: () => providers.length > 0,
       task: async () => {
@@ -108,7 +103,7 @@ export async function cleanCommand(): Promise<void> {
             rmSync(lockfilePath, { force: true });
           } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
-            error(`Failed to remove lockfile ${lockfilePath}: ${message}`);
+            deferredErrors.push(`Failed to remove lockfile ${lockfilePath}: ${message}`);
           }
         }
       },
@@ -118,15 +113,14 @@ export async function cleanCommand(): Promise<void> {
       enabled: () => providers.length > 0 && db.getSubAgents(projectId).length > 0,
       task: async (_, task) => {
         const installedSubAgents = db.getSubAgents(projectId);
-        return task.newListr(
-          installedSubAgents.map(({ agent_id }) => ({
-            title: agent_id,
-            task: async () => {
-              await unregisterSubAgentMCPServer(projectPath, agent_id, providers);
-              removeSubAgentInstructions(projectPath, agent_id, providers);
-            },
-          })),
-        );
+        const total = installedSubAgents.length;
+        for (let i = 0; i < total; i++) {
+          const { agent_id } = installedSubAgents[i];
+          task.output = `[${i + 1}/${total}] ${agent_id}`;
+          await unregisterSubAgentMCPServer(projectPath, agent_id, providers);
+          removeSubAgentInstructions(projectPath, agent_id, providers);
+        }
+        task.title = `Unregistered ${total} sub-agent${total === 1 ? '' : 's'}`;
       },
     },
     {
@@ -146,6 +140,7 @@ export async function cleanCommand(): Promise<void> {
 
   try {
     await runTasks(tasks);
+    for (const e of deferredErrors) error(e);
     footer('Cleanup complete!');
   } finally {
     db.close();

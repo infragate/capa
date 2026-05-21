@@ -1,6 +1,6 @@
 import { intro as clackIntro, outro as clackOutro, log as clackLog } from '@clack/prompts'
 import { c, icon } from './colors'
-import { isJson, isQuiet } from './flags'
+import { isInteractive, isJson, isQuiet, isVerbose } from './flags'
 
 export function header(title: string): void {
   if (isJson() || isQuiet()) return
@@ -51,6 +51,19 @@ export interface Summary {
   failed?: number
   skipped?: number
   elapsedMs?: number
+}
+
+// Per-step detail lines (e.g. "✓ rule X written") that are suppressed when
+// the live spinner owns the screen and printed verbatim elsewhere.
+export function taskLog(message: string): void {
+  if (isJson()) {
+    process.stdout.write(JSON.stringify({ level: 'info', message }) + '\n')
+    return
+  }
+  if (isQuiet()) return
+  const ownedBySpinner = isInteractive() && !isVerbose() && !process.env.CI
+  if (ownedBySpinner) return
+  console.log(message)
 }
 
 export function summary(s: Summary): void {

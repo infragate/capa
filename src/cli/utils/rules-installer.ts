@@ -3,6 +3,7 @@ import { join, dirname, basename, sep } from 'path';
 import type { Rule } from '../../types/rules';
 import { getProvider } from '../../shared/providers';
 import { buildRuleFrontmatter } from '../../shared/providers/handlers';
+import { taskLog } from '../ui';
 
 const RULE_MARKER_PREFIX = 'rule:';
 
@@ -188,7 +189,7 @@ export function installRules(
 
         const filePath = join(rulesDir, `${rule.id}${provider.rules.extension}`);
         writeFileSync(filePath, fileContent, 'utf-8');
-        console.log(`  ✓ ${provider.rules.dir}/${rule.id}${provider.rules.extension} written (${provider.displayName})`);
+        taskLog(`  ✓ ${provider.rules.dir}/${rule.id}${provider.rules.extension} written (${provider.displayName})`);
         options.onFileWritten?.(filePath);
       }
     } else if (provider.instructions) {
@@ -202,7 +203,7 @@ export function installRules(
       }
 
       writeMd(projectPath, filename, mdContent);
-      console.log(`  ✓ ${filename} updated with ${applicableRules.length} rule(s) (${provider.displayName})`);
+      taskLog(`  ✓ ${filename} updated with ${applicableRules.length} rule(s) (${provider.displayName})`);
     }
   }
 }
@@ -276,7 +277,7 @@ export function pruneRules(
         if (existsSync(file)) {
           try {
             unlinkSync(file);
-            console.log(`  ✓ Removed orphan rule ${provider.rules.dir}/${basename(file)} (${provider.displayName})`);
+            taskLog(`  ✓ Removed orphan rule ${provider.rules.dir}/${basename(file)} (${provider.displayName})`);
           } catch (err: any) {
             console.error(`  ✗ Failed to remove orphan rule ${file}: ${err.message}`);
             // Skip DB cleanup if the file still exists on disk so we'll retry next install.
@@ -307,7 +308,7 @@ export function pruneRules(
       }
       if (removedHere > 0) {
         writeMd(projectPath, filename, updated);
-        console.log(
+        taskLog(
           `  ✓ Removed ${removedHere} orphan rule block(s) from ${filename} (${provider.displayName})`
         );
       }
@@ -343,7 +344,7 @@ export function cleanRules(projectPath: string, providers: string[], ruleIds?: s
         unlinkSync(join(rulesDir, file));
       }
       if (files.length > 0) {
-        console.log(`  ✓ Removed ${files.length} rule file(s) from ${provider.rules.dir} (${provider.displayName})`);
+        taskLog(`  ✓ Removed ${files.length} rule file(s) from ${provider.rules.dir} (${provider.displayName})`);
       }
     }
 
@@ -360,7 +361,7 @@ export function cleanRules(projectPath: string, providers: string[], ruleIds?: s
         mdContent = removeBlock(mdContent, id);
       }
       writeMd(projectPath, filename, mdContent);
-      console.log(`  ✓ Removed ${ruleIds.length} rule marker(s) from ${filename} (${provider.displayName})`);
+      taskLog(`  ✓ Removed ${ruleIds.length} rule marker(s) from ${filename} (${provider.displayName})`);
     }
   }
 }

@@ -3,7 +3,7 @@ export { setFlags, getFlags, isColorEnabled, isInteractive, isJson, isQuiet, isV
 export type { CliFlags } from './flags'
 export { prompt } from './prompts'
 export type { SelectOption } from './prompts'
-export { header, footer, success, info, warn, error, summary } from './output'
+export { header, footer, success, info, warn, error, summary, taskLog } from './output'
 export type { Summary } from './output'
 export { runTasks } from './tasks'
 export type { Task, RunTasksOptions } from './tasks'
