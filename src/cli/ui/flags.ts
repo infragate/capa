@@ -1,3 +1,5 @@
+import { isColorEnabled as isEnvColorEnabled } from '../../shared/tty'
+
 // Global flag state captured once at program-startup.
 // Lives in this module so the rest of the UI helpers can read it without prop-drilling.
 
@@ -31,7 +33,7 @@ export function getFlags(): Readonly<CliFlags> {
 
 export function isColorEnabled(): boolean {
   if (currentFlags.noColor) return false
-  return Boolean(process.stdout.isTTY)
+  return isEnvColorEnabled()
 }
 
 export function isInteractive(): boolean {

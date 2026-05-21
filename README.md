@@ -167,6 +167,19 @@ capa sh brave search --query "…"         # run a tool directly
 
 Every tool you define is also a CLI command under `capa sh`. MCP tools live at `capa sh <server> <tool>`. Shell tools live at the top level (or under whatever `group` you assigned). 
 
+## Server
+
+CAPA runs a local HTTP server (default `127.0.0.1:5912`) for the web UI, REST API, and MCP endpoints.
+
+When the server binds to a non-loopback address (anything other than `127.0.0.1`, `localhost`, or `::1`), all `/api/*` routes and MCP endpoints require authentication. Loopback-only bindings skip auth entirely.
+
+Set a fixed token with the `CAPA_AUTH_TOKEN` environment variable. If unset on a non-loopback host, CAPA generates a random token at startup, saves it to `~/.capa/auth.token` (mode `0600`), and prints it once to stderr.
+
+Clients must send the token via header (query-string tokens are rejected):
+
+- `Authorization: Bearer <token>` (preferred)
+- `X-Capa-Auth-Token: <token>` (fallback)
+
 ## Documentation
 
 Guides, the full schema reference, and the registry catalog:
