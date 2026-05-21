@@ -44,7 +44,7 @@ describe('sub-agent MCP client registration', () => {
       ['cursor']
     );
 
-    // Cursor uses .cursor/rules/{id}.mdc for sub-agent scoping, not MCP server entries
+    // Cursor does not register per-sub-agent MCP entries
     expect(existsSync(join(tempDir, '.cursor', 'mcp.json'))).toBe(false);
   });
 

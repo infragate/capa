@@ -5,6 +5,7 @@ import { tmpdir } from 'os';
 import {
   registerMCPServer,
   unregisterMCPServer,
+  purgeCursorSubAgentMCPEntries,
   getSupportedMCPClients,
   getMCPClientDisplayName,
 } from '../mcp-client-manager';
@@ -386,6 +387,28 @@ describe('mcp-client-manager', () => {
       const config = JSON.parse(readFileSync(configPath, 'utf-8'));
       
       expect(config.mcpServers['capa']).toBeDefined();
+    });
+  });
+
+  describe('purgeCursorSubAgentMCPEntries', () => {
+    it('removes stale capa-* MCP entries from .cursor/mcp.json', async () => {
+      mkdirSync(join(projectPath, '.cursor'), { recursive: true });
+      writeFileSync(
+        join(projectPath, '.cursor', 'mcp.json'),
+        JSON.stringify({
+          mcpServers: {
+            capa: { url: 'http://x/mcp' },
+            'capa-old-agent': { url: 'http://x/agent/mcp' },
+          },
+        }, null, 2),
+        'utf-8'
+      );
+
+      await purgeCursorSubAgentMCPEntries(projectPath);
+
+      const config = JSON.parse(readFileSync(join(projectPath, '.cursor', 'mcp.json'), 'utf-8'));
+      expect(config.mcpServers['capa']).toBeDefined();
+      expect(config.mcpServers['capa-old-agent']).toBeUndefined();
     });
   });
 

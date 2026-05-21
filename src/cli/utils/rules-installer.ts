@@ -98,6 +98,31 @@ function writeMd(projectPath: string, filename: string, content: string): void {
 }
 
 // ---------------------------------------------------------------------------
+// Managed-path helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * True when `filePath` is a capa-managed rule file for one of the given providers
+ * (under `provider.rules.dir` with the provider's extension).
+ */
+export function isProviderRulesManagedPath(
+  projectPath: string,
+  filePath: string,
+  providers: string[]
+): boolean {
+  for (const pid of providers) {
+    const provider = getProvider(pid);
+    if (!provider?.rules) continue;
+    const rulesDir = join(projectPath, provider.rules.dir);
+    const dirPrefix = rulesDir.endsWith(sep) ? rulesDir : rulesDir + sep;
+    if (!filePath.startsWith(dirPrefix)) continue;
+    if (!filePath.endsWith(provider.rules.extension)) continue;
+    return true;
+  }
+  return false;
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 

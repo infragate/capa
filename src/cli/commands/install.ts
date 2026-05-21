@@ -20,6 +20,7 @@ import { parseEnvFile } from '../../shared/env-parser';
 import { extractAllVariables } from '../../shared/variable-resolver';
 import { resolvePlugins } from './plugin-install';
 import { installAgentsFile, installSubAgentInstructions, removeSubAgentInstructions } from '../utils/agents-file';
+import { installRules, pruneRules, isProviderRulesManagedPath } from '../utils/rules-installer';
 import {
   loadBlockedPhrases,
   checkBlockedPhrases,
@@ -710,12 +711,36 @@ export async function installCommand(
     }
   }
 
-  // Step 3.5: Install rules across providers
-  // We also always run a prune step (further down) so that rules removed or
-  // commented out since the last install have their files / marker blocks
-  // cleaned up. The install step itself is gated on `rules.length > 0`
-  // because there's nothing to fetch otherwise.
   const currentRules = capabilitiesToUse.rules ?? [];
+
+  // Step 3.5: Prune rule artifacts that are no longer in the capabilities file.
+  // Runs before install so orphans are removed first; install then writes current rules.
+  if (providers.length > 0) {
+    try {
+      const previouslyManaged = db.getManagedFiles(projectId);
+      const { removedFiles, removedMarkers } = pruneRules(
+        projectPath,
+        providers,
+        currentRules,
+        previouslyManaged
+      );
+      for (const f of removedFiles) {
+        db.removeManagedFile(projectId, f);
+      }
+      if (removedFiles.length + removedMarkers.length > 0) {
+        const fileWord = removedFiles.length === 1 ? 'file' : 'files';
+        const blockWord = removedMarkers.length === 1 ? 'block' : 'blocks';
+        console.log(
+          `\n📏 Pruned ${removedFiles.length} orphan rule ${fileWord} and ` +
+          `${removedMarkers.length} orphan rule marker ${blockWord}`
+        );
+      }
+    } catch (err: any) {
+      console.error(`  ⚠  Failed to prune orphan rules: ${err.message}`);
+    }
+  }
+
+  // Step 3.6: Install rules across providers (gated on `rules.length > 0` — nothing to fetch otherwise)
   if (currentRules.length > 0) {
     console.log('\n📏 Installing rules...');
     try {
@@ -764,7 +789,6 @@ export async function installCommand(
         resolvedContent.set(rule.id, body);
       }
 
-      const { installRules } = await import('../utils/rules-installer');
       installRules(projectPath, currentRules, providers, resolvedContent, {
         // Register every rule file we write so `pruneRules` (and `capa
         // clean`) can find it later, even after the user removes the rule
@@ -776,37 +800,6 @@ export async function installCommand(
       console.error(`  ✗ Failed to install rules: ${err.message}`);
       db.close();
       process.exit(1);
-    }
-  }
-
-  // Step 3.6: Prune rule artifacts that are no longer in the capabilities file.
-  // Runs unconditionally so commenting out or removing a rule removes its
-  // file (for directory-based providers) or marker block (for instruction-
-  // folded providers) on the next install.
-  if (providers.length > 0) {
-    try {
-      const { pruneRules } = await import('../utils/rules-installer');
-      const previouslyManaged = db.getManagedFiles(projectId);
-      const { removedFiles, removedMarkers } = pruneRules(
-        projectPath,
-        providers,
-        currentRules,
-        previouslyManaged
-      );
-      for (const f of removedFiles) {
-        db.removeManagedFile(projectId, f);
-      }
-      if (removedFiles.length + removedMarkers.length > 0) {
-        const fileWord = removedFiles.length === 1 ? 'file' : 'files';
-        const blockWord = removedMarkers.length === 1 ? 'block' : 'blocks';
-        console.log(
-          `  ✓ Pruned ${removedFiles.length} orphan rule ${fileWord} and ` +
-          `${removedMarkers.length} orphan rule marker ${blockWord}`
-        );
-      }
-    } catch (err: any) {
-      console.error(`  ⚠  Failed to prune orphan rules: ${err.message}`);
-      // Non-fatal: install can still proceed even if prune partially failed.
     }
   }
 
@@ -888,18 +881,27 @@ export async function installCommand(
     await unregisterMCPServer(projectPath, projectId, providers);
   }
 
-  // Step 5a: Process sub-agents — register filtered endpoints + write instruction blocks
-  if (capabilitiesToUse.subagents && capabilitiesToUse.subagents.length > 0) {
-    console.log('\n🤖 Installing sub-agents...');
+  // Step 5a: Process sub-agents — cleanup removed, then register + write instruction blocks
+  const installedAgents = db.getSubAgents(projectId);
+  const currentSubagents = capabilitiesToUse.subagents ?? [];
+  const currentAgentIds = new Set(currentSubagents.map((a) => a.id));
+  const removedSubAgentIds = installedAgents
+    .filter(({ agent_id }) => !currentAgentIds.has(agent_id))
+    .map(({ agent_id }) => agent_id);
+  const needsSubagentCleanup = removedSubAgentIds.length > 0;
+  const needsSubagentInstall = currentSubagents.length > 0;
 
-    // Cursor no longer uses per-sub-agent MCP entries — purge any stale ones from prior installs
+  if (needsSubagentCleanup || needsSubagentInstall) {
+    console.log(
+      needsSubagentInstall
+        ? '\n🤖 Installing sub-agents...'
+        : '\n🤖 Cleaning up removed sub-agents...'
+    );
+
     if (providers.some((p) => p.toLowerCase() === 'cursor')) {
       await purgeCursorSubAgentMCPEntries(projectPath);
     }
 
-    // Clean up sub-agents that were removed since the last install
-    const installedAgents = db.getSubAgents(projectId);
-    const currentAgentIds = new Set(capabilitiesToUse.subagents.map((a) => a.id));
     for (const { agent_id } of installedAgents) {
       if (!currentAgentIds.has(agent_id)) {
         console.log(`  Removing sub-agent "${agent_id}" (no longer in capabilities)...`);
@@ -909,11 +911,9 @@ export async function installCommand(
       }
     }
 
-    // Install or update each sub-agent
-    for (const subAgent of capabilitiesToUse.subagents) {
+    for (const subAgent of currentSubagents) {
       console.log(`\n  Sub-agent: ${subAgent.id}${subAgent.description ? ` — ${subAgent.description}` : ''}`);
 
-      // Register filtered MCP endpoint
       const agentMcpUrl = `${serverStatus.url}/${projectId}/agents/${subAgent.id}/mcp`;
       await registerSubAgentMCPServer(
         projectPath,
@@ -922,7 +922,6 @@ export async function installCommand(
         providers
       );
 
-      // Write instruction block to CLAUDE.md / AGENTS.md
       installSubAgentInstructions(
         projectPath,
         subAgent,
@@ -930,11 +929,14 @@ export async function installCommand(
         providers
       );
 
-      // Track in DB for future cleanup
       db.upsertSubAgent(projectId, subAgent.id);
     }
 
-    console.log(`\n  ✓ ${capabilitiesToUse.subagents.length} sub-agent(s) installed`);
+    if (needsSubagentInstall) {
+      console.log(`\n  ✓ ${currentSubagents.length} sub-agent(s) installed`);
+    } else if (needsSubagentCleanup) {
+      console.log(`\n  ✓ Removed ${removedSubAgentIds.length} sub-agent(s)`);
+    }
   }
 
   db.close();
@@ -1011,6 +1013,11 @@ async function cleanupRemovedSkills(
   
   // Check each managed directory
   for (const managedPath of managedFiles) {
+    // Rule files share the managed-files table but are pruned in step 3.5
+    if (isProviderRulesManagedPath(projectPath, managedPath, clients)) {
+      continue;
+    }
+
     // Extract the skill ID from the managed path
     // Managed paths are typically: /path/to/project/.agents/skills/skill-id
     const skillId = basename(managedPath);
