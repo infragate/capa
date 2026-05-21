@@ -35,23 +35,47 @@ function isolateHome(): { restore: () => void } {
   };
 }
 
-function captureConsole<T>(fn: () => Promise<T> | T): Promise<{ stdout: string; result: T }> {
+function stripAnsi(text: string): string {
+  return text.replace(/\x1b\[[0-9;]*m/g, '');
+}
+
+function captureOutput<T>(fn: () => Promise<T> | T): Promise<{ stdout: string; result: T }> {
   return (async () => {
     const lines: string[] = [];
     const origLog = console.log;
     const origErr = console.error;
+    const origStdoutWrite = process.stdout.write.bind(process.stdout);
+    const origStderrWrite = process.stderr.write.bind(process.stderr);
+
+    const capture = (chunk: unknown) => {
+      if (typeof chunk === 'string') {
+        lines.push(stripAnsi(chunk));
+      }
+    };
+
     console.log = (...args: unknown[]) => {
       lines.push(args.map(String).join(' '));
     };
     console.error = (...args: unknown[]) => {
       lines.push(args.map(String).join(' '));
     };
+    process.stdout.write = ((chunk, ...args: unknown[]) => {
+      capture(chunk);
+      return (origStdoutWrite as (...a: unknown[]) => boolean)(chunk, ...args);
+    }) as typeof process.stdout.write;
+    process.stderr.write = ((chunk, ...args: unknown[]) => {
+      capture(chunk);
+      return (origStderrWrite as (...a: unknown[]) => boolean)(chunk, ...args);
+    }) as typeof process.stderr.write;
+
     try {
       const result = await fn();
       return { stdout: lines.join('\n'), result };
     } finally {
       console.log = origLog;
       console.error = origErr;
+      process.stdout.write = origStdoutWrite;
+      process.stderr.write = origStderrWrite;
     }
   })();
 }
@@ -73,14 +97,14 @@ describe('authCommand', () => {
   });
 
   it('lists connected providers when called without a provider arg', async () => {
-    const { stdout } = await captureConsole(() => authCommand());
+    const { stdout } = await captureOutput(() => authCommand());
     expect(stdout).toContain('Connected Git Providers');
     expect(ensureServerMock).toHaveBeenCalled();
   });
 
   it('exits with a clear error for an invalid provider format', async () => {
     const exitSpy = spyOn(process, 'exit').mockImplementation((() => {}) as typeof process.exit);
-    const { stdout } = await captureConsole(() => authCommand('not-a-valid-domain'));
+    const { stdout } = await captureOutput(() => authCommand('not-a-valid-domain'));
     expect(stdout).toContain('Invalid provider');
     expect(exitSpy).toHaveBeenCalledWith(1);
     exitSpy.mockRestore();
@@ -88,7 +112,7 @@ describe('authCommand', () => {
 
   it('exits with a clear error for an unknown git provider', async () => {
     const exitSpy = spyOn(process, 'exit').mockImplementation((() => {}) as typeof process.exit);
-    const { stdout } = await captureConsole(() => authCommand('example.com'));
+    const { stdout } = await captureOutput(() => authCommand('example.com'));
     expect(stdout).toContain('Unknown git provider: example.com');
     expect(exitSpy).toHaveBeenCalledWith(1);
     exitSpy.mockRestore();
