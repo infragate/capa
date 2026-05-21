@@ -114,7 +114,7 @@ export interface ProviderIntegration {
    * Opt-in per-provider plugin-manifest parser.
    * @returns `UnifiedPluginManifest` from `plugin-manifest.ts` (not imported here to avoid circular deps).
    */
-  parsePluginManifest?: (repoRoot: string, data: unknown) => unknown;
+  parsePluginManifest?: (repoRoot: string, data: unknown, manifestDir?: string) => unknown;
   /** When true, install command purges stale `capa-{id}` MCP entries (currently hardcoded to Cursor only). */
   purgeStaleSubAgentMcp?: boolean;
   /** When true, sub-agent text is folded into the `instructions.filename` file instead of separate sub-agent files. */

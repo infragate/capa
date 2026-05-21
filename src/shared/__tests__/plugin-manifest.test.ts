@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import {
+  detectAndParseManifest,
   discoverPluginEntries,
   findPluginInDirectory,
 } from '../plugin-manifest';
@@ -100,6 +101,71 @@ describe('plugin-manifest discovery', () => {
       const located = findPluginInDirectory(root, 'code-review', ['cursor']);
       expect(located).not.toBeNull();
       expect(located!.entry.subpath).toBe('cursor-plugins/code-review');
+    });
+  });
+
+  describe('detectAndParseManifest mcpServers resolution', () => {
+    it('resolves Cursor mcpServers paths relative to the manifest directory (slack-mcp-plugin layout)', () => {
+      // .cursor-plugin/plugin.json declares "mcpServers": "../.cursor-mcp.json".
+      // The referenced file lives at repo root, one level above the manifest.
+      mkdirSync(join(root, '.cursor-plugin'), { recursive: true });
+      writeFileSync(
+        join(root, '.cursor-plugin', 'plugin.json'),
+        JSON.stringify({
+          name: 'slack',
+          mcpServers: '../.cursor-mcp.json',
+        }),
+      );
+      writeFileSync(
+        join(root, '.cursor-mcp.json'),
+        JSON.stringify({
+          mcpServers: {
+            slack: { type: 'http', url: 'https://mcp.slack.com/mcp' },
+          },
+        }),
+      );
+
+      const manifest = detectAndParseManifest(root, ['cursor']);
+      expect(manifest).not.toBeNull();
+      expect(Object.keys(manifest!.mcpServers)).toEqual(['slack']);
+      expect(manifest!.mcpServers.slack.url).toBe('https://mcp.slack.com/mcp');
+    });
+
+    it('falls back to .mcp.json at repo root when the chosen manifest declares none', () => {
+      // .claude-plugin/plugin.json has no mcpServers — capa should still
+      // discover the servers declared in `.mcp.json` at the repo root.
+      mkdirSync(join(root, '.claude-plugin'), { recursive: true });
+      writeFileSync(
+        join(root, '.claude-plugin', 'plugin.json'),
+        JSON.stringify({ name: 'slack' }),
+      );
+      writeFileSync(
+        join(root, '.mcp.json'),
+        JSON.stringify({
+          mcpServers: {
+            slack: { type: 'http', url: 'https://mcp.slack.com/mcp' },
+          },
+        }),
+      );
+
+      const manifest = detectAndParseManifest(root, ['claude-code']);
+      expect(manifest).not.toBeNull();
+      expect(Object.keys(manifest!.mcpServers)).toEqual(['slack']);
+    });
+
+    it('rejects mcpServers paths that escape the repo root', () => {
+      mkdirSync(join(root, '.cursor-plugin'), { recursive: true });
+      writeFileSync(
+        join(root, '.cursor-plugin', 'plugin.json'),
+        JSON.stringify({
+          name: 'evil',
+          mcpServers: '../../../../etc/hosts',
+        }),
+      );
+
+      const manifest = detectAndParseManifest(root, ['cursor']);
+      expect(manifest).not.toBeNull();
+      expect(Object.keys(manifest!.mcpServers)).toEqual([]);
     });
   });
 });

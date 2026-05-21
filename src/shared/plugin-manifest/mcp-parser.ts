@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'fs';
-import { join, resolve, isAbsolute } from 'path';
+import { join, resolve, isAbsolute, relative } from 'path';
 import type { NormalizedPluginMCPServerDef } from '../../types/plugin';
 import {
   asParsedMcpServerEntry,
@@ -33,11 +33,38 @@ export function normalizeMcpServerEntry(entry: unknown): NormalizedPluginMCPServ
 }
 
 /**
- * Load one MCP config (object keyed by server id) from a path or return null.
+ * Resolve a manifest-relative path to an absolute path inside `repoRoot`.
+ * Relative paths (including `../`) are resolved against `manifestDir`. The
+ * resolved path is clamped to stay inside `repoRoot`; any attempt to escape
+ * the repo (via too many `..`s, absolute paths, or symlink-like tricks) is
+ * rejected by returning `null`.
  */
-function loadMcpConfigFromPath(repoRoot: string, path: string): Record<string, unknown> | null {
-  const fullPath = path.startsWith('./') ? join(repoRoot, path) : join(repoRoot, `./${path}`);
-  if (!existsSync(fullPath)) return null;
+function resolveManifestPath(
+  repoRoot: string,
+  manifestDir: string,
+  relPath: string,
+): string | null {
+  if (isAbsolute(relPath)) return null;
+  const base = isAbsolute(manifestDir) ? manifestDir : resolve(repoRoot, manifestDir);
+  const candidate = resolve(base, relPath);
+  const absRepo = resolve(repoRoot);
+  const rel = relative(absRepo, candidate);
+  if (rel.startsWith('..') || isAbsolute(rel)) return null;
+  return candidate;
+}
+
+/**
+ * Load one MCP config (object keyed by server id) from a manifest-relative
+ * path, or return null. `manifestDir` is the directory containing the
+ * referencing manifest (relative to or absolute under `repoRoot`).
+ */
+function loadMcpConfigFromPath(
+  repoRoot: string,
+  manifestDir: string,
+  path: string,
+): Record<string, unknown> | null {
+  const fullPath = resolveManifestPath(repoRoot, manifestDir, path);
+  if (!fullPath || !existsSync(fullPath)) return null;
   try {
     const content = readFileSync(fullPath, 'utf-8');
     const data: unknown = JSON.parse(content);
@@ -65,11 +92,22 @@ function mergeMcpEntries(
 /**
  * Load MCP servers from manifest: mcpServers can be a path (string), inline object,
  * or array of paths/inline configs (Cursor format).
+ *
+ * `manifestDir` is the directory containing the parsed manifest (relative to
+ * `repoRoot`, e.g. `.cursor-plugin`). Path-typed `mcpServers` values are
+ * resolved relative to it, matching how Cursor and Claude plugins author
+ * their manifests (`"mcpServers": "../.cursor-mcp.json"`).
+ *
+ * If no servers are found and `defaultMcpFallbackPath` is provided, that path
+ * is loaded relative to `repoRoot`. As a final safety net (matching long-
+ * standing capa behaviour for unconventional plugin layouts), `.mcp.json` at
+ * the repo root is also tried.
  */
 export function parseMcpServers(
   repoRoot: string,
   manifest: unknown,
-  defaultMcpFallbackPath?: string
+  defaultMcpFallbackPath?: string,
+  manifestDir: string = '.',
 ): Record<string, NormalizedPluginMCPServerDef> {
   const result: Record<string, NormalizedPluginMCPServerDef> = {};
   if (!isPlainObject(manifest)) return result;
@@ -77,13 +115,13 @@ export function parseMcpServers(
   const raw = manifest.mcpServers ?? manifest.mcp;
 
   if (typeof raw === 'string') {
-    const obj = loadMcpConfigFromPath(repoRoot, raw);
+    const obj = loadMcpConfigFromPath(repoRoot, manifestDir, raw);
     if (obj) mergeMcpEntries(result, obj);
   } else if (Array.isArray(raw)) {
     for (let i = 0; i < raw.length; i++) {
       const item = raw[i];
       if (typeof item === 'string') {
-        const obj = loadMcpConfigFromPath(repoRoot, item);
+        const obj = loadMcpConfigFromPath(repoRoot, manifestDir, item);
         if (obj) mergeMcpEntries(result, obj);
       } else if (isPlainObject(item)) {
         const hasCommand = 'command' in item || 'cmd' in item;
@@ -100,8 +138,13 @@ export function parseMcpServers(
   }
 
   if (Object.keys(result).length === 0 && defaultMcpFallbackPath) {
-    const defaultObj = loadMcpConfigFromPath(repoRoot, defaultMcpFallbackPath);
+    const defaultObj = loadMcpConfigFromPath(repoRoot, '.', defaultMcpFallbackPath);
     if (defaultObj) mergeMcpEntries(result, defaultObj);
+  }
+
+  if (Object.keys(result).length === 0) {
+    const fallback = loadMcpConfigFromPath(repoRoot, '.', '.mcp.json');
+    if (fallback) mergeMcpEntries(result, fallback);
   }
 
   return result;
