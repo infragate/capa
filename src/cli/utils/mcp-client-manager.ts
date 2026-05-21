@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { getProvider, getAllProviders } from '../../shared/providers';
 import { readTomlFile, writeTomlFile, setNestedKey, deleteNestedKey } from '../../shared/toml-io';
@@ -156,17 +156,10 @@ export async function unregisterSubAgentMCPServer(
 }
 
 /**
- * Remove stale capa-{agentId} sub-agent entries from Cursor's MCP config and
- * legacy per-sub-agent `.cursor/rules/{agentId}.mdc` scoping files from older
- * capa versions. Does not touch capa-managed capability rules.
- *
- * @param removedSubAgentIds - Sub-agent ids dropped from the capabilities file
- *   since the last install; only their legacy `.mdc` files are removed.
+ * Remove stale capa-{agentId} sub-agent entries from Cursor's MCP config.
+ * Cursor does not use per-sub-agent MCP server entries; capa no longer writes them.
  */
-export async function purgeCursorSubAgentMCPEntries(
-  projectPath: string,
-  removedSubAgentIds: string[] = []
-): Promise<void> {
+export async function purgeCursorSubAgentMCPEntries(projectPath: string): Promise<void> {
   const configPath = join(projectPath, '.cursor', 'mcp.json');
   if (!existsSync(configPath)) return;
 
@@ -186,22 +179,6 @@ export async function purgeCursorSubAgentMCPEntries(
       writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
       console.log(`  ✓ Removed ${staleKeys.length} stale sub-agent MCP entr${staleKeys.length === 1 ? 'y' : 'ies'} from .cursor/mcp.json`);
     }
-  }
-
-  if (removedSubAgentIds.length === 0) return;
-
-  const rulesDir = join(projectPath, '.cursor', 'rules');
-  let removedLegacyRules = 0;
-  for (const agentId of removedSubAgentIds) {
-    const legacyPath = join(rulesDir, `${agentId}.mdc`);
-    if (!existsSync(legacyPath)) continue;
-    unlinkSync(legacyPath);
-    removedLegacyRules++;
-  }
-  if (removedLegacyRules > 0) {
-    console.log(
-      `  ✓ Removed ${removedLegacyRules} legacy sub-agent rule file(s) from .cursor/rules/`
-    );
   }
 }
 
