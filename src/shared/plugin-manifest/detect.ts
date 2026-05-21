@@ -38,14 +38,36 @@ function getPluginManifestContainerDirs(): Set<string> {
 /**
  * Discovery order: preferred providers first (in order), then fallback providers
  * that have pluginManifestPaths defined.
+ *
+ * Special-case: when Claude is among the preferred providers we hoist it to
+ * the front of the queue regardless of where the user listed it in
+ * `capabilities.providers`. Many real-world plugins (Slack, Atlassian, …)
+ * ship both `.claude-plugin/plugin.json` and `.cursor-plugin/plugin.json`,
+ * but only the Claude variant carries a complete OAuth2 block (clientId +
+ * callbackPort). The Cursor variant typically omits the callback port,
+ * which causes capa to fall back to its own /api/.../oauth/callback URL —
+ * and auth servers reject that because the registered redirect URIs only
+ * allow the loopback /callback form the Claude config describes.
+ *
+ * Picking Claude first means a dual-shipping plugin authenticates exactly
+ * the same way it did before the plugin-manifest split.
+ *
  * Returns ordered list of (provider, manifestPath).
  */
 function getManifestSearchOrder(preferredProviders: string[]): { provider: PluginProvider; path: string }[] {
   const order: { provider: PluginProvider; path: string }[] = [];
   const seenPaths = new Set<string>();
 
-  // Preferred providers first
-  for (const p of preferredProviders) {
+  const claudeFirst = (ids: string[]): string[] => {
+    const claudeId = ids.find((id) => {
+      const entry = getProvider(id);
+      return entry?.pluginProviderId === 'claude';
+    });
+    if (!claudeId) return ids;
+    return [claudeId, ...ids.filter((id) => id !== claudeId)];
+  };
+
+  for (const p of claudeFirst(preferredProviders)) {
     const entry = getProvider(p);
     if (entry?.pluginManifestPaths) {
       const prov = toPluginProvider(p);
@@ -59,9 +81,12 @@ function getManifestSearchOrder(preferredProviders: string[]): { provider: Plugi
     }
   }
 
-  // Fallback: all providers with plugin manifest paths, in stable order
-  for (const entry of getAllProviders()) {
-    if (!entry.pluginManifestPaths) continue;
+  // Fallback: every provider that exposes plugin manifest paths, Claude first.
+  const allProviders = getAllProviders();
+  const fallbackIds = claudeFirst(allProviders.map((p) => p.id));
+  for (const id of fallbackIds) {
+    const entry = getProvider(id);
+    if (!entry?.pluginManifestPaths) continue;
     const prov = toPluginProvider(entry.id);
     if (!prov) continue;
     for (const mp of entry.pluginManifestPaths) {

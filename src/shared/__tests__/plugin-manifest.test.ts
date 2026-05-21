@@ -231,6 +231,62 @@ describe('plugin-manifest discovery', () => {
       expect(slack.oauth2?.callback_port).toBe(3118);
     });
 
+    it('prefers Claude manifest over Cursor when a plugin ships both (carries callback_port)', () => {
+      // Real-world layout from slackapi/slack-mcp-plugin: both .claude-plugin
+      // and .cursor-plugin exist, but only the Claude .mcp.json carries the
+      // callbackPort needed for the loopback redirect URI the auth server
+      // is registered to accept. Even when capabilities.providers lists
+      // cursor first, Claude wins for the manifest read.
+      mkdirSync(join(root, '.claude-plugin'), { recursive: true });
+      writeFileSync(
+        join(root, '.claude-plugin', 'plugin.json'),
+        JSON.stringify({ name: 'slack' }),
+      );
+      writeFileSync(
+        join(root, '.mcp.json'),
+        JSON.stringify({
+          mcpServers: {
+            slack: {
+              url: 'https://mcp.slack.com/mcp',
+              oauth: {
+                clientId: 'claude-app-id',
+                callbackPort: 3118,
+              },
+            },
+          },
+        }),
+      );
+
+      mkdirSync(join(root, '.cursor-plugin'), { recursive: true });
+      writeFileSync(
+        join(root, '.cursor-plugin', 'plugin.json'),
+        JSON.stringify({
+          name: 'slack',
+          mcpServers: '../.cursor-mcp.json',
+        }),
+      );
+      writeFileSync(
+        join(root, '.cursor-mcp.json'),
+        JSON.stringify({
+          mcpServers: {
+            slack: {
+              url: 'https://mcp.slack.com/mcp',
+              auth: { CLIENT_ID: 'cursor-app-id' },
+            },
+          },
+        }),
+      );
+
+      const manifest = detectAndParseManifest(root, ['cursor', 'claude-code']);
+      expect(manifest).not.toBeNull();
+      expect(manifest!.provider).toBe('claude');
+      const slack = manifest!.mcpServers.slack as {
+        oauth2?: Record<string, unknown>;
+      };
+      expect(slack.oauth2?.client_id).toBe('claude-app-id');
+      expect(slack.oauth2?.callback_port).toBe(3118);
+    });
+
     it('leaves spec-compliant client_id untouched', () => {
       mkdirSync(join(root, '.cursor-plugin'), { recursive: true });
       writeFileSync(
