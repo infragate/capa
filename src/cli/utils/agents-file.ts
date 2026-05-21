@@ -548,14 +548,6 @@ function removeSubAgentFile(projectPath: string, providerId: string, agentId: st
     unlinkSync(filePath);
     console.log(`  ✓ Removed ${sa.dir}/${agentId}${sa.extension}`);
   }
-
-  // Legacy cleanup for Cursor: remove old .cursor/rules/{id}.mdc files
-  if (providerId === 'cursor') {
-    const legacyPath = join(projectPath, '.cursor', 'rules', `${agentId}.mdc`);
-    if (existsSync(legacyPath)) {
-      unlinkSync(legacyPath);
-    }
-  }
 }
 
 /**

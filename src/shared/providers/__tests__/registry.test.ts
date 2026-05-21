@@ -631,6 +631,21 @@ describe('Rules: managed-file registration + pruning', () => {
     expect(result.removedMarkers).toEqual(['cursor-only']);
   });
 
+  it('isProviderRulesManagedPath identifies capa rule files but not skill dirs', async () => {
+    const { isProviderRulesManagedPath } = await import('../../../cli/utils/rules-installer');
+    const rulePath = join(tempDir, '.cursor', 'rules', 'my-rule.mdc');
+    const skillDir = join(tempDir, '.cursor', 'skills', 'my-skill');
+    mkdirSync(join(tempDir, '.cursor', 'rules'), { recursive: true });
+    writeFileSync(rulePath, 'rule', 'utf-8');
+    mkdirSync(skillDir, { recursive: true });
+
+    expect(isProviderRulesManagedPath(tempDir, rulePath, ['cursor'])).toBe(true);
+    expect(isProviderRulesManagedPath(tempDir, skillDir, ['cursor'])).toBe(false);
+    expect(isProviderRulesManagedPath(tempDir, join(skillDir, 'SKILL.md'), ['cursor'])).toBe(
+      false
+    );
+  });
+
   it('pruneRules ignores managed files outside the provider rules dir (no false deletions)', async () => {
     const { pruneRules } = await import('../../../cli/utils/rules-installer');
     // A skill directory is "managed" but lives elsewhere. pruneRules must

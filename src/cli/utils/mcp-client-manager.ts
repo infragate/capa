@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, unlinkSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { getProvider, getAllProviders } from '../../shared/providers';
 import { readTomlFile, writeTomlFile, setNestedKey, deleteNestedKey } from '../../shared/toml-io';
@@ -156,8 +156,8 @@ export async function unregisterSubAgentMCPServer(
 }
 
 /**
- * Remove any stale capa-{agentId} sub-agent entries from Cursor's MCP config.
- * Also cleans up legacy .cursor/rules/*.mdc files from old capa versions.
+ * Remove stale capa-{agentId} sub-agent entries from Cursor's MCP config.
+ * Cursor does not use per-sub-agent MCP server entries; capa no longer writes them.
  */
 export async function purgeCursorSubAgentMCPEntries(projectPath: string): Promise<void> {
   const configPath = join(projectPath, '.cursor', 'mcp.json');
@@ -178,17 +178,6 @@ export async function purgeCursorSubAgentMCPEntries(projectPath: string): Promis
       }
       writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
       console.log(`  ✓ Removed ${staleKeys.length} stale sub-agent MCP entr${staleKeys.length === 1 ? 'y' : 'ies'} from .cursor/mcp.json`);
-    }
-  }
-
-  const rulesDir = join(projectPath, '.cursor', 'rules');
-  if (existsSync(rulesDir)) {
-    const staleRules = readdirSync(rulesDir).filter((f) => f.endsWith('.mdc'));
-    for (const file of staleRules) {
-      unlinkSync(join(rulesDir, file));
-    }
-    if (staleRules.length > 0) {
-      console.log(`  ✓ Removed ${staleRules.length} stale .cursor/rules/*.mdc file(s)`);
     }
   }
 }
