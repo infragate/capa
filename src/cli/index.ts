@@ -208,7 +208,7 @@ if (process.argv[2] === '__server__') {
         if (opts.type) {
           if (opts.type !== 'github' && opts.type !== 'gitlab' && opts.type !== 'url') {
             error(`Invalid --type "${opts.type}". Expected one of: github, gitlab, url.`);
-            process.exit(ExitCode.UsageError);
+            process.exit(ExitCode.USER_ERROR);
           }
           type = opts.type;
         }

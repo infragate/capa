@@ -9,6 +9,7 @@ import {
 } from '../shared/registries/installer';
 import { createAuthenticatedFetch } from '../shared/authenticated-fetch';
 import type { RegistrySourceType } from '../types/database';
+import type { RegistryManifest } from '../types/registry';
 
 const JSON_HEADERS = { 'Content-Type': 'application/json' };
 
@@ -30,7 +31,7 @@ export async function listRegistriesHandler(
   manager: RegistryManager,
 ): Promise<Response> {
   const records = db.listRegistries();
-  let manifests;
+  let manifests: RegistryManifest[];
   try {
     manifests = await manager.list();
   } catch {
