@@ -121,22 +121,90 @@ export async function patchRegistryHandler(
   slug: string,
   request: Request,
 ): Promise<Response> {
-  if (!db.getRegistry(slug)) {
+  const existing = db.getRegistry(slug);
+  if (!existing) {
     return jsonError(`Registry "${slug}" not found.`, 404);
   }
-  let body: { enabled?: boolean };
+  let body: { enabled?: boolean; type?: string; source?: string };
   try {
-    body = (await request.json()) as { enabled?: boolean };
+    body = (await request.json()) as {
+      enabled?: boolean;
+      type?: string;
+      source?: string;
+    };
   } catch {
     return jsonError('Invalid JSON body', 400);
   }
-  if (typeof body.enabled !== 'boolean') {
-    return jsonError('Field "enabled" (boolean) is required.', 400);
+
+  const hasEnabled = typeof body.enabled === 'boolean';
+  const hasType = typeof body.type === 'string';
+  const hasSource = typeof body.source === 'string';
+
+  if (!hasEnabled && !hasType && !hasSource) {
+    return jsonError(
+      'Provide at least one of: "enabled" (boolean), "type", "source".',
+      400,
+    );
   }
-  db.setRegistryEnabled(slug, body.enabled);
-  await manager.reload().catch(() => {});
-  const record = db.getRegistry(slug);
-  return jsonOk({ registry: record });
+
+  // Source / type changes require re-running the installer so the
+  // materialized adapter matches the new upstream pointer.
+  const newType = hasType ? parseTypeQuery(body.type!) : existing.type;
+  if (hasType && !newType) {
+    return jsonError('Field "type" must be one of: github, gitlab, url.', 400);
+  }
+  const newSource = hasSource ? body.source!.trim() : existing.source;
+  if (hasSource && !newSource) {
+    return jsonError('Field "source" cannot be empty.', 400);
+  }
+
+  const typeChanged = hasType && newType !== existing.type;
+  const sourceChanged = hasSource && newSource !== existing.source;
+  const needsReinstall = typeChanged || sourceChanged;
+
+  if (needsReinstall) {
+    try {
+      const authFetch = createAuthenticatedFetch(db);
+      const result = await installRegistry(
+        { slug, type: newType!, source: newSource },
+        authFetch,
+      );
+      const record = db.upsertRegistry({
+        slug,
+        type: newType!,
+        source: newSource,
+        status: 'installed',
+        enabled: hasEnabled ? body.enabled! : existing.enabled,
+        lastError: null,
+        resolvedRef: result.resolvedRef,
+        installedAt: Date.now(),
+      });
+      await manager.reload().catch(() => {});
+      return jsonOk({ registry: record, manifest: result.manifest });
+    } catch (err: any) {
+      const message = err?.message ?? String(err);
+      // Persist the new pointer so the user can fix and retry, but mark
+      // the row failed so the loader stops serving the broken adapter.
+      db.upsertRegistry({
+        slug,
+        type: newType!,
+        source: newSource,
+        status: 'failed',
+        enabled: hasEnabled ? body.enabled! : existing.enabled,
+        lastError: message,
+        resolvedRef: existing.resolvedRef,
+        installedAt: existing.installedAt,
+      });
+      await manager.reload().catch(() => {});
+      return jsonError(message, 400);
+    }
+  }
+
+  if (hasEnabled) {
+    db.setRegistryEnabled(slug, body.enabled!);
+    await manager.reload().catch(() => {});
+  }
+  return jsonOk({ registry: db.getRegistry(slug) });
 }
 
 export async function refreshRegistryHandler(

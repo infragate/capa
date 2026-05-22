@@ -158,4 +158,13 @@ export function initSchema(db: Database): void {
         updated_at INTEGER NOT NULL
       )
     `);
+
+  // Generic key/value store for small server-wide flags that don't deserve
+  // their own table (e.g. "have we seeded the default registries yet").
+  db.run(`
+      CREATE TABLE IF NOT EXISTS meta (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      )
+    `);
 }

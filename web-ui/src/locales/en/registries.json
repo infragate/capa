@@ -1,6 +1,7 @@
 {
   "title": "Registries",
   "subtitle": "Browse and install skills and plugins from third-party registries",
+  "manageLink": "Manage registries",
   "nav": {
     "registries": "Registries"
   },
@@ -62,6 +63,7 @@
       "disabled": "Disabled"
     },
     "actions": {
+      "edit": "Edit",
       "refresh": "Refresh",
       "delete": "Delete",
       "enable": "Enable",
@@ -72,9 +74,17 @@
       "added": "Registry \"{{slug}}\" added.",
       "removed": "Registry \"{{slug}}\" removed.",
       "refreshed": "Registry \"{{slug}}\" refreshed.",
+      "edited": "Registry \"{{slug}}\" updated.",
       "enabled": "Registry \"{{slug}}\" enabled.",
       "disabled": "Registry \"{{slug}}\" disabled."
     }
+  },
+  "editDialog": {
+    "title": "Edit registry \"{{slug}}\"",
+    "description": "Repoint this slug at a different source. The new adapter is downloaded and validated before it replaces the existing one.",
+    "slugImmutable": "The slug is the registry's identity and cannot be renamed. Remove and re-add to change it.",
+    "noChanges": "No changes — Save closes the dialog.",
+    "submit": "Save changes"
   },
   "addDialog": {
     "title": "Add registry",

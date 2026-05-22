@@ -13,6 +13,7 @@ import type { Capabilities, MCPServer, ToolMCPDefinition, ToolCommandDefinition 
 import type { OAuth2Config } from '../types/oauth';
 import { extractAllVariables } from '../shared/variable-resolver';
 import { RegistryManager } from '../shared/registries/manager';
+import { seedDefaultRegistries } from '../shared/registries/seed';
 import {
   listRegistriesHandler,
   createRegistryHandler,
@@ -105,6 +106,21 @@ class CapaServer {
 
     // Initialize managers
     this.registryManager = new RegistryManager(this.db);
+
+    // First-run seeding of the bundled example registries. This runs in the
+    // background — a slow or unauthenticated GitHub fetch must not block
+    // server startup, and any per-seed failure is persisted as a `failed`
+    // row that the user can see and retry from the UI.
+    void seedDefaultRegistries(this.db, this.registryManager, {
+      log: {
+        info: (m) => this.logger.info(m),
+        warn: (m) => this.logger.warn(m),
+        success: (m) => this.logger.success(m),
+      },
+    }).catch((err) => {
+      this.logger.warn(`Default registry seeding failed: ${err?.message ?? err}`);
+    });
+
     this.sessionManager = new SessionManager(this.db);
     this.subprocessManager = new SubprocessManager(this.db);
     this.oauth2Manager = new OAuth2Manager(this.db);

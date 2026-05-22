@@ -14,7 +14,9 @@ import {
 } from '../hooks';
 import { RegistriesTable } from './RegistriesTable';
 import { AddRegistryDialog } from './AddRegistryDialog';
+import { EditRegistryDialog } from './EditRegistryDialog';
 import { ApiError } from '../../../lib/api';
+import type { RegistryAdminRecord } from '../api';
 
 type Feedback = { type: 'success' | 'error'; message: string };
 
@@ -31,6 +33,7 @@ export function RegistrySettingsPage() {
   const refreshMut = useRefreshRegistry();
   const setEnabledMut = useSetRegistryEnabled();
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [editing, setEditing] = useState<RegistryAdminRecord | null>(null);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [busySlug, setBusySlug] = useState<string | null>(null);
 
@@ -40,6 +43,17 @@ export function RegistrySettingsPage() {
     },
     [t],
   );
+
+  const handleEdited = useCallback(
+    (slug: string) => {
+      setFeedback({ type: 'success', message: t('settings.feedback.edited', { slug }) });
+    },
+    [t],
+  );
+
+  const handleEdit = useCallback((record: RegistryAdminRecord) => {
+    setEditing(record);
+  }, []);
 
   const handleRefresh = useCallback(
     async (slug: string) => {
@@ -145,6 +159,7 @@ export function RegistrySettingsPage() {
         ) : (
           <RegistriesTable
             registries={registries}
+            onEdit={handleEdit}
             onRefresh={handleRefresh}
             onDelete={handleDelete}
             onSetEnabled={handleSetEnabled}
@@ -157,6 +172,14 @@ export function RegistrySettingsPage() {
         open={dialogOpen}
         onOpenChange={setDialogOpen}
         onAdded={handleAdded}
+      />
+      <EditRegistryDialog
+        open={editing !== null}
+        onOpenChange={(open) => {
+          if (!open) setEditing(null);
+        }}
+        record={editing}
+        onSaved={handleEdited}
       />
     </>
   );

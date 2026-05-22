@@ -92,6 +92,24 @@ export function useSetRegistryEnabled() {
   });
 }
 
+export function useEditRegistry() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      slug,
+      type,
+      source,
+    }: {
+      slug: string;
+      type: RegistrySourceType;
+      source: string;
+    }) => registriesApi.patch(slug, { type, source }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: REGISTRIES_KEY });
+    },
+  });
+}
+
 export function useRefreshRegistry() {
   const qc = useQueryClient();
   return useMutation({

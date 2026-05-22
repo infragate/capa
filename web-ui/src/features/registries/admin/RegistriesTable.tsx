@@ -1,10 +1,11 @@
 import { useTranslation } from 'react-i18next';
-import { RefreshCw, Trash2, Power, PowerOff } from 'lucide-react';
+import { RefreshCw, Trash2, Power, PowerOff, Pencil } from 'lucide-react';
 import { cn } from '../../../lib/utils';
 import type { RegistryAdminRecord } from '../api';
 
 interface RegistriesTableProps {
   registries: RegistryAdminRecord[];
+  onEdit: (record: RegistryAdminRecord) => void;
   onRefresh: (slug: string) => void;
   onDelete: (slug: string) => void;
   onSetEnabled: (slug: string, enabled: boolean) => void;
@@ -26,6 +27,7 @@ function statusTone(record: RegistryAdminRecord): { label: string; tone: string 
 
 export function RegistriesTable({
   registries,
+  onEdit,
   onRefresh,
   onDelete,
   onSetEnabled,
@@ -115,6 +117,16 @@ export function RegistriesTable({
                       <span>
                         {r.enabled ? t('settings.actions.disable') : t('settings.actions.enable')}
                       </span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => onEdit(r)}
+                      className="inline-flex items-center gap-1 rounded-sm border border-border-secondary bg-bg-tertiary px-2 py-1 text-xs text-text-secondary transition-colors hover:bg-hover-bg disabled:cursor-not-allowed disabled:opacity-50"
+                      title={t('settings.actions.edit')}
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                      <span>{t('settings.actions.edit')}</span>
                     </button>
                     <button
                       type="button"
