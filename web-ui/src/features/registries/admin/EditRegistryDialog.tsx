@@ -3,14 +3,15 @@ import * as Dialog from '@radix-ui/react-dialog';
 import { useTranslation } from 'react-i18next';
 import { X, Eye, AlertTriangle, Loader2 } from 'lucide-react';
 import { ApiError } from '../../../lib/api';
-import { useAddRegistry, usePreviewRegistry } from '../hooks';
-import type { RegistrySourceType } from '../api';
+import { useEditRegistry, usePreviewRegistry } from '../hooks';
+import type { RegistryAdminRecord, RegistrySourceType } from '../api';
 import { CodeBlock } from '../../../components/common/CodeBlock';
 
-interface AddRegistryDialogProps {
+interface EditRegistryDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onAdded: (slug: string) => void;
+  record: RegistryAdminRecord | null;
+  onSaved: (slug: string) => void;
 }
 
 const TYPE_OPTIONS: RegistrySourceType[] = ['github', 'gitlab', 'url'];
@@ -19,84 +20,95 @@ function isErrorWithMessage(err: unknown): err is { message: string } {
   return !!err && typeof (err as any).message === 'string';
 }
 
-export function AddRegistryDialog({ open, onOpenChange, onAdded }: AddRegistryDialogProps) {
+export function EditRegistryDialog({
+  open,
+  onOpenChange,
+  record,
+  onSaved,
+}: EditRegistryDialogProps) {
   const { t } = useTranslation('registries');
   const [type, setType] = useState<RegistrySourceType>('github');
   const [source, setSource] = useState('');
-  const [slug, setSlug] = useState('');
   const [trusted, setTrusted] = useState(false);
   const [preview, setPreview] = useState<{ content: string; ref: string | null } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const previewMutation = usePreviewRegistry();
-  const addMutation = useAddRegistry();
-  const busy = previewMutation.isPending || addMutation.isPending;
+  const editMutation = useEditRegistry();
+  const busy = previewMutation.isPending || editMutation.isPending;
 
-  // Reset state whenever the dialog re-opens so a previously-failed attempt
-  // doesn't leak into a fresh one.
+  // Re-seed the form whenever a different record is opened or the dialog
+  // toggles open — so a previously-failed attempt doesn't leak into a
+  // fresh edit session.
   useEffect(() => {
-    if (open) {
-      setType('github');
-      setSource('');
-      setSlug('');
+    if (open && record) {
+      setType(record.type);
+      setSource(record.source);
       setTrusted(false);
       setPreview(null);
       setError(null);
       previewMutation.reset();
-      addMutation.reset();
+      editMutation.reset();
     }
-    // We intentionally only react to `open` here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  }, [open, record?.slug]);
 
-  const canAdd = !!preview && trusted && !!source.trim() && !busy;
+  if (!record) return null;
+
+  const trimmedSource = source.trim();
+  const changed = type !== record.type || trimmedSource !== record.source;
+  // Same security gate as the Add dialog: a fresh preview + trust check is
+  // required before persisting *new* code under a known slug.
+  const canSave = !busy && trimmedSource.length > 0 && (!changed || (preview && trusted));
 
   async function handlePreview() {
     setError(null);
     setPreview(null);
-    if (!source.trim()) {
+    if (!trimmedSource) {
       setError(t('addDialog.errors.missingSource'));
       return;
     }
     try {
-      const res = await previewMutation.mutateAsync({ type, source: source.trim() });
+      const res = await previewMutation.mutateAsync({ type, source: trimmedSource });
       setPreview({ content: res.content, ref: res.resolvedRef });
-      if (!slug && res.derivedSlug) {
-        setSlug(res.derivedSlug);
-      }
     } catch (err) {
-      const message =
+      setError(
         err instanceof ApiError
           ? err.message
           : isErrorWithMessage(err)
             ? err.message
-            : 'Preview failed';
-      setError(message);
+            : 'Preview failed',
+      );
     }
   }
 
-  async function handleAdd() {
+  async function handleSave() {
     setError(null);
+    if (!record) return;
+    if (!changed) {
+      onOpenChange(false);
+      return;
+    }
     if (!preview) {
       setError(t('addDialog.errors.previewBeforeAdd'));
       return;
     }
     try {
-      const res = await addMutation.mutateAsync({
+      const res = await editMutation.mutateAsync({
+        slug: record.slug,
         type,
-        source: source.trim(),
-        slug: slug.trim() || undefined,
+        source: trimmedSource,
       });
-      onAdded(res.registry.slug);
+      onSaved(res.registry.slug);
       onOpenChange(false);
     } catch (err) {
-      const message =
+      setError(
         err instanceof ApiError
           ? err.message
           : isErrorWithMessage(err)
             ? err.message
-            : 'Add failed';
-      setError(message);
+            : 'Save failed',
+      );
     }
   }
 
@@ -108,10 +120,10 @@ export function AddRegistryDialog({ open, onOpenChange, onAdded }: AddRegistryDi
           <div className="flex items-start justify-between border-b border-border-secondary px-6 py-4">
             <div>
               <Dialog.Title className="text-lg font-medium text-text-primary">
-                {t('addDialog.title')}
+                {t('editDialog.title', { slug: record.slug })}
               </Dialog.Title>
               <Dialog.Description className="mt-1 text-xs text-text-secondary">
-                {t('addDialog.description')}
+                {t('editDialog.description')}
               </Dialog.Description>
             </div>
             <Dialog.Close
@@ -124,6 +136,21 @@ export function AddRegistryDialog({ open, onOpenChange, onAdded }: AddRegistryDi
 
           <div className="flex-1 overflow-y-auto px-6 py-5">
             <div className="grid gap-4">
+              <label className="block">
+                <span className="mb-1 block text-xs font-medium text-text-secondary">
+                  {t('addDialog.fields.slug')}
+                </span>
+                <input
+                  type="text"
+                  value={record.slug}
+                  disabled
+                  className="w-full rounded-sm border border-border-secondary bg-bg-tertiary px-2 py-2 font-mono text-sm text-text-secondary"
+                />
+                <span className="mt-1 block text-xs text-text-tertiary">
+                  {t('editDialog.slugImmutable')}
+                </span>
+              </label>
+
               <label className="block">
                 <span className="mb-1 block text-xs font-medium text-text-secondary">
                   {t('addDialog.fields.type')}
@@ -154,24 +181,11 @@ export function AddRegistryDialog({ open, onOpenChange, onAdded }: AddRegistryDi
                 />
               </label>
 
-              <label className="block">
-                <span className="mb-1 block text-xs font-medium text-text-secondary">
-                  {t('addDialog.fields.slug')}
-                </span>
-                <input
-                  type="text"
-                  value={slug}
-                  onChange={(e) => setSlug(e.target.value)}
-                  placeholder={t('addDialog.fields.slugHint')}
-                  className="w-full rounded-sm border border-border-primary bg-bg-primary px-2 py-2 font-mono text-sm text-text-primary placeholder:text-text-tertiary"
-                />
-              </label>
-
               <div className="flex items-center gap-2">
                 <button
                   type="button"
                   onClick={handlePreview}
-                  disabled={busy || !source.trim()}
+                  disabled={busy || !trimmedSource}
                   className="inline-flex items-center gap-2 rounded-sm border border-border-primary bg-bg-tertiary px-3 py-1.5 text-sm text-text-primary transition-colors hover:bg-hover-bg disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {previewMutation.isPending ? (
@@ -215,17 +229,23 @@ export function AddRegistryDialog({ open, onOpenChange, onAdded }: AddRegistryDi
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border-secondary px-6 py-4">
             <label
               className={
-                preview
+                changed && preview
                   ? 'flex items-center gap-2 text-sm text-text-primary'
                   : 'flex items-center gap-2 text-sm text-text-tertiary'
               }
-              title={preview ? undefined : t('addDialog.errors.previewBeforeAdd')}
+              title={
+                !changed
+                  ? t('editDialog.noChanges')
+                  : !preview
+                    ? t('addDialog.errors.previewBeforeAdd')
+                    : undefined
+              }
             >
               <input
                 type="checkbox"
                 checked={trusted}
                 onChange={(e) => setTrusted(e.target.checked)}
-                disabled={!preview}
+                disabled={!preview || !changed}
               />
               <span>{t('addDialog.trust')}</span>
             </label>
@@ -238,12 +258,12 @@ export function AddRegistryDialog({ open, onOpenChange, onAdded }: AddRegistryDi
               </Dialog.Close>
               <button
                 type="button"
-                onClick={handleAdd}
-                disabled={!canAdd}
+                onClick={handleSave}
+                disabled={!canSave}
                 className="inline-flex items-center gap-2 rounded-sm border border-accent-primary bg-accent-primary px-3 py-1.5 text-sm font-medium text-bg-secondary transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {addMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
-                <span>{t('addDialog.submit')}</span>
+                {editMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+                <span>{t('editDialog.submit')}</span>
               </button>
             </div>
           </div>

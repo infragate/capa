@@ -75,6 +75,14 @@
   --info-border: #aecbfa;
   --status-connected: #137333;
   --status-connected-dot: #34a853;
+  --hl-keyword: #cf222e;
+  --hl-string: #0a6e3f;
+  --hl-comment: #6e7781;
+  --hl-number: #8250df;
+  --hl-function: #6f42c1;
+  --hl-class: #953800;
+  --hl-meta: #6e7781;
+  --hl-punctuation: #24292f;
 }
 
 :root,
@@ -113,6 +121,14 @@
   --info-border: #3c4043;
   --status-connected: #81c995;
   --status-connected-dot: #81c995;
+  --hl-keyword: #ff7b72;
+  --hl-string: #a5d6a7;
+  --hl-comment: #8b949e;
+  --hl-number: #d2a8ff;
+  --hl-function: #d2a8ff;
+  --hl-class: #ffa657;
+  --hl-meta: #8b949e;
+  --hl-punctuation: #e8eaed;
 }
 
 @layer base {
@@ -303,3 +319,56 @@
   max-width: 100%;
   border-radius: 4px;
 }
+
+/* Syntax highlighting (highlight.js token classes) — themed via CSS vars
+ * defined in the light/dark blocks above so the palette tracks the
+ * active theme automatically. */
+.hljs {
+  color: var(--text-primary);
+  background: transparent;
+}
+.hljs-comment,
+.hljs-quote,
+.hljs-meta {
+  color: var(--hl-comment);
+  font-style: italic;
+}
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-built_in,
+.hljs-type {
+  color: var(--hl-keyword);
+}
+.hljs-string,
+.hljs-attr,
+.hljs-template-tag,
+.hljs-template-variable,
+.hljs-regexp {
+  color: var(--hl-string);
+}
+.hljs-number,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-link {
+  color: var(--hl-number);
+}
+.hljs-title,
+.hljs-title.function_,
+.hljs-name {
+  color: var(--hl-function);
+}
+.hljs-title.class_,
+.hljs-class .hljs-title,
+.hljs-tag,
+.hljs-property,
+.hljs-variable.constant_ {
+  color: var(--hl-class);
+}
+.hljs-punctuation,
+.hljs-operator {
+  color: var(--hl-punctuation);
+}
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: 600; }
+

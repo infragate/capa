@@ -77,7 +77,10 @@ export const registriesApi = {
 
   remove: (slug: string) => api.delete<void>(`/api/registries/${encodeURIComponent(slug)}`),
 
-  patch: (slug: string, body: { enabled: boolean }) =>
+  patch: (
+    slug: string,
+    body: { enabled?: boolean; type?: RegistrySourceType; source?: string },
+  ) =>
     api.patch<RegistryMutationResponse>(`/api/registries/${encodeURIComponent(slug)}`, body),
 
   refresh: (slug: string) =>

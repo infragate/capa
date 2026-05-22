@@ -240,7 +240,7 @@ describe('registries-routes', () => {
       expect(body.registry.enabled).toBe(false);
     });
 
-    it('rejects bodies missing the enabled boolean', async () => {
+    it('rejects bodies with no recognised fields', async () => {
       db.upsertRegistry({ slug: 'unit', type: 'github', source: 'x/y@u', status: 'installed' });
       const req = new Request('http://localhost/api/registries/unit', {
         method: 'PATCH',
@@ -257,6 +257,70 @@ describe('registries-routes', () => {
       });
       const res = await patchRegistryHandler(db, manager, 'x', req);
       expect(res.status).toBe(404);
+    });
+
+    it('re-runs the installer when source changes and persists the new pointer', async () => {
+      const create = new Request('http://localhost/api/registries', {
+        method: 'POST',
+        body: JSON.stringify({ type: 'url', source: goodUrl, slug: 'r' }),
+      });
+      await createRegistryHandler(db, manager, create);
+
+      // Same upstream content but a different URL — re-install pipeline runs.
+      const newGoodUrl = `http://localhost:${server.port}/good.ts?v=2`;
+      const req = new Request('http://localhost/api/registries/r', {
+        method: 'PATCH',
+        body: JSON.stringify({ source: newGoodUrl }),
+      });
+      const res = await patchRegistryHandler(db, manager, 'r', req);
+      expect(res.status).toBe(200);
+
+      const after = db.getRegistry('r')!;
+      expect(after.source).toBe(newGoodUrl);
+      expect(after.status).toBe('installed');
+    });
+
+    it('marks failed and keeps the new pointer when the new source is broken', async () => {
+      db.upsertRegistry({
+        slug: 'mvp',
+        type: 'url',
+        source: goodUrl,
+        status: 'installed',
+        resolvedRef: null,
+        installedAt: Date.now(),
+      });
+
+      const req = new Request('http://localhost/api/registries/mvp', {
+        method: 'PATCH',
+        body: JSON.stringify({ source: 'http://localhost:1/missing.ts' }),
+      });
+      const res = await patchRegistryHandler(db, manager, 'mvp', req);
+      expect(res.status).toBe(400);
+
+      const after = db.getRegistry('mvp')!;
+      expect(after.source).toBe('http://localhost:1/missing.ts');
+      expect(after.status).toBe('failed');
+      expect(after.lastError).toBeTruthy();
+    });
+
+    it('is a no-op when the same source is sent (no re-install, status preserved)', async () => {
+      const create = new Request('http://localhost/api/registries', {
+        method: 'POST',
+        body: JSON.stringify({ type: 'url', source: goodUrl, slug: 'same' }),
+      });
+      await createRegistryHandler(db, manager, create);
+      const before = db.getRegistry('same')!;
+
+      const req = new Request('http://localhost/api/registries/same', {
+        method: 'PATCH',
+        body: JSON.stringify({ source: goodUrl, type: 'url' }),
+      });
+      const res = await patchRegistryHandler(db, manager, 'same', req);
+      expect(res.status).toBe(200);
+
+      const after = db.getRegistry('same')!;
+      expect(after.installedAt).toBe(before.installedAt);
+      expect(after.status).toBe('installed');
     });
   });
 
