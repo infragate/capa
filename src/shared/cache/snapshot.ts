@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, rmSync } from 'fs';
 import { join } from 'path';
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import { promisify } from 'util';
 import type { AuthenticatedFetch } from '../authenticated-fetch';
 import { validateRepoPath } from './validate';
@@ -15,7 +15,10 @@ import {
   type ResolveOptions,
 } from './mirror';
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
+async function git(args: string[]): Promise<{ stdout: string; stderr: string }> {
+  return execFileAsync('git', args);
+}
 
 /**
  * Materialize a snapshot directory at the given SHA from a mirror clone. If
@@ -40,9 +43,16 @@ export async function materializeSnapshot(
   // populated snapshot dir.
   const tempDir = `${snapshotDir}.partial-${process.pid}-${Date.now()}`;
   try {
-    await execAsync(
-      `git -C "${mirrorDir}" worktree add --detach --force "${tempDir}" "${sha}"`
-    );
+    await git([
+      '-C',
+      mirrorDir,
+      'worktree',
+      'add',
+      '--detach',
+      '--force',
+      tempDir,
+      sha,
+    ]);
   } catch (err: any) {
     try { rmSync(tempDir, { recursive: true, force: true }); } catch {}
     throw err;
@@ -54,7 +64,7 @@ export async function materializeSnapshot(
   } catch {}
   // Detach the worktree from the mirror's bookkeeping.
   try {
-    await execAsync(`git -C "${mirrorDir}" worktree prune`);
+    await git(['-C', mirrorDir, 'worktree', 'prune']);
   } catch {}
 
   // Atomic-ish rename into place.

@@ -1,5 +1,5 @@
 import { randomBytes, timingSafeEqual } from 'crypto';
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { getCapaDir } from '../shared/config';
 
@@ -24,9 +24,11 @@ function resolveToken(): string | null {
   }
 
   const path = authTokenPath();
-  if (existsSync(path)) {
+  try {
     cachedToken = readFileSync(path, 'utf8').trim();
     return cachedToken;
+  } catch (err: any) {
+    if (err?.code !== 'ENOENT') throw err;
   }
 
   if (bindHost && !isLoopbackHost(bindHost)) {

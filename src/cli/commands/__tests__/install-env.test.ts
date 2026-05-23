@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test';
-import { existsSync, mkdirSync, writeFileSync, rmSync } from 'fs';
+import { existsSync, mkdtempSync, writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
@@ -10,10 +10,7 @@ describe('installCommand with env flag', () => {
   let envFile: string;
 
   beforeEach(() => {
-    // Create a temporary test directory
-    testDir = join(tmpdir(), `capa-install-test-${Date.now()}`);
-    mkdirSync(testDir, { recursive: true });
-    
+    testDir = mkdtempSync(join(tmpdir(), 'capa-install-test-'));
     capabilitiesFile = join(testDir, 'capabilities.yaml');
     envFile = join(testDir, '.env');
   });
