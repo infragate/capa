@@ -12,9 +12,18 @@ import { authCommand } from './commands/auth';
 import { upgradeCommand } from './commands/upgrade';
 import { shellCommand } from './commands/sh';
 import { cacheInfoCommand, cacheCleanCommand } from './commands/cache';
-import { registryListCommand, registryPathCommand } from './commands/registry';
+import {
+  registryListCommand,
+  registryPathCommand,
+  registryAddCommand,
+  registryRemoveCommand,
+  registryRefreshCommand,
+  registrySetEnabledCommand,
+} from './commands/registry';
+import type { RegistrySourceType } from '../types/database';
 import { checkForUpdates } from './utils/version-check';
 import { VERSION } from '../version';
+import { setFlags, ExitCode, error } from './ui';
 
 // Check if running as server
 if (process.argv[2] === '__server__') {
@@ -25,6 +34,7 @@ if (process.argv[2] === '__server__') {
   });
 } else {
   (async () => {
+    try {
     // Start version check in the background while the command runs
     const isUpgradeCommand = process.argv[2] === 'upgrade';
     const updateCheckPromise = isUpgradeCommand ? Promise.resolve(null) : checkForUpdates();
@@ -34,7 +44,23 @@ if (process.argv[2] === '__server__') {
     program
       .name('capa')
       .description('An agentic skills and tools package manager')
-      .version(VERSION);
+      .version(VERSION)
+      .option('--json', 'Machine-readable output')
+      .option('-q, --quiet', 'Suppress non-essential output')
+      .option('-v, --verbose', 'Verbose output')
+      .option('--no-color', 'Disable colored output')
+      .option('-y, --yes', 'Auto-accept all confirms');
+
+    program.hook('preAction', () => {
+      const opts = program.opts();
+      setFlags({
+        json: Boolean(opts.json),
+        quiet: Boolean(opts.quiet),
+        verbose: Boolean(opts.verbose),
+        noColor: !opts.color,
+        yes: Boolean(opts.yes),
+      });
+    });
 
     program
       .command('init')
@@ -62,8 +88,17 @@ if (process.argv[2] === '__server__') {
       .description('Add a skill or plugin from various sources (GitHub, GitLab, registry, local path, or remote URL)')
       .option('--plugin', 'Treat <source> as a plugin (default is skill)')
       .option('--skill', 'Treat <source> as a skill (default; flag exists for explicitness)')
+      .option('-e, --env [file]', 'Load variables from .env file (defaults to .env if no file specified)')
+      .option('-p, --provider <id>', 'Install for a single provider (e.g. "cursor", "claude-code")')
+      .option('--no-cache', 'Bypass the on-disk cache and lockfile; re-resolve every remote source')
       .action(async (source: string, options) => {
-        await addCommand(source, options);
+        await addCommand(source, {
+          plugin: options.plugin,
+          skill: options.skill,
+          envFile: options.env,
+          provider: options.provider,
+          noCache: options.cache === false,
+        });
       });
 
     program
@@ -155,9 +190,58 @@ if (process.argv[2] === '__server__') {
 
     registryCmd
       .command('path')
-      .description('Print the registries directory path')
+      .description('Print the managed registries directory path')
       .action(async () => {
         await registryPathCommand();
+      });
+
+    registryCmd
+      .command('add <source> [slug]')
+      .description('Fetch a registry adapter from a git repo or HTTPS URL and install it')
+      .option(
+        '--type <type>',
+        'Source type: github, gitlab, or url (auto-detected from source by default)',
+      )
+      .option('--no-cache', 'Bypass the on-disk repo cache when fetching')
+      .action(async (source: string, slug: string | undefined, opts: { type?: string; cache?: boolean }) => {
+        let type: RegistrySourceType | undefined;
+        if (opts.type) {
+          if (opts.type !== 'github' && opts.type !== 'gitlab' && opts.type !== 'url') {
+            error(`Invalid --type "${opts.type}". Expected one of: github, gitlab, url.`);
+            process.exit(ExitCode.USER_ERROR);
+          }
+          type = opts.type;
+        }
+        await registryAddCommand(source, slug, { type, noCache: opts.cache === false });
+      });
+
+    registryCmd
+      .command('remove <slug>')
+      .description('Remove a configured registry and its materialized adapter file')
+      .action(async (slug: string) => {
+        await registryRemoveCommand(slug);
+      });
+
+    registryCmd
+      .command('refresh <slug>')
+      .description('Re-fetch a registry from its original source')
+      .option('--no-cache', 'Bypass the on-disk repo cache when refreshing')
+      .action(async (slug: string, opts: { cache?: boolean }) => {
+        await registryRefreshCommand(slug, { noCache: opts.cache === false });
+      });
+
+    registryCmd
+      .command('enable <slug>')
+      .description('Enable a previously-disabled registry')
+      .action(async (slug: string) => {
+        await registrySetEnabledCommand(slug, true);
+      });
+
+    registryCmd
+      .command('disable <slug>')
+      .description('Disable a registry without removing it')
+      .action(async (slug: string) => {
+        await registrySetEnabledCommand(slug, false);
       });
 
     await program.parseAsync();
@@ -167,6 +251,11 @@ if (process.argv[2] === '__server__') {
     if (updateInfo?.hasUpdate) {
       console.log(`\n  A new version of capa is available: ${updateInfo.latestVersion} (current: ${updateInfo.currentVersion})`);
       console.log('  Run "capa upgrade" to update.\n');
+    }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      error(message);
+      process.exit(ExitCode.SYSTEM_ERROR);
     }
   })();
 }

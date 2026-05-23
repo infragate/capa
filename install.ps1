@@ -1,6 +1,10 @@
 #!/usr/bin/env pwsh
 # CAPA Installer Script for Windows
 # Licensed under the MIT license
+#
+# NOTE: This installer is fetched over HTTPS but is not signed. For air-gapped
+# or high-security environments, download install.ps1 + SHA256SUMS manually and
+# verify before running.
 
 param(
     [string]$InstallDir = "",
@@ -15,7 +19,7 @@ $ErrorActionPreference = "Stop"
 # Constants
 $APP_NAME = "capa"
 $GITHUB_REPO = "infragate/capa"
-$FALLBACK_VERSION = "1.1.1"  # Fallback version if API request fails
+$FALLBACK_VERSION = "1.0.0"  # Fallback version if API request fails
 
 # Environment variable overrides
 if ($env:CAPA_INSTALL_DIR) {
@@ -277,6 +281,35 @@ function Install-Capa {
     catch {
         Write-Error-Custom "Failed to download CAPA from $downloadUrl`n$_"
     }
+
+    # Verify binary integrity against release checksums
+    Write-Info "Verifying download integrity..."
+    $checksumsUrl = "https://github.com/$GITHUB_REPO/releases/download/v$APP_VERSION/SHA256SUMS.txt"
+    $checksumsPath = Join-Path $env:TEMP "capa-SHA256SUMS.txt"
+
+    try {
+        Invoke-WebRequest -Uri $checksumsUrl -OutFile $checksumsPath -UseBasicParsing
+    }
+    catch {
+        Remove-Item -LiteralPath $tempPath -Force -ErrorAction SilentlyContinue
+        Write-Error-Custom "Failed to download SHA256SUMS.txt from $checksumsUrl`n$_"
+    }
+
+    $computedHash = (Get-FileHash $tempPath -Algorithm SHA256).Hash.ToLower()
+    $expectedLine = Get-Content $checksumsPath | Where-Object { $_ -match (' ' + [regex]::Escape($binaryName) + '$') } | Select-Object -First 1
+    Remove-Item -LiteralPath $checksumsPath -Force -ErrorAction SilentlyContinue
+
+    if (-not $expectedLine) {
+        Remove-Item -LiteralPath $tempPath -Force -ErrorAction SilentlyContinue
+        Write-Error-Custom "No checksum found for $binaryName in SHA256SUMS.txt"
+    }
+
+    $expectedHash = ($expectedLine -split '\s+')[0].ToLower()
+    if ($computedHash -ne $expectedHash) {
+        Remove-Item -LiteralPath $tempPath -Force -ErrorAction SilentlyContinue
+        Write-Error-Custom "Checksum verification failed for $binaryName (expected $expectedHash, got $computedHash)"
+    }
+    Write-Success "Verified binary integrity"
     
     # Replace existing binary. When invoked by "capa upgrade", capa exits before we run, so the exe
     # may still be released briefly by Windows — retry a few times before failing.

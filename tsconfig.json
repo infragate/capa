@@ -16,8 +16,8 @@
     "isolatedModules": true,
     "noEmit": true,
     "outDir": "./dist",
-    "rootDir": "./src"
+    "rootDir": "."
   },
-  "include": ["src/**/*.ts", "src/**/__tests__/**/*.ts"],
+  "include": ["src/**/*.ts", "src/**/__tests__/**/*.ts", "registries/**/*.ts"],
   "exclude": ["node_modules", "dist"]
 }

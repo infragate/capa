@@ -16,6 +16,7 @@ export interface MCPSubprocessInfo {
 
 export class SubprocessManager {
   private subprocesses = new Map<string, MCPSubprocessInfo>();
+  private inFlight = new Map<string, Promise<MCPSubprocessInfo>>();
   private db: CapaDatabase;
   private readonly MAX_RESTART_ATTEMPTS = 3;
   private readonly RESTART_WINDOW_MS = 60000; // 1 minute
@@ -77,9 +78,18 @@ export class SubprocessManager {
       return info;
     }
 
-    // Create new subprocess
+    const existingInFlight = this.inFlight.get(configHash);
+    if (existingInFlight) {
+      this.logger.debug('Subprocess spawn already in flight, awaiting existing promise');
+      return existingInFlight;
+    }
+
     this.logger.info('Creating new subprocess...');
-    return await this.createSubprocess(serverId, definition, configHash, projectPath);
+    const promise = this.createSubprocess(serverId, definition, configHash, projectPath).finally(
+      () => this.inFlight.delete(configHash)
+    );
+    this.inFlight.set(configHash, promise);
+    return promise;
   }
 
   private async createSubprocess(

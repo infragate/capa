@@ -1,12 +1,16 @@
 #!/bin/sh
 # CAPA Installer Script for macOS and Linux
 # Licensed under the MIT license
+#
+# NOTE: This installer is fetched over HTTPS but is not signed. For air-gapped
+# or high-security environments, download install.sh + SHA256SUMS manually and
+# verify before running.
 
 set -u
 
 APP_NAME="capa"
 GITHUB_REPO="infragate/capa"
-FALLBACK_VERSION="1.1.1"  # Fallback version if API request fails
+FALLBACK_VERSION="1.0.0"  # Fallback version if API request fails
 
 # Fetch latest release version from GitHub
 get_latest_version() {
@@ -344,6 +348,44 @@ install_capa() {
         err "failed to download CAPA from $_download_url"
     fi
     success "Downloaded CAPA binary"
+
+    # Verify binary integrity against release checksums
+    info "Verifying download integrity..."
+    local _checksums_url="https://github.com/${GITHUB_REPO}/releases/download/v${APP_VERSION}/SHA256SUMS.txt"
+    local _checksums_file
+    _checksums_file="$(mktemp)"
+
+    if ! downloader "$_checksums_url" "$_checksums_file"; then
+        rm -f "$_temp_file"
+        err "failed to download SHA256SUMS.txt from $_checksums_url"
+    fi
+
+    local _sha256_cmd
+    if check_cmd sha256sum; then
+        _sha256_cmd=sha256sum
+    elif check_cmd shasum; then
+        _sha256_cmd="shasum -a 256"
+    else
+        rm -f "$_temp_file" "$_checksums_file"
+        err "need 'sha256sum' or 'shasum' for integrity verification"
+    fi
+
+    local _computed_hash _expected_hash
+    _computed_hash=$($_sha256_cmd "$_temp_file" | awk '{print $1}')
+    _expected_hash=$(grep -F " ${_binary_name}" "$_checksums_file" | awk '{print $1}')
+
+    rm -f "$_checksums_file"
+
+    if [ -z "$_expected_hash" ]; then
+        rm -f "$_temp_file"
+        err "no checksum found for ${_binary_name} in SHA256SUMS.txt"
+    fi
+
+    if [ "$_computed_hash" != "$_expected_hash" ]; then
+        rm -f "$_temp_file"
+        err "checksum verification failed for ${_binary_name} (expected ${_expected_hash}, got ${_computed_hash})"
+    fi
+    success "Verified binary integrity"
 
     # Install binary
     info "Installing to ${_install_dir}/capa..."

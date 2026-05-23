@@ -1,5 +1,9 @@
 // Plugin types: capabilities reference, unified manifest, source attribution
 
+/**
+ * @see ProviderIntegration.pluginProviderId — registry id may differ from this manifest id
+ * (e.g. registry id `claude-code` maps to manifest id `claude`).
+ */
 export type PluginProvider = 'cursor' | 'claude';
 
 /**

@@ -2,40 +2,58 @@
 
 Registry adapters let capa connect to third-party skill and plugin registries — whether public (like [skills.sh](https://skills.sh)) or private (an internal company registry behind a VPN).
 
-Each adapter is a single `.ts` (or `.js` / `.mjs`) file that you drop into `~/.capa/registries/`. Capa discovers and loads them automatically at startup.
+Each adapter is a single `.ts` (or `.js` / `.mjs`) file that ships inside a folder containing an `adapter.{ts,js,mjs}` entry point. Capa fetches the file from GitHub, GitLab, or an HTTPS URL, validates its shape, and stores a row in its database — there is no longer a "drop a file in `~/.capa/registries/`" path.
 
 ## Quick start
 
-1. Copy one of the example adapters from this folder into your registries directory:
+Add a registry with `capa registry add`:
 
-   ```bash
-   # macOS / Linux
-   cp registries/skills-sh.ts ~/.capa/registries/
+```bash
+# Add the example skills-sh adapter from this repo (search-form)
+capa registry add infragate/capa@skills-sh
 
-   # Windows (PowerShell)
-   Copy-Item registries\skills-sh.ts $env:USERPROFILE\.capa\registries\
-   ```
+# Same, with an explicit slug
+capa registry add infragate/capa@skills-sh skills-sh
 
-2. Start (or restart) capa:
+# A GitLab source with an exact path
+capa registry add my-org/internal-tools::registries/internal --type=gitlab
 
-   ```bash
-   capa start
-   ```
+# A direct HTTPS URL to an adapter file (HTTPS is required)
+capa registry add https://example.com/adapters/my-registry.ts
+```
 
-3. Open the web UI — a **Registries** tab appears in the navigation bar.
+The adapter file is fetched, validated by dynamic-importing it, and copied into `~/.capa/registries-managed/<slug>/adapter.{ts,js,mjs}`. Open the web UI — the **Registries** nav link is always visible, and the **Manage registries** button (or `/ui/registries/settings`) lets you add, refresh, enable/disable, and remove registries with a "Preview" of the adapter source before installing.
+
+The reference adapters in this folder are kept as starting points — once you've added one with `capa registry add`, capa owns the on-disk copy.
 
 ## How it works
 
 ```
-~/.capa/registries/
-├── skills-sh.ts            # adapter for skills.sh
-├── cursor-marketplace.ts   # adapter for Cursor marketplace
-└── my-company.ts           # your own private registry
+~/.capa/registries-managed/
+├── skills-sh/
+│   └── adapter.ts
+├── cursor-marketplace/
+│   └── adapter.ts
+└── my-company/
+    └── adapter.ts
 ```
 
-When the capa server starts, it scans this directory and dynamic-imports every `.ts`, `.js`, or `.mjs` file it finds. Each file must export a default object conforming to the `RegistryAdapter` interface (described below). The server then exposes the adapters through its API, and the web UI renders a tab for each one.
+Capa tracks each registry in a `registries` table (slug, type, source, enabled, status, last_error, resolved_ref). On every server start, and at most every 30 seconds while running, the loader reads `enabled = true AND status = 'installed'` rows from the database and dynamic-imports each materialized `adapter.{ts,js,mjs}`. The server then exposes the adapters through its API, and the web UI renders a tab for each one.
 
 Adapter files are **self-contained** — they run in the server process and can use `fetch` to call any upstream API. There is no compilation step; Bun transpiles TypeScript on the fly.
+
+## Managing registries
+
+```bash
+capa registry list                  # show all rows (installed / failed / disabled), source, resolved ref
+capa registry refresh <slug>        # re-fetch the adapter from its stored source
+capa registry remove <slug>         # delete the row and its managed file
+capa registry enable <slug>         # bring a disabled registry back
+capa registry disable <slug>        # hide a registry without removing it
+capa registry path                  # print ~/.capa/registries-managed/
+```
+
+Most of those actions also exist in the web UI at `/ui/registries/settings`. The Add dialog includes a **Preview** button that calls `GET /api/registries/preview` and renders the raw adapter source in the dialog so you can audit it before checking *"I trust this code"* and confirming the install.
 
 ## The `RegistryAdapter` interface
 
@@ -234,17 +252,17 @@ export default adapter;
 ## Tips
 
 - **Type definitions are inline.** Each adapter file includes its own type definitions so it works anywhere — no external dependencies needed.
-- **The `id` in the manifest must be unique** across all loaded adapters. If two files declare the same `id`, the second one is skipped.
-- **Capa caches adapters by file mtime.** Editing a file causes it to be reimported on the next load cycle. For a fully clean reload, restart the capa server.
-- **Timeouts.** Each `search()` and `view()` call has a 15-second timeout. If your upstream API is slow, consider caching responses in the adapter (see `cursor-marketplace.ts` for an example with a 5-minute in-memory cache).
+- **The `id` in the manifest must be unique** across all loaded adapters. If two adapters declare the same `id`, the second one is skipped and surfaced as a failure on `capa registry list`.
+- **Capa caches adapters by `(file mtime, DB updated_at)`.** Re-running `capa registry refresh <slug>` (or hitting **Refresh** in the UI) re-downloads the adapter and bumps both — restart the server for a fully clean reload.
+- **Timeouts.** Each `search()` and `view()` call has a 15-second timeout. If your upstream API is slow, consider caching responses in the adapter (see `cursor-marketplace/adapter.ts` for an example with a 5-minute in-memory cache).
 - **Return early for unsupported capabilities.** If your adapter only supports `'skills'`, return `{ items: [] }` from `search()` and throw from `view()` when called with `'plugins'`.
 - **The `preview` field is rendered as Markdown** in the UI and sanitized with DOMPurify. You can return full SKILL.md content, or build a markdown string dynamically.
-- **CLI install.** Users can install items directly via `capa add <registryId>:<itemId>` (for skills). For plugins, the YAML snippet in the UI is the primary install method.
+- **CLI install.** Users can install items directly via `capa add <slug>:<itemId>` (for skills) where `<slug>` is the slug shown by `capa registry list`. For plugins, the YAML snippet in the UI is the primary install method.
 
 ## Examples
 
 | File | Registry | Capabilities | Notes |
 |------|----------|-------------|-------|
-| `skills-sh.ts` | [skills.sh](https://skills.sh) | Skills | Server-side search via API |
-| `cursor-marketplace.ts` | [Cursor Marketplace](https://cursor.com/marketplace) | Plugins | Client-side filtering with in-memory cache |
-| `claude-plugins.ts` | [Claude Plugins](https://claude.com/plugins) | Plugins | Scrapes the Webflow-rendered directory; resolves source repos via `marketplace.json` |
+| `skills-sh/adapter.ts` | [skills.sh](https://skills.sh) | Skills | Server-side search via API |
+| `cursor-marketplace/adapter.ts` | [Cursor Marketplace](https://cursor.com/marketplace) | Plugins | Client-side filtering with in-memory cache |
+| `claude-plugins/adapter.ts` | [Claude Plugins](https://claude.com/plugins) | Plugins | Scrapes the Webflow-rendered directory; resolves source repos via `marketplace.json` |

@@ -4,10 +4,12 @@ import { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 import type { CapaDatabase } from '../db/database';
 import type { MCPServerDefinition, ToolMCPDefinition } from '../types/capabilities';
+import type { OAuth2Config } from '../types/oauth';
 import { resolveVariablesInObject, hasUnresolvedVariables } from '../shared/variable-resolver';
 import { VERSION } from '../version';
 import { OAuth2Manager } from './oauth-manager';
 import { logger } from '../shared/logger';
+import { shouldSkipTlsVerify } from '../shared/tls-skip-verify';
 
 export interface MCPToolResult {
   success: boolean;
@@ -324,6 +326,7 @@ class HttpMCPTransport implements Transport {
   private db: CapaDatabase;
   private oauth2Manager: OAuth2Manager;
   private serverDefinition: MCPServerDefinition;
+  private skipTlsVerify: boolean;
   private logger = logger.child('HttpTransport');
   public sessionId?: string;
   public onclose?: () => void;
@@ -344,6 +347,10 @@ class HttpMCPTransport implements Transport {
     this.db = db;
     this.oauth2Manager = oauth2Manager;
     this.serverDefinition = serverDefinition;
+    this.skipTlsVerify = shouldSkipTlsVerify(
+      !!serverDefinition.tlsSkipVerify,
+      `MCP HTTP transport (${serverId})`
+    );
   }
 
   async start(): Promise<void> {
@@ -375,14 +382,14 @@ class HttpMCPTransport implements Transport {
         const accessToken = await this.oauth2Manager.getAccessToken(
           this.projectId,
           this.serverId,
-          this.serverDefinition.oauth2
+          this.serverDefinition.oauth2 as OAuth2Config
         );
         if (accessToken) {
           headers['Authorization'] = `Bearer ${accessToken}`;
         }
       }
 
-      const tlsOptions = this.serverDefinition.tlsSkipVerify
+      const tlsOptions = this.skipTlsVerify
         ? ({ tls: { rejectUnauthorized: false } } as object)
         : {};
 
@@ -401,7 +408,7 @@ class HttpMCPTransport implements Transport {
         const refreshed = await this.oauth2Manager.refreshAccessToken(
           this.projectId,
           this.serverId,
-          this.serverDefinition.oauth2
+          this.serverDefinition.oauth2 as OAuth2Config
         );
 
         if (refreshed) {
@@ -409,7 +416,7 @@ class HttpMCPTransport implements Transport {
           const newToken = await this.oauth2Manager.getAccessToken(
             this.projectId,
             this.serverId,
-            this.serverDefinition.oauth2
+            this.serverDefinition.oauth2 as OAuth2Config
           );
           if (newToken) {
             headers['Authorization'] = `Bearer ${newToken}`;

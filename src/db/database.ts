@@ -3,461 +3,206 @@ import { mkdirSync } from 'fs';
 import { dirname } from 'path';
 import type {
   Project,
-  Variable,
-  ManagedFile,
   ToolInitState,
   MCPSubprocess,
   Session,
   GitIntegration,
+  OAuthTokenRow,
+  OAuthFlowStateRow,
+  RegistryRecord,
+  RegistryStatus,
 } from '../types/database';
+import { initSchema } from './schema';
+import { ProjectsRepo } from './projects';
+import { SessionsRepo } from './sessions';
+import { VariablesRepo } from './variables';
+import { ManagedFilesRepo } from './managed-files';
+import { OAuthTokensRepo } from './oauth-tokens';
+import { OAuthFlowStateRepo } from './oauth-flow-state';
+import { GitIntegrationsRepo } from './git-integrations';
+import { ToolInitStateRepo } from './tool-init-state';
+import { SubAgentsRepo } from './sub-agents';
+import { MCPSubprocessesRepo } from './mcp-subprocesses';
+import { RegistriesRepo, type RegistryUpsertInput } from './registries';
 
 export class CapaDatabase {
   private db: Database;
+  private projects: ProjectsRepo;
+  private sessions: SessionsRepo;
+  private variables: VariablesRepo;
+  private managedFiles: ManagedFilesRepo;
+  private oauthTokens: OAuthTokensRepo;
+  private oauthFlowState: OAuthFlowStateRepo;
+  private gitIntegrations: GitIntegrationsRepo;
+  private toolInitState: ToolInitStateRepo;
+  private subAgents: SubAgentsRepo;
+  private mcpSubprocesses: MCPSubprocessesRepo;
+  private registries: RegistriesRepo;
 
   constructor(dbPath: string) {
     // Ensure parent directory exists before creating database
     const dbDir = dirname(dbPath);
     mkdirSync(dbDir, { recursive: true });
-    
+
     this.db = new Database(dbPath, { create: true });
-    this.initSchema();
-  }
+    initSchema(this.db);
 
-  private initSchema() {
-    this.db.run(`
-      CREATE TABLE IF NOT EXISTS projects (
-        id TEXT PRIMARY KEY,
-        path TEXT UNIQUE NOT NULL,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL
-      )
-    `);
-
-    this.db.run(`
-      CREATE TABLE IF NOT EXISTS variables (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        project_id TEXT NOT NULL,
-        key TEXT NOT NULL,
-        value TEXT NOT NULL,
-        created_at INTEGER NOT NULL,
-        FOREIGN KEY (project_id) REFERENCES projects(id),
-        UNIQUE(project_id, key)
-      )
-    `);
-
-    this.db.run(`
-      CREATE TABLE IF NOT EXISTS managed_files (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        project_id TEXT NOT NULL,
-        file_path TEXT NOT NULL,
-        created_at INTEGER NOT NULL,
-        FOREIGN KEY (project_id) REFERENCES projects(id),
-        UNIQUE(project_id, file_path)
-      )
-    `);
-
-    this.db.run(`
-      CREATE TABLE IF NOT EXISTS tool_init_state (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        project_id TEXT NOT NULL,
-        tool_id TEXT NOT NULL,
-        initialized INTEGER DEFAULT 0,
-        last_error TEXT,
-        updated_at INTEGER NOT NULL,
-        FOREIGN KEY (project_id) REFERENCES projects(id),
-        UNIQUE(project_id, tool_id)
-      )
-    `);
-
-    this.db.run(`
-      CREATE TABLE IF NOT EXISTS mcp_subprocesses (
-        id TEXT PRIMARY KEY,
-        config_hash TEXT UNIQUE NOT NULL,
-        pid INTEGER,
-        port INTEGER,
-        status TEXT,
-        started_at INTEGER,
-        last_health_check INTEGER
-      )
-    `);
-
-    this.db.run(`
-      CREATE TABLE IF NOT EXISTS sessions (
-        session_id TEXT PRIMARY KEY,
-        project_id TEXT NOT NULL,
-        skill_ids TEXT,
-        created_at INTEGER NOT NULL,
-        last_activity INTEGER NOT NULL,
-        FOREIGN KEY (project_id) REFERENCES projects(id)
-      )
-    `);
-
-    this.db.run(`
-      CREATE TABLE IF NOT EXISTS oauth_tokens (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        project_id TEXT NOT NULL,
-        server_id TEXT NOT NULL,
-        access_token TEXT NOT NULL,
-        refresh_token TEXT,
-        token_type TEXT DEFAULT 'Bearer',
-        expires_at INTEGER,
-        scope TEXT,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL,
-        FOREIGN KEY (project_id) REFERENCES projects(id),
-        UNIQUE(project_id, server_id)
-      )
-    `);
-
-    this.db.run(`
-      CREATE TABLE IF NOT EXISTS oauth_flow_state (
-        state TEXT PRIMARY KEY,
-        project_id TEXT NOT NULL,
-        server_id TEXT NOT NULL,
-        code_verifier TEXT NOT NULL,
-        redirect_uri TEXT NOT NULL,
-        created_at INTEGER NOT NULL,
-        FOREIGN KEY (project_id) REFERENCES projects(id)
-      )
-    `);
-
-    this.db.run(`
-      CREATE TABLE IF NOT EXISTS git_integrations (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        platform TEXT NOT NULL,
-        host TEXT,
-        access_token TEXT NOT NULL,
-        refresh_token TEXT,
-        token_type TEXT DEFAULT 'Bearer',
-        expires_at INTEGER,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL,
-        UNIQUE(platform, host)
-      )
-    `);
-
-    this.db.run(`
-      CREATE TABLE IF NOT EXISTS project_capabilities (
-        project_id TEXT PRIMARY KEY,
-        capabilities_json TEXT NOT NULL,
-        updated_at INTEGER NOT NULL,
-        FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
-      )
-    `);
-
-    this.db.run(`
-      CREATE TABLE IF NOT EXISTS sub_agents (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        project_id TEXT NOT NULL,
-        agent_id TEXT NOT NULL,
-        created_at INTEGER NOT NULL,
-        FOREIGN KEY (project_id) REFERENCES projects(id),
-        UNIQUE(project_id, agent_id)
-      )
-    `);
-
-    this.db.run(`
-      CREATE TABLE IF NOT EXISTS project_providers (
-        project_id TEXT NOT NULL,
-        provider_id TEXT NOT NULL,
-        created_at INTEGER NOT NULL,
-        PRIMARY KEY (project_id, provider_id),
-        FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
-      )
-    `);
+    this.projects = new ProjectsRepo(this.db);
+    this.sessions = new SessionsRepo(this.db);
+    this.variables = new VariablesRepo(this.db);
+    this.managedFiles = new ManagedFilesRepo(this.db);
+    this.oauthTokens = new OAuthTokensRepo(this.db);
+    this.oauthFlowState = new OAuthFlowStateRepo(this.db);
+    this.gitIntegrations = new GitIntegrationsRepo(this.db);
+    this.toolInitState = new ToolInitStateRepo(this.db);
+    this.subAgents = new SubAgentsRepo(this.db);
+    this.mcpSubprocesses = new MCPSubprocessesRepo(this.db);
+    this.registries = new RegistriesRepo(this.db);
   }
 
   // Project operations
   upsertProject(project: Omit<Project, 'created_at' | 'updated_at'>): void {
-    const now = Date.now();
-    const existing = this.db.query('SELECT id FROM projects WHERE id = ?').get(project.id);
-    
-    if (existing) {
-      this.db.run(
-        'UPDATE projects SET path = ?, updated_at = ? WHERE id = ?',
-        [project.path, now, project.id]
-      );
-    } else {
-      this.db.run(
-        'INSERT INTO projects (id, path, created_at, updated_at) VALUES (?, ?, ?, ?)',
-        [project.id, project.path, now, now]
-      );
-    }
+    return this.projects.upsert(project);
   }
 
   getProject(id: string): Project | null {
-    return this.db.query('SELECT * FROM projects WHERE id = ?').get(id) as Project | null;
+    return this.projects.get(id);
   }
 
   getProjectByPath(path: string): Project | null {
-    return this.db.query('SELECT * FROM projects WHERE path = ?').get(path) as Project | null;
+    return this.projects.getByPath(path);
   }
 
   getAllProjects(): Project[] {
-    return this.db.query('SELECT * FROM projects ORDER BY updated_at DESC').all() as Project[];
+    return this.projects.getAll();
   }
 
   deleteProject(projectId: string): void {
-    this.db.run('DELETE FROM variables WHERE project_id = ?', [projectId]);
-    this.db.run('DELETE FROM managed_files WHERE project_id = ?', [projectId]);
-    this.db.run('DELETE FROM tool_init_state WHERE project_id = ?', [projectId]);
-    this.db.run('DELETE FROM sessions WHERE project_id = ?', [projectId]);
-    this.db.run('DELETE FROM oauth_tokens WHERE project_id = ?', [projectId]);
-    this.db.run('DELETE FROM oauth_flow_state WHERE project_id = ?', [projectId]);
-    this.db.run('DELETE FROM project_capabilities WHERE project_id = ?', [projectId]);
-    this.db.run('DELETE FROM sub_agents WHERE project_id = ?', [projectId]);
-    this.db.run('DELETE FROM project_providers WHERE project_id = ?', [projectId]);
-    this.db.run('DELETE FROM projects WHERE id = ?', [projectId]);
+    return this.projects.delete(projectId);
   }
 
   // Project provider operations
   setProjectProviders(projectId: string, providers: string[]): void {
-    const now = Date.now();
-    this.db.run('DELETE FROM project_providers WHERE project_id = ?', [projectId]);
-    const seen = new Set<string>();
-    for (const pid of providers) {
-      if (seen.has(pid)) continue;
-      seen.add(pid);
-      this.db.run(
-        'INSERT INTO project_providers (project_id, provider_id, created_at) VALUES (?, ?, ?)',
-        [projectId, pid, now]
-      );
-    }
+    return this.projects.setProviders(projectId, providers);
   }
 
   getProjectProviders(projectId: string): string[] {
-    const rows = this.db.query(
-      'SELECT provider_id FROM project_providers WHERE project_id = ? ORDER BY rowid'
-    ).all(projectId) as Array<{ provider_id: string }>;
-    return rows.map((r) => r.provider_id);
+    return this.projects.getProviders(projectId);
   }
 
   // Sub-agent operations
   upsertSubAgent(projectId: string, agentId: string): void {
-    const now = Date.now();
-    this.db.run(
-      `INSERT INTO sub_agents (project_id, agent_id, created_at)
-       VALUES (?, ?, ?)
-       ON CONFLICT(project_id, agent_id) DO NOTHING`,
-      [projectId, agentId, now]
-    );
+    return this.subAgents.upsert(projectId, agentId);
   }
 
   getSubAgents(projectId: string): Array<{ agent_id: string }> {
-    return this.db.query(
-      'SELECT agent_id FROM sub_agents WHERE project_id = ?'
-    ).all(projectId) as Array<{ agent_id: string }>;
+    return this.subAgents.getAll(projectId);
   }
 
   removeSubAgent(projectId: string, agentId: string): void {
-    this.db.run(
-      'DELETE FROM sub_agents WHERE project_id = ? AND agent_id = ?',
-      [projectId, agentId]
-    );
+    return this.subAgents.remove(projectId, agentId);
   }
 
   setProjectCapabilities(projectId: string, capabilitiesJson: string): void {
-    const now = Date.now();
-    this.db.run(
-      `INSERT INTO project_capabilities (project_id, capabilities_json, updated_at)
-       VALUES (?, ?, ?)
-       ON CONFLICT(project_id) DO UPDATE SET capabilities_json = ?, updated_at = ?`,
-      [projectId, capabilitiesJson, now, capabilitiesJson, now]
-    );
+    return this.projects.setCapabilities(projectId, capabilitiesJson);
   }
 
   getProjectCapabilities(projectId: string): string | null {
-    const row = this.db.query(
-      'SELECT capabilities_json FROM project_capabilities WHERE project_id = ?'
-    ).get(projectId) as { capabilities_json: string } | null;
-    return row?.capabilities_json ?? null;
+    return this.projects.getCapabilities(projectId);
   }
 
   // Variable operations
   setVariable(projectId: string, key: string, value: string): void {
-    const now = Date.now();
-    this.db.run(
-      `INSERT INTO variables (project_id, key, value, created_at)
-       VALUES (?, ?, ?, ?)
-       ON CONFLICT(project_id, key) DO UPDATE SET value = ?, created_at = ?`,
-      [projectId, key, value, now, value, now]
-    );
+    return this.variables.set(projectId, key, value);
   }
 
   getVariable(projectId: string, key: string): string | null {
-    const result = this.db.query(
-      'SELECT value FROM variables WHERE project_id = ? AND key = ?'
-    ).get(projectId, key) as { value: string } | null;
-    return result?.value ?? null;
+    return this.variables.get(projectId, key);
   }
 
   getAllVariables(projectId: string): Record<string, string> {
-    const rows = this.db.query(
-      'SELECT key, value FROM variables WHERE project_id = ?'
-    ).all(projectId) as Array<{ key: string; value: string }>;
-    
-    const vars: Record<string, string> = {};
-    for (const row of rows) {
-      vars[row.key] = row.value;
-    }
-    return vars;
+    return this.variables.getAll(projectId);
   }
 
   deleteVariable(projectId: string, key: string): void {
-    this.db.run(
-      'DELETE FROM variables WHERE project_id = ? AND key = ?',
-      [projectId, key]
-    );
+    return this.variables.delete(projectId, key);
   }
 
   // Managed files operations
   addManagedFile(projectId: string, filePath: string): void {
-    const now = Date.now();
-    this.db.run(
-      `INSERT OR IGNORE INTO managed_files (project_id, file_path, created_at)
-       VALUES (?, ?, ?)`,
-      [projectId, filePath, now]
-    );
+    return this.managedFiles.add(projectId, filePath);
   }
 
   getManagedFiles(projectId: string): string[] {
-    const rows = this.db.query(
-      'SELECT file_path FROM managed_files WHERE project_id = ?'
-    ).all(projectId) as Array<{ file_path: string }>;
-    return rows.map(r => r.file_path);
+    return this.managedFiles.getAll(projectId);
   }
 
   removeManagedFile(projectId: string, filePath: string): void {
-    this.db.run(
-      'DELETE FROM managed_files WHERE project_id = ? AND file_path = ?',
-      [projectId, filePath]
-    );
+    return this.managedFiles.remove(projectId, filePath);
   }
 
   clearManagedFiles(projectId: string): void {
-    this.db.run('DELETE FROM managed_files WHERE project_id = ?', [projectId]);
+    return this.managedFiles.clear(projectId);
   }
 
   // Tool init state operations
   setToolInitialized(projectId: string, toolId: string, error: string | null = null): void {
-    const now = Date.now();
-    this.db.run(
-      `INSERT INTO tool_init_state (project_id, tool_id, initialized, last_error, updated_at)
-       VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(project_id, tool_id) DO UPDATE SET
-         initialized = ?,
-         last_error = ?,
-         updated_at = ?`,
-      [projectId, toolId, error ? 0 : 1, error, now, error ? 0 : 1, error, now]
-    );
+    return this.toolInitState.setInitialized(projectId, toolId, error);
   }
 
   getToolInitState(projectId: string, toolId: string): ToolInitState | null {
-    return this.db.query(
-      'SELECT * FROM tool_init_state WHERE project_id = ? AND tool_id = ?'
-    ).get(projectId, toolId) as ToolInitState | null;
+    return this.toolInitState.get(projectId, toolId);
   }
 
   // MCP subprocess operations
   upsertMCPSubprocess(subprocess: Omit<MCPSubprocess, 'started_at' | 'last_health_check'> & Partial<Pick<MCPSubprocess, 'started_at' | 'last_health_check'>>): void {
-    const now = Date.now();
-    const existing = this.db.query('SELECT id FROM mcp_subprocesses WHERE id = ?').get(subprocess.id);
-    
-    if (existing) {
-      this.db.run(
-        `UPDATE mcp_subprocesses SET
-          config_hash = ?,
-          pid = ?,
-          port = ?,
-          status = ?,
-          last_health_check = ?
-         WHERE id = ?`,
-        [
-          subprocess.config_hash,
-          subprocess.pid,
-          subprocess.port,
-          subprocess.status,
-          subprocess.last_health_check ?? now,
-          subprocess.id
-        ]
-      );
-    } else {
-      this.db.run(
-        `INSERT INTO mcp_subprocesses (id, config_hash, pid, port, status, started_at, last_health_check)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [
-          subprocess.id,
-          subprocess.config_hash,
-          subprocess.pid,
-          subprocess.port,
-          subprocess.status,
-          subprocess.started_at ?? now,
-          subprocess.last_health_check ?? now
-        ]
-      );
-    }
+    return this.mcpSubprocesses.upsert(subprocess);
   }
 
   getMCPSubprocess(id: string): MCPSubprocess | null {
-    return this.db.query('SELECT * FROM mcp_subprocesses WHERE id = ?').get(id) as MCPSubprocess | null;
+    return this.mcpSubprocesses.get(id);
   }
 
   getMCPSubprocessByHash(hash: string): MCPSubprocess | null {
-    return this.db.query('SELECT * FROM mcp_subprocesses WHERE config_hash = ?').get(hash) as MCPSubprocess | null;
+    return this.mcpSubprocesses.getByHash(hash);
   }
 
   getAllMCPSubprocesses(): MCPSubprocess[] {
-    return this.db.query('SELECT * FROM mcp_subprocesses').all() as MCPSubprocess[];
+    return this.mcpSubprocesses.getAll();
   }
 
   deleteMCPSubprocess(id: string): void {
-    this.db.run('DELETE FROM mcp_subprocesses WHERE id = ?', [id]);
+    return this.mcpSubprocesses.delete(id);
   }
 
   // Session operations
   createSession(sessionId: string, projectId: string): void {
-    const now = Date.now();
-    this.db.run(
-      `INSERT INTO sessions (session_id, project_id, skill_ids, created_at, last_activity)
-       VALUES (?, ?, ?, ?, ?)`,
-      [sessionId, projectId, '[]', now, now]
-    );
+    return this.sessions.create(sessionId, projectId);
   }
 
   getSession(sessionId: string): Session | null {
-    return this.db.query('SELECT * FROM sessions WHERE session_id = ?').get(sessionId) as Session | null;
+    return this.sessions.get(sessionId);
   }
 
   updateSessionActivity(sessionId: string): void {
-    const now = Date.now();
-    this.db.run(
-      'UPDATE sessions SET last_activity = ? WHERE session_id = ?',
-      [now, sessionId]
-    );
+    return this.sessions.updateActivity(sessionId);
   }
 
   updateSessionSkills(sessionId: string, skillIds: string[]): void {
-    const now = Date.now();
-    this.db.run(
-      'UPDATE sessions SET skill_ids = ?, last_activity = ? WHERE session_id = ?',
-      [JSON.stringify(skillIds), now, sessionId]
-    );
+    return this.sessions.updateSkills(sessionId, skillIds);
   }
 
   deleteSession(sessionId: string): void {
-    this.db.run('DELETE FROM sessions WHERE session_id = ?', [sessionId]);
+    return this.sessions.delete(sessionId);
   }
 
   deleteExpiredSessions(timeoutMinutes: number): void {
-    const cutoff = Date.now() - timeoutMinutes * 60 * 1000;
-    this.db.run('DELETE FROM sessions WHERE last_activity < ?', [cutoff]);
+    return this.sessions.deleteExpired(timeoutMinutes);
   }
 
   // OAuth2 token operations
-  getOAuthToken(projectId: string, serverId: string): any | null {
-    return this.db.query(
-      'SELECT * FROM oauth_tokens WHERE project_id = ? AND server_id = ?'
-    ).get(projectId, serverId);
+  getOAuthToken(projectId: string, serverId: string): OAuthTokenRow | null {
+    return this.oauthTokens.get(projectId, serverId);
   }
 
   setOAuthToken(projectId: string, serverId: string, tokenData: {
@@ -467,76 +212,37 @@ export class CapaDatabase {
     expires_at?: number;
     scope?: string;
   }): void {
-    const now = Date.now();
-    this.db.run(
-      `INSERT INTO oauth_tokens (project_id, server_id, access_token, refresh_token, token_type, expires_at, scope, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(project_id, server_id) DO UPDATE SET
-         access_token = ?,
-         refresh_token = ?,
-         token_type = ?,
-         expires_at = ?,
-         scope = ?,
-         updated_at = ?`,
-      [
-        projectId, serverId, tokenData.access_token, tokenData.refresh_token || null,
-        tokenData.token_type || 'Bearer', tokenData.expires_at || null, tokenData.scope || null,
-        now, now,
-        tokenData.access_token, tokenData.refresh_token || null, tokenData.token_type || 'Bearer',
-        tokenData.expires_at || null, tokenData.scope || null, now
-      ]
-    );
+    return this.oauthTokens.set(projectId, serverId, tokenData);
   }
 
   deleteOAuthToken(projectId: string, serverId: string): void {
-    this.db.run(
-      'DELETE FROM oauth_tokens WHERE project_id = ? AND server_id = ?',
-      [projectId, serverId]
-    );
+    return this.oauthTokens.delete(projectId, serverId);
   }
 
-  getAllOAuthTokens(projectId: string): any[] {
-    return this.db.query(
-      'SELECT * FROM oauth_tokens WHERE project_id = ?'
-    ).all(projectId);
+  getAllOAuthTokens(projectId: string): OAuthTokenRow[] {
+    return this.oauthTokens.getAll(projectId);
   }
 
   // OAuth2 flow state operations
   storeFlowState(state: string, projectId: string, serverId: string, codeVerifier: string, redirectUri: string, clientId?: string): void {
-    const now = Date.now();
-    // Store client_id in the state so we can use it during token exchange
-    const stateData = JSON.stringify({
-      code_verifier: codeVerifier,
-      redirect_uri: redirectUri,
-      client_id: clientId || 'capa',
-    });
-    this.db.run(
-      `INSERT INTO oauth_flow_state (state, project_id, server_id, code_verifier, redirect_uri, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [state, projectId, serverId, stateData, redirectUri, now]
-    );
+    return this.oauthFlowState.store(state, projectId, serverId, codeVerifier, redirectUri, clientId);
   }
 
-  getFlowState(state: string): any | null {
-    return this.db.query(
-      'SELECT * FROM oauth_flow_state WHERE state = ?'
-    ).get(state);
+  getFlowState(state: string): OAuthFlowStateRow | null {
+    return this.oauthFlowState.get(state);
   }
 
   deleteFlowState(state: string): void {
-    this.db.run('DELETE FROM oauth_flow_state WHERE state = ?', [state]);
+    return this.oauthFlowState.delete(state);
   }
 
   deleteExpiredFlowStates(timeoutMinutes: number = 10): void {
-    const cutoff = Date.now() - timeoutMinutes * 60 * 1000;
-    this.db.run('DELETE FROM oauth_flow_state WHERE created_at < ?', [cutoff]);
+    return this.oauthFlowState.deleteExpired(timeoutMinutes);
   }
 
   // Git integration operations
   getGitIntegration(platform: string, host: string | null = null): GitIntegration | null {
-    return this.db.query(
-      'SELECT * FROM git_integrations WHERE platform = ? AND (host = ? OR (host IS NULL AND ? IS NULL))'
-    ).get(platform, host, host) as GitIntegration | null;
+    return this.gitIntegrations.get(platform, host);
   }
 
   setGitIntegration(
@@ -549,77 +255,20 @@ export class CapaDatabase {
       expires_at?: number | null;
     }
   ): void {
-    const now = Date.now();
-    const host = tokenData.host || null;
-    
-    // Check if an entry already exists
-    const existing = this.getGitIntegration(platform, host);
-    
-    if (existing) {
-      // Update existing entry
-      this.db.run(
-        `UPDATE git_integrations SET
-          access_token = ?,
-          refresh_token = ?,
-          token_type = ?,
-          expires_at = ?,
-          updated_at = ?
-         WHERE platform = ? AND (host = ? OR (host IS NULL AND ? IS NULL))`,
-        [
-          tokenData.access_token,
-          tokenData.refresh_token || null,
-          tokenData.token_type || 'Bearer',
-          tokenData.expires_at || null,
-          now,
-          platform,
-          host,
-          host
-        ]
-      );
-    } else {
-      // Insert new entry
-      this.db.run(
-        `INSERT INTO git_integrations (platform, host, access_token, refresh_token, token_type, expires_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          platform,
-          host,
-          tokenData.access_token,
-          tokenData.refresh_token || null,
-          tokenData.token_type || 'Bearer',
-          tokenData.expires_at || null,
-          now,
-          now
-        ]
-      );
-    }
+    return this.gitIntegrations.set(platform, tokenData);
   }
 
   deleteGitIntegration(platform: string, host: string | null = null): void {
-    this.db.run(
-      'DELETE FROM git_integrations WHERE platform = ? AND (host = ? OR (host IS NULL AND ? IS NULL))',
-      [platform, host, host]
-    );
+    return this.gitIntegrations.delete(platform, host);
   }
 
   getAllGitIntegrations(): GitIntegration[] {
-    return this.db.query('SELECT * FROM git_integrations ORDER BY created_at DESC').all() as GitIntegration[];
+    return this.gitIntegrations.getAll();
   }
 
   // Convenience methods for CLI git client (uses provider string format like "github.com" or "gitlab.com")
   getGitOAuthToken(provider: string): GitIntegration | null {
-    // Map provider string to platform
-    const platformMap: Record<string, 'github' | 'gitlab'> = {
-      'github.com': 'github',
-      'gitlab.com': 'gitlab',
-    };
-    
-    const platform = platformMap[provider];
-    if (!platform) {
-      return null;
-    }
-    
-    return this.getGitIntegration(platform, null);
+    return this.gitIntegrations.getOAuthToken(provider);
   }
 
   setGitOAuthToken(
@@ -631,30 +280,52 @@ export class CapaDatabase {
       expires_at?: number | null;
     }
   ): void {
-    // Map provider string to platform
-    const platformMap: Record<string, 'github' | 'gitlab'> = {
-      'github.com': 'github',
-      'gitlab.com': 'gitlab',
-    };
-    
-    const platform = platformMap[provider];
-    if (!platform) {
-      throw new Error(`Unknown provider: ${provider}`);
-    }
-    
-    this.setGitIntegration(platform, tokenData);
+    return this.gitIntegrations.setOAuthToken(provider, tokenData);
   }
 
   getAllGitOAuthTokens(): Array<GitIntegration & { provider: string }> {
-    const integrations = this.getAllGitIntegrations();
-    
-    // Map platforms back to provider strings and filter for OAuth providers
-    return integrations
-      .filter(i => i.platform === 'github' || i.platform === 'gitlab')
-      .map(integration => ({
-        ...integration,
-        provider: integration.platform === 'github' ? 'github.com' : 'gitlab.com',
-      }));
+    return this.gitIntegrations.getAllOAuthTokens();
+  }
+
+  // Registry operations
+  listRegistries(): RegistryRecord[] {
+    return this.registries.list();
+  }
+
+  getRegistry(slug: string): RegistryRecord | null {
+    return this.registries.get(slug);
+  }
+
+  upsertRegistry(input: RegistryUpsertInput): RegistryRecord {
+    return this.registries.upsert(input);
+  }
+
+  setRegistryStatus(slug: string, status: RegistryStatus, lastError: string | null = null): void {
+    return this.registries.setStatus(slug, status, lastError);
+  }
+
+  setRegistryEnabled(slug: string, enabled: boolean): void {
+    return this.registries.setEnabled(slug, enabled);
+  }
+
+  deleteRegistry(slug: string): void {
+    return this.registries.delete(slug);
+  }
+
+  // Generic kv-style flags persisted in the `meta` table.
+  getMeta(key: string): string | null {
+    const row = this.db
+      .query('SELECT value FROM meta WHERE key = ?')
+      .get(key) as { value: string } | null;
+    return row?.value ?? null;
+  }
+
+  setMeta(key: string, value: string): void {
+    this.db.run(
+      `INSERT INTO meta (key, value) VALUES (?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      [key, value],
+    );
   }
 
   close(): void {

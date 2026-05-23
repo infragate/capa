@@ -15,6 +15,10 @@ export interface McpIntegration {
   entryUrlKey: string;
   /** Whether per-sub-agent MCP entries ('capa-{id}') can coexist with the main entry. */
   supportsSubAgentEntries: boolean;
+  /** Fallback config path when the primary `configPath` doesn't exist. */
+  defaultMcpFallbackPath?: string;
+  /** Env var name that points to the provider's plugin root (e.g. `CURSOR_PLUGIN_ROOT`). */
+  pluginRootEnvVar?: string;
 }
 
 /**
@@ -75,8 +79,9 @@ export interface SubagentsIntegration {
  * integration points (MCPs, instructions, rules, subagents, plugins).
  *
  * All fields are pure data — no functions except the optional detectInstalled
- * callback. For providers we don't fully integrate yet, only the skill-path
- * fields are populated; the optional integration fields remain undefined.
+ * and parsePluginManifest callbacks. For providers we don't fully integrate yet,
+ * only the skill-path fields are populated; the optional integration fields
+ * remain undefined.
  */
 export interface ProviderIntegration {
   /** Provider id, matches entries in capabilities.providers[]. */
@@ -103,4 +108,15 @@ export interface ProviderIntegration {
   subagents?: SubagentsIntegration;
   /** Plugin manifest paths relative to the plugin repo root (e.g. '.cursor-plugin/plugin.json'). */
   pluginManifestPaths?: string[];
+  /** Id used in the `PluginProvider` union (manifest enum); decouples registry id from manifest id. */
+  pluginProviderId?: string;
+  /**
+   * Opt-in per-provider plugin-manifest parser.
+   * @returns `UnifiedPluginManifest` from `plugin-manifest.ts` (not imported here to avoid circular deps).
+   */
+  parsePluginManifest?: (repoRoot: string, data: unknown, manifestDir?: string) => unknown;
+  /** When true, install command purges stale `capa-{id}` MCP entries (currently hardcoded to Cursor only). */
+  purgeStaleSubAgentMcp?: boolean;
+  /** When true, sub-agent text is folded into the `instructions.filename` file instead of separate sub-agent files. */
+  foldSubAgentsIntoInstructions?: boolean;
 }

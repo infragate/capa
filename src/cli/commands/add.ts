@@ -6,6 +6,7 @@ import type { Skill } from '../../types/capabilities';
 import type { Plugin, PluginDefinition } from '../../types/plugin';
 import type { RegistryCapability } from '../../types/registry';
 import { validatePluginDef } from '../../shared/plugin-source';
+import { getAllGitProviders } from '../../shared/git-providers/registry';
 import { resolve, basename, join, relative } from 'path';
 import { access } from 'fs/promises';
 import { constants } from 'fs';
@@ -220,31 +221,25 @@ interface ParsedPluginSource {
   idHint: string;
 }
 
-function splitTreeRefAndSubpath(treePath: string): { refOrBranch: string; subpath?: string } {
-  const segments = treePath.split('/').filter(Boolean);
-  if (segments.length === 0) {
-    return { refOrBranch: '' };
+function buildPluginSourceFromRepoUrl(
+  providerId: 'github' | 'gitlab',
+  parsed: { owner: string; repo: string; ref?: string; path?: string }
+): ParsedPluginSource {
+  const repoString = providerId === 'gitlab'
+    ? (parsed.path ? `${parsed.owner}::${parsed.path}` : parsed.owner)
+    : (parsed.path ? `${parsed.owner}/${parsed.repo}::${parsed.path}` : `${parsed.owner}/${parsed.repo}`);
+  const def: PluginDefinition = { repo: repoString };
+  if (parsed.ref) {
+    if (/^[a-f0-9]{7,40}$/i.test(parsed.ref)) def.ref = parsed.ref;
+    else if (/^v?\d+\.\d+/.test(parsed.ref)) def.version = parsed.ref;
   }
-
-  const pluginRootIndex = segments.findIndex((segment) => segment === 'plugins');
-  if (pluginRootIndex > 0) {
-    return {
-      refOrBranch: segments.slice(0, pluginRootIndex).join('/'),
-      subpath: segments.slice(pluginRootIndex).join('/'),
-    };
-  }
-
-  if (segments.length > 1) {
-    throw new Error(
-      `Ambiguous plugin tree URL path "${treePath}". ` +
-      `For tree URLs, capa only auto-splits when the plugin path starts with "plugins/". ` +
-      `Use "owner/repo::path/to/plugin" or "gitlab:group/project::path/to/plugin" syntax to disambiguate.`
-    );
-  }
-
+  const idHint = parsed.path
+    ? basename(parsed.path)
+    : (providerId === 'gitlab' ? parsed.owner.split('/').pop()! : parsed.repo);
   return {
-    refOrBranch: segments[0],
-    subpath: undefined,
+    type: providerId,
+    def,
+    idHint,
   };
 }
 
@@ -267,51 +262,11 @@ function splitTreeRefAndSubpath(treePath: string): { refOrBranch: string; subpat
  * @internal Exported for testing purposes
  */
 export function parsePluginSource(source: string): ParsedPluginSource {
-  // GitHub URL: https://github.com/<owner>/<repo>[/tree/<ref>/<subpath>]
-  const ghUrlMatch = source.match(
-    /^https?:\/\/github\.com\/([\w.-]+)\/([\w.-]+?)(?:\.git)?(?:\/tree\/([\w./-]+))?$/
-  );
-  if (ghUrlMatch) {
-    const [, owner, repo, treePath] = ghUrlMatch;
-    const { refOrBranch, subpath } = treePath
-      ? splitTreeRefAndSubpath(treePath)
-      : { refOrBranch: undefined, subpath: undefined };
-    const def: PluginDefinition = {
-      repo: subpath ? `${owner}/${repo}::${subpath}` : `${owner}/${repo}`,
-    };
-    if (refOrBranch) {
-      if (/^[a-f0-9]{7,40}$/i.test(refOrBranch)) def.ref = refOrBranch;
-      else if (/^v?\d+\.\d+/.test(refOrBranch)) def.version = refOrBranch;
-    }
-    return {
-      type: 'github',
-      def,
-      idHint: subpath ? basename(subpath) : repo,
-    };
-  }
-
-  // GitLab URL: https://gitlab.com/<group>/.../<project>[-/tree/<ref>/<subpath>]
-  const glUrlMatch = source.match(
-    /^https?:\/\/gitlab\.com\/([\w.-]+(?:\/[\w.-]+)+?)(?:\.git)?(?:\/-\/tree\/([\w./-]+))?$/
-  );
-  if (glUrlMatch) {
-    const [, repoPath, treePath] = glUrlMatch;
-    const { refOrBranch, subpath } = treePath
-      ? splitTreeRefAndSubpath(treePath)
-      : { refOrBranch: undefined, subpath: undefined };
-    const def: PluginDefinition = {
-      repo: subpath ? `${repoPath}::${subpath}` : repoPath,
-    };
-    if (refOrBranch) {
-      if (/^[a-f0-9]{7,40}$/i.test(refOrBranch)) def.ref = refOrBranch;
-      else if (/^v?\d+\.\d+/.test(refOrBranch)) def.version = refOrBranch;
-    }
-    const repoSegments = repoPath.split('/');
-    return {
-      type: 'gitlab',
-      def,
-      idHint: subpath ? basename(subpath) : repoSegments[repoSegments.length - 1],
-    };
+  for (const gp of getAllGitProviders()) {
+    if (!gp.parseRepoUrl) continue;
+    const parsed = gp.parseRepoUrl(source);
+    if (!parsed) continue;
+    return buildPluginSourceFromRepoUrl(gp.id as 'github' | 'gitlab', parsed);
   }
 
   // GitLab `@name` search: gitlab:group/sub/project@plugin-name[:version|#sha]
@@ -410,7 +365,21 @@ export function parsePluginSource(source: string): ParsedPluginSource {
   );
 }
 
-export async function addCommand(source: string, options: { plugin?: boolean; skill?: boolean }): Promise<void> {
+export async function addCommand(
+  source: string,
+  options: {
+    plugin?: boolean;
+    skill?: boolean;
+    provider?: string;
+    envFile?: string | boolean;
+    noCache?: boolean;
+  }
+): Promise<void> {
+  const installOpts = {
+    envFile: options.envFile,
+    provider: options.provider,
+    noCache: options.noCache,
+  };
   if (options.plugin && options.skill) {
     console.error('✗ Cannot pass both --skill and --plugin.');
     process.exit(1);
@@ -436,22 +405,32 @@ export async function addCommand(source: string, options: { plugin?: boolean; sk
   const registryMatch = source.match(/^([a-zA-Z][\w-]*):([\s\S]+)$/);
   if (registryMatch && !RESERVED_PREFIXES.test(source) && !source.startsWith('.') && !source.startsWith('/') && !/^[A-Za-z]:[\\/]/.test(source)) {
     const [, registryId, itemId] = registryMatch;
-    const manager = new RegistryManager();
-    const adapter = await manager.getAdapter(registryId);
-    if (adapter) {
-      console.log(`Resolving from registry "${adapter.manifest.name}"...`);
-
-      let detail: Awaited<ReturnType<typeof manager.view>> | undefined;
-      let resolvedCapability: RegistryCapability | undefined;
-      for (const cap of adapter.manifest.capabilities) {
-        try {
-          detail = await manager.view(registryId, { capability: cap, id: itemId });
-          resolvedCapability = cap;
-          break;
-        } catch {
-          // item not found under this capability, try next
+    const { CapaDatabase } = await import('../../db/database');
+    const { loadSettings, getDatabasePath } = await import('../../shared/config');
+    const settings = await loadSettings();
+    const dbForRegistry = new CapaDatabase(getDatabasePath(settings));
+    const manager = new RegistryManager(dbForRegistry);
+    let adapter;
+    let detail: Awaited<ReturnType<typeof manager.view>> | undefined;
+    let resolvedCapability: RegistryCapability | undefined;
+    try {
+      adapter = await manager.getAdapter(registryId);
+      if (adapter) {
+        for (const cap of adapter.manifest.capabilities) {
+          try {
+            detail = await manager.view(registryId, { capability: cap, id: itemId });
+            resolvedCapability = cap;
+            break;
+          } catch {
+            // item not found under this capability, try next
+          }
         }
       }
+    } finally {
+      try { dbForRegistry.close(); } catch {}
+    }
+    if (adapter) {
+      console.log(`Resolving from registry "${adapter.manifest.name}"...`);
       if (!detail || !resolvedCapability) {
         throw new Error(
           `Item "${itemId}" not found in registry "${registryId}" under any capability ` +
@@ -499,7 +478,7 @@ export async function addCommand(source: string, options: { plugin?: boolean; sk
 
       console.log(`\u2713 Added ${resolvedCapability.slice(0, -1)} "${itemName}" from registry "${registryId}" to ${capabilitiesFile.path}`);
       console.log('\n\u{1F4E6} Running installation...\n');
-      await installCommand();
+      await installCommand(installOpts);
       return;
     }
     // If no adapter matched, fall through to normal parsing
@@ -538,7 +517,7 @@ export async function addCommand(source: string, options: { plugin?: boolean; sk
     if (parsed.def.ref) console.log(`  Ref: ${parsed.def.ref}`);
 
     console.log('\n📦 Running installation...\n');
-    await installCommand();
+    await installCommand(installOpts);
     return;
   }
 
@@ -583,5 +562,5 @@ export async function addCommand(source: string, options: { plugin?: boolean; sk
   }
 
   console.log('\n📦 Running installation...\n');
-  await installCommand();
+  await installCommand(installOpts);
 }

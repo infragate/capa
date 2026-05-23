@@ -11,6 +11,25 @@ import type {
 } from '../types/oauth';
 import { generateCodeVerifier, generateCodeChallenge, generateState } from '../utils/pkce';
 import { logger } from '../shared/logger';
+import { shouldSkipTlsVerify } from '../shared/tls-skip-verify';
+
+const PERMANENT_REFRESH_FAILURE_MARKERS = ['invalid_grant', 'invalid_token', 'expired'];
+
+export function isPermanentRefreshFailure(
+  error?: unknown,
+  response?: Response,
+  responseBody?: string,
+): boolean {
+  if (response) {
+    const status = response.status;
+    if (status === 400 || status === 401 || status === 403) {
+      const body = (responseBody ?? '').toLowerCase();
+      return PERMANENT_REFRESH_FAILURE_MARKERS.some((marker) => body.includes(marker));
+    }
+    return false;
+  }
+  return false;
+}
 
 export class OAuth2Manager {
   private db: CapaDatabase;
@@ -38,7 +57,10 @@ export class OAuth2Manager {
   }
 
   async detectOAuth2Requirement(serverUrl: string, options?: { tlsSkipVerify?: boolean }): Promise<OAuth2Config | null> {
-    const tlsSkipVerify = options?.tlsSkipVerify;
+    const tlsSkipVerify = shouldSkipTlsVerify(
+      !!options?.tlsSkipVerify,
+      `OAuth2 detection (${serverUrl})`
+    );
     try {
       this.logger.info(`Detecting OAuth2 requirement for: ${serverUrl}`);
       
@@ -331,7 +353,7 @@ export class OAuth2Manager {
         return { success: false, error: 'Server OAuth2 config not found' };
       }
 
-      const oauth2Config = server.def.oauth2;
+      const oauth2Config = server.def.oauth2 as OAuth2Config;
 
       // Get client credentials if stored (from dynamic registration)
       const clientSecret = this.db.getVariable(project_id, `oauth2_client_secret_${server_id}`);
@@ -437,10 +459,14 @@ export class OAuth2Manager {
       });
 
       if (!response.ok) {
-        this.logger.failure(`Token refresh failed: ${response.statusText}`);
-        // Delete invalid token so isServerConnected returns false
-        this.db.deleteOAuthToken(projectId, serverId);
-        this.logger.info(`Deleted invalid token for ${serverId}`);
+        const body = await response.text();
+        this.logger.failure(`Token refresh failed: ${response.status} ${response.statusText}`);
+        if (isPermanentRefreshFailure(undefined, response, body)) {
+          this.db.deleteOAuthToken(projectId, serverId);
+          this.logger.info(`Deleted invalid token for ${serverId}`);
+        } else {
+          this.logger.warn(`Transient refresh failure for ${serverId}, keeping token`);
+        }
         return false;
       }
 
@@ -464,9 +490,12 @@ export class OAuth2Manager {
       return true;
     } catch (error: any) {
       this.logger.failure(`Token refresh error: ${error.message}`);
-      // Delete token that failed to refresh
-      this.db.deleteOAuthToken(projectId, serverId);
+      if (isPermanentRefreshFailure(error)) {
+        this.db.deleteOAuthToken(projectId, serverId);
         this.logger.info(`Deleted failed token for ${serverId}`);
+      } else {
+        this.logger.warn(`Transient refresh error for ${serverId}, keeping token`);
+      }
       return false;
     }
   }

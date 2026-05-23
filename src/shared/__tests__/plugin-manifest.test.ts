@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import {
+  detectAndParseManifest,
   discoverPluginEntries,
   findPluginInDirectory,
 } from '../plugin-manifest';
@@ -100,6 +101,287 @@ describe('plugin-manifest discovery', () => {
       const located = findPluginInDirectory(root, 'code-review', ['cursor']);
       expect(located).not.toBeNull();
       expect(located!.entry.subpath).toBe('cursor-plugins/code-review');
+    });
+  });
+
+  describe('detectAndParseManifest mcpServers resolution', () => {
+    it('resolves Cursor mcpServers paths relative to the manifest directory (slack-mcp-plugin layout)', () => {
+      // .cursor-plugin/plugin.json declares "mcpServers": "../.cursor-mcp.json".
+      // The referenced file lives at repo root, one level above the manifest.
+      mkdirSync(join(root, '.cursor-plugin'), { recursive: true });
+      writeFileSync(
+        join(root, '.cursor-plugin', 'plugin.json'),
+        JSON.stringify({
+          name: 'slack',
+          mcpServers: '../.cursor-mcp.json',
+        }),
+      );
+      writeFileSync(
+        join(root, '.cursor-mcp.json'),
+        JSON.stringify({
+          mcpServers: {
+            slack: { type: 'http', url: 'https://mcp.slack.com/mcp' },
+          },
+        }),
+      );
+
+      const manifest = detectAndParseManifest(root, ['cursor']);
+      expect(manifest).not.toBeNull();
+      expect(Object.keys(manifest!.mcpServers)).toEqual(['slack']);
+      expect(manifest!.mcpServers.slack.url).toBe('https://mcp.slack.com/mcp');
+    });
+
+    it('falls back to .mcp.json at repo root when the chosen manifest declares none', () => {
+      // .claude-plugin/plugin.json has no mcpServers — capa should still
+      // discover the servers declared in `.mcp.json` at the repo root.
+      mkdirSync(join(root, '.claude-plugin'), { recursive: true });
+      writeFileSync(
+        join(root, '.claude-plugin', 'plugin.json'),
+        JSON.stringify({ name: 'slack' }),
+      );
+      writeFileSync(
+        join(root, '.mcp.json'),
+        JSON.stringify({
+          mcpServers: {
+            slack: { type: 'http', url: 'https://mcp.slack.com/mcp' },
+          },
+        }),
+      );
+
+      const manifest = detectAndParseManifest(root, ['claude-code']);
+      expect(manifest).not.toBeNull();
+      expect(Object.keys(manifest!.mcpServers)).toEqual(['slack']);
+    });
+
+    it('rejects mcpServers paths that escape the repo root', () => {
+      mkdirSync(join(root, '.cursor-plugin'), { recursive: true });
+      writeFileSync(
+        join(root, '.cursor-plugin', 'plugin.json'),
+        JSON.stringify({
+          name: 'evil',
+          mcpServers: '../../../../etc/hosts',
+        }),
+      );
+
+      const manifest = detectAndParseManifest(root, ['cursor']);
+      expect(manifest).not.toBeNull();
+      expect(Object.keys(manifest!.mcpServers)).toEqual([]);
+    });
+  });
+
+  describe('detectAndParseManifest oauth2 client_id normalization', () => {
+    it('normalizes Cursor "auth.CLIENT_ID" (uppercase) to client_id', () => {
+      // Real-world layout from slackapi/slack-mcp-plugin's .cursor-mcp.json
+      mkdirSync(join(root, '.cursor-plugin'), { recursive: true });
+      writeFileSync(
+        join(root, '.cursor-plugin', 'plugin.json'),
+        JSON.stringify({
+          name: 'slack',
+          mcpServers: '../.cursor-mcp.json',
+        }),
+      );
+      writeFileSync(
+        join(root, '.cursor-mcp.json'),
+        JSON.stringify({
+          mcpServers: {
+            slack: {
+              url: 'https://mcp.slack.com/mcp',
+              auth: { CLIENT_ID: '3660753192626.8903469228982' },
+            },
+          },
+        }),
+      );
+
+      const manifest = detectAndParseManifest(root, ['cursor']);
+      expect(manifest).not.toBeNull();
+      const slack = manifest!.mcpServers.slack as {
+        oauth2?: Record<string, unknown>;
+      };
+      expect(slack.oauth2?.client_id).toBe('3660753192626.8903469228982');
+    });
+
+    it('normalizes Claude-style "oauth.clientId" (camelCase) and "callbackPort"', () => {
+      // Real-world layout from slackapi/slack-mcp-plugin's .mcp.json
+      mkdirSync(join(root, '.claude-plugin'), { recursive: true });
+      writeFileSync(
+        join(root, '.claude-plugin', 'plugin.json'),
+        JSON.stringify({ name: 'slack' }),
+      );
+      writeFileSync(
+        join(root, '.mcp.json'),
+        JSON.stringify({
+          mcpServers: {
+            slack: {
+              url: 'https://mcp.slack.com/mcp',
+              oauth: {
+                clientId: '1601185624273.8899143856786',
+                callbackPort: 3118,
+              },
+            },
+          },
+        }),
+      );
+
+      const manifest = detectAndParseManifest(root, ['claude-code']);
+      expect(manifest).not.toBeNull();
+      const slack = manifest!.mcpServers.slack as {
+        oauth2?: Record<string, unknown>;
+      };
+      expect(slack.oauth2?.client_id).toBe('1601185624273.8899143856786');
+      expect(slack.oauth2?.callback_port).toBe(3118);
+    });
+
+    it('prefers Claude manifest over Cursor when a plugin ships both (carries callback_port)', () => {
+      // Real-world layout from slackapi/slack-mcp-plugin: both .claude-plugin
+      // and .cursor-plugin exist, but only the Claude .mcp.json carries the
+      // callbackPort needed for the loopback redirect URI the auth server
+      // is registered to accept. Even when capabilities.providers lists
+      // cursor first, Claude wins for the manifest read.
+      mkdirSync(join(root, '.claude-plugin'), { recursive: true });
+      writeFileSync(
+        join(root, '.claude-plugin', 'plugin.json'),
+        JSON.stringify({ name: 'slack' }),
+      );
+      writeFileSync(
+        join(root, '.mcp.json'),
+        JSON.stringify({
+          mcpServers: {
+            slack: {
+              url: 'https://mcp.slack.com/mcp',
+              oauth: {
+                clientId: 'claude-app-id',
+                callbackPort: 3118,
+              },
+            },
+          },
+        }),
+      );
+
+      mkdirSync(join(root, '.cursor-plugin'), { recursive: true });
+      writeFileSync(
+        join(root, '.cursor-plugin', 'plugin.json'),
+        JSON.stringify({
+          name: 'slack',
+          mcpServers: '../.cursor-mcp.json',
+        }),
+      );
+      writeFileSync(
+        join(root, '.cursor-mcp.json'),
+        JSON.stringify({
+          mcpServers: {
+            slack: {
+              url: 'https://mcp.slack.com/mcp',
+              auth: { CLIENT_ID: 'cursor-app-id' },
+            },
+          },
+        }),
+      );
+
+      const manifest = detectAndParseManifest(root, ['cursor', 'claude-code']);
+      expect(manifest).not.toBeNull();
+      expect(manifest!.provider).toBe('claude');
+      const slack = manifest!.mcpServers.slack as {
+        oauth2?: Record<string, unknown>;
+      };
+      expect(slack.oauth2?.client_id).toBe('claude-app-id');
+      expect(slack.oauth2?.callback_port).toBe(3118);
+    });
+
+    it('leaves spec-compliant client_id untouched', () => {
+      mkdirSync(join(root, '.cursor-plugin'), { recursive: true });
+      writeFileSync(
+        join(root, '.cursor-plugin', 'plugin.json'),
+        JSON.stringify({
+          name: 'spec',
+          mcpServers: {
+            spec: {
+              url: 'https://example.com/mcp',
+              oauth2: { client_id: 'already-canonical' },
+            },
+          },
+        }),
+      );
+
+      const manifest = detectAndParseManifest(root, ['cursor']);
+      expect(manifest).not.toBeNull();
+      const spec = manifest!.mcpServers.spec as {
+        oauth2?: Record<string, unknown>;
+      };
+      expect(spec.oauth2?.client_id).toBe('already-canonical');
+    });
+
+    it('injects Cursor CLI loopback port 8787 for cursor-only plugins with embedded client_id', () => {
+      // Cursor-only plugin (no .claude-plugin variant). .cursor-mcp.json carries the
+      // OAuth client_id but no callback_port — Cursor itself uses the cursor://
+      // custom scheme which capa cannot receive, so capa must impersonate the
+      // Cursor CLI's loopback (http://localhost:8787/callback) for the same client_id.
+      mkdirSync(join(root, '.cursor-plugin'), { recursive: true });
+      writeFileSync(
+        join(root, '.cursor-plugin', 'plugin.json'),
+        JSON.stringify({
+          name: 'cursor-only',
+          mcpServers: {
+            example: {
+              url: 'https://example.com/mcp',
+              auth: { CLIENT_ID: 'cursor-app-id' },
+            },
+          },
+        }),
+      );
+
+      const manifest = detectAndParseManifest(root, ['cursor']);
+      expect(manifest).not.toBeNull();
+      expect(manifest!.provider).toBe('cursor');
+      const example = manifest!.mcpServers.example as {
+        oauth2?: Record<string, unknown>;
+      };
+      expect(example.oauth2?.client_id).toBe('cursor-app-id');
+      expect(example.oauth2?.callback_port).toBe(8787);
+    });
+
+    it('does not override an explicit callback_port set in a cursor manifest', () => {
+      mkdirSync(join(root, '.cursor-plugin'), { recursive: true });
+      writeFileSync(
+        join(root, '.cursor-plugin', 'plugin.json'),
+        JSON.stringify({
+          name: 'cursor-explicit',
+          mcpServers: {
+            example: {
+              url: 'https://example.com/mcp',
+              oauth2: { client_id: 'cursor-app-id', callback_port: 9999 },
+            },
+          },
+        }),
+      );
+
+      const manifest = detectAndParseManifest(root, ['cursor']);
+      expect(manifest).not.toBeNull();
+      const example = manifest!.mcpServers.example as {
+        oauth2?: Record<string, unknown>;
+      };
+      expect(example.oauth2?.callback_port).toBe(9999);
+    });
+
+    it('does not inject the cursor loopback when no client_id is embedded', () => {
+      // No client_id means dynamic registration is expected — capa's own server
+      // callback URL is correct in that case, so we must not preempt it.
+      mkdirSync(join(root, '.cursor-plugin'), { recursive: true });
+      writeFileSync(
+        join(root, '.cursor-plugin', 'plugin.json'),
+        JSON.stringify({
+          name: 'cursor-no-clientid',
+          mcpServers: {
+            example: { url: 'https://example.com/mcp' },
+          },
+        }),
+      );
+
+      const manifest = detectAndParseManifest(root, ['cursor']);
+      expect(manifest).not.toBeNull();
+      const example = manifest!.mcpServers.example as {
+        oauth2?: Record<string, unknown>;
+      };
+      expect(example.oauth2?.callback_port).toBeUndefined();
     });
   });
 });

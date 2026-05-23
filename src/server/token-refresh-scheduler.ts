@@ -4,6 +4,7 @@
 import type { CapaDatabase } from '../db/database';
 import type { OAuth2Manager } from './oauth-manager';
 import type { GitIntegrationManager } from './git-integration-manager';
+import type { OAuth2Config } from '../types/oauth';
 import { logger } from '../shared/logger';
 
 export interface TokenRefreshSchedulerOptions {
@@ -157,7 +158,7 @@ export class TokenRefreshScheduler {
                 const success = await this.oauth2Manager.refreshAccessToken(
                   projectId,
                   serverId,
-                  oauth2Config
+                  oauth2Config as OAuth2Config
                 );
 
                 if (success) {

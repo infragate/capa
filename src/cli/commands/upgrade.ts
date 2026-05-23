@@ -1,57 +1,78 @@
 import { getServerStatus, stopServer } from '../utils/server-manager';
+import { header, footer, success, info, error, runTasks } from '../ui';
+import type { Task } from '../ui';
 
 const INSTALL_SH_URL = 'https://capa.infragate.ai/install.sh';
 const INSTALL_PS1_URL = 'https://capa.infragate.ai/install.ps1';
 
 export async function upgradeCommand(): Promise<void> {
-  console.log('Upgrading capa...\n');
+  header('Upgrade capa');
 
-  const status = await getServerStatus();
-  if (status.running) {
-    await stopServer();
-    console.log('');
-  }
+  const tasks: Task[] = [
+    {
+      title: 'Stop running server',
+      task: async () => {
+        const status = await getServerStatus();
+        if (status.running) {
+          await stopServer();
+        }
+      },
+    },
+    {
+      title:
+        process.platform === 'win32'
+          ? 'Start Windows installer'
+          : 'Run installation script',
+      task: async () => {
+        if (process.platform === 'win32') {
+          await runWindowsInstaller();
+        } else {
+          await runUnixInstaller();
+        }
+      },
+    },
+  ];
 
-  if (process.platform === 'win32') {
-    await upgradeWindows();
-  } else {
-    await upgradeUnix();
-  }
+  await runTasks(tasks);
+  footer('Upgrade complete');
 }
 
-async function upgradeWindows(): Promise<void> {
-  console.log('Starting Windows installer in the background...\n');
-
-  // Spawn the installer detached and exit immediately so this process (capa.exe) is
-  // no longer running when the script tries to replace the binary (fixes #19).
+async function runWindowsInstaller(): Promise<void> {
   const proc = Bun.spawn(
-    ['powershell.exe', '-ExecutionPolicy', 'Bypass', '-NoProfile', '-Command', `irm '${INSTALL_PS1_URL}' | iex`],
+    [
+      'powershell.exe',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-NoProfile',
+      '-Command',
+      `irm '${INSTALL_PS1_URL}' | iex`,
+    ],
     {
       stdout: 'ignore',
       stderr: 'ignore',
       stdin: 'ignore',
       detached: true,
       env: { ...process.env },
-    }
+    },
   );
   proc.unref();
 
-  console.log('✓ Installer started. This window will close; the installer will update capa in the background.');
-  console.log('  Restart your terminal when the installer finishes, then run `capa --version` to confirm.\n');
+  success(
+    'Installer started. This window will close; the installer will update capa in the background.',
+  );
+  info('Restart your terminal when the installer finishes, then run `capa --version` to confirm.');
   process.exit(0);
 }
 
-async function upgradeUnix(): Promise<void> {
-  console.log('Running installation script...\n');
-
+async function runUnixInstaller(): Promise<void> {
   const hasCurl = await commandExists('curl');
   const cmd = hasCurl
     ? `curl -fsSL '${INSTALL_SH_URL}' | sh`
     : `wget -qO- '${INSTALL_SH_URL}' | sh`;
 
   if (!hasCurl && !(await commandExists('wget'))) {
-    console.error('✗ Neither curl nor wget is available. Please install one and try again.');
-    console.error(`  Or run the installation script manually: ${INSTALL_SH_URL}`);
+    error('Neither curl nor wget is available. Please install one and try again.');
+    error(`Or run the installation script manually: ${INSTALL_SH_URL}`);
     process.exit(1);
   }
 
@@ -63,7 +84,7 @@ async function upgradeUnix(): Promise<void> {
 
   const exitCode = await proc.exited;
   if (exitCode !== 0) {
-    console.error('\n✗ Upgrade failed');
+    error('Upgrade failed');
     process.exit(exitCode ?? 1);
   }
 }

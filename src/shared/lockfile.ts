@@ -7,6 +7,7 @@
  */
 
 import { existsSync } from 'fs';
+import { logger } from './logger';
 import { join } from 'path';
 import yaml from 'js-yaml';
 import type {
@@ -50,6 +51,66 @@ export function emptyLockfile(): Lockfile {
   };
 }
 
+function isLockSource(value: unknown): value is LockSource {
+  return value === 'github' || value === 'gitlab';
+}
+
+function isNullableString(value: unknown): value is string | null {
+  return value === null || typeof value === 'string';
+}
+
+export function isValidSkillLockEntry(x: unknown): x is LockSkillEntry {
+  if (!x || typeof x !== 'object') return false;
+  const e = x as Record<string, unknown>;
+  return (
+    typeof e.id === 'string' &&
+    e.id.length > 0 &&
+    isLockSource(e.source) &&
+    typeof e.repo === 'string' &&
+    typeof e.skillName === 'string' &&
+    isNullableString(e.requestedVersion) &&
+    isNullableString(e.requestedRef) &&
+    typeof e.resolvedRef === 'string' &&
+    isNullableString(e.resolvedVersion)
+  );
+}
+
+export function isValidPluginLockEntry(x: unknown): x is LockPluginEntry {
+  if (!x || typeof x !== 'object') return false;
+  const e = x as Record<string, unknown>;
+  return (
+    typeof e.id === 'string' &&
+    e.id.length > 0 &&
+    isLockSource(e.source) &&
+    typeof e.repo === 'string' &&
+    isNullableString(e.subpath) &&
+    isNullableString(e.requestedSearchName) &&
+    isNullableString(e.requestedVersion) &&
+    isNullableString(e.requestedRef) &&
+    typeof e.resolvedRef === 'string' &&
+    isNullableString(e.resolvedVersion) &&
+    typeof e.manifestName === 'string' &&
+    isNullableString(e.manifestVersion)
+  );
+}
+
+function filterLockEntries<T>(
+  entries: unknown[],
+  isValid: (entry: unknown) => entry is T,
+  label: string
+): T[] {
+  const valid: T[] = [];
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
+    if (isValid(entry)) {
+      valid.push(entry);
+    } else {
+      logger.warn(`Lockfile: skipping invalid ${label} entry at index ${i}`);
+    }
+  }
+  return valid;
+}
+
 /**
  * Validate a parsed object against the lockfile schema. Throws on mismatch.
  * Currently only schema version 1 exists.
@@ -72,8 +133,8 @@ function validateLockfile(parsed: unknown): Lockfile {
     version: 1,
     generator: typeof obj.generator === 'string' ? obj.generator : `capa@${VERSION}`,
     generatedAt: typeof obj.generatedAt === 'string' ? obj.generatedAt : new Date().toISOString(),
-    skills: obj.skills as LockSkillEntry[],
-    plugins: obj.plugins as LockPluginEntry[],
+    skills: filterLockEntries(obj.skills, isValidSkillLockEntry, 'skill'),
+    plugins: filterLockEntries(obj.plugins, isValidPluginLockEntry, 'plugin'),
   };
 }
 
