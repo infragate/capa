@@ -1446,7 +1446,7 @@ class CapaServer {
         const url = new URL(request.url);
         // Cloud OAuth provider redirects via GET with tokens in the query string. Serve
         // a tiny HTML+JS bridge that strips tokens from the URL and re-issues the
-        // callback as a POST (the spec-compliant ingress hardened by #S3).
+        // callback as a POST.
         if (
           url.searchParams.has('access_token') ||
           url.searchParams.has('refresh_token') ||
@@ -1563,7 +1563,7 @@ class CapaServer {
         const url = new URL(request.url);
         // Cloud OAuth provider redirects via GET with tokens in the query string. Serve
         // a tiny HTML+JS bridge that strips tokens from the URL and re-issues the
-        // callback as a POST (the spec-compliant ingress hardened by #S3).
+        // callback as a POST.
         if (
           url.searchParams.has('access_token') ||
           url.searchParams.has('refresh_token') ||

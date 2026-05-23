@@ -115,11 +115,9 @@ tools: []
   });
 
   it('removes capa-managed snippets from CLAUDE.md / AGENTS.md even when capabilities.yaml has no `agents:` block', async () => {
-    // Reproduces the bug where sub-agent integrations (e.g. Claude's
-    // foldSubAgentsIntoInstructions) wrote capa snippets into CLAUDE.md and
-    // AGENTS.md, but `capa clean` only ran the agents-file cleanup when a
-    // top-level `agents:` block existed in capabilities.yaml — so the files
-    // were left behind on every project that only used sub-agents.
+    // Sub-agent integrations (e.g. Claude's foldSubAgentsIntoInstructions)
+    // can write capa snippets into CLAUDE.md / AGENTS.md without a top-level
+    // `agents:` block, so `capa clean` must always run the agents-file cleanup.
     writeFileSync(
       join(projectDir, 'capabilities.yaml'),
       `providers: [claude-code]

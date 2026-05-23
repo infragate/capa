@@ -13,7 +13,7 @@ const execAsync = promisify(exec);
 
 /**
  * Build the authenticated git URL for cloning, embedding an OAuth token when
- * one is available. Mirrors the logic previously inlined in install.ts.
+ * one is available.
  */
 function buildAuthenticatedRepoUrl(
   platform: CachePlatform,

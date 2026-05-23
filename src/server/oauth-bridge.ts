@@ -3,24 +3,20 @@
  *
  * The capa cloud OAuth proxy completes the GitHub/GitLab dance server-side, then
  * redirects the user's browser back to capa's local callback URL with the resulting
- * `access_token` (and friends) in the query string — that's the protocol contract
- * the cloud provider uses for native loopback clients (RFC 8252).
+ * `access_token` (and friends) in the query string — the protocol contract the
+ * cloud provider uses for native loopback clients (RFC 8252).
  *
- * #S3 (capa security hardening) requires the local server to accept tokens *only*
- * via POST + JSON body so they don't end up in access logs or browser history. The
- * cloud's GET redirect would otherwise be rejected with 405, breaking sign-in.
- *
- * This bridge bridges the two contracts: it serves a tiny HTML page on the GET
+ * The local server accepts tokens only via POST + JSON body so they never land in
+ * access logs or browser history. This bridge serves a tiny HTML page on the GET
  * callback that:
  *   1. Reads the tokens from `window.location.search` (never echoed by the server).
  *   2. Calls `history.replaceState` to strip them from the URL bar and the current
  *      history entry — keeps tokens out of the browser's persisted history.
- *   3. POSTs the tokens (as JSON) to the same callback path — the spec-compliant
- *      ingress hardened by #S3.
+ *   3. POSTs the tokens (as JSON) to the same callback path.
  *   4. Redirects to `/ui/integrations?success=<platform>` (or `?error=...`).
  *
- * Kept as a module-level pure function so it's trivially unit-testable and doesn't
- * pull `CapaServer` into the test graph.
+ * Module-level pure function so it's trivially unit-testable and doesn't pull
+ * `CapaServer` into the test graph.
  */
 export type GitOAuthPlatform = 'github' | 'gitlab';
 
