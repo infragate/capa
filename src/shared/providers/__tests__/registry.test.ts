@@ -979,7 +979,7 @@ describe('Expanded provider integrations', () => {
       if (exp.instructions) {
         it(`has instructions filename ${exp.instructions}`, () => {
           expect(provider!.instructions).toBeDefined();
-          expect(provider!.instructions!.filename).toBe(exp.instructions);
+          expect(provider!.instructions!.filename).toBe(exp.instructions!);
         });
       }
 
