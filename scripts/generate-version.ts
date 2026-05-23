@@ -8,7 +8,7 @@
  * 3. package.json version (fallback)
  */
 
-import { writeFileSync } from 'fs';
+import { readFileSync, writeFileSync } from 'fs';
 import { execSync } from 'child_process';
 import { join } from 'path';
 
@@ -52,7 +52,7 @@ function getVersion(): string {
   // 3. Fallback to package.json
   try {
     const packageJson = JSON.parse(
-      execSync('cat package.json', { encoding: 'utf-8' })
+      readFileSync(join(__dirname, '..', 'package.json'), 'utf-8')
     );
     const version = packageJson.version;
     console.log(`✓ Using version from package.json: ${version}`);

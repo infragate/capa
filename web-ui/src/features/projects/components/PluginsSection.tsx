@@ -7,6 +7,19 @@ import { getProviderDisplayName } from '../../../lib/providers';
 
 import { FaGithub, FaGitlab } from 'react-icons/fa';
 
+// Parse the URL and compare the host against an allowlist instead of a
+// substring match, so an attacker-controlled `https://github.com.evil.tld/x`
+// or `https://evil.tld/github.com/x` can't masquerade as a github.com repo.
+function isGitHubRepoUrl(raw: string | undefined | null): boolean {
+  if (!raw) return false;
+  try {
+    const url = new URL(raw);
+    return url.hostname === 'github.com' || url.hostname.endsWith('.github.com');
+  } catch {
+    return false;
+  }
+}
+
 interface PluginStats {
   skills: number;
   tools: number;
@@ -65,7 +78,7 @@ export function PluginsSection({ plugins, skills = [], tools = [], servers = [] 
       </p>
       <div className="grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-3">
         {plugins.map((plugin) => {
-          const isGitHub = (plugin.repository || '').includes('github.com');
+          const isGitHub = isGitHubRepoUrl(plugin.repository);
           const providerLabel = getProviderDisplayName(plugin.provider);
           const stats = statsMap[plugin.name];
 
