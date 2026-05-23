@@ -166,7 +166,10 @@ function Get-Architecture {
     
     switch ($arch) {
         "AMD64" { return "x86_64-pc-windows-msvc" }
-        "ARM64" { return "aarch64-pc-windows-msvc" }
+        # ARM64: no native binary is shipped (bun-windows-arm64 compile target
+        # is unstable). Fall back to the x64 build, which Windows on ARM runs
+        # transparently via Prism emulation.
+        "ARM64" { return "x86_64-pc-windows-msvc" }
         "x86" { return "i686-pc-windows-msvc" }
         default {
             Write-Error-Custom "Unsupported architecture: $arch"
