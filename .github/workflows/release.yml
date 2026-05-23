@@ -50,15 +50,13 @@ jobs:
             artifact_name: capa.exe
             asset_name: capa-x86_64-pc-windows-msvc.exe
 
-          # Windows aarch64 (ARM64)
-          - os: windows-latest
-            target: aarch64-pc-windows-msvc
-            bun_target: bun-windows-arm64
-            artifact_name: capa.exe
-            asset_name: capa-aarch64-pc-windows-msvc.exe
-
-          # install.ps1 also maps x86 -> i686-pc-windows-msvc, but bun build --compile
-          # has no bun-windows-i686 target; 32-bit Windows installs remain unsupported.
+          # Windows ARM64 falls back to the x64 binary via install.ps1
+          # (`bun build --compile --target=bun-windows-arm64` is unstable as of
+          # Bun 1.3.x — runtime download fails to extract). Windows on ARM64
+          # runs x64 binaries fine under Prism emulation.
+          #
+          # Windows x86 (32-bit) is also unsupported because there is no
+          # `bun-windows-i686` build target.
 
     steps:
       - name: Checkout code
