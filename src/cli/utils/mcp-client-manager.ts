@@ -27,6 +27,20 @@ function parseJsonConfig(raw: string): McpJsonConfig | null {
   }
 }
 
+/**
+ * Read a file's contents, returning null when the file doesn't exist. Avoids
+ * the existsSync+readFileSync TOCTOU race that CodeQL flags as
+ * js/file-system-race.
+ */
+function tryReadFile(path: string): string | null {
+  try {
+    return readFileSync(path, 'utf-8');
+  } catch (err: any) {
+    if (err?.code === 'ENOENT') return null;
+    throw err;
+  }
+}
+
 function getServerMap(config: McpJsonConfig, serversKey: string): Record<string, McpServerEntry> {
   const existing = config[serversKey];
   if (!isPlainObject(existing)) {
@@ -66,8 +80,9 @@ export async function registerMCPServer(
 
       if (mcp.format === 'json') {
         let config: McpJsonConfig = {};
-        if (existsSync(configPath)) {
-          const parsed = parseJsonConfig(readFileSync(configPath, 'utf-8'));
+        const existing = tryReadFile(configPath);
+        if (existing !== null) {
+          const parsed = parseJsonConfig(existing);
           if (parsed === null) {
             console.warn(`  ⚠ Failed to parse existing ${provider.displayName} config, creating new one`);
           } else {
@@ -118,8 +133,9 @@ export async function registerSubAgentMCPServer(
 
       if (mcp.format === 'json') {
         let config: McpJsonConfig = {};
-        if (existsSync(configPath)) {
-          config = parseJsonConfig(readFileSync(configPath, 'utf-8')) ?? {};
+        const existing = tryReadFile(configPath);
+        if (existing !== null) {
+          config = parseJsonConfig(existing) ?? {};
         }
         const servers = getServerMap(config, mcp.serversKey);
         servers[serverKey] = buildMcpEntry(mcp, mcpUrl) as McpServerEntry;
@@ -155,10 +171,10 @@ export async function unregisterSubAgentMCPServer(
       const configPath = getMcpConfigPath(provider, projectPath);
       const serverKey = `capa-${agentId}`;
 
-      if (!existsSync(configPath)) continue;
-
       if (mcp.format === 'json') {
-        const config = parseJsonConfig(readFileSync(configPath, 'utf-8'));
+        const existing = tryReadFile(configPath);
+        if (existing === null) continue;
+        const config = parseJsonConfig(existing);
         if (config === null) continue;
         const servers = config[mcp.serversKey];
         if (!isPlainObject(servers) || !(serverKey in servers)) continue;
@@ -186,9 +202,10 @@ export async function purgeCursorSubAgentMCPEntries(projectPath: string): Promis
     if (!provider.purgeStaleSubAgentMcp || !provider.mcp) continue;
 
     const configPath = join(projectPath, provider.mcp.configPath);
-    if (!existsSync(configPath)) continue;
+    const existing = tryReadFile(configPath);
+    if (existing === null) continue;
 
-    const config = parseJsonConfig(readFileSync(configPath, 'utf-8'));
+    const config = parseJsonConfig(existing);
     if (config === null) continue;
 
     const serversObj = config[provider.mcp.serversKey];
@@ -227,13 +244,13 @@ export async function unregisterMCPServer(
       const { mcp } = provider;
       const configPath = getMcpConfigPath(provider, projectPath);
 
-      if (!existsSync(configPath)) {
-        taskLog(`  - No ${provider.displayName} config found (already removed)`);
-        continue;
-      }
-
       if (mcp.format === 'json') {
-        const config = parseJsonConfig(readFileSync(configPath, 'utf-8'));
+        const existing = tryReadFile(configPath);
+        if (existing === null) {
+          taskLog(`  - No ${provider.displayName} config found (already removed)`);
+          continue;
+        }
+        const config = parseJsonConfig(existing);
         if (config === null) {
           console.warn(`  ⚠ Failed to parse ${provider.displayName} config, skipping removal`);
           continue;
@@ -246,6 +263,11 @@ export async function unregisterMCPServer(
         delete (servers as Record<string, McpServerEntry>)[mcp.serverKey];
         writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
       } else if (mcp.format === 'toml') {
+        const tomlRaw = tryReadFile(configPath);
+        if (tomlRaw === null) {
+          taskLog(`  - No ${provider.displayName} config found (already removed)`);
+          continue;
+        }
         const config = readTomlFile(configPath);
         if (!deleteNestedKey(config, [mcp.serversKey, mcp.serverKey])) {
           taskLog(`  - MCP server not registered with ${provider.displayName} (already removed)`);
