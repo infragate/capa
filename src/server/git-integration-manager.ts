@@ -4,8 +4,8 @@
 import type { CapaDatabase } from '../db/database';
 import type { GitPlatform, GitPATConfig } from '../types/git-integration';
 import { logger } from '../shared/logger';
-
-const CLOUD_OAUTH_ENDPOINT = 'https://capa.infragate.ai/auth';
+import { CAPA_CLOUD_OAUTH_URL } from '../shared/ui-urls';
+import { getGitProvider, getAllGitProviders } from '../shared/git-providers/registry';
 
 export class GitIntegrationManager {
   private db: CapaDatabase;
@@ -36,7 +36,7 @@ export class GitIntegrationManager {
       displayName: this.getPlatformDisplayName(integration.platform, integration.host),
       isConnected: true,
       expiresAt: integration.expires_at || undefined,
-      usesOAuth: integration.platform === 'github' || integration.platform === 'gitlab',
+      usesOAuth: !!getGitProvider(integration.platform),
     }));
   }
 
@@ -60,10 +60,15 @@ export class GitIntegrationManager {
     // Clean up old flows (older than 15 minutes)
     this.cleanupExpiredFlows();
 
+    const gp = getGitProvider(platform);
+    if (!gp) {
+      throw new Error(`Unknown git platform: ${platform}`);
+    }
+
     // Build cloud OAuth URL
     // The cloud will handle the OAuth flow and redirect back to our local server with the token
-    const cloudUrl = new URL(CLOUD_OAUTH_ENDPOINT);
-    cloudUrl.searchParams.set('provider', platform === 'github' ? 'github.com' : 'gitlab.com');
+    const cloudUrl = new URL(CAPA_CLOUD_OAUTH_URL);
+    cloudUrl.searchParams.set('provider', gp.cloudOAuthProviderParam);
     cloudUrl.searchParams.set('redirect', localRedirectUri);
 
     const finalUrl = cloudUrl.toString();
@@ -107,17 +112,12 @@ export class GitIntegrationManager {
       // If we still don't have a platform, try to determine it from the token
       if (!platform) {
         this.logger.info('Attempting to determine platform by testing token...');
-        // Try GitHub first
-        const githubTest = await this.testToken('github', accessToken);
-        if (githubTest) {
-          platform = 'github';
-          this.logger.success('Token identified as GitHub');
-        } else {
-          // Try GitLab
-          const gitlabTest = await this.testToken('gitlab', accessToken);
-          if (gitlabTest) {
-            platform = 'gitlab';
-            this.logger.success('Token identified as GitLab');
+        for (const gp of getAllGitProviders()) {
+          const valid = await this.testToken(gp.id as 'github' | 'gitlab', accessToken);
+          if (valid) {
+            platform = gp.id as GitPlatform;
+            this.logger.success(`Token identified as ${gp.displayName}`);
+            break;
           }
         }
       }
@@ -150,17 +150,12 @@ export class GitIntegrationManager {
    */
   private async testToken(platform: 'github' | 'gitlab', token: string): Promise<boolean> {
     try {
-      const url = platform === 'github' 
-        ? 'https://api.github.com/user'
-        : 'https://gitlab.com/api/v4/user';
-      
-      const authHeader = platform === 'github'
-        ? `token ${token}`
-        : `Bearer ${token}`;
+      const gp = getGitProvider(platform);
+      if (!gp) return false;
 
-      const response = await fetch(url, {
+      const response = await fetch(gp.apiUserUrl, {
         headers: {
-          'Authorization': authHeader,
+          'Authorization': gp.authHeader(token),
           'Accept': 'application/json',
         },
       });
@@ -267,7 +262,10 @@ export class GitIntegrationManager {
   }
 
   /**
-   * Refresh access token using refresh token
+   * Refresh access token using refresh token via cloud OAuth proxy (POST + JSON body).
+   *
+   * POST https://capa.infragate.ai/auth/refresh
+   * Body: { "provider": "github.com", "refresh_token": "..." }
    */
   async refreshAccessToken(platform: GitPlatform, host?: string): Promise<boolean> {
     try {
@@ -278,19 +276,23 @@ export class GitIntegrationManager {
         return false;
       }
 
-      // Only GitHub and GitLab support OAuth refresh
-      if (platform !== 'github' && platform !== 'gitlab') {
+      // Only registered cloud OAuth providers support refresh
+      const gp = getGitProvider(platform);
+      if (!gp) {
         this.logger.warn(`Refresh not supported for ${platform}`);
         return false;
       }
 
-      // Call cloud endpoint to refresh the token
-      const providerParam = platform === 'github' ? 'github.com' : 'gitlab.com';
-      const refreshUrl = `${CLOUD_OAUTH_ENDPOINT}/refresh?provider=${providerParam}&refresh_token=${encodeURIComponent(integration.refresh_token)}`;
-      
-      this.logger.debug(`Refreshing token via: ${CLOUD_OAUTH_ENDPOINT}/refresh`);
-      
-      const response = await fetch(refreshUrl);
+      this.logger.debug(`Refreshing token via: ${CAPA_CLOUD_OAUTH_URL}/refresh`);
+
+      const response = await fetch(`${CAPA_CLOUD_OAUTH_URL}/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider: gp.cloudOAuthProviderParam,
+          refresh_token: integration.refresh_token,
+        }),
+      });
       
       if (!response.ok) {
         const errorText = await response.text();
@@ -331,8 +333,7 @@ export class GitIntegrationManager {
   }
 
   /**
-   * Get access token for a platform (legacy method, kept for compatibility)
-   * Note: Now automatically handles token refresh
+   * Alias for `getAccessToken` (automatically refreshes when needed).
    */
   async getAccessTokenLegacy(platform: GitPlatform, host?: string): Promise<string | null> {
     return this.getAccessToken(platform, host);
@@ -347,14 +348,20 @@ export class GitIntegrationManager {
       return null;
     }
 
-    // GitHub and GitHub Enterprise use "token" prefix
-    if (platform === 'github' || platform === 'github-enterprise') {
+    const gp = getGitProvider(platform);
+    if (gp) {
+      return {
+        'Authorization': gp.authHeader(token),
+      };
+    }
+
+    // Self-managed instances
+    if (platform === 'github-enterprise') {
       return {
         'Authorization': `token ${token}`,
       };
     }
 
-    // GitLab uses "Bearer" prefix
     return {
       'Authorization': `Bearer ${token}`,
     };
@@ -372,17 +379,18 @@ export class GitIntegrationManager {
    * Get display name for a platform
    */
   private getPlatformDisplayName(platform: GitPlatform, host: string | null): string {
+    const gp = getGitProvider(platform);
+    if (gp && !host) {
+      return gp.displayName;
+    }
+
     switch (platform) {
-      case 'github':
-        return 'GitHub';
-      case 'gitlab':
-        return 'GitLab';
       case 'github-enterprise':
         return `GitHub Enterprise${host ? ` (${host})` : ''}`;
       case 'gitlab-self-managed':
         return `GitLab Self-Managed${host ? ` (${host})` : ''}`;
       default:
-        return platform;
+        return getGitProvider(platform)?.displayName ?? platform;
     }
   }
 

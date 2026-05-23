@@ -17,7 +17,11 @@ describe('CapaDatabase', () => {
 
   afterEach(() => {
     db.close();
-    rmSync(tempDir, { recursive: true, force: true });
+    try {
+      rmSync(tempDir, { recursive: true, force: true });
+    } catch (error: any) {
+      if (error?.code !== 'EBUSY') throw error;
+    }
   });
 
   describe('Project operations', () => {
@@ -395,6 +399,58 @@ describe('CapaDatabase', () => {
 
       const providers = db.getProjectProviders('test-proj');
       expect(providers).toEqual([]);
+    });
+  });
+
+  describe('deleteProject transaction', () => {
+    beforeEach(() => {
+      db.upsertProject({ id: 'test-proj', path: '/test/path' });
+      db.setVariable('test-proj', 'KEY', 'value');
+      db.addManagedFile('test-proj', '/file.txt');
+      db.createSession('session-1', 'test-proj');
+    });
+
+    it('should rollback cascade when a delete fails mid-way', () => {
+      const dbInternal = (db as any).db;
+      const originalRun = dbInternal.run.bind(dbInternal);
+      let deleteCallCount = 0;
+
+      dbInternal.run = function (...args: unknown[]) {
+        deleteCallCount++;
+        if (deleteCallCount === 2) {
+          throw new Error('simulated delete failure');
+        }
+        return originalRun(...args);
+      };
+
+      try {
+        expect(() => db.deleteProject('test-proj')).toThrow('simulated delete failure');
+        expect(db.getProject('test-proj')).not.toBeNull();
+        expect(db.getVariable('test-proj', 'KEY')).toBe('value');
+        expect(db.getManagedFiles('test-proj')).toEqual(['/file.txt']);
+        expect(db.getSession('session-1')).not.toBeNull();
+      } finally {
+        dbInternal.run = originalRun;
+      }
+    });
+
+    it('should use db.transaction for deleteProject cascade', () => {
+      const dbInternal = (db as any).db;
+      const originalTransaction = dbInternal.transaction.bind(dbInternal);
+      let transactionUsed = false;
+
+      dbInternal.transaction = function (fn: (id: string) => void) {
+        transactionUsed = true;
+        return originalTransaction(fn);
+      };
+
+      try {
+        db.deleteProject('test-proj');
+        expect(transactionUsed).toBe(true);
+        expect(db.getProject('test-proj')).toBeNull();
+      } finally {
+        dbInternal.transaction = originalTransaction;
+      }
     });
   });
 });

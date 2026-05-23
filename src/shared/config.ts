@@ -4,6 +4,7 @@ import { existsSync } from 'fs';
 import { mkdir } from 'fs/promises';
 import type { ServerSettings } from '../types/database';
 import { VERSION } from '../version';
+import { logger } from './logger';
 
 const DEFAULT_SETTINGS: ServerSettings = {
   version: VERSION,
@@ -40,18 +41,19 @@ export function getPidFilePath(): string {
   return join(getCapaDir(), 'server.pid');
 }
 
-export function getRegistriesDir(): string {
-  return join(getCapaDir(), 'registries');
+/**
+ * Materialized adapters for DB-tracked registries live under
+ * `<capa>/registries-managed/<slug>/adapter.{ts,js,mjs}`. The dir is created
+ * lazily by the installer; ensureCapaDir does not pre-create it.
+ */
+export function getManagedRegistriesDir(): string {
+  return join(getCapaDir(), 'registries-managed');
 }
 
 export async function ensureCapaDir(): Promise<void> {
   const capaDir = getCapaDir();
   if (!existsSync(capaDir)) {
     await mkdir(capaDir, { recursive: true });
-  }
-  const registriesDir = getRegistriesDir();
-  if (!existsSync(registriesDir)) {
-    await mkdir(registriesDir, { recursive: true });
   }
 }
 
@@ -69,7 +71,7 @@ export async function loadSettings(): Promise<ServerSettings> {
     const settings = await file.json();
     return { ...DEFAULT_SETTINGS, ...settings };
   } catch (error) {
-    console.error('Failed to load settings, using defaults:', error);
+    logger.error('Failed to load settings, using defaults:', error);
     return DEFAULT_SETTINGS;
   }
 }

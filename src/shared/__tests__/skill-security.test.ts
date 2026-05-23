@@ -79,6 +79,26 @@ describe('skill-security', () => {
         /Blocked phrases file not found/
       );
     });
+
+    it('should reject path traversal outside capabilities directory', () => {
+      const security: SecurityOptions = {
+        blockedPhrases: { file: '../../../etc/passwd' },
+      };
+      expect(() => loadBlockedPhrases(security, capabilitiesPath)).toThrow(
+        /Blocked-phrases file path escapes the capabilities directory/
+      );
+    });
+
+    it('should allow phrases file inside capabilities directory', () => {
+      const nestedDir = join(tempDir, 'security');
+      mkdirSync(nestedDir, { recursive: true });
+      const phrasesPath = join(nestedDir, 'blocked.txt');
+      writeFileSync(phrasesPath, 'inside\n', 'utf-8');
+      const security: SecurityOptions = {
+        blockedPhrases: { file: 'security/blocked.txt' },
+      };
+      expect(loadBlockedPhrases(security, capabilitiesPath)).toEqual(['inside']);
+    });
   });
 
   describe('checkBlockedPhrases', () => {
@@ -97,11 +117,21 @@ describe('skill-security', () => {
       });
     });
 
-    it('should be case-sensitive', () => {
-      expect(checkBlockedPhrases('EVAL()', ['eval('])).toEqual({ blocked: false });
+    it('should match case-insensitively after NFKC normalization', () => {
+      expect(checkBlockedPhrases('use EXPLOIT here', ['exploit'])).toEqual({
+        blocked: true,
+        phrase: 'exploit',
+      });
       expect(checkBlockedPhrases('eval()', ['eval('])).toEqual({
         blocked: true,
         phrase: 'eval(',
+      });
+    });
+
+    it('should match fullwidth homoglyphs after NFKC normalization', () => {
+      expect(checkBlockedPhrases('warning: ＳＣＡＭ detected', ['scam'])).toEqual({
+        blocked: true,
+        phrase: 'scam',
       });
     });
   });

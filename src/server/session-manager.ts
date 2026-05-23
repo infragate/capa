@@ -17,6 +17,7 @@ export class SessionManager {
   private db: CapaDatabase;
   private sessions = new Map<string, SessionInfo>();
   private projectCapabilities = new Map<string, Capabilities>();
+  private capabilitiesLoadInflight = new Map<string, Promise<Capabilities | null>>();
   private logger = logger.child('SessionManager');
 
   constructor(db: CapaDatabase) {
@@ -222,6 +223,23 @@ export class SessionManager {
     if (cached) {
       return cached;
     }
+
+    const existing = this.capabilitiesLoadInflight.get(projectId);
+    if (existing) {
+      const result = Bun.peek(existing);
+      if (!(result instanceof Promise)) {
+        return result;
+      }
+    }
+
+    const promise = Promise.resolve(this.loadCapabilitiesFromDb(projectId)).finally(
+      () => this.capabilitiesLoadInflight.delete(projectId)
+    );
+    this.capabilitiesLoadInflight.set(projectId, promise);
+    return this.projectCapabilities.get(projectId) ?? null;
+  }
+
+  private loadCapabilitiesFromDb(projectId: string): Capabilities | null {
     const raw = this.db.getProjectCapabilities(projectId);
     if (!raw) {
       return null;
@@ -235,7 +253,7 @@ export class SessionManager {
    * Get all project capabilities (for OAuth2Manager integration)
    */
   getAllProjectCapabilities(): Map<string, Capabilities> {
-    return this.projectCapabilities;
+    return new Map(this.projectCapabilities);
   }
 
   /**

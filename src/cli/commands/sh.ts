@@ -310,6 +310,9 @@ async function executeToolViaMCP(
 }
 
 async function runPassthrough(tokens: string[]): Promise<void> {
+  if (process.env.CAPA_NO_SHELL_WARN !== '1') {
+    console.warn('capa: running OS shell passthrough. Set CAPA_NO_SHELL_WARN=1 to suppress.');
+  }
   const command = tokens.join(' ');
   const isWindows = process.platform === 'win32';
   const shell = isWindows ? 'cmd.exe' : '/bin/sh';

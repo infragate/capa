@@ -16,7 +16,11 @@ describe('CapaDatabase — sub-agent operations', () => {
 
   afterEach(() => {
     db.close();
-    rmSync(tempDir, { recursive: true, force: true });
+    try {
+      rmSync(tempDir, { recursive: true, force: true });
+    } catch (error: any) {
+      if (error?.code !== 'EBUSY') throw error;
+    }
   });
 
   it('returns empty array when no sub-agents installed', () => {

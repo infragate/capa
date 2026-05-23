@@ -3,6 +3,7 @@ import { ProjectsListPage } from './pages/ProjectsListPage';
 import { ProjectDetailPage } from './pages/ProjectDetailPage';
 import { IntegrationsPage } from './pages/IntegrationsPage';
 import { RegistriesPage } from './pages/RegistriesPage';
+import { RegistrySettingsPage } from './features/registries/admin/RegistrySettingsPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 
 export function App() {
@@ -14,6 +15,7 @@ export function App() {
         <Route path="/ui/project" element={<ProjectDetailPage />} />
         <Route path="/ui/integrations" element={<IntegrationsPage />} />
         <Route path="/ui/registries" element={<RegistriesPage />} />
+        <Route path="/ui/registries/settings" element={<RegistrySettingsPage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Routes>
     </BrowserRouter>

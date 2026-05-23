@@ -8,128 +8,141 @@ import { cleanAgentsFile, removeSubAgentInstructions } from '../utils/agents-fil
 import { cleanRules } from '../utils/rules-installer';
 import { getLockfilePath } from '../../shared/lockfile';
 import { resolveProvidersForClean } from '../../shared/providers/resolve';
+import { header, footer, info, warn, error, runTasks } from '../ui';
+import type { Task } from '../ui';
 
 export async function cleanCommand(): Promise<void> {
   const projectPath = process.cwd();
-  
-  // Detect capabilities file
+
+  header('Clean project');
+
   const capabilitiesFile = await detectCapabilitiesFile(projectPath);
   if (!capabilitiesFile) {
-    console.error('✗ No capabilities file found.');
+    error('No capabilities file found.');
     process.exit(1);
   }
-  
-  // Parse capabilities file to get providers list
+
   const capabilities = await parseCapabilitiesFile(
     capabilitiesFile.path,
-    capabilitiesFile.format
+    capabilitiesFile.format,
   );
-  
-  // Generate project ID
+
   const projectId = generateProjectId(projectPath);
-  console.log(`Project ID: ${projectId}`);
-  
-  // Initialize database
+  info(`Project ID: ${projectId}`);
+
   const settings = await loadSettings();
   const dbPath = getDatabasePath(settings);
   const db = new CapaDatabase(dbPath);
 
-  // Resolve providers (capabilities file > DB > empty)
   const providers = resolveProvidersForClean({
     capabilitiesProviders: capabilities.providers,
     db,
     projectId,
   });
   if (providers.length === 0) {
-    console.warn('\n⚠  No providers found. Skipping provider-specific cleanup.');
+    warn('No providers found. Skipping provider-specific cleanup.');
   }
-  
-  // Get managed files
+
   const managedFiles = db.getManagedFiles(projectId);
-  
-  if (managedFiles.length === 0) {
-    console.log('No files to clean.');
-  } else {
-    console.log('\n🧹 Cleaning managed files...');
-    
-    for (const filePath of managedFiles) {
-      if (existsSync(filePath)) {
-        try {
-          const stats = statSync(filePath);
-          
-          if (stats.isDirectory()) {
-            // Remove entire directory
-            rmSync(filePath, { recursive: true, force: true });
-            console.log(`  ✓ Removed directory ${filePath}`);
-          } else {
-            // Remove single file
-            rmSync(filePath);
-            console.log(`  ✓ Removed ${filePath}`);
-          }
-        } catch (error) {
-          console.error(`  ✗ Failed to remove ${filePath}:`, error);
+
+  // Collected from inside tasks; flushed after the spinner clears.
+  const deferredErrors: string[] = [];
+
+  const tasks: Task[] = [
+    {
+      title: 'Remove managed files',
+      task: async (_, task) => {
+        if (managedFiles.length === 0) {
+          task.skip('No files to clean.');
+          return;
         }
-      } else {
-        console.log(`  - Already removed: ${filePath}`);
-      }
-      
-      db.removeManagedFile(projectId, filePath);
-    }
+        const total = managedFiles.length;
+        for (let i = 0; i < total; i++) {
+          const filePath = managedFiles[i];
+          task.output = `[${i + 1}/${total}] ${filePath}`;
+          if (existsSync(filePath)) {
+            try {
+              const stats = statSync(filePath);
+              if (stats.isDirectory()) {
+                rmSync(filePath, { recursive: true, force: true });
+              } else {
+                rmSync(filePath);
+              }
+            } catch (err) {
+              deferredErrors.push(`Failed to remove ${filePath}: ${err}`);
+            }
+          }
+          db.removeManagedFile(projectId, filePath);
+        }
+        task.title = `Removed ${total} managed file${total === 1 ? '' : 's'}`;
+      },
+    },
+    {
+      // Sub-agent integrations write capa snippets independently of the top-level
+      // `agents:` block, so gate only on providers — not on `capabilities.agents`.
+      title: 'Clean agent instructions',
+      enabled: () => providers.length > 0,
+      task: async () => {
+        cleanAgentsFile(projectPath, providers);
+      },
+    },
+    {
+      title: 'Clean rules',
+      enabled: () => providers.length > 0,
+      task: async () => {
+        const ruleIds = (capabilities.rules ?? []).map((r) => r.id);
+        cleanRules(projectPath, providers, ruleIds);
+      },
+    },
+    {
+      title: 'Remove lockfile',
+      task: async () => {
+        const lockfilePath = getLockfilePath(projectPath);
+        if (existsSync(lockfilePath)) {
+          try {
+            rmSync(lockfilePath, { force: true });
+          } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            deferredErrors.push(`Failed to remove lockfile ${lockfilePath}: ${message}`);
+          }
+        }
+      },
+    },
+    {
+      title: 'Unregister sub-agents',
+      enabled: () => providers.length > 0 && db.getSubAgents(projectId).length > 0,
+      task: async (_, task) => {
+        const installedSubAgents = db.getSubAgents(projectId);
+        const total = installedSubAgents.length;
+        for (let i = 0; i < total; i++) {
+          const { agent_id } = installedSubAgents[i];
+          task.output = `[${i + 1}/${total}] ${agent_id}`;
+          await unregisterSubAgentMCPServer(projectPath, agent_id, providers);
+          removeSubAgentInstructions(projectPath, agent_id, providers);
+        }
+        task.title = `Unregistered ${total} sub-agent${total === 1 ? '' : 's'}`;
+      },
+    },
+    {
+      title: 'Unregister MCP server from clients',
+      enabled: () => providers.length > 0,
+      task: async () => {
+        await unregisterMCPServer(projectPath, projectId, providers);
+      },
+    },
+    {
+      title: 'Remove project data',
+      task: async () => {
+        db.deleteProject(projectId);
+      },
+    },
+  ];
+
+  try {
+    await runTasks(tasks);
+    for (const e of deferredErrors) error(e);
+    footer('Cleanup complete!');
+  } finally {
+    db.close();
   }
-  
-  // Clean up capa-managed snippets from agent instructions files (AGENTS.md and/or CLAUDE.md)
-  if (capabilities.agents) {
-    console.log('\n📝 Cleaning agent instructions files...');
-    cleanAgentsFile(projectPath, providers);
-  }
-
-  if (providers.length > 0) {
-    // Clean up capa-managed rules. We always run this, even when the
-    // capabilities file lists no rules — otherwise rule files / marker
-    // blocks installed by a previous run (and then removed or commented
-    // out from the config) would be left behind on disk.
-    //
-    // Rule files for directory-based providers are also tracked in the
-    // managed-files DB and get removed by the `managedFiles` loop above;
-    // this call additionally strips `<!-- capa:start:rule:* -->` blocks
-    // from instruction-folded providers (Claude Code, OpenCode, …).
-    console.log('\n📏 Cleaning rules...');
-    const ruleIds = (capabilities.rules ?? []).map((r) => r.id);
-    cleanRules(projectPath, providers, ruleIds);
-  }
-
-  // Remove the lockfile (it's generated by capa, not user-authored)
-  const lockfilePath = getLockfilePath(projectPath);
-  if (existsSync(lockfilePath)) {
-    try {
-      rmSync(lockfilePath, { force: true });
-      console.log(`\n🔒 Removed ${lockfilePath}`);
-    } catch (error: any) {
-      console.error(`  ✗ Failed to remove lockfile ${lockfilePath}: ${error.message}`);
-    }
-  }
-
-  if (providers.length > 0) {
-    // Unregister sub-agent MCP endpoints before removing the main server
-    const installedSubAgents = db.getSubAgents(projectId);
-    if (installedSubAgents.length > 0) {
-      console.log('\n🤖 Unregistering sub-agents...');
-      for (const { agent_id } of installedSubAgents) {
-        await unregisterSubAgentMCPServer(projectPath, agent_id, providers);
-        removeSubAgentInstructions(projectPath, agent_id, providers);
-      }
-    }
-
-    // Unregister main MCP server from client configurations
-    console.log('\n🔗 Unregistering MCP server from clients...');
-    await unregisterMCPServer(projectPath, projectId, providers);
-  }
-
-  // Delete all project data from the database
-  console.log('\n🗑️  Removing project data...');
-  db.deleteProject(projectId);
-  console.log('  ✓ Removed project configuration and metadata');
-
-  db.close();
-  console.log('\n✓ Cleanup complete!');
 }

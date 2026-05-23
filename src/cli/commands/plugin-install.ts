@@ -1,7 +1,7 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync, cpSync, statSync } from 'fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync, cpSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
-import type { Capabilities, Skill, MCPServer, SourcePlugin, ResolvedPluginInfo } from '../../types/capabilities';
+import type { Capabilities, Skill, MCPServer, SourcePlugin, ResolvedPluginInfo, OAuth2Config } from '../../types/capabilities';
 import type { UnifiedPluginManifest } from '../../types/plugin';
 import type { CapaDatabase } from '../../db/database';
 import type { AuthenticatedFetch } from '../../shared/authenticated-fetch';
@@ -13,6 +13,7 @@ import {
   resolvePluginServerDef,
 } from '../../shared/plugin-manifest';
 import { getProvider } from '../../shared/providers';
+import { getGitProvider } from '../../shared/git-providers/registry';
 import {
   loadBlockedPhrases,
   checkBlockedPhrases,
@@ -26,28 +27,11 @@ import {
 import type { GetSnapshotResult, CachePlatform } from '../../shared/cache';
 import type { LockfileBuilder } from '../../shared/lockfile';
 import type { LockPluginEntry } from '../../types/lockfile';
+import { copySkillTree } from '../../shared/skill-copy';
 
 /** Base under system temp for extracted plugin content (MCP cwd). Per-project so projects don't clash. */
 function getPluginsTempBase(projectId: string): string {
   return join(tmpdir(), 'capa-plugins', projectId);
-}
-
-/**
- * Copy a directory recursively (for environments where fs.cpSync may not exist).
- */
-function copyDirRecursive(src: string, dest: string): void {
-  mkdirSync(dest, { recursive: true });
-  const entries = readdirSync(src, { withFileTypes: true });
-  for (const e of entries) {
-    const srcPath = join(src, e.name);
-    const destPath = join(dest, e.name);
-    if (e.isDirectory()) {
-      copyDirRecursive(srcPath, destPath);
-    } else {
-      mkdirSync(resolve(destPath, '..'), { recursive: true });
-      writeFileSync(destPath, readFileSync(srcPath));
-    }
-  }
 }
 
 function copyPluginToStable(tempDir: string, pluginStablePath: string): void {
@@ -55,7 +39,7 @@ function copyPluginToStable(tempDir: string, pluginStablePath: string): void {
   try {
     cpSync(tempDir, pluginStablePath, { recursive: true });
   } catch {
-    copyDirRecursive(tempDir, pluginStablePath);
+    copySkillTree({ src: tempDir, dst: pluginStablePath });
   }
 }
 
@@ -72,20 +56,10 @@ function copySkillDirWithSecurity(
   allowedCharacters: string | null,
   pluginName?: string
 ): void {
-  mkdirSync(destSkillDir, { recursive: true });
-
-  function processEntry(relPath: string): void {
-    const srcPath = join(srcSkillDir, relPath);
-    const destPath = join(destSkillDir, relPath);
-    const stat = statSync(srcPath);
-
-    if (stat.isDirectory()) {
-      mkdirSync(destPath, { recursive: true });
-      for (const e of readdirSync(srcPath, { withFileTypes: true })) {
-        processEntry(join(relPath, e.name).replace(/\\/g, '/'));
-      }
-    } else {
-      mkdirSync(resolve(destPath, '..'), { recursive: true });
+  copySkillTree({
+    src: srcSkillDir,
+    dst: destSkillDir,
+    handleFile: ({ relPath, srcPath, destPath }) => {
       const filename = relPath.split(/[/\\]/).pop() ?? '';
 
       if (isTextFile(filename)) {
@@ -113,17 +87,19 @@ function copySkillDirWithSecurity(
       } else {
         writeFileSync(destPath, readFileSync(srcPath));
       }
-    }
-  }
-
-  for (const e of readdirSync(srcSkillDir, { withFileTypes: true })) {
-    processEntry(e.name);
-  }
+    },
+  });
 }
 
 export interface ResolvePluginsResult {
   mergedCapabilities: Capabilities;
   tempDirsToCleanup: string[];
+  /** Non-fatal diagnostics surfaced after the listr2 task tree completes (e.g.
+   * a per-client skill copy failed but the plugin itself resolved). Fatal
+   * problems (clone failed, manifest missing, copy failed) throw instead so
+   * the install task is marked as failed rather than silently skipping the
+   * plugin. */
+  warnings: string[];
 }
 
 /**
@@ -169,6 +145,7 @@ export async function resolvePlugins(
 
   const pluginsBase = getPluginsTempBase(projectId);
   const currentPluginIds = new Set<string>();
+  const warnings: string[] = [];
 
   const registeredServerIds = new Set(mergedServers.map(s => s.id));
 
@@ -183,13 +160,16 @@ export async function resolvePlugins(
   }
 
   for (const pluginRef of plugins) {
-    if (pluginRef.type !== 'github' && pluginRef.type !== 'gitlab') continue;
+    if (!getGitProvider(pluginRef.type)) continue;
     if (!pluginRef.def?.repo) continue;
 
     const validated = validatePluginDef(pluginRef);
     if ('error' in validated) {
-      console.warn(`  ⚠ Invalid plugin entry ${pluginRef.id ?? pluginRef.def.repo}: ${validated.error}`);
-      continue;
+      // The user explicitly listed this plugin — fail loudly rather than skip
+      // it silently and report "install succeeded" with the plugin missing.
+      throw new Error(
+        `Invalid plugin entry ${pluginRef.id ?? pluginRef.def.repo}: ${validated.error}`
+      );
     }
 
     const { platform, repoPath, subpath, search, version, ref } = validated;
@@ -214,8 +194,12 @@ export async function resolvePlugins(
         noCache,
       });
     } catch (err: any) {
-      console.error(`  ✗ Failed to clone plugin ${repoPath}: ${err.message}`);
-      continue;
+      // Surface auth / 404 / network failures from `explainGitError` so that
+      // disconnected git integrations and typo'd repo paths fail the install
+      // instead of being silently skipped.
+      throw new Error(
+        `Failed to clone plugin ${repoPath}: ${err.message}`
+      );
     }
 
     // Resolve the manifest root. Three modes:
@@ -233,12 +217,11 @@ export async function resolvePlugins(
           .filter(Boolean)
           .sort();
         const availableList = available.length > 0 ? available.join(', ') : 'none';
-        console.warn(
-          `  ⚠ Plugin "${search}" not found in ${repoPath}.\n` +
+        throw new Error(
+          `Plugin "${search}" not found in ${repoPath}.\n` +
           `    Available plugins: ${availableList}\n` +
           `    Tip: use \`subpath: <path>\` to pin an exact location, or @ to match either the directory name or the manifest's "name" field.`
         );
-        continue;
       }
       manifestRoot = located.entry.subpath
         ? join(snapshot.snapshotDir, located.entry.subpath)
@@ -248,14 +231,15 @@ export async function resolvePlugins(
     } else {
       manifestRoot = subpath ? join(snapshot.snapshotDir, subpath) : snapshot.snapshotDir;
       if (subpath && !existsSync(manifestRoot)) {
-        console.warn(`  ⚠ Plugin subpath not found: ${subpath} in ${repoPath}`);
-        continue;
+        throw new Error(`Plugin subpath not found: "${subpath}" in ${repoPath}`);
       }
       resolvedSubpath = subpath;
       manifest = detectAndParseManifest(manifestRoot, providers);
       if (!manifest) {
-        console.warn(`  ⚠ No plugin manifest found in ${repoPath}${subpath ? `/${subpath}` : ''}`);
-        continue;
+        throw new Error(
+          `No plugin manifest found in ${repoPath}${subpath ? `/${subpath}` : ''}.\n` +
+          `    Expected one of: .claude-plugin/plugin.json, .cursor-plugin/plugin.json.`
+        );
       }
     }
 
@@ -267,8 +251,9 @@ export async function resolvePlugins(
       if (existsSync(pluginStablePath)) rmSync(pluginStablePath, { recursive: true, force: true });
       copyPluginToStable(manifestRoot, pluginStablePath);
     } catch (err: any) {
-      console.error(`  ✗ Failed to copy plugin to ${pluginStablePath}: ${err.message}`);
-      continue;
+      throw new Error(
+        `Failed to copy plugin ${pluginInstallId} to ${pluginStablePath}: ${err.message}`
+      );
     }
 
     const lockPluginEntry: LockPluginEntry = {
@@ -287,9 +272,11 @@ export async function resolvePlugins(
     lockBuilder.upsertPlugin(lockPluginEntry);
 
     const refish = ref ?? version ?? 'HEAD';
+    const gp = getGitProvider(platform);
+    const host = gp?.host ?? `${platform}.com`;
     const repository = resolvedSubpath
-      ? `https://${platform}.com/${repoPath}/tree/${refish}/${resolvedSubpath}`
-      : `https://${platform}.com/${repoPath}`;
+      ? `https://${host}/${repoPath}/tree/${refish}/${resolvedSubpath}`
+      : `https://${host}/${repoPath}`;
     const sourcePlugin: SourcePlugin = {
       id: pluginInstallId,
       name: manifest.name,
@@ -342,7 +329,7 @@ export async function resolvePlugins(
             try {
               cpSync(srcSkillDir, destSkillDir, { recursive: true });
             } catch {
-              copyDirRecursive(srcSkillDir, destSkillDir);
+              copySkillTree({ src: srcSkillDir, dst: destSkillDir });
             }
           }
           db.addManagedFile(projectId, destSkillDir);
@@ -350,7 +337,9 @@ export async function resolvePlugins(
           if (err instanceof BlockedPhraseError) {
             throw err;
           }
-          console.warn(`  ⚠ Failed to install skill ${entry.id} for ${client}: ${err.message}`);
+          // Non-fatal: the skill may still install for other clients. Surfaced
+          // post-tree via the `warnings` array so the user sees it.
+          warnings.push(`Failed to install skill "${entry.id}" for ${client}: ${err.message}`);
         }
       }
 
@@ -380,7 +369,10 @@ export async function resolvePlugins(
       const serverId = config?.as ?? serverKey;
 
       if (registeredServerIds.has(serverId)) {
-        console.warn(`  ⚠ Plugin server id "${serverId}" collides with an existing server; skipping. Rename with \`servers.${serverKey}.as\` in the plugin entry.`);
+        warnings.push(
+          `Plugin server id "${serverId}" collides with an existing server; skipping. ` +
+          `Rename with \`servers.${serverKey}.as\` in the plugin entry.`
+        );
         continue;
       }
       registeredServerIds.add(serverId);
@@ -394,7 +386,7 @@ export async function resolvePlugins(
           def: {
             url: resolvedDef.url,
             headers: resolvedDef.headers,
-            oauth2: resolvedDef.oauth2,
+            oauth2: resolvedDef.oauth2 as OAuth2Config | undefined,
           },
           sourcePlugin,
           sourcePluginServerKey: serverKey,
@@ -424,7 +416,9 @@ export async function resolvePlugins(
           const available = manifestKeys.length > 0
             ? `Available servers: ${manifestKeys.join(', ')}`
             : 'The plugin manifest declares no MCP servers.';
-          console.warn(`  ⚠ Plugin "${pluginInstallId}": servers config key "${configKey}" does not match any server in the plugin manifest. ${available}`);
+          warnings.push(
+            `Plugin "${pluginInstallId}": servers config key "${configKey}" does not match any server in the plugin manifest. ${available}`
+          );
         }
       }
     }
@@ -444,7 +438,9 @@ export async function resolvePlugins(
         const toRemove = join(pluginsDirFull, d.name);
         try {
           rmSync(toRemove, { recursive: true, force: true });
-        } catch {}
+        } catch (err) {
+          console.warn(`Failed to clean up plugin directory: ${(err as Error).message}`);
+        }
       }
     }
   }
@@ -457,5 +453,5 @@ export async function resolvePlugins(
     resolvedPlugins,
   };
 
-  return { mergedCapabilities, tempDirsToCleanup: tempDirs };
+  return { mergedCapabilities, tempDirsToCleanup: tempDirs, warnings };
 }

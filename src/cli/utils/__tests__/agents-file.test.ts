@@ -43,12 +43,10 @@ describe('detectRepoCoordsFromRawUrl', () => {
     ).toEqual({ platform: 'github', repoString: 'owner/repo::AGENTS.md' });
   });
 
-  // GitHub's "Raw" button now generates URLs of the form
+  // GitHub's "Raw" button generates URLs of the form
   //   https://raw.githubusercontent.com/<owner>/<repo>/refs/heads/<branch>/<path>
-  // (and the equivalent `/refs/tags/<tag>/` form for tagged refs).
-  // Regression: previously the detector greedily took `refs` as the ref,
-  // turning `refs/heads/main/.../file.md` into a bogus filepath that broke
-  // the downstream `git clone` step with "Repository not accessible".
+  // (and the equivalent `/refs/tags/<tag>/` form for tagged refs). The detector
+  // must skip the `refs/heads/` (or `refs/tags/`) prefix when extracting the ref.
   it('parses a raw.githubusercontent.com URL with refs/heads/<branch>', () => {
     expect(
       detectRepoCoordsFromRawUrl(
@@ -87,9 +85,8 @@ describe('detectRepoCoordsFromRawUrl', () => {
     ).toEqual({ platform: 'github', repoString: 'owner/repo::AGENTS.md' });
   });
 
-  it('regression: nested filepath after refs/heads/<branch> survives intact', () => {
-    // The original bug report URL shape — make sure the path doesn't get
-    // split across the refs/heads/main boundary.
+  it('nested filepath after refs/heads/<branch> survives intact', () => {
+    // The full filepath must not get split across the refs/heads/main boundary.
     expect(
       detectRepoCoordsFromRawUrl(
         'https://raw.githubusercontent.com/owner/repo/refs/heads/main/examples/playwright-e2e-testing-automation.md'

@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { BookOpen, Wrench, Server } from 'lucide-react';
 import type { ResolvedPlugin, Skill, Tool, Server as ServerType } from '../../../types/api';
 import { SourceBadge } from '../../../components/common/ServerBadge';
+import { getProviderDisplayName } from '../../../lib/providers';
 
 import { FaGithub, FaGitlab } from 'react-icons/fa';
 
@@ -65,12 +66,7 @@ export function PluginsSection({ plugins, skills = [], tools = [], servers = [] 
       <div className="grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-3">
         {plugins.map((plugin) => {
           const isGitHub = (plugin.repository || '').includes('github.com');
-          const providerLabel =
-            plugin.provider === 'cursor'
-              ? 'Cursor'
-              : plugin.provider === 'claude'
-                ? 'Claude Code'
-                : plugin.provider || '';
+          const providerLabel = getProviderDisplayName(plugin.provider);
           const stats = statsMap[plugin.name];
 
           return (
