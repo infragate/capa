@@ -52,11 +52,9 @@ export class CommandToolExecutor {
       }
       
       this.logger.success('Tool initialized');
-      // Mark as initialized
       this.db.setToolInitialized(this.projectId, toolId, null);
     } else if (initState && initState.last_error) {
       this.logger.failure(`Tool initialization previously failed: ${initState.last_error}`);
-      // Tool initialization previously failed
       return {
         success: false,
         error: `Tool initialization previously failed: ${initState.last_error}`,

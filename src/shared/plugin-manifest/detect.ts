@@ -44,13 +44,10 @@ function getPluginManifestContainerDirs(): Set<string> {
  * `capabilities.providers`. Many real-world plugins (Slack, Atlassian, …)
  * ship both `.claude-plugin/plugin.json` and `.cursor-plugin/plugin.json`,
  * but only the Claude variant carries a complete OAuth2 block (clientId +
- * callbackPort). The Cursor variant typically omits the callback port,
- * which causes capa to fall back to its own /api/.../oauth/callback URL —
- * and auth servers reject that because the registered redirect URIs only
- * allow the loopback /callback form the Claude config describes.
- *
- * Picking Claude first means a dual-shipping plugin authenticates exactly
- * the same way it did before the plugin-manifest split.
+ * callbackPort). The Cursor variant typically omits the callback port and
+ * forces capa to fall back to its own /api/.../oauth/callback URL, which
+ * auth servers reject because the registered redirect URIs only allow the
+ * loopback /callback form the Claude config describes.
  *
  * Returns ordered list of (provider, manifestPath).
  */

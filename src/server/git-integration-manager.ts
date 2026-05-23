@@ -333,8 +333,7 @@ export class GitIntegrationManager {
   }
 
   /**
-   * Get access token for a platform (legacy method, kept for compatibility)
-   * Note: Now automatically handles token refresh
+   * Alias for `getAccessToken` (automatically refreshes when needed).
    */
   async getAccessTokenLegacy(platform: GitPlatform, host?: string): Promise<string | null> {
     return this.getAccessToken(platform, host);

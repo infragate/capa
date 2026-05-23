@@ -1,9 +1,4 @@
 // Provider registry — the single source of truth for all per-provider facts.
-//
-// Skill-path data (skillsDir, globalSkillsDir, detectInstalled) was originally
-// maintained in the vercel-labs/skills package (v1.3.7, commit a600598).
-// It is ported here verbatim so capa owns its own agent registry without an
-// external GitHub-pinned dependency.
 
 import { homedir } from 'os';
 import { join } from 'path';

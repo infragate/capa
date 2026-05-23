@@ -3,10 +3,9 @@ import { buildOAuthBridgeHtml, oauthBridgeResponse } from '../oauth-bridge';
 
 /**
  * The cloud OAuth provider redirects via GET with `?access_token=...` in the query
- * string. The local server must respond with an HTML+JS bridge that strips those
- * tokens from the URL bar and re-issues the callback as a POST + JSON body — the
- * spec-compliant ingress that #S3 hardened. The original #S3 implementation
- * rejected the GET callback with HTTP 405, which broke the cloud sign-in flow.
+ * string. The local server responds with an HTML+JS bridge that strips those
+ * tokens from the URL bar and re-issues the callback as a POST + JSON body, which
+ * is the spec-compliant ingress for token submission.
  */
 describe('git OAuth callback bridge', () => {
   describe('buildOAuthBridgeHtml', () => {

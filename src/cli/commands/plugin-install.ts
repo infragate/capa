@@ -165,9 +165,8 @@ export async function resolvePlugins(
 
     const validated = validatePluginDef(pluginRef);
     if ('error' in validated) {
-      // The user explicitly listed this plugin — refusing to fail when the
-      // entry itself is unparseable produces "install succeeded" with the
-      // plugin silently missing, which is exactly the bug we're fixing.
+      // The user explicitly listed this plugin — fail loudly rather than skip
+      // it silently and report "install succeeded" with the plugin missing.
       throw new Error(
         `Invalid plugin entry ${pluginRef.id ?? pluginRef.def.repo}: ${validated.error}`
       );
@@ -195,9 +194,9 @@ export async function resolvePlugins(
         noCache,
       });
     } catch (err: any) {
-      // Surfaces auth / 404 / network failures from `explainGitError`. Previously
-      // we logged-and-continued, which made disconnected git integrations and
-      // typo'd repo paths look like a successful install.
+      // Surface auth / 404 / network failures from `explainGitError` so that
+      // disconnected git integrations and typo'd repo paths fail the install
+      // instead of being silently skipped.
       throw new Error(
         `Failed to clone plugin ${repoPath}: ${err.message}`
       );
