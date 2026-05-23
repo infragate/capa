@@ -45,6 +45,15 @@ export const providers: Record<string, ProviderIntegration> = {
     globalSkillsDir: join(home, '.gemini/antigravity/skills'),
     detectInstalled: async () =>
       existsSync(join(process.cwd(), '.agent')) || existsSync(join(home, '.gemini/antigravity')),
+    // Antigravity IDE has no project-local MCP file; the CLI uses
+    // `.agents/mcp_config.json` with `serverUrl` (not `url`). Holding off
+    // until we either split into antigravity-cli or extend McpIntegration.
+    instructions: { filename: 'AGENTS.md' },
+    rules: {
+      dir: '.agents/rules',
+      extension: '.md',
+      frontmatter: 'none',
+    },
   },
   augment: {
     id: 'augment',
@@ -52,6 +61,13 @@ export const providers: Record<string, ProviderIntegration> = {
     skillsDir: '.augment/skills',
     globalSkillsDir: join(home, '.augment/skills'),
     detectInstalled: async () => existsSync(join(home, '.augment')),
+    // MCP is global-only (~/.augment/settings.json); no project-local file.
+    instructions: { filename: 'AGENTS.md' },
+    subagents: {
+      dir: '.augment/agents',
+      extension: '.md',
+      format: 'markdown-frontmatter',
+    },
   },
   'claude-code': {
     id: 'claude-code',
@@ -69,6 +85,12 @@ export const providers: Record<string, ProviderIntegration> = {
       defaultMcpFallbackPath: '.mcp.json',
     },
     instructions: { filename: 'CLAUDE.md' },
+    rules: {
+      dir: '.claude/rules',
+      extension: '.md',
+      frontmatter: 'yaml',
+      fieldMap: { appliesTo: 'paths' },
+    },
     subagents: {
       dir: '.claude/agents',
       extension: '.md',
@@ -99,6 +121,8 @@ export const providers: Record<string, ProviderIntegration> = {
     skillsDir: '.cline/skills',
     globalSkillsDir: join(home, '.cline/skills'),
     detectInstalled: async () => existsSync(join(home, '.cline')),
+    // MCP is global-only (~/.cline/mcp.json); no project-local file.
+    instructions: { filename: 'AGENTS.md' },
   },
   codebuddy: {
     id: 'codebuddy',
@@ -107,6 +131,18 @@ export const providers: Record<string, ProviderIntegration> = {
     globalSkillsDir: join(home, '.codebuddy/skills'),
     detectInstalled: async () =>
       existsSync(join(process.cwd(), '.codebuddy')) || existsSync(join(home, '.codebuddy')),
+    // `.mcp.json` is documented for the CodeBuddy CLI only, not the IDE.
+    mcp: {
+      configPath: '.mcp.json',
+      format: 'json',
+      serversKey: 'mcpServers',
+      serverKey: 'capa',
+      entryUrlKey: 'url',
+      supportsSubAgentEntries: true,
+    },
+    instructions: { filename: 'CODEBUDDY.md' },
+    // Skipping rules — CodeBuddy uses `.codebuddy/rules/<name>/RULE.mdc`
+    // (directory-per-rule), which doesn't match capa's flat file model.
   },
   codex: {
     id: 'codex',
@@ -151,6 +187,16 @@ export const providers: Record<string, ProviderIntegration> = {
     skillsDir: '.crush/skills',
     globalSkillsDir: join(home, '.config/crush/skills'),
     detectInstalled: async () => existsSync(join(home, '.config/crush')),
+    mcp: {
+      // Crush uses `mcp` (not `mcpServers`) at the top of `.crush.json`.
+      configPath: '.crush.json',
+      format: 'json',
+      serversKey: 'mcp',
+      serverKey: 'capa',
+      entryUrlKey: 'url',
+      supportsSubAgentEntries: true,
+    },
+    instructions: { filename: 'AGENTS.md' },
   },
   cursor: {
     id: 'cursor',
@@ -190,6 +236,23 @@ export const providers: Record<string, ProviderIntegration> = {
     skillsDir: '.factory/skills',
     globalSkillsDir: join(home, '.factory/skills'),
     detectInstalled: async () => existsSync(join(home, '.factory')),
+    mcp: {
+      configPath: '.factory/mcp.json',
+      format: 'json',
+      serversKey: 'mcpServers',
+      serverKey: 'capa',
+      entryUrlKey: 'url',
+      supportsSubAgentEntries: true,
+    },
+    instructions: { filename: 'AGENTS.md' },
+    subagents: {
+      dir: '.factory/droids',
+      extension: '.md',
+      format: 'markdown-frontmatter',
+      fields: { model: 'inherit' },
+    },
+    // Droid documents `.factory-plugin/plugin.json` plugin manifests, but
+    // capa has no parser for that schema. See the note on `augment`.
   },
   'gemini-cli': {
     id: 'gemini-cli',
@@ -197,6 +260,23 @@ export const providers: Record<string, ProviderIntegration> = {
     skillsDir: '.agents/skills',
     globalSkillsDir: join(home, '.gemini/skills'),
     detectInstalled: async () => existsSync(join(home, '.gemini')),
+    mcp: {
+      // Gemini settings is a regular JSON object with a top-level `mcpServers`.
+      // We register the capa endpoint as `httpUrl` (streamable HTTP), not
+      // `url` (SSE).
+      configPath: '.gemini/settings.json',
+      format: 'json',
+      serversKey: 'mcpServers',
+      serverKey: 'capa',
+      entryUrlKey: 'httpUrl',
+      supportsSubAgentEntries: true,
+    },
+    instructions: { filename: 'AGENTS.md' },
+    subagents: {
+      dir: '.gemini/agents',
+      extension: '.md',
+      format: 'markdown-frontmatter',
+    },
   },
   'github-copilot': {
     id: 'github-copilot',
@@ -232,6 +312,8 @@ export const providers: Record<string, ProviderIntegration> = {
     skillsDir: '.goose/skills',
     globalSkillsDir: join(configHome, 'goose/skills'),
     detectInstalled: async () => existsSync(join(configHome, 'goose')),
+    // MCP is global-only (~/.config/goose/config.yaml); no project-local file.
+    instructions: { filename: 'AGENTS.md' },
   },
   junie: {
     id: 'junie',
@@ -239,6 +321,20 @@ export const providers: Record<string, ProviderIntegration> = {
     skillsDir: '.junie/skills',
     globalSkillsDir: join(home, '.junie/skills'),
     detectInstalled: async () => existsSync(join(home, '.junie')),
+    mcp: {
+      configPath: '.junie/mcp/mcp.json',
+      format: 'json',
+      serversKey: 'mcpServers',
+      serverKey: 'capa',
+      entryUrlKey: 'url',
+      supportsSubAgentEntries: true,
+    },
+    instructions: { filename: 'AGENTS.md' },
+    subagents: {
+      dir: '.junie/agents',
+      extension: '.md',
+      format: 'markdown-frontmatter',
+    },
   },
   'iflow-cli': {
     id: 'iflow-cli',
@@ -246,6 +342,15 @@ export const providers: Record<string, ProviderIntegration> = {
     skillsDir: '.iflow/skills',
     globalSkillsDir: join(home, '.iflow/skills'),
     detectInstalled: async () => existsSync(join(home, '.iflow')),
+    mcp: {
+      configPath: '.iflow/settings.json',
+      format: 'json',
+      serversKey: 'mcpServers',
+      serverKey: 'capa',
+      entryUrlKey: 'url',
+      supportsSubAgentEntries: true,
+    },
+    instructions: { filename: 'AGENTS.md' },
   },
   kilo: {
     id: 'kilo',
@@ -253,6 +358,27 @@ export const providers: Record<string, ProviderIntegration> = {
     skillsDir: '.kilocode/skills',
     globalSkillsDir: join(home, '.kilocode/skills'),
     detectInstalled: async () => existsSync(join(home, '.kilocode')),
+    // Kilo is mid-rename `.kilocode/` → `.kilo/`. The legacy MCP path is
+    // still loaded by current Kilo releases.
+    mcp: {
+      configPath: '.kilocode/mcp.json',
+      format: 'json',
+      serversKey: 'mcpServers',
+      serverKey: 'capa',
+      entryUrlKey: 'url',
+      supportsSubAgentEntries: true,
+    },
+    instructions: { filename: 'AGENTS.md' },
+    rules: {
+      dir: '.kilo/rules',
+      extension: '.md',
+      frontmatter: 'none',
+    },
+    subagents: {
+      dir: '.kilo/agent',
+      extension: '.md',
+      format: 'markdown-frontmatter',
+    },
   },
   'kimi-cli': {
     id: 'kimi-cli',
@@ -260,6 +386,8 @@ export const providers: Record<string, ProviderIntegration> = {
     skillsDir: '.agents/skills',
     globalSkillsDir: join(home, '.config/agents/skills'),
     detectInstalled: async () => existsSync(join(home, '.kimi')),
+    // MCP is global-only (~/.kimi/mcp.json); no project-local file.
+    instructions: { filename: 'AGENTS.md' },
   },
   'kiro-cli': {
     id: 'kiro-cli',
@@ -267,6 +395,24 @@ export const providers: Record<string, ProviderIntegration> = {
     skillsDir: '.kiro/skills',
     globalSkillsDir: join(home, '.kiro/skills'),
     detectInstalled: async () => existsSync(join(home, '.kiro')),
+    mcp: {
+      configPath: '.kiro/settings/mcp.json',
+      format: 'json',
+      serversKey: 'mcpServers',
+      serverKey: 'capa',
+      entryUrlKey: 'url',
+      supportsSubAgentEntries: true,
+    },
+    instructions: { filename: 'AGENTS.md' },
+    rules: {
+      // Kiro calls these "steering" files. The inclusion-mode frontmatter
+      // field name (`inclusion`?) is not 100% confirmed from public docs;
+      // we emit the rules without frontmatter and let users add per-file
+      // inclusion manually until verified.
+      dir: '.kiro/steering',
+      extension: '.md',
+      frontmatter: 'none',
+    },
   },
   kode: {
     id: 'kode',
@@ -274,6 +420,26 @@ export const providers: Record<string, ProviderIntegration> = {
     skillsDir: '.kode/skills',
     globalSkillsDir: join(home, '.kode/skills'),
     detectInstalled: async () => existsSync(join(home, '.kode')),
+    mcp: {
+      configPath: '.mcp.json',
+      format: 'json',
+      serversKey: 'mcpServers',
+      serverKey: 'capa',
+      entryUrlKey: 'url',
+      supportsSubAgentEntries: true,
+    },
+    instructions: { filename: 'AGENTS.md' },
+    subagents: {
+      dir: '.kode/agents',
+      extension: '.md',
+      format: 'markdown-frontmatter',
+    },
+    // Kode plugins live at `.kode-plugin/plugin.json` (with a legacy
+    // `.claude-plugin/` fallback in some repos). The new schema isn't
+    // covered by capa's Claude or Cursor parsers, so we don't declare Kode
+    // as a plugin source yet. Plugins shipping the legacy
+    // `.claude-plugin/plugin.json` are already discoverable via the
+    // claude-code entry.
   },
   mcpjam: {
     id: 'mcpjam',
@@ -288,6 +454,10 @@ export const providers: Record<string, ProviderIntegration> = {
     skillsDir: '.vibe/skills',
     globalSkillsDir: join(home, '.vibe/skills'),
     detectInstalled: async () => existsSync(join(home, '.vibe')),
+    // MCP lives in `.vibe/config.toml` as TOML array-of-tables
+    // (`[[mcp_servers]]`), which doesn't fit the current
+    // `serversKey: <map>` model — held until McpIntegration supports it.
+    instructions: { filename: 'AGENTS.md' },
   },
   mux: {
     id: 'mux',
@@ -324,6 +494,8 @@ export const providers: Record<string, ProviderIntegration> = {
     skillsDir: '.openhands/skills',
     globalSkillsDir: join(home, '.openhands/skills'),
     detectInstalled: async () => existsSync(join(home, '.openhands')),
+    // MCP is global-only (~/.openhands/mcp.json); no project-local file.
+    instructions: { filename: 'AGENTS.md' },
   },
   pi: {
     id: 'pi',
@@ -331,6 +503,8 @@ export const providers: Record<string, ProviderIntegration> = {
     skillsDir: '.pi/skills',
     globalSkillsDir: join(home, '.pi/agent/skills'),
     detectInstalled: async () => existsSync(join(home, '.pi/agent')),
+    // Core Pi has no project-local MCP; community extensions add one.
+    instructions: { filename: 'AGENTS.md' },
   },
   qoder: {
     id: 'qoder',
@@ -338,6 +512,21 @@ export const providers: Record<string, ProviderIntegration> = {
     skillsDir: '.qoder/skills',
     globalSkillsDir: join(home, '.qoder/skills'),
     detectInstalled: async () => existsSync(join(home, '.qoder')),
+    // MCP servers are managed via the IDE UI; no project-local file.
+    instructions: { filename: 'AGENTS.md' },
+    rules: {
+      // Per-rule behavior (always/specific-files/model-decision/manual) is
+      // selected via the Qoder IDE, not YAML frontmatter, so we emit plain
+      // markdown rule files.
+      dir: '.qoder/rules',
+      extension: '.md',
+      frontmatter: 'none',
+    },
+    subagents: {
+      dir: '.qoder/agents',
+      extension: '.md',
+      format: 'markdown-frontmatter',
+    },
   },
   'qwen-code': {
     id: 'qwen-code',
@@ -345,6 +534,20 @@ export const providers: Record<string, ProviderIntegration> = {
     skillsDir: '.qwen/skills',
     globalSkillsDir: join(home, '.qwen/skills'),
     detectInstalled: async () => existsSync(join(home, '.qwen')),
+    mcp: {
+      configPath: '.qwen/settings.json',
+      format: 'json',
+      serversKey: 'mcpServers',
+      serverKey: 'capa',
+      entryUrlKey: 'url',
+      supportsSubAgentEntries: true,
+    },
+    instructions: { filename: 'AGENTS.md' },
+    subagents: {
+      dir: '.qwen/agents',
+      extension: '.md',
+      format: 'markdown-frontmatter',
+    },
   },
   replit: {
     id: 'replit',
@@ -353,6 +556,9 @@ export const providers: Record<string, ProviderIntegration> = {
     globalSkillsDir: join(configHome, 'agents/skills'),
     showInUniversalList: false,
     detectInstalled: async () => existsSync(join(process.cwd(), '.agents')),
+    // Replit Agent reads `replit.md` only (not AGENTS.md). MCP is added
+    // through the Integrations page (per-account, not per-project).
+    instructions: { filename: 'replit.md' },
   },
   roo: {
     id: 'roo',
@@ -375,6 +581,22 @@ export const providers: Record<string, ProviderIntegration> = {
     skillsDir: '.trae/skills',
     globalSkillsDir: join(home, '.trae/skills'),
     detectInstalled: async () => existsSync(join(home, '.trae')),
+    // Trae reads `.trae/mcp.json` only when the user toggles
+    // Settings → Agents → Read project MCP config.
+    mcp: {
+      configPath: '.trae/mcp.json',
+      format: 'json',
+      serversKey: 'mcpServers',
+      serverKey: 'capa',
+      entryUrlKey: 'url',
+      supportsSubAgentEntries: true,
+    },
+    instructions: { filename: 'AGENTS.md' },
+    rules: {
+      dir: '.trae/rules',
+      extension: '.md',
+      frontmatter: 'none',
+    },
   },
   'trae-cn': {
     id: 'trae-cn',
@@ -382,6 +604,20 @@ export const providers: Record<string, ProviderIntegration> = {
     skillsDir: '.trae/skills',
     globalSkillsDir: join(home, '.trae-cn/skills'),
     detectInstalled: async () => existsSync(join(home, '.trae-cn')),
+    mcp: {
+      configPath: '.trae/mcp.json',
+      format: 'json',
+      serversKey: 'mcpServers',
+      serverKey: 'capa',
+      entryUrlKey: 'url',
+      supportsSubAgentEntries: true,
+    },
+    instructions: { filename: 'AGENTS.md' },
+    rules: {
+      dir: '.trae/rules',
+      extension: '.md',
+      frontmatter: 'none',
+    },
   },
   windsurf: {
     id: 'windsurf',
@@ -414,6 +650,16 @@ export const providers: Record<string, ProviderIntegration> = {
     skillsDir: '.neovate/skills',
     globalSkillsDir: join(home, '.neovate/skills'),
     detectInstalled: async () => existsSync(join(home, '.neovate')),
+    mcp: {
+      configPath: '.neovate/config.json',
+      format: 'json',
+      serversKey: 'mcpServers',
+      serverKey: 'capa',
+      entryUrlKey: 'url',
+      supportsSubAgentEntries: true,
+    },
+    // No project-root instructions file documented for Neovate.
+    // Sub-agents are registered through TypeScript plugin code, not files.
   },
   pochi: {
     id: 'pochi',
@@ -421,6 +667,22 @@ export const providers: Record<string, ProviderIntegration> = {
     skillsDir: '.pochi/skills',
     globalSkillsDir: join(home, '.pochi/skills'),
     detectInstalled: async () => existsSync(join(home, '.pochi')),
+    mcp: {
+      // `.pochi/config.jsonc` is JSONC; capa writes vanilla JSON which
+      // JSONC parses fine. Top-level key is `mcp`, not `mcpServers`.
+      configPath: '.pochi/config.jsonc',
+      format: 'json',
+      serversKey: 'mcp',
+      serverKey: 'capa',
+      entryUrlKey: 'url',
+      supportsSubAgentEntries: true,
+    },
+    instructions: { filename: 'README.pochi.md' },
+    subagents: {
+      dir: '.pochi/agents',
+      extension: '.md',
+      format: 'markdown-frontmatter',
+    },
   },
   adal: {
     id: 'adal',
@@ -428,5 +690,7 @@ export const providers: Record<string, ProviderIntegration> = {
     skillsDir: '.adal/skills',
     globalSkillsDir: join(home, '.adal/skills'),
     detectInstalled: async () => existsSync(join(home, '.adal')),
+    // MCP is CLI-managed (`/mcp add` at runtime); no project-local file.
+    instructions: { filename: 'AGENTS.md' },
   },
 };
