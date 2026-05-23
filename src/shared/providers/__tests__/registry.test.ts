@@ -169,9 +169,13 @@ describe('Claude Code pilot integration', () => {
     expect(claude.instructions!.filename).toBe('CLAUDE.md');
   });
 
-  it('has no rules integration', () => {
+  it('has rules integration (.claude/rules/*.md with paths frontmatter)', () => {
     const claude = getProvider('claude-code')!;
-    expect(claude.rules).toBeUndefined();
+    expect(claude.rules).toBeDefined();
+    expect(claude.rules!.dir).toBe('.claude/rules');
+    expect(claude.rules!.extension).toBe('.md');
+    expect(claude.rules!.frontmatter).toBe('yaml');
+    expect(claude.rules!.fieldMap).toEqual({ appliesTo: 'paths' });
   });
 
   it('has subagents integration (.claude/agents/*.md)', () => {
@@ -807,4 +811,202 @@ describe('Windsurf rules frontmatter with alwaysApplyValues', () => {
     });
     expect(fm.trigger).toBe('model_decision');
   });
+});
+
+// ---------------------------------------------------------------------------
+// Expanded provider integrations (parameterised)
+//
+// These cover the long tail of providers we picked up from the docs research
+// round. Each entry only asserts on fields that were specifically wired up —
+// missing keys mean "not declared on this provider".
+// ---------------------------------------------------------------------------
+
+interface ExpectedIntegration {
+  mcp?: {
+    configPath: string;
+    format: 'json' | 'toml';
+    serversKey: string;
+    entryUrlKey: string;
+    supportsSubAgentEntries?: boolean;
+  };
+  instructions?: string;
+  rules?: {
+    dir: string;
+    extension: string;
+    frontmatter: 'yaml' | 'none';
+    fieldMap?: Record<string, unknown>;
+  };
+  subagents?: {
+    dir: string;
+    extension: string;
+    format: 'markdown-frontmatter' | 'toml';
+  };
+  plugin?: { manifestPaths: string[]; providerId: string };
+}
+
+const expandedIntegrations: Record<string, ExpectedIntegration> = {
+  // Tier 1 — full project-local integrations
+  crush: {
+    mcp: { configPath: '.crush.json', format: 'json', serversKey: 'mcp', entryUrlKey: 'url' },
+    instructions: 'AGENTS.md',
+  },
+  droid: {
+    mcp: { configPath: '.factory/mcp.json', format: 'json', serversKey: 'mcpServers', entryUrlKey: 'url' },
+    instructions: 'AGENTS.md',
+    subagents: { dir: '.factory/droids', extension: '.md', format: 'markdown-frontmatter' },
+    // Plugin manifest format (`.factory-plugin/plugin.json`) is documented but
+    // not yet wired up to a capa parser — see registry comment.
+  },
+  'gemini-cli': {
+    mcp: { configPath: '.gemini/settings.json', format: 'json', serversKey: 'mcpServers', entryUrlKey: 'httpUrl' },
+    instructions: 'AGENTS.md',
+    subagents: { dir: '.gemini/agents', extension: '.md', format: 'markdown-frontmatter' },
+  },
+  junie: {
+    mcp: { configPath: '.junie/mcp/mcp.json', format: 'json', serversKey: 'mcpServers', entryUrlKey: 'url' },
+    instructions: 'AGENTS.md',
+    subagents: { dir: '.junie/agents', extension: '.md', format: 'markdown-frontmatter' },
+  },
+  'iflow-cli': {
+    mcp: { configPath: '.iflow/settings.json', format: 'json', serversKey: 'mcpServers', entryUrlKey: 'url' },
+    instructions: 'AGENTS.md',
+  },
+  kilo: {
+    mcp: { configPath: '.kilocode/mcp.json', format: 'json', serversKey: 'mcpServers', entryUrlKey: 'url' },
+    instructions: 'AGENTS.md',
+    rules: { dir: '.kilo/rules', extension: '.md', frontmatter: 'none' },
+    subagents: { dir: '.kilo/agent', extension: '.md', format: 'markdown-frontmatter' },
+  },
+  'kiro-cli': {
+    mcp: { configPath: '.kiro/settings/mcp.json', format: 'json', serversKey: 'mcpServers', entryUrlKey: 'url' },
+    instructions: 'AGENTS.md',
+    rules: { dir: '.kiro/steering', extension: '.md', frontmatter: 'none' },
+  },
+  kode: {
+    mcp: { configPath: '.mcp.json', format: 'json', serversKey: 'mcpServers', entryUrlKey: 'url' },
+    instructions: 'AGENTS.md',
+    subagents: { dir: '.kode/agents', extension: '.md', format: 'markdown-frontmatter' },
+    // `.kode-plugin/plugin.json` is the new manifest path; no capa parser yet.
+  },
+  neovate: {
+    mcp: { configPath: '.neovate/config.json', format: 'json', serversKey: 'mcpServers', entryUrlKey: 'url' },
+  },
+  pochi: {
+    mcp: { configPath: '.pochi/config.jsonc', format: 'json', serversKey: 'mcp', entryUrlKey: 'url' },
+    instructions: 'README.pochi.md',
+    subagents: { dir: '.pochi/agents', extension: '.md', format: 'markdown-frontmatter' },
+  },
+  qoder: {
+    instructions: 'AGENTS.md',
+    rules: { dir: '.qoder/rules', extension: '.md', frontmatter: 'none' },
+    subagents: { dir: '.qoder/agents', extension: '.md', format: 'markdown-frontmatter' },
+  },
+  'qwen-code': {
+    mcp: { configPath: '.qwen/settings.json', format: 'json', serversKey: 'mcpServers', entryUrlKey: 'url' },
+    instructions: 'AGENTS.md',
+    subagents: { dir: '.qwen/agents', extension: '.md', format: 'markdown-frontmatter' },
+  },
+  trae: {
+    mcp: { configPath: '.trae/mcp.json', format: 'json', serversKey: 'mcpServers', entryUrlKey: 'url' },
+    instructions: 'AGENTS.md',
+    rules: { dir: '.trae/rules', extension: '.md', frontmatter: 'none' },
+  },
+  'trae-cn': {
+    mcp: { configPath: '.trae/mcp.json', format: 'json', serversKey: 'mcpServers', entryUrlKey: 'url' },
+    instructions: 'AGENTS.md',
+    rules: { dir: '.trae/rules', extension: '.md', frontmatter: 'none' },
+  },
+  codebuddy: {
+    mcp: { configPath: '.mcp.json', format: 'json', serversKey: 'mcpServers', entryUrlKey: 'url' },
+    instructions: 'CODEBUDDY.md',
+  },
+
+  // Tier 2 — instructions-only or partial
+  adal: { instructions: 'AGENTS.md' },
+  antigravity: {
+    instructions: 'AGENTS.md',
+    rules: { dir: '.agents/rules', extension: '.md', frontmatter: 'none' },
+  },
+  augment: {
+    instructions: 'AGENTS.md',
+    subagents: { dir: '.augment/agents', extension: '.md', format: 'markdown-frontmatter' },
+    // `.augment-plugin/plugin.json` exists but the schema is unverified.
+  },
+  cline: { instructions: 'AGENTS.md' },
+  goose: { instructions: 'AGENTS.md' },
+  'kimi-cli': { instructions: 'AGENTS.md' },
+  'mistral-vibe': { instructions: 'AGENTS.md' },
+  openhands: { instructions: 'AGENTS.md' },
+  pi: { instructions: 'AGENTS.md' },
+  replit: { instructions: 'replit.md' },
+};
+
+describe('Plugin manifest declarations are gated on parser support', () => {
+  // capa currently only ships parsers for the Claude and Cursor plugin
+  // formats (see src/shared/plugin-manifest/detect.ts). Until a provider
+  // either reuses one of those schemas via `pluginProviderId` or wires its
+  // own `parsePluginManifest`, it should NOT declare manifest paths —
+  // otherwise plugin resolution silently no-ops.
+  for (const id of ['augment', 'droid', 'kode'] as const) {
+    it(`${id} does not declare pluginManifestPaths`, () => {
+      const p = getProvider(id)!;
+      expect(p.pluginManifestPaths).toBeUndefined();
+      expect(p.pluginProviderId).toBeUndefined();
+    });
+  }
+});
+
+describe('Expanded provider integrations', () => {
+  for (const [id, exp] of Object.entries(expandedIntegrations)) {
+    describe(id, () => {
+      const provider = getProvider(id);
+
+      it('is registered', () => {
+        expect(provider).toBeDefined();
+      });
+
+      if (exp.mcp) {
+        it('has expected MCP integration', () => {
+          expect(provider!.mcp).toBeDefined();
+          expect(provider!.mcp!.configPath).toBe(exp.mcp!.configPath);
+          expect(provider!.mcp!.format).toBe(exp.mcp!.format);
+          expect(provider!.mcp!.serversKey).toBe(exp.mcp!.serversKey);
+          expect(provider!.mcp!.entryUrlKey).toBe(exp.mcp!.entryUrlKey);
+          expect(provider!.mcp!.serverKey).toBe('capa');
+        });
+      }
+
+      if (exp.instructions) {
+        it(`has instructions filename ${exp.instructions}`, () => {
+          expect(provider!.instructions).toBeDefined();
+          expect(provider!.instructions!.filename).toBe(exp.instructions);
+        });
+      }
+
+      if (exp.rules) {
+        it('has expected rules integration', () => {
+          expect(provider!.rules).toBeDefined();
+          expect(provider!.rules!.dir).toBe(exp.rules!.dir);
+          expect(provider!.rules!.extension).toBe(exp.rules!.extension);
+          expect(provider!.rules!.frontmatter).toBe(exp.rules!.frontmatter);
+        });
+      }
+
+      if (exp.subagents) {
+        it('has expected sub-agents integration', () => {
+          expect(provider!.subagents).toBeDefined();
+          expect(provider!.subagents!.dir).toBe(exp.subagents!.dir);
+          expect(provider!.subagents!.extension).toBe(exp.subagents!.extension);
+          expect(provider!.subagents!.format).toBe(exp.subagents!.format);
+        });
+      }
+
+      if (exp.plugin) {
+        it('has expected plugin manifest path', () => {
+          expect(provider!.pluginManifestPaths).toEqual(exp.plugin!.manifestPaths);
+          expect(provider!.pluginProviderId).toBe(exp.plugin!.providerId);
+        });
+      }
+    });
+  }
 });
