@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { parseEnvFile } from '../env-parser';
-import { writeFileSync, unlinkSync, mkdirSync } from 'fs';
+import { writeFileSync, mkdtempSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
@@ -9,16 +9,13 @@ describe('env-parser', () => {
   let testEnvFile: string;
 
   beforeEach(() => {
-    // Create a temporary directory for test files
-    testDir = join(tmpdir(), `capa-test-${Date.now()}`);
-    mkdirSync(testDir, { recursive: true });
+    testDir = mkdtempSync(join(tmpdir(), 'capa-test-'));
     testEnvFile = join(testDir, '.env.test');
   });
 
   afterEach(() => {
-    // Clean up test files
     try {
-      unlinkSync(testEnvFile);
+      rmSync(testDir, { recursive: true, force: true });
     } catch {}
   });
 

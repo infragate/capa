@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'bun:test';
-import { writeFileSync, mkdirSync, rmSync, existsSync } from 'fs';
+import { writeFileSync, mkdirSync, mkdtempSync, rmSync, existsSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import {
@@ -18,8 +18,7 @@ describe('skill-security', () => {
   let capabilitiesPath: string;
 
   beforeAll(() => {
-    tempDir = join(tmpdir(), `capa-skill-security-test-${Date.now()}`);
-    mkdirSync(tempDir, { recursive: true });
+    tempDir = mkdtempSync(join(tmpdir(), 'capa-skill-security-test-'));
     capabilitiesPath = join(tempDir, 'capabilities.json');
     writeFileSync(capabilitiesPath, '{}', 'utf-8');
   });

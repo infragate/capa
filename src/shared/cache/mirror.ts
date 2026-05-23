@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync } from 'fs';
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import { promisify } from 'util';
 import type { AuthenticatedFetch } from '../authenticated-fetch';
 import { validateRepoPath } from './validate';
@@ -9,7 +9,13 @@ import {
   getRepoMirrorDir,
 } from './paths';
 
-const execAsync = promisify(exec);
+// Argv-array form of execFile (no shell interpretation) so user-controlled
+// repo paths, refs, and URLs can never inject shell metacharacters.
+const execFileAsync = promisify(execFile);
+
+async function git(args: string[]): Promise<{ stdout: string; stderr: string }> {
+  return execFileAsync('git', args);
+}
 
 /**
  * Build the authenticated git URL for cloning, embedding an OAuth token when
@@ -51,7 +57,7 @@ export async function ensureMirrorClone(
   }
   mkdirSync(getRepoCacheDir(platform, repoPath), { recursive: true });
   const url = repoUrl ?? buildAuthenticatedRepoUrl(platform, repoPath, authFetch);
-  await execAsync(`git clone --mirror "${url}" "${mirrorDir}"`);
+  await git(['clone', '--mirror', url, mirrorDir]);
   return mirrorDir;
 }
 
@@ -60,7 +66,7 @@ export async function ensureMirrorClone(
  * version/ref isn't yet present in the mirror.
  */
 export async function fetchMirror(mirrorDir: string): Promise<void> {
-  await execAsync(`git -C "${mirrorDir}" remote update --prune`);
+  await git(['-C', mirrorDir, 'remote', 'update', '--prune']);
 }
 
 /**
@@ -72,9 +78,13 @@ async function tryResolveRefInMirror(
   ref: string
 ): Promise<string | null> {
   try {
-    const { stdout } = await execAsync(
-      `git -C "${mirrorDir}" rev-parse --verify "${ref}^{commit}"`
-    );
+    const { stdout } = await git([
+      '-C',
+      mirrorDir,
+      'rev-parse',
+      '--verify',
+      `${ref}^{commit}`,
+    ]);
     const sha = stdout.trim();
     return /^[a-f0-9]{40}$/i.test(sha) ? sha : null;
   } catch {
@@ -87,9 +97,7 @@ async function tryResolveRefInMirror(
  * are no version-shaped tags.
  */
 async function findLatestVersionTag(mirrorDir: string): Promise<string | null> {
-  const { stdout } = await execAsync(
-    `git -C "${mirrorDir}" tag --list`
-  );
+  const { stdout } = await git(['-C', mirrorDir, 'tag', '--list']);
   const tags = stdout.trim().split('\n').filter(Boolean);
   const versionTags = tags.filter((t) => /^v?\d+\.\d+\.\d+$/.test(t));
   if (versionTags.length === 0) return null;
