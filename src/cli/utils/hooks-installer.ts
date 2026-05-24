@@ -320,6 +320,10 @@ interface ResolvedHookBody {
 }
 
 async function resolveHookBody(hook: Hook, opts: InstallHooksOptions): Promise<ResolvedHookBody> {
+  // Prompt hooks are inlined into the provider entry, never written to
+  // ~/.capa/hooks/<projectId>/. Only command-type bodies are materialised.
+  const isCommand = (hook.type ?? 'command') === 'command';
+
   if (!hook.source) {
     return { text: hook.command ?? hook.prompt ?? '', needsMaterialisation: false };
   }
@@ -381,7 +385,7 @@ async function resolveHookBody(hook: Hook, opts: InstallHooksOptions): Promise<R
     }
   }
 
-  return { text, needsMaterialisation: true, lockEntry };
+  return { text, needsMaterialisation: isCommand, lockEntry };
 }
 
 /**

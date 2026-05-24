@@ -95,10 +95,11 @@ included for completeness but lack any project-local write paths.
 Hooks are intentionally absent from the matrix above because only a small
 slice of providers wire them up. The four providers below have a `hooks`
 integration in `registry.ts` today — capa edits the file in-place using
-`name: capa:<id>` (or `id: <hook-id>` for TOML) tags so it can update or
-remove its own entries without touching user-authored ones. Every other
-provider triggers a one-shot warning and skips; `capa install` never
-fails because of an unsupported hook target.
+the `name = "capa:<id>"` tag (TOML providers like Codex use the same
+field — appended as an opaque key Codex's deserialiser ignores) so it
+can update or remove its own entries without touching user-authored
+ones. Every other provider triggers a one-shot warning and skips; `capa
+install` never fails because of an unsupported hook target.
 
 | Provider | Config file | Shape |
 | --- | --- | --- |

@@ -82,11 +82,19 @@ function idFromNameTag(tag: string): string {
  *  - prefix only            -> use prefix
  *  - user matcher only      -> use user matcher (no canonical scope to fold in)
  *  - both                   -> union them as a regex alternation
- *                              `(prefix)|(userMatcher)` so the canonical
- *                              tool family is still covered while the user's
- *                              extra tool names also fire. The user can bypass
- *                              this fold-in by switching to the provider-scoped
- *                              event form (e.g. `on: claude-code:PreToolUse`).
+ *                              `(?:prefix)|(?:userMatcher)` so the
+ *                              canonical tool family is still covered while
+ *                              the user's extra tool names also fire. Each
+ *                              side is wrapped in a non-capturing group so
+ *                              alternations or anchors inside either the
+ *                              registry prefix (e.g. `Edit|MultiEdit|Write`)
+ *                              or a user matcher compose as a top-level
+ *                              alternation, and so we don't introduce new
+ *                              numbered capture groups that could collide
+ *                              with backreferences in the user matcher.
+ *                              The user can bypass this fold-in by switching
+ *                              to the provider-scoped event form (e.g.
+ *                              `on: claude-code:PreToolUse`).
  *  - neither                -> empty (shape decides)
  */
 function resolveMatcher(input: HookEntryInput): string {
@@ -97,7 +105,7 @@ function resolveMatcher(input: HookEntryInput): string {
   const prefix =
     "matcherPrefix" in input.mapping ? input.mapping.matcherPrefix : "";
   if (prefix && userMatcher) {
-    return prefix === userMatcher ? prefix : `${prefix}|${userMatcher}`;
+    return prefix === userMatcher ? prefix : `(?:${prefix})|(?:${userMatcher})`;
   }
   return userMatcher || prefix;
 }
