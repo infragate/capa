@@ -95,6 +95,36 @@ export const providers: Record<string, ProviderIntegration> = {
     pluginManifestPaths: ['.claude-plugin/plugin.json'],
     pluginProviderId: 'claude',
     foldSubAgentsIntoInstructions: false,
+    hooks: {
+      // Claude Code reads hooks from the project-local .claude/settings.json.
+      // Docs: https://docs.claude.com/en/docs/claude-code/hooks
+      storage: {
+        kind: 'inline-config',
+        configPath: '.claude/settings.json',
+        format: 'json',
+        hooksKey: 'hooks',
+      },
+      shape: 'claude',
+      supportsNameTag: true,
+      eventMap: {
+        sessionStart: { event: 'SessionStart' },
+        sessionEnd: { event: 'SessionEnd' },
+        userPromptSubmit: { event: 'UserPromptSubmit' },
+        beforeTool: { event: 'PreToolUse' },
+        afterTool: { event: 'PostToolUse' },
+        beforeShell: { event: 'PreToolUse', matcherPrefix: 'Bash' },
+        afterShell: { event: 'PostToolUse', matcherPrefix: 'Bash' },
+        afterFileEdit: {
+          event: 'PostToolUse',
+          matcherPrefix: 'Edit|MultiEdit|Write',
+        },
+        beforeMcpCall: { event: 'PreToolUse', matcherPrefix: 'mcp__' },
+        afterMcpCall: { event: 'PostToolUse', matcherPrefix: 'mcp__' },
+        subagentStop: { event: 'SubagentStop' },
+        preCompact: { event: 'PreCompact' },
+        stop: { event: 'Stop' },
+      },
+    },
   },
   openclaw: {
     id: 'openclaw',
@@ -160,6 +190,23 @@ export const providers: Record<string, ProviderIntegration> = {
       format: 'toml',
       bodyField: 'developer_instructions',
     },
+    hooks: {
+      // Codex reads hooks from .codex/config.toml as a [hooks] table.
+      // Docs: https://github.com/openai/codex/blob/main/docs/config.md
+      storage: {
+        kind: 'inline-config',
+        configPath: '.codex/config.toml',
+        format: 'toml',
+        hooksKey: 'hooks',
+      },
+      shape: 'codex-toml',
+      supportsNameTag: false,
+      eventMap: {
+        sessionStart: { event: 'SessionStart' },
+        beforeShell: { event: 'PreShellExec' },
+        afterShell: { event: 'PostShellExec' },
+      },
+    },
   },
   'command-code': {
     id: 'command-code',
@@ -224,6 +271,27 @@ export const providers: Record<string, ProviderIntegration> = {
     pluginManifestPaths: ['.cursor-plugin/plugin.json'],
     pluginProviderId: 'cursor',
     purgeStaleSubAgentMcp: true,
+    hooks: {
+      // Cursor reads hooks from a dedicated .cursor/hooks.json with a
+      // { version: 1, hooks: { ... } } envelope.
+      // Docs: https://cursor.com/docs/agent/hooks
+      storage: {
+        kind: 'standalone',
+        configPath: '.cursor/hooks.json',
+        format: 'json',
+        envelope: 'cursor-v1',
+      },
+      shape: 'cursor',
+      supportsNameTag: true,
+      eventMap: {
+        beforeShell: { event: 'beforeShellExecution' },
+        beforeMcpCall: { event: 'beforeMCPExecution' },
+        beforeFileRead: { event: 'beforeReadFile' },
+        afterFileEdit: { event: 'afterFileEdit' },
+        userPromptSubmit: { event: 'beforeSubmitPrompt' },
+        stop: { event: 'stop' },
+      },
+    },
   },
   droid: {
     id: 'droid',
@@ -271,6 +339,28 @@ export const providers: Record<string, ProviderIntegration> = {
       dir: '.gemini/agents',
       extension: '.md',
       format: 'markdown-frontmatter',
+    },
+    hooks: {
+      // Gemini CLI hooks live alongside its other settings in
+      // .gemini/settings.json under a top-level `hooks` key. Format and
+      // shape mirror Claude's claude-style entries closely enough that we
+      // share the same `claude` shape.
+      // Docs: https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/configuration.md
+      storage: {
+        kind: 'inline-config',
+        configPath: '.gemini/settings.json',
+        format: 'json',
+        hooksKey: 'hooks',
+      },
+      shape: 'gemini',
+      supportsNameTag: true,
+      eventMap: {
+        sessionStart: { event: 'SessionStart' },
+        userPromptSubmit: { event: 'UserPromptSubmit' },
+        beforeTool: { event: 'PreToolUse' },
+        afterTool: { event: 'PostToolUse' },
+        stop: { event: 'Stop' },
+      },
     },
   },
   'github-copilot': {

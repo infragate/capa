@@ -14,6 +14,7 @@ const KNOWN_CAPABILITY_KEYS = new Set([
   'agents',
   'subagents',
   'rules',
+  'hooks',
 ]);
 
 const objectEntry = z.record(z.string(), z.unknown());
@@ -30,6 +31,7 @@ const capabilitiesSchema = z
     agents: z.record(z.string(), z.unknown()).optional(),
     subagents: z.preprocess((val) => val ?? [], z.array(objectEntry)),
     rules: z.preprocess((val) => val ?? [], z.array(objectEntry)),
+    hooks: z.preprocess((val) => val ?? [], z.array(objectEntry)),
   })
   .passthrough();
 

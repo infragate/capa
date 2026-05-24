@@ -15,10 +15,22 @@ Source-of-truth definition: [`src/shared/providers/registry.ts → cursor`](../.
 | Instructions | `AGENTS.md` | — |
 | Rules | `.cursor/rules/<id>.mdc` | YAML frontmatter: `description`, `globs` (from capa's `appliesTo`), `alwaysApply`. |
 | Sub-agents | `.cursor/agents/<id>.md` | Markdown + frontmatter (`model`, `readonly`, `is_background`). |
+| Hooks | `.cursor/hooks.json` (standalone) | `{ version: 1, hooks: { <eventName>: [ { name: "capa:<id>", command, … } ] } }` envelope. Cursor lets a hook fail-close on a non-zero exit (`failClosed: true`). |
 | Plugin manifests | `.cursor-plugin/plugin.json` (`pluginProviderId: cursor`) | Parsed by `parseCursorManifest` — see [plugin docs](../README.md#plugin-discovery-and-unpack). |
+
+## Hooks event mapping
+
+Canonical → Cursor: `beforeShell → beforeShellExecution`,
+`afterShell → afterShellExecution`, `beforeFileRead → beforeReadFile`,
+`afterFileEdit → afterFileEdit`, `beforeMcpCall → beforeMCPExecution`,
+`afterMcpCall → afterMCPExecution`, `userPromptSubmit → beforeSubmitPrompt`,
+`stop → stop`. Cursor-specific events (e.g. `beforeShellExecution`) can
+be targeted directly with `on: cursor:<eventName>` to bypass the
+canonical map.
 
 ## Sources
 
 - Cursor docs: <https://docs.cursor.com/>
+- Cursor hooks reference: <https://cursor.com/docs/agent/hooks>
 
-Last verified: 2026-05-23
+Last verified: 2026-05-24
