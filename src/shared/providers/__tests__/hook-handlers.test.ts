@@ -78,7 +78,11 @@ describe('hook-handlers — buildHookEntry', () => {
       mapping: { event: 'PostToolUse', matcherPrefix: 'Edit|MultiEdit|Write' },
     });
     expect(out.eventName).toBe('PostToolUse');
-    expect(out.matcher).toBe('Edit|MultiEdit|Write|src/.+\\.ts');
+    // Each side wrapped in a non-capturing group so the registry's existing
+    // alternation (`Edit|MultiEdit|Write`) composes as a top-level
+    // alternation with the user matcher — and so we don't shift any capture
+    // group numbers the user might be referencing.
+    expect(out.matcher).toBe('(?:Edit|MultiEdit|Write)|(?:src/.+\\.ts)');
   });
 
   it('claude shape skips union when user matcher equals prefix', () => {

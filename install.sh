@@ -259,11 +259,19 @@ profile_has_dir() {
 
     # If _dir is under $HOME, also accept $HOME / ${HOME} prefixed forms
     # written by hand by the user.
+    #
+    # NOTE: use grep -F for both forms — `_rel` is a path that very often
+    # contains regex metacharacters (e.g. `.local/bin`), and embedding it
+    # into a `grep -E` pattern caused false matches that skipped writing
+    # the PATH update (e.g. `.local/bin` matching `xlocal/bin`).
     if [ -n "${HOME:-}" ]; then
         case "$_dir" in
             "$HOME"/*)
                 _rel="${_dir#"$HOME"/}"
-                if grep -qE "\\\$\{?HOME\}?/${_rel}" "$_profile"; then
+                if grep -qF -- "\$HOME/${_rel}" "$_profile"; then
+                    return 0
+                fi
+                if grep -qF -- "\${HOME}/${_rel}" "$_profile"; then
                     return 0
                 fi
                 ;;
