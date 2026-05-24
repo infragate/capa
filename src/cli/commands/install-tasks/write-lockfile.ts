@@ -2,6 +2,7 @@ import { existsSync, rmSync } from 'fs';
 import { join } from 'path';
 import type { Task } from '../../ui';
 import { saveLockfile } from '../../../shared/lockfile';
+import { validateHooks } from '../../../shared/hooks-validate';
 import type { InstallCtx } from './context';
 
 export function writeLockfileTask(): Task<InstallCtx> {
@@ -18,14 +19,19 @@ export function writeLockfileTask(): Task<InstallCtx> {
       );
       // Hooks with a remote/repo source are pinned in the lockfile; inline /
       // local hooks travel inside the capabilities file or workspace and
-      // don't need pinning.
+      // don't need pinning. Validate the raw hooks first so an invalid
+      // entry (missing id, unsafe id, etc.) doesn't keep a stale lock pin
+      // alive — install-hooks will skip it anyway, and pruneToIds must
+      // mirror that decision.
+      const rawHooks = (ctx.capabilitiesToUse.hooks ?? []) as unknown[];
+      const { valid: validHooks } = validateHooks(rawHooks);
       const hookIdsForLock = new Set(
-        (ctx.capabilitiesToUse.hooks ?? [])
+        validHooks
           .filter((h) => {
-            const t = (h as { source?: { type?: string } }).source?.type;
+            const t = h.source?.type;
             return t === 'github' || t === 'gitlab' || t === 'remote';
           })
-          .map((h) => (h as { id: string }).id),
+          .map((h) => h.id),
       );
       ctx.lockBuilder.pruneToIds(skillIdsForLock, pluginIdsForLock, hookIdsForLock);
       const lockfileToSave = ctx.lockBuilder.build();

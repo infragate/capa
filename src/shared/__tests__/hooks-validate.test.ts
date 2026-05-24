@@ -35,6 +35,35 @@ describe('validateHooks', () => {
     expect(issues[0].message).toContain("'id'");
   });
 
+  it('rejects path-traversal hook ids', () => {
+    const cases = [
+      '../escape',
+      'foo/bar',
+      'foo\\bar',
+      'a..b',
+      '.hidden',
+      '-leading-dash',
+      'has spaces',
+      'has;semicolon',
+      'with$shell',
+    ];
+    for (const id of cases) {
+      const { valid, issues } = validateHooks([{ id, on: 'sessionStart', command: 'echo' }]);
+      expect(valid).toHaveLength(0);
+      expect(issues).toHaveLength(1);
+      expect(issues[0].message).toMatch(/unsafe characters/);
+    }
+  });
+
+  it('accepts safe hook ids', () => {
+    const cases = ['ok', 'audit-shell', 'lint_staged', 'a.b.c', 'block-rm-rf', 'hook123'];
+    for (const id of cases) {
+      const { valid, issues } = validateHooks([{ id, on: 'sessionStart', command: 'echo' }]);
+      expect(issues).toEqual([]);
+      expect(valid).toHaveLength(1);
+    }
+  });
+
   it('skips duplicates after the first', () => {
     const { valid, issues } = validateHooks([
       { id: 'a', on: 'sessionStart', command: 'first' },

@@ -20,11 +20,22 @@ Source-of-truth definition: [`src/shared/providers/registry.ts → codex`](../..
 
 ## Hooks event mapping
 
-Codex's hook surface is narrower than Claude's: capa only writes
-canonical events that map onto Codex's documented `[hooks]` keys
-(`beforeTool`, `afterTool`, `sessionStart`, `sessionEnd`,
-`userPromptSubmit`). Hooks targeting events Codex does not support are
-skipped with a one-shot warning.
+Codex uses Claude-style event names plus a tool-name matcher; built-in
+tools include `Bash` and `apply_patch`, and MCP tools follow the
+`mcp__server__tool` pattern. Canonical → Codex:
+`sessionStart → SessionStart`, `userPromptSubmit → UserPromptSubmit`,
+`beforeTool → PreToolUse`, `afterTool → PostToolUse`,
+`beforeShell → PreToolUse` + `matcher: Bash`,
+`afterShell → PostToolUse` + `matcher: Bash`,
+`afterFileEdit → PostToolUse` + `matcher: apply_patch`,
+`beforeMcpCall → PreToolUse` + `matcher: mcp__`,
+`afterMcpCall → PostToolUse` + `matcher: mcp__`,
+`subagentStart → SubagentStart`, `subagentStop → SubagentStop`,
+`preCompact → PreCompact`, `stop → Stop`. Codex does not expose a
+`sessionEnd` or `beforeFileRead` equivalent — those canonical hooks are
+skipped on Codex with a one-shot warning. Codex-specific events (e.g.
+`PermissionRequest`, `PostCompact`) can be targeted directly with
+`on: codex:<EventName>`.
 
 ## Sources
 

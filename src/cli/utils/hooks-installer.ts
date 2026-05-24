@@ -23,7 +23,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync, unlinkSync } from 'fs';
-import { dirname, join, resolve as resolvePath } from 'path';
+import { dirname, join, resolve as resolvePath, sep as pathSep } from 'path';
 import { createHash } from 'crypto';
 import type { CapaDatabase } from '../../db/database';
 import type { ManagedHookRow } from '../../db/managed-hooks';
@@ -43,6 +43,7 @@ import type { AuthenticatedFetch } from '../../shared/authenticated-fetch';
 import type { CachePlatform, GetSnapshotResult } from '../../shared/cache';
 import { fetchRepoFile, fetchTextFile } from '../../shared/repo-file';
 import { getHookScriptDir } from '../../shared/config';
+import { isSafeHookId } from '../../shared/hooks-validate';
 import { readTomlFile, writeTomlFile } from '../../shared/toml-io';
 import { taskLog } from '../ui';
 
@@ -243,11 +244,13 @@ export function pruneOrphanHooks(
     try {
       removeManagedHookEntry(projectPath, row);
       removed++;
+      // Only drop the DB locator after the on-disk entry was removed; if
+      // unlinking failed we keep the row so a future install/clean can
+      // retry instead of leaving the provider config dirty forever.
+      db.removeManagedHook(row.projectId, row.providerId, row.hookId);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       warnings.push(`Hook "${row.hookId}" on "${row.providerId}": prune failed — ${msg}`);
-    } finally {
-      db.removeManagedHook(row.projectId, row.providerId, row.hookId);
     }
   }
   return { removed, warnings };
@@ -364,9 +367,23 @@ function materialiseHookScript(input: {
   hookId: string;
   body: string;
 }): string {
+  // Defence in depth: validateHooks() should have already rejected unsafe
+  // ids, but installHooks() is also reachable from callers that pass a raw
+  // Hook[]. Refuse to write outside the project's hook script dir.
+  if (!isSafeHookId(input.hookId)) {
+    throw new Error(
+      `unsafe hook id "${input.hookId}" — refusing to materialise script`,
+    );
+  }
   const dir = getHookScriptDir(input.projectId);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   const file = join(dir, input.hookId);
+  // Sanity check: the resolved path must be a direct child of `dir`.
+  const resolvedFile = resolvePath(file);
+  const resolvedDir = resolvePath(dir);
+  if (!resolvedFile.startsWith(resolvedDir + pathSep)) {
+    throw new Error(`hook script path escapes hook script dir: ${resolvedFile}`);
+  }
   writeFileSync(file, input.body, 'utf-8');
   try {
     chmodSync(file, 0o755);
@@ -401,6 +418,11 @@ function applyHookEntryToConfig(args: ApplyEntryArgs): { configPath: string; loc
 
   // JSON-based storage (standalone or inline-config).
   const config = readJsonFile(configPath);
+  if (config === null) {
+    throw new Error(
+      `existing config at ${configPath} is not a valid JSON object — refusing to overwrite. Fix the file by hand and re-run capa install.`,
+    );
+  }
 
   let hooksRoot: Record<string, unknown>;
   if (integration.storage.kind === 'standalone') {
@@ -469,6 +491,11 @@ function removeManagedHookEntry(projectPath: string, row: ManagedHookRow): void 
     writeTomlFile(configPath, config);
   } else {
     const config = readJsonFile(configPath);
+    if (config === null) {
+      throw new Error(
+        `existing config at ${configPath} is not a valid JSON object — refusing to rewrite. Fix the file by hand and re-run.`,
+      );
+    }
     let root: Record<string, unknown> | null;
     let rootKey: string | null = null;
     if (integration.storage.kind === 'standalone') {
@@ -538,17 +565,34 @@ function resolveProviderEventName(
 // Small file helpers
 // ---------------------------------------------------------------------------
 
-function readJsonFile(path: string): Record<string, unknown> {
+/**
+ * Read a JSON config file as a plain object.
+ *
+ *  - Missing / empty file → `{}` (fresh start, safe to write).
+ *  - Valid JSON object    → the parsed object.
+ *  - Corrupted JSON or wrong shape → `null`. Callers must NOT overwrite
+ *    in this case, otherwise a transient parse error / hand-edit could
+ *    silently wipe the user's provider config (issues #5).
+ */
+function readJsonFile(path: string): Record<string, unknown> | null {
   if (!existsSync(path)) return {};
+  let raw: string;
   try {
-    const raw = readFileSync(path, 'utf-8');
-    if (!raw.trim()) return {};
-    const parsed: unknown = JSON.parse(raw);
-    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
-    return parsed as Record<string, unknown>;
+    raw = readFileSync(path, 'utf-8');
   } catch {
-    return {};
+    return null;
   }
+  if (!raw.trim()) return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return null;
+  }
+  return parsed as Record<string, unknown>;
 }
 
 function writeJsonFile(path: string, data: Record<string, unknown>): void {

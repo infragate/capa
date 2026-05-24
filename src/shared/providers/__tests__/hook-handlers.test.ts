@@ -66,6 +66,27 @@ describe('hook-handlers — buildHookEntry', () => {
     expect(out.entry.name).toBe('capa:block-rm');
   });
 
+  it('claude shape unions matcherPrefix with user matcher (preserves canonical scope)', () => {
+    const hook: Hook = { id: 'edit-ts', on: 'afterFileEdit', command: 'echo', matcher: 'src/.+\\.ts' };
+    const out = buildHookEntry(claudeIntegration, {
+      hook,
+      runReference: '/abs/script',
+      mapping: { event: 'PostToolUse', matcherPrefix: 'Edit|MultiEdit|Write' },
+    });
+    expect(out.eventName).toBe('PostToolUse');
+    expect(out.matcher).toBe('Edit|MultiEdit|Write|src/.+\\.ts');
+  });
+
+  it('claude shape skips union when user matcher equals prefix', () => {
+    const hook: Hook = { id: 'shell', on: 'beforeShell', command: 'echo', matcher: 'Bash' };
+    const out = buildHookEntry(claudeIntegration, {
+      hook,
+      runReference: '/abs/script',
+      mapping: { event: 'PreToolUse', matcherPrefix: 'Bash' },
+    });
+    expect(out.matcher).toBe('Bash');
+  });
+
   it('codex-toml shape emits id without name tag', () => {
     const hook: Hook = { id: 'audit-shell', on: 'beforeShell', command: 'echo' };
     const out = buildHookEntry(codexIntegration, {

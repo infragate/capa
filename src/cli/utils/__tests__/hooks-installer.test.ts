@@ -142,12 +142,15 @@ describe('hooks-installer (claude inline-config)', () => {
   });
 
   it('warns when canonical event has no mapping for provider', async () => {
+    // Codex's hook surface has no `beforeFileRead` equivalent (it routes
+    // file ops through PostToolUse + apply_patch instead), so it's a
+    // stable choice for "canonical event with no mapping for provider".
     const result = await installHooks({
       projectPath,
       projectId,
       capabilitiesFilePath: join(projectPath, 'capabilities.yaml'),
-      hooks: [{ id: 'pc', on: 'preCompact', command: 'echo pre-compact' }],
-      providers: ['cursor'],
+      hooks: [{ id: 'br', on: 'beforeFileRead', command: 'echo read' }],
+      providers: ['codex'],
       db,
       authFetch: makeAuthFetch(),
       getRepoSnapshot: stubGetRepoSnapshot,
@@ -285,6 +288,40 @@ describe('hooks-installer — pruneOrphanHooks / cleanHooks', () => {
     const bashHooks = settings.hooks.PreToolUse[0].hooks;
     expect(bashHooks).toHaveLength(1);
     expect(bashHooks[0].command).toBe('echo a');
+  });
+
+  it('keeps the managed_hooks row when on-disk prune fails so future runs can retry', async () => {
+    // Install a hook, then corrupt the locator so removeManagedHookEntry
+    // throws. The DB row should survive the failed prune (warn-but-retry)
+    // instead of leaving an orphan entry in the provider config forever.
+    await installHooks({
+      projectPath,
+      projectId,
+      capabilitiesFilePath: join(projectPath, 'capabilities.yaml'),
+      hooks: [{ id: 'orphan', on: 'beforeShell', command: 'echo orphan' }],
+      providers: ['claude-code'],
+      db,
+      authFetch: makeAuthFetch(),
+      getRepoSnapshot: stubGetRepoSnapshot,
+    });
+    expect(db.getManagedHooks(projectId)).toHaveLength(1);
+
+    // Corrupt the stored locator so JSON.parse-then-validate throws.
+    db.upsertManagedHook({
+      projectId,
+      providerId: 'claude-code',
+      hookId: 'orphan',
+      configPath: join(projectPath, '.claude', 'settings.json'),
+      locator: '"not-an-array"',
+      scriptPath: null,
+    });
+    expect(db.getManagedHooks(projectId)[0].locator).toBe('"not-an-array"');
+
+    const result = pruneOrphanHooks(projectPath, projectId, [], ['claude-code'], db);
+    expect(result.removed).toBe(0);
+    expect(result.warnings.some((w) => /prune failed/.test(w))).toBe(true);
+    // DB row preserved so the next run can retry — no orphan in config.
+    expect(db.getManagedHooks(projectId)).toHaveLength(1);
   });
 
   it('cleanHooks wipes every entry and config keys for the project', async () => {

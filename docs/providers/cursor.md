@@ -20,13 +20,17 @@ Source-of-truth definition: [`src/shared/providers/registry.ts → cursor`](../.
 
 ## Hooks event mapping
 
-Canonical → Cursor: `beforeShell → beforeShellExecution`,
+Canonical → Cursor: `sessionStart → sessionStart`, `sessionEnd → sessionEnd`,
+`beforeTool → preToolUse`, `afterTool → postToolUse`,
+`afterToolFailure → postToolUseFailure`, `beforeShell → beforeShellExecution`,
 `afterShell → afterShellExecution`, `beforeFileRead → beforeReadFile`,
 `afterFileEdit → afterFileEdit`, `beforeMcpCall → beforeMCPExecution`,
 `afterMcpCall → afterMCPExecution`, `userPromptSubmit → beforeSubmitPrompt`,
-`stop → stop`. Cursor-specific events (e.g. `beforeShellExecution`) can
-be targeted directly with `on: cursor:<eventName>` to bypass the
-canonical map.
+`subagentStart → subagentStart`, `subagentStop → subagentStop`,
+`preCompact → preCompact`, `stop → stop`. Cursor-only events (e.g.
+`afterAgentResponse`, `workspaceOpen`, `beforeTabFileRead`) can be
+targeted directly with `on: cursor:<eventName>` to bypass the canonical
+map.
 
 ## Sources
 
