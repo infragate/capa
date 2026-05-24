@@ -191,11 +191,29 @@ export const providers: Record<string, ProviderIntegration> = {
       bodyField: 'developer_instructions',
     },
     hooks: {
-      // Codex reads hooks from .codex/config.toml as a [hooks] table.
-      // Codex uses Claude-style event names (PreToolUse/PostToolUse) and a
-      // tool-name matcher; built-in tools include `Bash`, `apply_patch`, and
-      // MCP tools follow the `mcp__server__tool` naming pattern. Events
-      // without a matcher are: UserPromptSubmit, Stop.
+      // Codex reads hooks from .codex/config.toml as a [hooks] table whose
+      // shape is *structurally identical* to Claude's `.claude/settings.json`
+      // hook map: a top-level event key holds an array of matcher groups
+      // (`{ matcher, hooks: [...] }`), and each handler in the inner `hooks`
+      // array is a `{ type, command, ... }` table. Capa therefore reuses the
+      // `claude` shape handler — the only difference is TOML vs JSON
+      // serialisation (handled by `storage.format`).
+      //
+      // Codex's TOML form (per `codex-rs/config/src/hook_config.rs`) is:
+      //   [[hooks.PreToolUse]]
+      //   matcher = "Bash"
+      //   [[hooks.PreToolUse.hooks]]
+      //   type = "command"
+      //   command = "..."
+      //
+      // Identification: `MatcherGroup` and `HookHandlerConfig` do NOT use
+      // `#[serde(deny_unknown_fields)]`, so capa appends an opaque
+      // `name = "capa:<id>"` field on entries it owns. Codex ignores it but
+      // round-trips it through writes; capa uses it for surgical updates.
+      //
+      // Built-in matcher tool names are `Bash`, `apply_patch`, and
+      // `mcp__server__tool` for MCP. Events without a matcher
+      // (UserPromptSubmit, Stop, …) accept an empty/omitted matcher.
       // Docs: https://developers.openai.com/codex/hooks
       storage: {
         kind: 'inline-config',
@@ -203,8 +221,8 @@ export const providers: Record<string, ProviderIntegration> = {
         format: 'toml',
         hooksKey: 'hooks',
       },
-      shape: 'codex-toml',
-      supportsNameTag: false,
+      shape: 'claude',
+      supportsNameTag: true,
       eventMap: {
         sessionStart: { event: 'SessionStart' },
         userPromptSubmit: { event: 'UserPromptSubmit' },

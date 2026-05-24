@@ -108,8 +108,17 @@ export interface HooksIntegration {
   storage: HooksStorage;
   /** Canonical → provider event name (subset is fine; missing events are skipped). */
   eventMap: Partial<Record<CanonicalHookEvent, ProviderEventMapping>>;
-  /** Selects the entry shape (claude-style array, cursor map, codex tables, …). */
-  shape: 'cursor' | 'claude' | 'gemini' | 'windsurf' | 'antigravity' | 'codex-toml';
+  /**
+   * Selects the entry shape used to serialise hook entries. `claude` covers
+   * every provider that uses the matcher-grouped layout (Claude Code, Gemini
+   * CLI, Codex, Windsurf, Antigravity); the variant labels exist only as
+   * future-proofing in case a provider diverges (e.g. extra fields). The
+   * `cursor` shape is a flat array with `pattern`+`name` per entry.
+   *
+   * Codex serialises through the same `claude` shape; the storage format is
+   * what makes it land as TOML rather than JSON.
+   */
+  shape: 'cursor' | 'claude' | 'gemini' | 'windsurf' | 'antigravity';
   /**
    * When true the provider entry carries an opaque `name` field (used by capa
    * for the `capa:<hook-id>` tag, allowing surgical updates without disturbing

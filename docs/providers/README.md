@@ -103,7 +103,7 @@ fails because of an unsupported hook target.
 | Provider | Config file | Shape |
 | --- | --- | --- |
 | **[Claude Code (`claude-code`)](./claude-code.md)** | `.claude/settings.json` → `hooks` | JSON map (event → `[{ matcher, hooks: [...] }]`) |
-| **[Codex (`codex`)](./codex.md)** | `.codex/config.toml` → `[hooks]` | TOML tables, ID-tagged |
+| **[Codex (`codex`)](./codex.md)** | `.codex/config.toml` → `[hooks]` | Matcher-grouped Claude-style envelope, serialised as TOML, `name: capa:<id>` tag |
 | **[Cursor (`cursor`)](./cursor.md)** | `.cursor/hooks.json` (standalone) | `{ version: 1, hooks: { ... } }` envelope |
 | **[Gemini CLI (`gemini-cli`)](./gemini-cli.md)** | `.gemini/settings.json` → `hooks` | JSON map (claude-style) |
 

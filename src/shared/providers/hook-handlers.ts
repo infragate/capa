@@ -146,23 +146,6 @@ function buildCursorEntry(input: HookEntryInput): HookEntryOutput {
   };
 }
 
-function buildCodexTomlEntry(input: HookEntryInput): HookEntryOutput {
-  const { hook, mapping, runReference } = input;
-  const isPrompt = (hook.type ?? "command") === "prompt";
-  const entry: Record<string, unknown> = {
-    type: isPrompt ? "prompt" : "command",
-    [isPrompt ? "prompt" : "command"]: runReference,
-    id: hook.id,
-  };
-  if (hook.timeout !== undefined) entry.timeout = hook.timeout;
-  return {
-    eventName: mapping.event,
-    entry,
-    matcher: resolveMatcher(input),
-    nameTag: null,
-  };
-}
-
 /**
  * Build the shape-specific entry for a single (provider, hook, mapping).
  *
@@ -181,8 +164,6 @@ export function buildHookEntry(
       return buildClaudeLikeEntry(input, integration.supportsNameTag);
     case "cursor":
       return buildCursorEntry(input);
-    case "codex-toml":
-      return buildCodexTomlEntry(input);
     default:
       throw new Error(
         `Unsupported hook shape: ${(integration as { shape: string }).shape}`,
@@ -202,11 +183,13 @@ export function buildHookEntry(
  * Layout per shape (`hooksRoot` is the inline-config `hooksKey` or the bare
  * standalone document):
  *
- *  - claude/gemini : hooksRoot[<event>] is an array of `{ matcher, hooks: [entry] }`.
+ *  - claude/gemini/codex/windsurf/antigravity :
+ *                    hooksRoot[<event>] is an array of `{ matcher, hooks: [entry] }`.
+ *                    Codex serialises this as TOML's nested array of tables
+ *                    (`[[hooks.PreToolUse]]` + `[[hooks.PreToolUse.hooks]]`),
+ *                    every other provider as JSON; the layout is the same.
  *                    locator = ['<event>', <matcherIndex>, 'hooks', <entryIndex>]
  *  - cursor        : hooksRoot[<event>] is an array of `entry`.
- *                    locator = ['<event>', <entryIndex>]
- *  - codex-toml    : hooksRoot[<event>] is an array of `entry`.
  *                    locator = ['<event>', <entryIndex>]
  *
  * Locators are emitted relative to the hooks root, NOT relative to the file
@@ -258,8 +241,7 @@ export function upsertHookEntry(
       group.hooks.push(entry);
       return [eventName, matcherIdx, "hooks", group.hooks.length - 1];
     }
-    case "cursor":
-    case "codex-toml": {
+    case "cursor": {
       const { eventName, entry, nameTag } = output;
       const events = ensureArray(hooksRoot, eventName);
       const existingIdx = nameTag
@@ -267,11 +249,7 @@ export function upsertHookEntry(
             (e) =>
               isPlainObject(e) && isCapaNameTag(e.name, idFromNameTag(nameTag)),
           )
-        : integration.shape === "codex-toml"
-          ? events.findIndex(
-              (e) => isPlainObject(e) && e.id === (entry as { id?: string }).id,
-            )
-          : -1;
+        : -1;
       if (existingIdx >= 0) {
         events[existingIdx] = entry;
         return [eventName, existingIdx];
@@ -335,8 +313,7 @@ export function removeHookEntryAt(
       if (events.length === 0) delete hooksRoot[eventName];
       return true;
     }
-    case "cursor":
-    case "codex-toml": {
+    case "cursor": {
       // ['<event>', entryIdx]
       if (locator.length !== 2) return false;
       const [eventName, entryIdx] = locator;
@@ -346,16 +323,11 @@ export function removeHookEntryAt(
       if (!Array.isArray(events) || entryIdx < 0 || entryIdx >= events.length)
         return false;
       const candidate = events[entryIdx];
-      if (integration.shape === "cursor") {
-        if (
-          !isPlainObject(candidate) ||
-          !isCapaNameTag(candidate.name, expectedHookId)
-        )
-          return false;
-      } else {
-        if (!isPlainObject(candidate) || candidate.id !== expectedHookId)
-          return false;
-      }
+      if (
+        !isPlainObject(candidate) ||
+        !isCapaNameTag(candidate.name, expectedHookId)
+      )
+        return false;
       events.splice(entryIdx, 1);
       if (events.length === 0) delete hooksRoot[eventName];
       return true;
