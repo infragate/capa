@@ -126,9 +126,7 @@
     "source": "Source",
     "command": "Command",
     "prompt": "Prompt",
-    "installed": "Installed entries",
     "installedOn": "Installed on",
-    "script": "Script",
     "allProviders": "All providers"
   },
   "providers": {

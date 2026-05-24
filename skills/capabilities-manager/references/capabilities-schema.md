@@ -233,9 +233,8 @@ Lifecycle hooks installed into each provider's hook configuration. The schema is
   - `{ type: github, def: { repo: 'owner/repo::scripts/before.sh' } }` (or `@basename` form)
   - `{ type: gitlab, def: { repo: 'group/repo::scripts/before.sh' } }`
   - `{ type: local, path: ./scripts/before.sh }` — relative to the capabilities file
-  - `executable` (default `true`) controls whether capa chmods the materialised file.
 
-When `source` is set, the resolved body is materialised under `~/.capa/hooks/<projectId>/<hook-id>` (NOT inside the project) and the provider entry references that absolute path.
+When `source` is set, the resolved body is materialised under `~/.capa/hooks/<projectId>/<hook-id>` (NOT inside the project), chmod +x, and the provider entry's `command` references that absolute path.
 
 ```yaml
 hooks:

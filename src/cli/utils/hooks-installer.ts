@@ -126,7 +126,6 @@ export async function installHooks(opts: InstallHooksOptions): Promise<InstallHo
         projectId,
         hookId: hook.id,
         body: body.text,
-        executable: hook.source.executable !== false,
       });
       hookScriptPaths.set(hook.id, scriptPath);
     } catch (err: unknown) {
@@ -354,24 +353,25 @@ async function resolveHookBody(hook: Hook, opts: InstallHooksOptions): Promise<R
 
 /**
  * Write the resolved hook body to `~/.capa/hooks/<projectId>/<hookId>` and
- * (optionally) chmod +x. Returns the absolute script path.
+ * chmod +x. Returns the absolute script path.
+ *
+ * The materialised path is wired into the provider entry's `command` field
+ * verbatim, so the file MUST be executable for the hook to fire — there is
+ * no knob to opt out.
  */
 function materialiseHookScript(input: {
   projectId: string;
   hookId: string;
   body: string;
-  executable: boolean;
 }): string {
   const dir = getHookScriptDir(input.projectId);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   const file = join(dir, input.hookId);
   writeFileSync(file, input.body, 'utf-8');
-  if (input.executable) {
-    try {
-      chmodSync(file, 0o755);
-    } catch {
-      // chmod is best-effort on platforms that don't support it.
-    }
+  try {
+    chmodSync(file, 0o755);
+  } catch {
+    // chmod is best-effort on platforms that don't support it.
   }
   return file;
 }
