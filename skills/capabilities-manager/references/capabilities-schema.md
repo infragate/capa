@@ -234,7 +234,9 @@ Lifecycle hooks installed into each provider's hook configuration. The schema is
   - `{ type: gitlab, def: { repo: 'group/repo::scripts/before.sh' } }`
   - `{ type: local, path: ./scripts/before.sh }` — relative to the capabilities file
 
-When `source` is set, the resolved body is materialised under `~/.capa/hooks/<projectId>/<hook-id>` (NOT inside the project), chmod +x, and the provider entry's `command` references that absolute path.
+When `source` is `inline` / `remote` / `github` / `gitlab`, capa fetches the body and materialises it under `~/.capa/hooks/<projectId>/<hook-id>` (NOT inside the project), chmod +x, and the provider entry's `command` references that absolute path.
+
+`source.type: local` is special: the script already exists in the project and is version-controlled, so capa references the user's file in place via its absolute path — no copy is made under `~/.capa`, `chmod` is the user's responsibility, and edits to the script take effect immediately without re-running `capa install`. `capa clean` will never delete a local-source script.
 
 ```yaml
 hooks:

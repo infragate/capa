@@ -107,11 +107,16 @@ fails because of an unsupported hook target.
 | **[Cursor (`cursor`)](./cursor.md)** | `.cursor/hooks.json` (standalone) | `{ version: 1, hooks: { ... } }` envelope |
 | **[Gemini CLI (`gemini-cli`)](./gemini-cli.md)** | `.gemini/settings.json` → `hooks` | JSON map (claude-style) |
 
-Materialised hook scripts (when the YAML uses `source:` instead of inline
-`command`) live under `~/.capa/hooks/<projectId>/<hookId>` rather than in
-the project. The `managed_hooks` SQLite table tracks `(projectId,
-providerId, hookId, configPath, locator, scriptPath)` so prune and clean
-can edit a single entry surgically.
+Materialised hook scripts (when the YAML uses `source: { type: inline /
+remote / github / gitlab }`) live under `~/.capa/hooks/<projectId>/<hookId>`
+rather than in the project. `source: { type: local }` is special: the
+script already exists in the project, so capa references it in place via
+its absolute path — no copy under `~/.capa`, `chmod` is the user's
+responsibility, edits take effect without re-running `capa install`, and
+`capa clean` never deletes it. The `managed_hooks` SQLite table tracks
+`(projectId, providerId, hookId, configPath, locator, scriptPath)` so
+prune and clean can edit a single entry surgically; `scriptPath` is null
+for inline-command hooks and for `local`-source hooks.
 
 See [`docs/README.md`](../README.md#installation-pipeline) for how
 `prune-orphan-hooks` and `install-hooks` slot into the install pipeline,

@@ -187,9 +187,11 @@ flowchart TD
   `locator` is a JSON pointer (or TOML path) into the file so prune/clean
   can edit a single entry surgically without disturbing user-authored
   ones. `script_path` points at the materialised body under
-  `~/.capa/hooks/<projectId>/<hookId>` for `source`-backed hooks.
-  `prune-orphan-hooks`, `install-hooks`, and `capa clean` all read and
-  mutate this table.
+  `~/.capa/hooks/<projectId>/<hookId>` for `inline` / `remote` /
+  `github` / `gitlab` sources, and is `NULL` for inline-command hooks
+  and `source: { type: local }` hooks (which reference the user's file
+  in place and must never be deleted on clean). `prune-orphan-hooks`,
+  `install-hooks`, and `capa clean` all read and mutate this table.
 
 - **Lockfile**. `capabilities.lock` pins resolved commit SHAs for every
   `github`/`gitlab` skill, plugin, and hook source. The lockfile is built

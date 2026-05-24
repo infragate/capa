@@ -159,6 +159,45 @@ describe('hooks-installer (claude inline-config)', () => {
     expect(result.warnings.some((w) => /no mapping/.test(w))).toBe(true);
   });
 
+  it('source.type=local references the user\'s script directly (no copy under ~/.capa)', async () => {
+    // Place a script alongside the (synthetic) capabilities file and point
+    // the hook at it via a relative path. capa should embed the absolute
+    // path of THAT script in the provider config, not a path under ~/.capa.
+    require('fs').mkdirSync(join(projectPath, 'scripts'), { recursive: true });
+    const scriptPath = join(projectPath, 'scripts', 'lint.sh');
+    writeFileSync(scriptPath, '#!/bin/sh\necho lint\n', 'utf-8');
+
+    const result = await installHooks({
+      projectPath,
+      projectId,
+      capabilitiesFilePath: join(projectPath, 'capabilities.yaml'),
+      hooks: [
+        {
+          id: 'lint-after-edit',
+          on: 'afterFileEdit',
+          source: { type: 'local', path: 'scripts/lint.sh' },
+        },
+      ],
+      providers: ['claude-code'],
+      db,
+      authFetch: makeAuthFetch(),
+      getRepoSnapshot: stubGetRepoSnapshot,
+    });
+    expect(result.installed).toBe(1);
+
+    const settings = JSON.parse(
+      readFileSync(join(projectPath, '.claude', 'settings.json'), 'utf-8'),
+    ) as any;
+    const entry = settings.hooks.PostToolUse[0].hooks[0];
+    expect(entry.command).toBe(scriptPath);
+
+    // No copy in ~/.capa — managed_hooks.scriptPath stays null so clean
+    // never tries to unlink the user's file.
+    const rows = db.getManagedHooks(projectId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].scriptPath).toBeNull();
+  });
+
   it('records remote sources in the lockfile builder', async () => {
     const lockBuilder = new LockfileBuilder(null);
     await installHooks({

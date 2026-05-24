@@ -107,18 +107,27 @@ export async function installHooks(opts: InstallHooksOptions): Promise<InstallHo
     }
   }
 
-  // Step 2: materialise command bodies under ~/.capa/hooks/<projectId>/.
+  // Step 2: figure out the run reference for each command-type hook.
+  //
+  //  - inline `command:` (no source) -> use the literal command string;
+  //  - `source.type=local`           -> reference the user's script in place
+  //                                     via its absolute path (no copy);
+  //  - inline / remote / github / gitlab -> materialise to
+  //                                     ~/.capa/hooks/<projectId>/<hookId>
+  //                                     and reference that absolute path.
   const hookScriptPaths = new Map<string, string>();
   for (const hook of hooks) {
     const body = resolvedBodies.get(hook.id);
     if (!body) continue;
     if ((hook.type ?? 'command') !== 'command') continue;
 
-    // If the user inlined `command:` and provided no source, the entry value
-    // is the literal command string. We don't materialise a script in that
-    // case — the provider runs it directly.
     if (!hook.source) {
       hookScriptPaths.set(hook.id, hook.command ?? '');
+      continue;
+    }
+
+    if (body.localPath) {
+      hookScriptPaths.set(hook.id, body.localPath);
       continue;
     }
 
@@ -185,7 +194,12 @@ export async function installHooks(opts: InstallHooksOptions): Promise<InstallHo
           output: out,
         });
 
-        const scriptPath = body.materialised ? hookScriptPaths.get(hook.id) ?? null : null;
+        // Only track scriptPath for files capa wrote under ~/.capa, so
+        // prune/clean delete what they own and never touch user-authored
+        // local scripts referenced via `source.type=local`.
+        const scriptPath = body.needsMaterialisation
+          ? hookScriptPaths.get(hook.id) ?? null
+          : null;
         db.upsertManagedHook({
           projectId,
           providerId,
@@ -281,17 +295,33 @@ export function cleanHooks(projectPath: string, projectId: string, db: CapaDatab
 // ---------------------------------------------------------------------------
 
 interface ResolvedHookBody {
-  /** The resolved script body or prompt text. */
+  /**
+   * Resolved body text. For `local` sources this is left empty — the script
+   * already exists on disk at `localPath` and we reference it directly
+   * instead of copying it into ~/.capa.
+   */
   text: string;
-  /** True when the body was fetched from outside (and we need a script path). */
-  materialised: boolean;
+  /**
+   * True when the body needs to be written to a script file under
+   * ~/.capa/hooks/<projectId>/. False for inline `command:` (no source)
+   * and for `local` sources (we reuse the user's file).
+   */
+  needsMaterialisation: boolean;
+  /**
+   * Set for `source.type='local'`: the absolute path of the user's script.
+   * The provider entry's `command` is set to this path verbatim, so the
+   * user's file becomes the live hook script — no copy in ~/.capa, no
+   * scriptPath tracked in `managed_hooks`, no chmod, and edits to the
+   * file take effect immediately without re-running `capa install`.
+   */
+  localPath?: string;
   /** Optional lockfile pin for remote / repo sources. */
   lockEntry?: LockHookEntry;
 }
 
 async function resolveHookBody(hook: Hook, opts: InstallHooksOptions): Promise<ResolvedHookBody> {
   if (!hook.source) {
-    return { text: hook.command ?? hook.prompt ?? '', materialised: false };
+    return { text: hook.command ?? hook.prompt ?? '', needsMaterialisation: false };
   }
   const source = hook.source;
   let text = '';
@@ -342,16 +372,16 @@ async function resolveHookBody(hook: Hook, opts: InstallHooksOptions): Promise<R
       break;
     }
     case 'local': {
+      // We don't read the body — local scripts are referenced in place.
       if (!source.path) throw new Error('source.type=local requires path');
       const baseDir = dirname(opts.capabilitiesFilePath);
       const fullPath = resolvePath(baseDir, source.path);
       if (!existsSync(fullPath)) throw new Error(`local file does not exist: ${fullPath}`);
-      text = readFileSync(fullPath, 'utf-8');
-      break;
+      return { text: '', needsMaterialisation: false, localPath: fullPath };
     }
   }
 
-  return { text, materialised: true, lockEntry };
+  return { text, needsMaterialisation: true, lockEntry };
 }
 
 /**
