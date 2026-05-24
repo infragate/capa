@@ -297,7 +297,7 @@ Per provider, hook entries land in:
 | --- | --- | --- | --- |
 | `claude-code` | `.claude/settings.json` → `hooks` | JSON map keyed by event → `[{ matcher, hooks: [...] }]` | `name: capa:<id>` |
 | `cursor` | `.cursor/hooks.json` (standalone) | `{ version: 1, hooks: { ... } }` envelope | `name: capa:<id>` |
-| `codex` | `.codex/config.toml` → `[hooks]` | TOML tables | `id: <hook-id>` |
+| `codex` | `.codex/config.toml` → `[hooks]` | TOML's nested array-of-tables (`[[hooks.<Event>]] matcher = "..."` + `[[hooks.<Event>.hooks]] type = "command" command = "..."`) — same matcher-grouped envelope as Claude | `name: capa:<id>` (Codex's serde deserialiser ignores unknown fields, so the tag round-trips safely) |
 | `gemini-cli` | `.gemini/settings.json` → `hooks` | JSON map (claude-style) | `name: capa:<id>` |
 
 Providers without a hooks integration (most of the rest of the registry) emit a warning and skip — `capa install` never fails on unsupported hooks. `capa clean` and `capa install` (via the `prune-orphan-hooks` task) keep their own entries in sync without disturbing entries you authored by hand.

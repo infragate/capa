@@ -29,12 +29,16 @@ const cursorIntegration: HooksIntegration = {
   },
 };
 
+// Codex shares the matcher-grouped Claude shape — the only difference is
+// TOML serialisation (handled by `storage.format`). Capa appends a
+// `name = "capa:<id>"` field for surgical updates; Codex's TOML
+// deserialiser doesn't use deny_unknown_fields, so the field is ignored.
 const codexIntegration: HooksIntegration = {
   storage: { kind: 'inline-config', configPath: '.codex/config.toml', format: 'toml', hooksKey: 'hooks' },
-  shape: 'codex-toml',
-  supportsNameTag: false,
+  shape: 'claude',
+  supportsNameTag: true,
   eventMap: {
-    beforeShell: { event: 'PreShellExec' },
+    beforeShell: { event: 'PreToolUse', matcherPrefix: 'Bash' },
   },
 };
 
@@ -87,16 +91,54 @@ describe('hook-handlers — buildHookEntry', () => {
     expect(out.matcher).toBe('Bash');
   });
 
-  it('codex-toml shape emits id without name tag', () => {
+  it('codex (claude shape) emits a matcher-grouped name-tagged command entry', () => {
     const hook: Hook = { id: 'audit-shell', on: 'beforeShell', command: 'echo' };
     const out = buildHookEntry(codexIntegration, {
       hook,
       runReference: '/abs/script',
-      mapping: { event: 'PreShellExec' },
+      mapping: { event: 'PreToolUse', matcherPrefix: 'Bash' },
     });
-    expect(out.entry.id).toBe('audit-shell');
+    expect(out.eventName).toBe('PreToolUse');
+    expect(out.matcher).toBe('Bash');
     expect(out.entry.command).toBe('/abs/script');
-    expect(out.nameTag).toBeNull();
+    expect(out.entry.type).toBe('command');
+    expect(out.entry.name).toBe('capa:audit-shell');
+    expect(out.nameTag).toBe('capa:audit-shell');
+    // Critically, the entry must NOT carry a flat `id` field — the old
+    // codex-toml shape did, and Codex's parser silently ignored it. Now
+    // that we live in the matcher-grouped layout the entry is found via
+    // the `name` tag like every other claude-style provider.
+    expect(out.entry.id).toBeUndefined();
+  });
+
+  it('codex (claude shape) upserts under matcher and serialises to nested TOML layout', () => {
+    const root: Record<string, unknown> = {};
+    const hook: Hook = { id: 'audit-shell', on: 'beforeShell', command: 'echo' };
+    const out = buildHookEntry(codexIntegration, {
+      hook,
+      runReference: '/abs/script',
+      mapping: { event: 'PreToolUse', matcherPrefix: 'Bash' },
+    });
+    const locator = upsertHookEntry(codexIntegration, root, out);
+    expect(locator).toEqual(['PreToolUse', 0, 'hooks', 0]);
+    // The shape — matcher group at the outer level, hook entry nested
+    // inside `hooks` — is what TOML round-trips as
+    // `[[hooks.PreToolUse]] matcher = "Bash"` /
+    // `[[hooks.PreToolUse.hooks]] type = "command" command = "..."`.
+    expect(((root.PreToolUse as unknown[])[0] as { matcher: string }).matcher).toBe('Bash');
+    const inner = ((root.PreToolUse as unknown[])[0] as { hooks: unknown[] }).hooks;
+    expect(inner.length).toBe(1);
+    expect((inner[0] as { name: string }).name).toBe('capa:audit-shell');
+    // Re-installing the same hook id replaces in place rather than appending.
+    const second = buildHookEntry(codexIntegration, {
+      hook,
+      runReference: '/abs/script-v2',
+      mapping: { event: 'PreToolUse', matcherPrefix: 'Bash' },
+    });
+    upsertHookEntry(codexIntegration, root, second);
+    const innerAfter = ((root.PreToolUse as unknown[])[0] as { hooks: unknown[] }).hooks;
+    expect(innerAfter.length).toBe(1);
+    expect((innerAfter[0] as { command: string }).command).toBe('/abs/script-v2');
   });
 });
 

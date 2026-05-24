@@ -137,9 +137,14 @@ describe('Provider registry', () => {
       }
     });
 
-    it('codex uses inline-config toml with codex-toml shape', () => {
+    it('codex uses inline-config toml with the (matcher-grouped) claude shape', () => {
+      // Codex's TOML hook layout is structurally identical to Claude's
+      // JSON layout (`{ matcher, hooks: [{ type, command, ... }] }` per
+      // event), so capa serialises through the same `claude` shape; the
+      // storage `format` is what makes it land as TOML on disk.
       const p = getProvider('codex');
-      expect(p?.hooks?.shape).toBe('codex-toml');
+      expect(p?.hooks?.shape).toBe('claude');
+      expect(p?.hooks?.supportsNameTag).toBe(true);
       expect(p?.hooks?.storage.kind).toBe('inline-config');
       if (p?.hooks?.storage.kind === 'inline-config') {
         expect(p.hooks.storage.format).toBe('toml');

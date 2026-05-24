@@ -15,7 +15,7 @@ Source-of-truth definition: [`src/shared/providers/registry.ts → codex`](../..
 | Instructions | `AGENTS.md` | — |
 | Rules | folded into `AGENTS.md` | No project-local rules directory; capa writes marker blocks into the instructions file. |
 | Sub-agents | `.codex/agents/<id>.toml` | TOML format; body goes into the `developer_instructions` field. |
-| Hooks | `.codex/config.toml` → `[hooks]` | TOML tables. Codex does not support a `name` tag, so capa keys each entry by `id = "<hookId>"` and tracks `(event, hookId)` in `managed_hooks` for surgical updates. |
+| Hooks | `.codex/config.toml` → `[hooks]` | Matcher-grouped Claude-style layout (`[[hooks.<Event>]]` + nested `[[hooks.<Event>.hooks]]`), serialised as TOML. Capa appends an opaque `name = "capa:<hookId>"` field on entries it owns; Codex's TOML deserialiser ignores unknown fields, so the tag round-trips cleanly and capa uses it for surgical updates without disturbing user-authored entries. |
 | Plugin manifests | — | Not declared; Codex consumes plugins via the same Claude/Cursor manifest paths handled elsewhere. |
 
 ## Hooks event mapping
@@ -37,9 +37,36 @@ skipped on Codex with a one-shot warning. Codex-specific events (e.g.
 `PermissionRequest`, `PostCompact`) can be targeted directly with
 `on: codex:<EventName>`.
 
+## TOML layout
+
+Codex's hook config uses the same matcher-grouped envelope Claude uses,
+serialised as TOML's nested array of tables. A capa-managed
+`beforeShell` hook lands as:
+
+```toml
+[[hooks.PreToolUse]]
+matcher = "Bash"
+
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = "/abs/path/to/script"
+name = "capa:audit-shell"
+timeout = 5
+```
+
+The `name` field is capa's opaque entry tag (`capa:<hookId>`). Codex's
+deserialiser (see
+[`codex-rs/config/src/hook_config.rs`](https://github.com/openai/codex/blob/main/codex-rs/config/src/hook_config.rs))
+does not use `#[serde(deny_unknown_fields)]` on `MatcherGroup` or
+`HookHandlerConfig`, so the tag is silently ignored at runtime but
+preserved across writes — capa relies on it to find and update or
+remove its own entries without touching user-authored siblings in the
+same matcher group.
+
 ## Sources
 
 - Codex repo & config docs: <https://github.com/openai/codex>
-- Codex hooks (`config.toml` → `[hooks]`): <https://github.com/openai/codex/blob/main/docs/config.md#hooks>
+- Codex hooks guide: <https://developers.openai.com/codex/hooks>
+- Codex hooks deserialiser: <https://github.com/openai/codex/blob/main/codex-rs/config/src/hook_config.rs>
 
 Last verified: 2026-05-24
