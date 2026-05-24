@@ -90,6 +90,34 @@ included for completeness but lack any project-local write paths.
 | **[Windsurf (`windsurf`)](./windsurf.md)** | `.windsurf/skills/` | — | — | `.windsurf/rules/*.md` (yaml: `description`, `globs`, `trigger: always_on \| model_decision`) | — |
 | [Zencoder (`zencoder`)](./zencoder.md) | `.zencoder/skills/` | — *(UI-managed; rules format unverified)* | — | — | — |
 
+### Hooks integration
+
+Hooks are intentionally absent from the matrix above because only a small
+slice of providers wire them up. The four providers below have a `hooks`
+integration in `registry.ts` today — capa edits the file in-place using
+`name: capa:<id>` (or `id: <hook-id>` for TOML) tags so it can update or
+remove its own entries without touching user-authored ones. Every other
+provider triggers a one-shot warning and skips; `capa install` never
+fails because of an unsupported hook target.
+
+| Provider | Config file | Shape |
+| --- | --- | --- |
+| **[Claude Code (`claude-code`)](./claude-code.md)** | `.claude/settings.json` → `hooks` | JSON map (event → `[{ matcher, hooks: [...] }]`) |
+| **[Codex (`codex`)](./codex.md)** | `.codex/config.toml` → `[hooks]` | TOML tables, ID-tagged |
+| **[Cursor (`cursor`)](./cursor.md)** | `.cursor/hooks.json` (standalone) | `{ version: 1, hooks: { ... } }` envelope |
+| **[Gemini CLI (`gemini-cli`)](./gemini-cli.md)** | `.gemini/settings.json` → `hooks` | JSON map (claude-style) |
+
+Materialised hook scripts (when the YAML uses `source:` instead of inline
+`command`) live under `~/.capa/hooks/<projectId>/<hookId>` rather than in
+the project. The `managed_hooks` SQLite table tracks `(projectId,
+providerId, hookId, configPath, locator, scriptPath)` so prune and clean
+can edit a single entry surgically.
+
+See [`docs/README.md`](../README.md#installation-pipeline) for how
+`prune-orphan-hooks` and `install-hooks` slot into the install pipeline,
+and the per-provider pages above for citations to each provider's hooks
+documentation.
+
 ### Cross-cutting notes
 
 - **`AGENTS.md` is universal.** Every install run touches `AGENTS.md`

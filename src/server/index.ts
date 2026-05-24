@@ -591,6 +591,28 @@ class CapaServer {
             appliesTo: r.appliesTo || [],
             alwaysApply: r.alwaysApply || false,
           })),
+          hooks: (capabilities.hooks || []).map(h => ({
+            id: h.id,
+            description: h.description || null,
+            on: h.on,
+            type: h.type || 'command',
+            providers: h.providers || [],
+            matcher: h.matcher || null,
+            timeout: h.timeout ?? null,
+            failClosed: h.failClosed ?? false,
+            sequential: h.sequential ?? false,
+            sourceType: h.source?.type || null,
+            command: h.command ?? null,
+            prompt: h.prompt ?? null,
+            installed: this.db
+              .getManagedHooks(projectId)
+              .filter(m => m.hookId === h.id)
+              .map(m => ({
+                providerId: m.providerId,
+                configPath: m.configPath,
+                scriptPath: m.scriptPath,
+              })),
+          })),
           options: capabilities.options ? {
             toolExposure: capabilities.options.toolExposure || null,
             security: capabilities.options.security ? {

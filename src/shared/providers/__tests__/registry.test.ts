@@ -113,6 +113,49 @@ describe('Provider registry', () => {
       expect(replit?.showInUniversalList).toBe(false);
     });
   });
+
+  describe('hooks integration is wired for v1 providers', () => {
+    it('claude-code uses inline-config json with claude shape', () => {
+      const p = getProvider('claude-code');
+      expect(p?.hooks).toBeDefined();
+      expect(p?.hooks?.shape).toBe('claude');
+      expect(p?.hooks?.storage.kind).toBe('inline-config');
+      if (p?.hooks?.storage.kind === 'inline-config') {
+        expect(p.hooks.storage.configPath).toBe('.claude/settings.json');
+        expect(p.hooks.storage.format).toBe('json');
+      }
+      expect(p?.hooks?.eventMap.beforeShell).toEqual({ event: 'PreToolUse', matcherPrefix: 'Bash' });
+    });
+
+    it('cursor uses standalone json with cursor-v1 envelope', () => {
+      const p = getProvider('cursor');
+      expect(p?.hooks?.shape).toBe('cursor');
+      expect(p?.hooks?.storage.kind).toBe('standalone');
+      if (p?.hooks?.storage.kind === 'standalone') {
+        expect(p.hooks.storage.envelope).toBe('cursor-v1');
+        expect(p.hooks.storage.configPath).toBe('.cursor/hooks.json');
+      }
+    });
+
+    it('codex uses inline-config toml with codex-toml shape', () => {
+      const p = getProvider('codex');
+      expect(p?.hooks?.shape).toBe('codex-toml');
+      expect(p?.hooks?.storage.kind).toBe('inline-config');
+      if (p?.hooks?.storage.kind === 'inline-config') {
+        expect(p.hooks.storage.format).toBe('toml');
+        expect(p.hooks.storage.configPath).toBe('.codex/config.toml');
+      }
+    });
+
+    it('gemini-cli uses inline-config json with gemini shape', () => {
+      const p = getProvider('gemini-cli');
+      expect(p?.hooks?.shape).toBe('gemini');
+      expect(p?.hooks?.storage.kind).toBe('inline-config');
+      if (p?.hooks?.storage.kind === 'inline-config') {
+        expect(p.hooks.storage.configPath).toBe('.gemini/settings.json');
+      }
+    });
+  });
 });
 
 describe('Cursor pilot integration', () => {

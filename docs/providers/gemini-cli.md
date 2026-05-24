@@ -15,7 +15,16 @@ Source-of-truth definition: [`src/shared/providers/registry.ts → gemini-cli`](
 | Instructions | `AGENTS.md` | Supported via configurable `context.fileName`. |
 | Rules | folded into `AGENTS.md` | No project-local rules directory; rules become marker blocks. |
 | Sub-agents | `.gemini/agents/<id>.md` | Markdown + YAML frontmatter; `name` / `description` required. |
+| Hooks | `.gemini/settings.json` → `hooks` | JSON map; Gemini reuses the Claude shape, so capa upserts `[{ matcher, hooks: [{ name: "capa:<id>", … }] }]` and only manages its own tagged entries. |
 | Plugin manifests | — | Not declared. |
+
+## Hooks event mapping
+
+Canonical → Gemini: `beforeTool → PreToolUse`, `afterTool → PostToolUse`,
+`userPromptSubmit → UserPromptSubmit`, `sessionStart → SessionStart`,
+`stop → Stop`. Gemini's hook surface tracks Claude's, so the bash-style
+matcher rewrite (`beforeShell` ⇒ `PreToolUse` + `matcher: Bash`) applies
+here too.
 
 ## Caveats
 
@@ -25,5 +34,6 @@ Source-of-truth definition: [`src/shared/providers/registry.ts → gemini-cli`](
 ## Sources
 
 - Gemini CLI repo: <https://github.com/google-gemini/gemini-cli>
+- Gemini CLI hooks (`.gemini/settings.json` → `hooks`): <https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/configuration.md#hooks>
 
-Last verified: 2026-05-23
+Last verified: 2026-05-24

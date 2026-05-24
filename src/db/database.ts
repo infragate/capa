@@ -17,6 +17,7 @@ import { ProjectsRepo } from './projects';
 import { SessionsRepo } from './sessions';
 import { VariablesRepo } from './variables';
 import { ManagedFilesRepo } from './managed-files';
+import { type ManagedHookRow, ManagedHooksRepo } from './managed-hooks';
 import { OAuthTokensRepo } from './oauth-tokens';
 import { OAuthFlowStateRepo } from './oauth-flow-state';
 import { GitIntegrationsRepo } from './git-integrations';
@@ -31,6 +32,7 @@ export class CapaDatabase {
   private sessions: SessionsRepo;
   private variables: VariablesRepo;
   private managedFiles: ManagedFilesRepo;
+  private managedHooks: ManagedHooksRepo;
   private oauthTokens: OAuthTokensRepo;
   private oauthFlowState: OAuthFlowStateRepo;
   private gitIntegrations: GitIntegrationsRepo;
@@ -51,6 +53,7 @@ export class CapaDatabase {
     this.sessions = new SessionsRepo(this.db);
     this.variables = new VariablesRepo(this.db);
     this.managedFiles = new ManagedFilesRepo(this.db);
+    this.managedHooks = new ManagedHooksRepo(this.db);
     this.oauthTokens = new OAuthTokensRepo(this.db);
     this.oauthFlowState = new OAuthFlowStateRepo(this.db);
     this.gitIntegrations = new GitIntegrationsRepo(this.db);
@@ -143,6 +146,23 @@ export class CapaDatabase {
 
   clearManagedFiles(projectId: string): void {
     return this.managedFiles.clear(projectId);
+  }
+
+  // Managed hooks operations
+  upsertManagedHook(input: Omit<ManagedHookRow, 'createdAt'>): void {
+    return this.managedHooks.upsert(input);
+  }
+
+  getManagedHooks(projectId: string): ManagedHookRow[] {
+    return this.managedHooks.getAll(projectId);
+  }
+
+  removeManagedHook(projectId: string, providerId: string, hookId: string): void {
+    return this.managedHooks.remove(projectId, providerId, hookId);
+  }
+
+  clearManagedHooks(projectId: string): void {
+    return this.managedHooks.clear(projectId);
   }
 
   // Tool init state operations

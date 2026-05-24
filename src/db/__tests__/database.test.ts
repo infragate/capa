@@ -56,6 +56,75 @@ describe('CapaDatabase', () => {
     });
   });
 
+  describe('Managed hooks operations', () => {
+    beforeEach(() => {
+      db.upsertProject({ id: 'hooks-proj', path: '/hooks/path' });
+    });
+
+    it('upserts and reads managed hook rows', () => {
+      db.upsertManagedHook({
+        projectId: 'hooks-proj',
+        providerId: 'claude-code',
+        hookId: 'audit',
+        configPath: '/abs/.claude/settings.json',
+        locator: '["PreToolUse",0,"hooks",0]',
+        scriptPath: null,
+      });
+      const rows = db.getManagedHooks('hooks-proj');
+      expect(rows).toHaveLength(1);
+      expect(rows[0].providerId).toBe('claude-code');
+      expect(rows[0].hookId).toBe('audit');
+      expect(rows[0].locator).toBe('["PreToolUse",0,"hooks",0]');
+    });
+
+    it('upsert replaces an existing (provider, hook) entry', () => {
+      db.upsertManagedHook({
+        projectId: 'hooks-proj',
+        providerId: 'cursor',
+        hookId: 'a',
+        configPath: '/p1',
+        locator: '["x",0]',
+        scriptPath: '/script',
+      });
+      db.upsertManagedHook({
+        projectId: 'hooks-proj',
+        providerId: 'cursor',
+        hookId: 'a',
+        configPath: '/p2',
+        locator: '["x",1]',
+        scriptPath: null,
+      });
+      const rows = db.getManagedHooks('hooks-proj');
+      expect(rows).toHaveLength(1);
+      expect(rows[0].configPath).toBe('/p2');
+      expect(rows[0].locator).toBe('["x",1]');
+      expect(rows[0].scriptPath).toBeNull();
+    });
+
+    it('removes individual entries and clears them all', () => {
+      db.upsertManagedHook({
+        projectId: 'hooks-proj',
+        providerId: 'claude-code',
+        hookId: 'a',
+        configPath: '/p',
+        locator: '["x",0]',
+        scriptPath: null,
+      });
+      db.upsertManagedHook({
+        projectId: 'hooks-proj',
+        providerId: 'cursor',
+        hookId: 'b',
+        configPath: '/p',
+        locator: '["x",0]',
+        scriptPath: null,
+      });
+      db.removeManagedHook('hooks-proj', 'claude-code', 'a');
+      expect(db.getManagedHooks('hooks-proj')).toHaveLength(1);
+      db.clearManagedHooks('hooks-proj');
+      expect(db.getManagedHooks('hooks-proj')).toEqual([]);
+    });
+  });
+
   describe('Variable operations', () => {
     beforeEach(() => {
       db.upsertProject({ id: 'test-proj', path: '/test/path' });

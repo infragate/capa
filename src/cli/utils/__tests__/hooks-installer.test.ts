@@ -1,0 +1,310 @@
+import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
+import { CapaDatabase } from '../../../db/database';
+import { installHooks, pruneOrphanHooks, cleanHooks } from '../hooks-installer';
+import { LockfileBuilder } from '../../../shared/lockfile';
+import type { Hook } from '../../../types/hooks';
+import type { AuthenticatedFetch } from '../../../shared/authenticated-fetch';
+import type { GetSnapshotResult } from '../../../shared/cache';
+
+function makeAuthFetch(): AuthenticatedFetch {
+  return {
+    fetch: async () => new Response('echo from-remote\n', { status: 200, headers: { 'Content-Type': 'text/plain' } }),
+    hasAuth: () => false,
+  } as unknown as AuthenticatedFetch;
+}
+
+const stubGetRepoSnapshot = async (): Promise<GetSnapshotResult> => {
+  throw new Error('repo snapshot fetcher should not be invoked in inline-only tests');
+};
+
+describe('hooks-installer (claude inline-config)', () => {
+  let tempDir: string;
+  let projectPath: string;
+  let db: CapaDatabase;
+  let dbPath: string;
+  const projectId = 'test-project';
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), 'capa-hooks-installer-'));
+    projectPath = join(tempDir, 'project');
+    require('fs').mkdirSync(projectPath, { recursive: true });
+    dbPath = join(tempDir, 'capa.db');
+    db = new CapaDatabase(dbPath);
+    db.upsertProject({ id: projectId, path: projectPath });
+  });
+
+  afterEach(() => {
+    db.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('writes a claude entry into .claude/settings.json and records it in managed_hooks', async () => {
+    const hooks: Hook[] = [
+      {
+        id: 'audit-bash',
+        on: 'beforeShell',
+        type: 'command',
+        command: 'echo running',
+      },
+    ];
+
+    const result = await installHooks({
+      projectPath,
+      projectId,
+      capabilitiesFilePath: join(projectPath, 'capabilities.yaml'),
+      hooks,
+      providers: ['claude-code'],
+      db,
+      authFetch: makeAuthFetch(),
+      getRepoSnapshot: stubGetRepoSnapshot,
+    });
+    expect(result.installed).toBe(1);
+    expect(result.warnings).toEqual([]);
+
+    const settingsPath = join(projectPath, '.claude', 'settings.json');
+    expect(existsSync(settingsPath)).toBe(true);
+    const config = JSON.parse(readFileSync(settingsPath, 'utf-8')) as Record<string, any>;
+    const events = config.hooks.PreToolUse;
+    expect(Array.isArray(events)).toBe(true);
+    expect(events.length).toBe(1);
+    expect(events[0].matcher).toBe('Bash');
+    expect(events[0].hooks[0].command).toBe('echo running');
+    expect(events[0].hooks[0].name).toBe('capa:audit-bash');
+
+    const rows = db.getManagedHooks(projectId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].providerId).toBe('claude-code');
+    expect(rows[0].hookId).toBe('audit-bash');
+    expect(JSON.parse(rows[0].locator)).toEqual(['PreToolUse', 0, 'hooks', 0]);
+  });
+
+  it('preserves user-authored entries when capa upserts its own', async () => {
+    const settingsPath = join(projectPath, '.claude', 'settings.json');
+    require('fs').mkdirSync(join(projectPath, '.claude'), { recursive: true });
+    writeFileSync(
+      settingsPath,
+      JSON.stringify(
+        {
+          hooks: {
+            PreToolUse: [
+              { matcher: 'Bash', hooks: [{ type: 'command', command: 'user-script' }] },
+            ],
+          },
+          permissions: ['*'],
+        },
+        null,
+        2,
+      ),
+    );
+
+    await installHooks({
+      projectPath,
+      projectId,
+      capabilitiesFilePath: join(projectPath, 'capabilities.yaml'),
+      hooks: [{ id: 'capa-bash', on: 'beforeShell', command: 'echo capa' }],
+      providers: ['claude-code'],
+      db,
+      authFetch: makeAuthFetch(),
+      getRepoSnapshot: stubGetRepoSnapshot,
+    });
+
+    const config = JSON.parse(readFileSync(settingsPath, 'utf-8')) as any;
+    expect(config.permissions).toEqual(['*']);
+    const bashEvents = config.hooks.PreToolUse[0].hooks;
+    expect(bashEvents).toHaveLength(2);
+    const commands = bashEvents.map((h: any) => h.command);
+    expect(commands).toContain('user-script');
+    expect(commands).toContain('echo capa');
+  });
+
+  it('warns and skips when a provider has no hook integration', async () => {
+    const result = await installHooks({
+      projectPath,
+      projectId,
+      capabilitiesFilePath: join(projectPath, 'capabilities.yaml'),
+      hooks: [{ id: 'whatever', on: 'sessionStart', command: 'echo' }],
+      providers: ['amp'],
+      db,
+      authFetch: makeAuthFetch(),
+      getRepoSnapshot: stubGetRepoSnapshot,
+    });
+    expect(result.installed).toBe(0);
+    expect(result.warnings.some((w) => w.includes('does not support project-level hooks'))).toBe(true);
+  });
+
+  it('warns when canonical event has no mapping for provider', async () => {
+    const result = await installHooks({
+      projectPath,
+      projectId,
+      capabilitiesFilePath: join(projectPath, 'capabilities.yaml'),
+      hooks: [{ id: 'pc', on: 'preCompact', command: 'echo pre-compact' }],
+      providers: ['cursor'],
+      db,
+      authFetch: makeAuthFetch(),
+      getRepoSnapshot: stubGetRepoSnapshot,
+    });
+    expect(result.installed).toBe(0);
+    expect(result.warnings.some((w) => /no mapping/.test(w))).toBe(true);
+  });
+
+  it('records remote sources in the lockfile builder', async () => {
+    const lockBuilder = new LockfileBuilder(null);
+    await installHooks({
+      projectPath,
+      projectId,
+      capabilitiesFilePath: join(projectPath, 'capabilities.yaml'),
+      hooks: [
+        {
+          id: 'remote-hook',
+          on: 'beforeShell',
+          source: { type: 'remote', url: 'https://example.com/hook.sh' },
+        },
+      ],
+      providers: ['claude-code'],
+      db,
+      authFetch: makeAuthFetch(),
+      getRepoSnapshot: stubGetRepoSnapshot,
+      lockBuilder,
+    });
+
+    const lock = lockBuilder.build();
+    expect(lock.hooks).toHaveLength(1);
+    expect(lock.hooks[0].id).toBe('remote-hook');
+    expect(lock.hooks[0].source).toBe('remote');
+    expect(lock.hooks[0].url).toBe('https://example.com/hook.sh');
+    expect(lock.hooks[0].bodySha256).toMatch(/^[a-f0-9]{64}$/);
+  });
+});
+
+describe('hooks-installer (cursor standalone)', () => {
+  let tempDir: string;
+  let projectPath: string;
+  let db: CapaDatabase;
+  const projectId = 'test-project';
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), 'capa-hooks-installer-cur-'));
+    projectPath = join(tempDir, 'project');
+    require('fs').mkdirSync(projectPath, { recursive: true });
+    db = new CapaDatabase(join(tempDir, 'capa.db'));
+    db.upsertProject({ id: projectId, path: projectPath });
+  });
+
+  afterEach(() => {
+    db.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('writes a cursor envelope and replaces capa-tagged entries on re-install', async () => {
+    const installOnce = (command: string) =>
+      installHooks({
+        projectPath,
+        projectId,
+        capabilitiesFilePath: join(projectPath, 'capabilities.yaml'),
+        hooks: [{ id: 'shell-audit', on: 'beforeShell', command }],
+        providers: ['cursor'],
+        db,
+        authFetch: makeAuthFetch(),
+        getRepoSnapshot: stubGetRepoSnapshot,
+      });
+
+    await installOnce('echo first');
+    await installOnce('echo second');
+
+    const path = join(projectPath, '.cursor', 'hooks.json');
+    expect(existsSync(path)).toBe(true);
+    const config = JSON.parse(readFileSync(path, 'utf-8')) as any;
+    expect(config.version).toBe(1);
+    expect(config.hooks.beforeShellExecution).toHaveLength(1);
+    expect(config.hooks.beforeShellExecution[0].command).toBe('echo second');
+
+    const rows = db.getManagedHooks(projectId);
+    expect(rows).toHaveLength(1);
+  });
+});
+
+describe('hooks-installer — pruneOrphanHooks / cleanHooks', () => {
+  let tempDir: string;
+  let projectPath: string;
+  let db: CapaDatabase;
+  const projectId = 'test-project';
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), 'capa-hooks-prune-'));
+    projectPath = join(tempDir, 'project');
+    require('fs').mkdirSync(projectPath, { recursive: true });
+    db = new CapaDatabase(join(tempDir, 'capa.db'));
+    db.upsertProject({ id: projectId, path: projectPath });
+  });
+
+  afterEach(() => {
+    db.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('drops entries no longer requested but keeps current ones', async () => {
+    await installHooks({
+      projectPath,
+      projectId,
+      capabilitiesFilePath: join(projectPath, 'capabilities.yaml'),
+      hooks: [
+        { id: 'a', on: 'beforeShell', command: 'echo a' },
+        { id: 'b', on: 'beforeShell', command: 'echo b' },
+      ],
+      providers: ['claude-code'],
+      db,
+      authFetch: makeAuthFetch(),
+      getRepoSnapshot: stubGetRepoSnapshot,
+    });
+    expect(db.getManagedHooks(projectId)).toHaveLength(2);
+
+    const result = pruneOrphanHooks(
+      projectPath,
+      projectId,
+      [{ id: 'a', on: 'beforeShell', command: 'echo a' }],
+      ['claude-code'],
+      db,
+    );
+    expect(result.removed).toBe(1);
+    const remaining = db.getManagedHooks(projectId);
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0].hookId).toBe('a');
+
+    const settings = JSON.parse(
+      readFileSync(join(projectPath, '.claude', 'settings.json'), 'utf-8'),
+    ) as any;
+    const bashHooks = settings.hooks.PreToolUse[0].hooks;
+    expect(bashHooks).toHaveLength(1);
+    expect(bashHooks[0].command).toBe('echo a');
+  });
+
+  it('cleanHooks wipes every entry and config keys for the project', async () => {
+    await installHooks({
+      projectPath,
+      projectId,
+      capabilitiesFilePath: join(projectPath, 'capabilities.yaml'),
+      hooks: [{ id: 'a', on: 'beforeShell', command: 'echo a' }],
+      providers: ['claude-code'],
+      db,
+      authFetch: makeAuthFetch(),
+      getRepoSnapshot: stubGetRepoSnapshot,
+    });
+
+    const { removed } = cleanHooks(projectPath, projectId, db);
+    expect(removed).toBe(1);
+    expect(db.getManagedHooks(projectId)).toEqual([]);
+    const settings = JSON.parse(
+      readFileSync(join(projectPath, '.claude', 'settings.json'), 'utf-8'),
+    ) as any;
+    expect(settings.hooks).toBeUndefined();
+  });
+});

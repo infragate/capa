@@ -50,6 +50,15 @@ export function getManagedRegistriesDir(): string {
   return join(getCapaDir(), 'registries-managed');
 }
 
+/**
+ * Resolved hook scripts live under `~/.capa/hooks/<projectId>/<hook-id>` so
+ * capa never pollutes a user's project directory with generated bodies. The
+ * dir is created lazily by the hooks installer.
+ */
+export function getHookScriptDir(projectId: string): string {
+  return join(getCapaDir(), 'hooks', projectId);
+}
+
 export async function ensureCapaDir(): Promise<void> {
   const capaDir = getCapaDir();
   if (!existsSync(capaDir)) {
