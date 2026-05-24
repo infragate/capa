@@ -73,17 +73,33 @@ function idFromNameTag(tag: string): string {
 /**
  * Pick a matcher value for the entry.
  *
- * Precedence:
- *  1. user-supplied `hook.matcher` (allows fine-grained scoping)
- *  2. mapping's `matcherPrefix` (fold-down helper, e.g. canonical
- *     `beforeShell` -> claude `PreToolUse` matcher `Bash`)
- *  3. empty string (no matcher; shape decides)
+ * `matcherPrefix` is the canonical event's implicit tool-family scope (e.g.
+ * `beforeShell -> PreToolUse` is implicitly scoped to `Bash`). It MUST be
+ * preserved when emitted, otherwise the canonical event silently widens to
+ * every tool and breaks the documented contract.
+ *
+ * Behaviour:
+ *  - prefix only            -> use prefix
+ *  - user matcher only      -> use user matcher (no canonical scope to fold in)
+ *  - both                   -> union them as a regex alternation
+ *                              `(prefix)|(userMatcher)` so the canonical
+ *                              tool family is still covered while the user's
+ *                              extra tool names also fire. The user can bypass
+ *                              this fold-in by switching to the provider-scoped
+ *                              event form (e.g. `on: claude-code:PreToolUse`).
+ *  - neither                -> empty (shape decides)
  */
 function resolveMatcher(input: HookEntryInput): string {
-  if (input.hook.matcher && input.hook.matcher.length > 0)
-    return input.hook.matcher;
-  if ("matcherPrefix" in input.mapping) return input.mapping.matcherPrefix;
-  return "";
+  const userMatcher =
+    input.hook.matcher && input.hook.matcher.length > 0
+      ? input.hook.matcher
+      : "";
+  const prefix =
+    "matcherPrefix" in input.mapping ? input.mapping.matcherPrefix : "";
+  if (prefix && userMatcher) {
+    return prefix === userMatcher ? prefix : `${prefix}|${userMatcher}`;
+  }
+  return userMatcher || prefix;
 }
 
 // ---------------------------------------------------------------------------

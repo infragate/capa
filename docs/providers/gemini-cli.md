@@ -20,11 +20,18 @@ Source-of-truth definition: [`src/shared/providers/registry.ts → gemini-cli`](
 
 ## Hooks event mapping
 
-Canonical → Gemini: `beforeTool → PreToolUse`, `afterTool → PostToolUse`,
-`userPromptSubmit → UserPromptSubmit`, `sessionStart → SessionStart`,
-`stop → Stop`. Gemini's hook surface tracks Claude's, so the bash-style
-matcher rewrite (`beforeShell` ⇒ `PreToolUse` + `matcher: Bash`) applies
-here too.
+Canonical → Gemini: `sessionStart → SessionStart`, `sessionEnd → SessionEnd`,
+`userPromptSubmit → BeforeAgent`, `beforeTool → BeforeTool`,
+`afterTool → AfterTool`, `beforeShell → BeforeTool` + `matcher: run_shell_command`,
+`afterShell → AfterTool` + `matcher: run_shell_command`,
+`beforeFileRead → BeforeTool` + `matcher: read_file`,
+`afterFileEdit → AfterTool` + `matcher: write_file|replace|edit_file`,
+`beforeMcpCall → BeforeTool` + `matcher: mcp_.*`,
+`afterMcpCall → AfterTool` + `matcher: mcp_.*`, `preCompact → PreCompress`.
+Gemini does not expose a `Stop` equivalent, so canonical `stop` hooks are
+skipped on this provider with a one-shot warning. Gemini-only events
+(e.g. `BeforeToolSelection`, `BeforeModel`, `AfterModel`, `Notification`)
+can be targeted directly with `on: gemini-cli:<EventName>`.
 
 ## Caveats
 

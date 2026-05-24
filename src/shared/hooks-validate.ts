@@ -22,6 +22,23 @@ const KNOWN_SOURCE_TYPES: ReadonlySet<HookSource["type"]> = new Set([
   "local",
 ]);
 
+/**
+ * Hook ids are used both as filenames (`~/.capa/hooks/<projectId>/<hookId>`)
+ * and as provider-config tags (`capa:<id>`). The strict allow-list keeps a
+ * crafted id from escaping the hook script directory or producing weird
+ * provider entries. Stay in sync with `isSafeHookId()` in hooks-installer.
+ */
+const SAFE_HOOK_ID_RE = /^[a-zA-Z0-9](?:[a-zA-Z0-9._-]{0,62})$/;
+
+export function isSafeHookId(id: string): boolean {
+  if (!SAFE_HOOK_ID_RE.test(id)) return false;
+  // Defence in depth: reject `..`, `/`, `\`, and explicit traversal patterns
+  // even if they happen to slip past the regex on a future edit.
+  if (id.includes("..")) return false;
+  if (id.includes("/") || id.includes("\\")) return false;
+  return true;
+}
+
 export interface HookValidationIssue {
   hookId: string | null;
   message: string;
@@ -117,6 +134,13 @@ export function validateHooks(raw: unknown[]): HookValidationResult {
       issues.push({
         hookId: null,
         message: `hook[${i}] is missing required 'id' field`,
+      });
+      continue;
+    }
+    if (!isSafeHookId(obj.id)) {
+      issues.push({
+        hookId: obj.id,
+        message: `hook "${obj.id}" id contains unsafe characters; allowed: [a-zA-Z0-9._-], must start with alphanumeric, no '..', '/', or '\\'`,
       });
       continue;
     }

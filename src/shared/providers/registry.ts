@@ -192,7 +192,11 @@ export const providers: Record<string, ProviderIntegration> = {
     },
     hooks: {
       // Codex reads hooks from .codex/config.toml as a [hooks] table.
-      // Docs: https://github.com/openai/codex/blob/main/docs/config.md
+      // Codex uses Claude-style event names (PreToolUse/PostToolUse) and a
+      // tool-name matcher; built-in tools include `Bash`, `apply_patch`, and
+      // MCP tools follow the `mcp__server__tool` naming pattern. Events
+      // without a matcher are: UserPromptSubmit, Stop.
+      // Docs: https://developers.openai.com/codex/hooks
       storage: {
         kind: 'inline-config',
         configPath: '.codex/config.toml',
@@ -203,8 +207,18 @@ export const providers: Record<string, ProviderIntegration> = {
       supportsNameTag: false,
       eventMap: {
         sessionStart: { event: 'SessionStart' },
-        beforeShell: { event: 'PreShellExec' },
-        afterShell: { event: 'PostShellExec' },
+        userPromptSubmit: { event: 'UserPromptSubmit' },
+        beforeTool: { event: 'PreToolUse' },
+        afterTool: { event: 'PostToolUse' },
+        beforeShell: { event: 'PreToolUse', matcherPrefix: 'Bash' },
+        afterShell: { event: 'PostToolUse', matcherPrefix: 'Bash' },
+        afterFileEdit: { event: 'PostToolUse', matcherPrefix: 'apply_patch' },
+        beforeMcpCall: { event: 'PreToolUse', matcherPrefix: 'mcp__' },
+        afterMcpCall: { event: 'PostToolUse', matcherPrefix: 'mcp__' },
+        subagentStart: { event: 'SubagentStart' },
+        subagentStop: { event: 'SubagentStop' },
+        preCompact: { event: 'PreCompact' },
+        stop: { event: 'Stop' },
       },
     },
   },
@@ -283,12 +297,27 @@ export const providers: Record<string, ProviderIntegration> = {
       },
       shape: 'cursor',
       supportsNameTag: true,
+      // Cursor's canonical/provider event surface (see
+      // https://cursor.com/docs/agent/hooks). We map every canonical event
+      // Cursor has a documented equivalent for; provider-only events (e.g.
+      // `afterAgentResponse`, `workspaceOpen`, `beforeTabFileRead`) can be
+      // targeted directly via `on: cursor:<eventName>`.
       eventMap: {
+        sessionStart: { event: 'sessionStart' },
+        sessionEnd: { event: 'sessionEnd' },
+        beforeTool: { event: 'preToolUse' },
+        afterTool: { event: 'postToolUse' },
+        afterToolFailure: { event: 'postToolUseFailure' },
         beforeShell: { event: 'beforeShellExecution' },
+        afterShell: { event: 'afterShellExecution' },
         beforeMcpCall: { event: 'beforeMCPExecution' },
+        afterMcpCall: { event: 'afterMCPExecution' },
         beforeFileRead: { event: 'beforeReadFile' },
         afterFileEdit: { event: 'afterFileEdit' },
         userPromptSubmit: { event: 'beforeSubmitPrompt' },
+        subagentStart: { event: 'subagentStart' },
+        subagentStop: { event: 'subagentStop' },
+        preCompact: { event: 'preCompact' },
         stop: { event: 'stop' },
       },
     },
@@ -342,10 +371,16 @@ export const providers: Record<string, ProviderIntegration> = {
     },
     hooks: {
       // Gemini CLI hooks live alongside its other settings in
-      // .gemini/settings.json under a top-level `hooks` key. Format and
-      // shape mirror Claude's claude-style entries closely enough that we
-      // share the same `claude` shape.
-      // Docs: https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/configuration.md
+      // .gemini/settings.json under a top-level `hooks` key. The shape
+      // (matcher group + nested `hooks` array) mirrors Claude's, but the
+      // event names and matcher conventions are Gemini-specific:
+      //   - tool events are BeforeTool/AfterTool (not Pre/PostToolUse).
+      //   - matcher is a regex over the tool name, where built-in tools
+      //     are snake_case (run_shell_command, read_file, write_file, …)
+      //     and MCP tools follow `mcp_<server>_<tool>`.
+      // Events without a Gemini equivalent (`stop`) are simply omitted —
+      // hooks targeting them are skipped with a one-shot warning.
+      // Docs: https://github.com/google-gemini/gemini-cli/blob/main/docs/hooks/reference.md
       storage: {
         kind: 'inline-config',
         configPath: '.gemini/settings.json',
@@ -356,10 +391,20 @@ export const providers: Record<string, ProviderIntegration> = {
       supportsNameTag: true,
       eventMap: {
         sessionStart: { event: 'SessionStart' },
-        userPromptSubmit: { event: 'UserPromptSubmit' },
-        beforeTool: { event: 'PreToolUse' },
-        afterTool: { event: 'PostToolUse' },
-        stop: { event: 'Stop' },
+        sessionEnd: { event: 'SessionEnd' },
+        userPromptSubmit: { event: 'BeforeAgent' },
+        beforeTool: { event: 'BeforeTool' },
+        afterTool: { event: 'AfterTool' },
+        beforeShell: { event: 'BeforeTool', matcherPrefix: 'run_shell_command' },
+        afterShell: { event: 'AfterTool', matcherPrefix: 'run_shell_command' },
+        beforeFileRead: { event: 'BeforeTool', matcherPrefix: 'read_file' },
+        afterFileEdit: {
+          event: 'AfterTool',
+          matcherPrefix: 'write_file|replace|edit_file',
+        },
+        beforeMcpCall: { event: 'BeforeTool', matcherPrefix: 'mcp_.*' },
+        afterMcpCall: { event: 'AfterTool', matcherPrefix: 'mcp_.*' },
+        preCompact: { event: 'PreCompress' },
       },
     },
   },
