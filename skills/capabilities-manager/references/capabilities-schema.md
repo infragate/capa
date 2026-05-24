@@ -238,14 +238,29 @@ When `source` is `inline` / `remote` / `github` / `gitlab`, capa fetches the bod
 
 `source.type: local` is special: the script already exists in the project and is version-controlled, so capa references the user's file in place via its absolute path — no copy is made under `~/.capa`, `chmod` is the user's responsibility, and edits to the script take effect immediately without re-running `capa install`. `capa clean` will never delete a local-source script.
 
+> **Important — capa template variables vs shell variables.** capa
+> resolves `${VarName}` placeholders (curly-braced) anywhere in the
+> capabilities file at install time, prompting for any value the project
+> doesn't already have stored. That syntax has nothing to do with the
+> environment your hook script runs under — providers do **not** export
+> the tool input as an env var; instead each fired hook receives a JSON
+> payload on **stdin** (shape varies per provider). For non-trivial
+> hooks that need to inspect the tool input, use `source: { type: local
+> }` and have the script read stdin (e.g. `jq -r '.tool_input.command'`
+> for Claude / Gemini / Codex, or `jq -r '.command'` for Cursor). Don't
+> embed `${...}` in inline commands unless you actually want capa to
+> substitute a project variable at install time.
+
 ```yaml
 hooks:
   # Canonical event with an inline command — installed for every active
-  # provider that maps `beforeShell`.
+  # provider that maps `beforeShell`. The command is a shell one-liner
+  # that runs at the moment the agent fires the hook; capa does NOT
+  # interpolate anything inside single quotes here.
   - id: audit-shell
-    description: Append shell commands to ~/.capa/audit.log
+    description: Timestamp every shell invocation
     on: beforeShell
-    command: 'echo "$(date) $TOOL_INPUT" >> ~/.capa/audit.log'
+    command: 'date >> ~/.capa/audit.log'
     timeout: 5
 
   # Provider-scoped event — only Cursor receives this entry.
@@ -254,6 +269,17 @@ hooks:
     matcher: 'rm -rf *'
     failClosed: true
     command: 'echo "blocked" && exit 1'
+
+  # When you actually need the tool input, use a local script that reads
+  # stdin. The script lives in the project (no copy under ~/.capa).
+  - id: log-bash-commands
+    on: beforeShell
+    source: { type: local, path: scripts/log-bash.sh }
+    # scripts/log-bash.sh:
+    #   #!/usr/bin/env bash
+    #   set -euo pipefail
+    #   cmd=$(jq -r '.tool_input.command // .command // empty')
+    #   printf '%s %s\n' "$(date -u +%FT%TZ)" "$cmd" >> "$HOME/.capa/audit.log"
 
   # Source pulled from a pinned GitHub path; capa pins the resolved SHA in
   # capabilities.lock under the new `hooks:` section.
