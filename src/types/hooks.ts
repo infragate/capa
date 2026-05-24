@@ -7,7 +7,18 @@
  * (e.g. `.claude/settings.json`) without disturbing user-authored entries.
  */
 
-import type { AgentSnippetDef } from './capabilities';
+/**
+ * Repo locator for `source: { type: 'github' | 'gitlab' }`.
+ *
+ * Same string grammar as skills (`owner/repo`, `owner/repo@search`,
+ * `owner/repo::path/inside/repo`, with optional `:version` / `#sha` suffixes).
+ * Defined locally instead of reusing `AgentSnippetDef` so the hook subsystem
+ * stays decoupled from the AGENTS.md / CLAUDE.md snippet flow — they happen
+ * to share a shape today, but mean different things.
+ */
+export interface HookSourceDef {
+  repo: string;
+}
 
 /**
  * Canonical lifecycle events.
@@ -71,10 +82,8 @@ export interface HookSource {
   type: 'inline' | 'remote' | 'github' | 'gitlab' | 'local';
   content?: string;
   url?: string;
-  def?: AgentSnippetDef;
+  def?: HookSourceDef;
   path?: string;
-  /** When true (default) the materialised script is chmod +x. */
-  executable?: boolean;
 }
 
 /**

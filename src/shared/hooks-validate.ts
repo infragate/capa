@@ -64,7 +64,6 @@ function validateSource(
   if (typeof obj.content === "string") result.content = obj.content;
   if (typeof obj.url === "string") result.url = obj.url;
   if (typeof obj.path === "string") result.path = obj.path;
-  if (typeof obj.executable === "boolean") result.executable = obj.executable;
   if (obj.def && typeof obj.def === "object" && !Array.isArray(obj.def)) {
     const def = obj.def as Record<string, unknown>;
     if (typeof def.repo === "string") {

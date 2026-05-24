@@ -28,7 +28,13 @@ export interface OAuth2Config {
 export type CapabilitiesFormat = 'json' | 'yaml';
 export type { Plugin, SourcePlugin, ResolvedPluginInfo } from './plugin';
 export type { Rule } from './rules';
-export type { Hook, HookSource, CanonicalHookEvent, ProviderScopedEvent } from './hooks';
+export type {
+  CanonicalHookEvent,
+  Hook,
+  HookSource,
+  HookSourceDef,
+  ProviderScopedEvent,
+} from './hooks';
 
 /**
  * Tool exposure modes for MCP clients

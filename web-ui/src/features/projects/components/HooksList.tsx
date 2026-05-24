@@ -146,27 +146,6 @@ function HookItem({ hook, search }: { hook: Hook; search: string }) {
               </div>
             )}
 
-            {hook.installed.length > 0 && (
-              <div className="flex flex-col gap-1">
-                <span className="font-medium text-text-primary">{t('hooks.installed')}:</span>
-                <ul className="space-y-1 pl-1">
-                  {hook.installed.map((entry) => (
-                    <li key={`${entry.providerId}:${entry.configPath}`} className="text-text-secondary">
-                      <div>
-                        <span className="font-medium">{entry.providerId}</span>
-                        {' — '}
-                        <span className="font-mono text-[11px]">{entry.configPath}</span>
-                      </div>
-                      {entry.scriptPath && (
-                        <div className="font-mono text-[11px] text-text-tertiary">
-                          {t('hooks.script')}: {entry.scriptPath}
-                        </div>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
           </div>
         </div>
       )}
