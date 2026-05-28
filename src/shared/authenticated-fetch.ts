@@ -9,6 +9,7 @@ import type { CapaDatabase } from '../db/database';
 import type { GitIntegration } from '../types/database';
 import type { GitPlatform } from '../types/git-integration';
 import { getGitProvider, getGitProviderByHost } from './git-providers/registry';
+import { isPermanentRefreshFailure } from './oauth-refresh';
 
 const CLOUD_OAUTH_ENDPOINT = 'https://capa.infragate.ai/auth';
 
@@ -92,7 +93,13 @@ export class AuthenticatedFetch {
         }),
       });
       if (!response.ok) {
-        this.db.deleteGitIntegration(platform, host ?? null);
+        // Only drop the stored token when the refresh_token is provably bad. Transient
+        // 5xx / rate-limit / network failures leave the token in place so the next
+        // request (or the scheduler) can retry.
+        const body = await response.text().catch(() => '');
+        if (isPermanentRefreshFailure(undefined, response, body)) {
+          this.db.deleteGitIntegration(platform, host ?? null);
+        }
         return false;
       }
 
