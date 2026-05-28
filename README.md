@@ -1,4 +1,4 @@
-# CAPA: Agentic Capabilities Manager
+# CAPA: Agentic Capabilities and Package Manager
 
 [![Latest Release](https://img.shields.io/github/v/release/infragate/capa?style=flat-square&label=latest&color=6366f1)](https://github.com/infragate/capa/releases/latest)
 [![Tests](https://img.shields.io/github/actions/workflow/status/infragate/capa/test.yml?style=flat-square&label=tests&logo=github)](https://github.com/infragate/capa/actions/workflows/test.yml)
