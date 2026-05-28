@@ -84,6 +84,66 @@ describe('git token refresh security', () => {
       expect(body.provider).toBe('github.com');
       expect(body.refresh_token).toBe('old-refresh');
     });
+
+    it('preserves the stored token when the cloud proxy returns a transient 5xx', async () => {
+      globalThis.fetch = (async (_input: RequestInfo | URL, _init?: RequestInit) => {
+        return new Response('upstream temporarily unavailable', {
+          status: 502,
+          headers: { 'Content-Type': 'text/plain' },
+        });
+      }) as typeof fetch;
+
+      const ok = await manager.refreshAccessToken('github');
+      expect(ok).toBe(false);
+
+      const stored = db.getGitIntegration('github');
+      expect(stored).not.toBeNull();
+      expect(stored?.access_token).toBe('old-access');
+      expect(stored?.refresh_token).toBe('old-refresh');
+    });
+
+    it('preserves the stored token when the refresh request hits a network error', async () => {
+      globalThis.fetch = (async (_input: RequestInfo | URL, _init?: RequestInit) => {
+        throw new Error('ECONNRESET');
+      }) as unknown as typeof fetch;
+
+      const ok = await manager.refreshAccessToken('github');
+      expect(ok).toBe(false);
+
+      const stored = db.getGitIntegration('github');
+      expect(stored).not.toBeNull();
+      expect(stored?.access_token).toBe('old-access');
+    });
+
+    it('preserves the stored token when the proxy returns 401 without an invalid_grant marker', async () => {
+      globalThis.fetch = (async (_input: RequestInfo | URL, _init?: RequestInit) => {
+        return new Response('rate limited', {
+          status: 401,
+          headers: { 'Content-Type': 'text/plain' },
+        });
+      }) as typeof fetch;
+
+      const ok = await manager.refreshAccessToken('github');
+      expect(ok).toBe(false);
+
+      const stored = db.getGitIntegration('github');
+      expect(stored).not.toBeNull();
+    });
+
+    it('deletes the stored token when the cloud proxy reports invalid_grant', async () => {
+      globalThis.fetch = (async (_input: RequestInfo | URL, _init?: RequestInit) => {
+        return new Response(JSON.stringify({ error: 'invalid_grant' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }) as typeof fetch;
+
+      const ok = await manager.refreshAccessToken('github');
+      expect(ok).toBe(false);
+
+      const stored = db.getGitIntegration('github');
+      expect(stored).toBeNull();
+    });
   });
 
   describe('/api/integrations/:platform/refresh', () => {
