@@ -53,7 +53,8 @@ export function ProjectDetailPage() {
       caps.tools.length > 0 ||
       caps.servers.length > 0 ||
       (caps.subagents?.length ?? 0) > 0 ||
-      (caps.rules?.length ?? 0) > 0);
+      (caps.rules?.length ?? 0) > 0 ||
+      (caps.hooks?.length ?? 0) > 0);
   const hasVariables = (variables?.required?.length ?? 0) > 0;
   const hasOAuth = (oauth2Servers?.length ?? 0) > 0;
   const hasProviders = (caps?.providers?.length ?? 0) > 0;
@@ -157,6 +158,7 @@ export function ProjectDetailPage() {
                 servers={caps!.servers}
                 subagents={caps!.subagents ?? []}
                 rules={caps!.rules ?? []}
+                hooks={caps!.hooks ?? []}
                 projectId={projectId}
               />
             )}

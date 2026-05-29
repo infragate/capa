@@ -10,7 +10,10 @@ import type { Rule } from '../../types/rules';
  * e.g. { url: 'http://...' }
  */
 export function buildMcpEntry(mcp: McpIntegration, url: string): Record<string, unknown> {
-  return { [mcp.entryUrlKey]: url };
+  const entry: Record<string, unknown> = {};
+  if (mcp.entryType) entry.type = mcp.entryType;
+  entry[mcp.entryUrlKey] = url;
+  return entry;
 }
 
 /**

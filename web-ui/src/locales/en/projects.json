@@ -38,10 +38,13 @@
     "noServersMatch": "No servers match your search",
     "subagents": "Sub-Agents",
     "rules": "Rules",
+    "hooks": "Hooks",
     "noSubagents": "No sub-agents configured",
     "noRules": "No rules configured",
+    "noHooks": "No hooks configured",
     "noSubagentsMatch": "No sub-agents match your search",
-    "noRulesMatch": "No rules match your search"
+    "noRulesMatch": "No rules match your search",
+    "noHooksMatch": "No hooks match your search"
   },
   "variables": {
     "title": "Environment Variables",
@@ -90,7 +93,9 @@
     "subagent": "sub-agent",
     "subagents": "sub-agents",
     "rule": "rule",
-    "rules": "rules"
+    "rules": "rules",
+    "hook": "hook",
+    "hooks": "hooks"
   },
   "openOnGitHub": "Open on GitHub",
   "openOnGitLab": "Open on GitLab",
@@ -109,6 +114,19 @@
     "providers": "Providers",
     "appliesTo": "Applies to",
     "alwaysApply": "Always apply",
+    "allProviders": "All providers"
+  },
+  "hooks": {
+    "title": "Hooks",
+    "subtitle": "Lifecycle hooks installed in each provider's hook config",
+    "event": "Event",
+    "providers": "Providers",
+    "matcher": "Matcher",
+    "timeout": "Timeout",
+    "source": "Source",
+    "command": "Command",
+    "prompt": "Prompt",
+    "installedOn": "Installed on",
     "allProviders": "All providers"
   },
   "providers": {

@@ -2,6 +2,7 @@
 
 import type { Plugin, SourcePlugin, ResolvedPluginInfo } from './plugin';
 import type { Rule } from './rules';
+import type { Hook } from './hooks';
 
 /** OAuth2 settings on MCP server definitions (plugin manifest or auto-detected). */
 export interface OAuth2Config {
@@ -27,6 +28,13 @@ export interface OAuth2Config {
 export type CapabilitiesFormat = 'json' | 'yaml';
 export type { Plugin, SourcePlugin, ResolvedPluginInfo } from './plugin';
 export type { Rule } from './rules';
+export type {
+  CanonicalHookEvent,
+  Hook,
+  HookSource,
+  HookSourceDef,
+  ProviderScopedEvent,
+} from './hooks';
 
 /**
  * Tool exposure modes for MCP clients
@@ -239,6 +247,12 @@ export interface Capabilities {
    * instructions file for providers without a dedicated rules location).
    */
   rules?: Rule[];
+  /**
+   * Lifecycle hooks installed across providers that support them. For each
+   * declared hook capa records the targeted provider config + JSON pointer
+   * (or TOML key path) so it can edit shared config files surgically.
+   */
+  hooks?: Hook[];
 }
 
 export interface Skill {

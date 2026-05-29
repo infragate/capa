@@ -30,6 +30,32 @@ function makeDb(integration: GitIntegration | null): CapaDatabase {
   } as unknown as CapaDatabase;
 }
 
+function makeDbWithSpies(integration: GitIntegration | null) {
+  const deletes: Array<{ platform: string; host: string | null }> = [];
+  const sets: Array<{ platform: string; tokenData: Record<string, unknown> }> = [];
+  let current: GitIntegration | null = integration;
+  const db = {
+    getGitIntegration: () => current,
+    getAllGitIntegrations: () => (current ? [current] : []),
+    setGitIntegration: (platform: string, tokenData: Record<string, unknown>) => {
+      sets.push({ platform, tokenData });
+      if (current) {
+        current = {
+          ...current,
+          access_token: String(tokenData.access_token ?? current.access_token),
+          refresh_token: (tokenData.refresh_token as string | null | undefined) ?? current.refresh_token,
+          expires_at: (tokenData.expires_at as number | null | undefined) ?? current.expires_at,
+        };
+      }
+    },
+    deleteGitIntegration: (platform: string, host: string | null) => {
+      deletes.push({ platform, host });
+      current = null;
+    },
+  } as unknown as CapaDatabase;
+  return { db, deletes, sets, get current() { return current; } };
+}
+
 describe('AuthenticatedFetch', () => {
   const originalFetch = globalThis.fetch;
   let fetchCalls: Array<{ url: string; init?: RequestInit }>;
@@ -114,5 +140,81 @@ describe('AuthenticatedFetch', () => {
     expect(response.status).toBe(404);
     expect(fetchCalls).toHaveLength(1);
     expect(AuthenticatedFetch.isPrivateRepoError(response)).toBe(false);
+  });
+
+  describe('refresh failure classification', () => {
+    it('keeps the stored token when the cloud refresh endpoint returns a transient 5xx', async () => {
+      globalThis.fetch = (async (input: RequestInfo | URL) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.includes('/auth/refresh')) {
+          return new Response('bad gateway', { status: 502 });
+        }
+        return new Response('ok', { status: 200 });
+      }) as typeof fetch;
+
+      const harness = makeDbWithSpies(
+        makeIntegration({
+          expires_at: Date.now() - 60_000,
+          refresh_token: 'still-valid-refresh',
+        })
+      );
+      const authFetch = new AuthenticatedFetch(harness.db);
+
+      await expect(authFetch.fetch(GITHUB_RAW_URL)).rejects.toThrow(/expired/i);
+
+      expect(harness.deletes).toHaveLength(0);
+      expect(harness.current).not.toBeNull();
+      expect(harness.current?.refresh_token).toBe('still-valid-refresh');
+    });
+
+    it('keeps the stored token when the refresh request throws a network error', async () => {
+      globalThis.fetch = (async (input: RequestInfo | URL) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.includes('/auth/refresh')) {
+          throw new Error('ENOTFOUND capa.infragate.ai');
+        }
+        return new Response('ok', { status: 200 });
+      }) as typeof fetch;
+
+      const harness = makeDbWithSpies(
+        makeIntegration({
+          expires_at: Date.now() - 60_000,
+          refresh_token: 'still-valid-refresh',
+        })
+      );
+      const authFetch = new AuthenticatedFetch(harness.db);
+
+      await expect(authFetch.fetch(GITHUB_RAW_URL)).rejects.toThrow(/expired/i);
+
+      expect(harness.deletes).toHaveLength(0);
+      expect(harness.current).not.toBeNull();
+    });
+
+    it('deletes the stored token when the refresh_token is rejected as invalid_grant', async () => {
+      globalThis.fetch = (async (input: RequestInfo | URL) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.includes('/auth/refresh')) {
+          return new Response(JSON.stringify({ error: 'invalid_grant' }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return new Response('ok', { status: 200 });
+      }) as typeof fetch;
+
+      const harness = makeDbWithSpies(
+        makeIntegration({
+          expires_at: Date.now() - 60_000,
+          refresh_token: 'truly-revoked',
+        })
+      );
+      const authFetch = new AuthenticatedFetch(harness.db);
+
+      await expect(authFetch.fetch(GITHUB_RAW_URL)).rejects.toThrow(/expired/i);
+
+      expect(harness.deletes).toHaveLength(1);
+      expect(harness.deletes[0]).toEqual({ platform: 'github', host: null });
+      expect(harness.current).toBeNull();
+    });
   });
 });
