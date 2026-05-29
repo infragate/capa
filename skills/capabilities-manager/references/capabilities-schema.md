@@ -12,7 +12,7 @@ providers:
   - claude-code
 
 options:
-  toolExposure: expose-all  # or 'on-demand'
+  toolExposure: expose-all  # 'expose-all' | 'on-demand' | 'none' (see notes below)
   # security: { blockedPhrases, allowedCharacters }
   # requiresCommands: [ { cli, description? } ]
 
@@ -78,6 +78,21 @@ Both forms accept an optional pinning suffix:
 - **Remote (HTTP)**: `def.url`, optional `def.headers`. Use `tlsSkipVerify: true` for self-signed certs. OAuth2 probe is skipped when `Authorization` header is set.
 
 Optional top-level `description` is shown in `capa sh`.
+
+## Tool Exposure (`options.toolExposure`)
+
+Controls how capa exposes skill tools to the MCP client. Three modes:
+
+| Mode | `tools/list` returns | Per-install MCP file writes | Agent invocation path |
+|------|----------------------|------------------------------|------------------------|
+| `'expose-all'` (default) | Every tool required by any active skill, with full input schemas | Yes — main `capa` entry + sub-agent `capa-<id>` entries | Direct MCP `tools/call` |
+| `'on-demand'` | Only the meta-tools `setup_tools` and `call_tool` | Yes — same as expose-all | Agent calls `setup_tools(['<skill>'])` (returns compact `name(required, optional?)` signature list), then `call_tool(name, data)`. If the call is invalid the full schema is returned in the error so the agent can self-correct without re-running setup. |
+| `'none'` | Empty list | **No** — capa skips all project-local MCP config files (`.mcp.json`, `.cursor/mcp.json`, `.codex/config.toml` `mcp_servers.capa`, sub-agent `capa-<id>` entries). Any previously-written entries are removed on install. | The agent must use `capa sh <group> <tool> [--args]` (see [`commands.md`](./commands.md)). Sub-agent instruction files are still installed for documentation but their tools are not reachable over MCP. |
+
+Notes on `'none'`:
+- The capa HTTP server still runs and the project endpoints stay live; `tools/list` just returns empty and `tools/call` rejects with a hint to use `capa sh`.
+- Useful when the user prefers to keep `.mcp.json` clean or has policy restrictions against writing per-project MCP configs.
+- Switching to `'none'` on a project that previously installed under another mode cleans up the old entries on the next `capa install`.
 
 ## Security Options (`options.security`)
 

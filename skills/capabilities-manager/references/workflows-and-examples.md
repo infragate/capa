@@ -384,9 +384,12 @@ tools:
             required: true
 ```
 
-With `on-demand` mode, the agent starts with only `setup_tools()` available and calls:
-- `setup_tools(["researcher"])` → Loads `brave.search`
-- `setup_tools(["data-analyst"])` → Loads `pandas_query`
+With `on-demand` mode, the agent starts with only `setup_tools()` and `call_tool()` available and calls:
+- `setup_tools(["researcher"])` → Activates skill `researcher`; returns the compact signature list `["brave.search(query, count?, freshness?, …)"]` (full schemas are intentionally *not* returned — they're only shown in `call_tool` error responses when an invocation is invalid).
+- `setup_tools(["data-analyst"])` → Adds `pandas_query(file, query)` to the active set.
+- `call_tool({ name: "brave.search", data: { query: "MCP spec" } })` → Invokes the tool. If `data` is missing required args or fails validation, the error response includes the full input schema so the agent can retry without re-running `setup_tools`.
+
+For a third option that bypasses MCP entirely, see `toolExposure: 'none'` in [`capabilities-schema.md`](./capabilities-schema.md#tool-exposure-optionstoolexposure) — capa skips writing any `.mcp.json` / `.cursor/mcp.json` / `.codex/config.toml` entries and the agent is expected to invoke tools via `capa sh <group> <tool> [--args]` instead.
 
 ### Example 5: CLI Prerequisites
 
