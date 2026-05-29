@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'bun:test';
-import { applyDefaultsToSchema, mergeDefaults } from '../mcp-handler';
+import {
+  applyDefaultsToSchema,
+  buildCallToolErrorPayload,
+  buildSetupToolsPayload,
+  buildToolSignature,
+  mergeDefaults,
+} from '../mcp-handler';
 import {
   getQualifiedToolName,
   normalizeToolName,
@@ -294,5 +300,182 @@ describe('getQualifiedToolName with grouped command tools', () => {
     );
     expect(fallback).toBeDefined();
     expect(fallback!.id).toBe('commit');
+  });
+});
+
+// ─── setup_tools response shape ───────────────────────────────────────────────
+//
+// `setup_tools` accumulates skills across calls, so historically the response
+// re-emitted every tool's full input schema on every call — that bloats the
+// agent's context window. The new contract: return signature strings only and
+// reserve the full schema for the `call_tool` error response when the agent
+// has demonstrably called wrong. These tests pin the new format.
+
+describe('buildToolSignature', () => {
+  it('renders empty arg list when there is no input schema', () => {
+    expect(
+      buildToolSignature({ name: 'ping', inputSchema: undefined as any })
+    ).toBe('ping()');
+  });
+
+  it('renders empty arg list when schema has no properties', () => {
+    expect(
+      buildToolSignature({
+        name: 'ping',
+        inputSchema: { type: 'object' as const },
+      })
+    ).toBe('ping()');
+  });
+
+  it('renders required-only properties in their declared required-order', () => {
+    expect(
+      buildToolSignature({
+        name: 'git.commit',
+        inputSchema: {
+          type: 'object' as const,
+          properties: {
+            message: { type: 'string' },
+            author: { type: 'string' },
+          },
+          required: ['message', 'author'],
+        },
+      })
+    ).toBe('git.commit(message, author)');
+  });
+
+  it('marks optional properties with `?` and lists required first', () => {
+    expect(
+      buildToolSignature({
+        name: 'github.create_issue',
+        inputSchema: {
+          type: 'object' as const,
+          properties: {
+            title: { type: 'string' },
+            body: { type: 'string' },
+            labels: { type: 'array' },
+            assignees: { type: 'array' },
+          },
+          required: ['title', 'body'],
+        },
+      })
+    ).toBe('github.create_issue(title, body, labels?, assignees?)');
+  });
+
+  it('renders all-optional schemas with every property marked `?`', () => {
+    expect(
+      buildToolSignature({
+        name: 'fs.list',
+        inputSchema: {
+          type: 'object' as const,
+          properties: {
+            path: { type: 'string' },
+            depth: { type: 'number' },
+          },
+        },
+      })
+    ).toBe('fs.list(path?, depth?)');
+  });
+
+  it('preserves the `required` array ordering, not the property-declaration ordering', () => {
+    // If the schema declares properties in {a, b} but requires [b, a], the
+    // signature must put `b` first — agents will read the order as a hint at
+    // positional/sensible call shape.
+    expect(
+      buildToolSignature({
+        name: 't',
+        inputSchema: {
+          type: 'object' as const,
+          properties: {
+            a: { type: 'string' },
+            b: { type: 'string' },
+          },
+          required: ['b', 'a'],
+        },
+      })
+    ).toBe('t(b, a)');
+  });
+
+  it('ignores entries in `required` that have no matching property', () => {
+    // Defensive: some schemas list `required` keys that no longer exist in
+    // `properties` after edits. We must not emit phantom args.
+    expect(
+      buildToolSignature({
+        name: 't',
+        inputSchema: {
+          type: 'object' as const,
+          properties: { real: { type: 'string' } },
+          required: ['real', 'ghost'],
+        },
+      })
+    ).toBe('t(real)');
+  });
+});
+
+describe('buildSetupToolsPayload', () => {
+  it('returns a slim JSON payload (no schemas) with skills, activeSkills, and hint', () => {
+    const payload = buildSetupToolsPayload(
+      ['skill-a'],
+      ['skill-a', 'skill-b'],
+      ['tool_a(x)', 'tool_b(y?, z?)']
+    );
+    expect(payload.success).toBe(true);
+    expect(payload.skills).toEqual(['skill-a']);
+    expect(payload.activeSkills).toEqual(['skill-a', 'skill-b']);
+    expect(payload.tools).toEqual(['tool_a(x)', 'tool_b(y?, z?)']);
+    expect(payload.message).toContain('1 skill(s)');
+    expect(payload.message).toContain('2 tool(s)');
+    expect(payload.hint).toMatch(/call_tool/);
+    expect(payload.hint).toMatch(/schema/);
+  });
+
+  it('distinguishes between the skills requested in this call and the merged active set', () => {
+    // The agent needs to be able to tell what was already active without
+    // diffing prior responses — drives whether to skip a redundant call.
+    const payload = buildSetupToolsPayload(
+      ['skill-b'],
+      ['skill-a', 'skill-b'],
+      []
+    );
+    expect(payload.skills).toEqual(['skill-b']);
+    expect(payload.activeSkills).toEqual(['skill-a', 'skill-b']);
+  });
+
+  it('never includes a full inputSchema field on a tool entry', () => {
+    // Regression guard: the slim format MUST stay slim. If a future refactor
+    // tries to add schemas back, this test fails loudly.
+    const payload = buildSetupToolsPayload(['s'], ['s'], ['tool_a(x)']);
+    for (const entry of payload.tools) {
+      expect(typeof entry).toBe('string');
+    }
+  });
+});
+
+describe('buildCallToolErrorPayload', () => {
+  it('omits tool / schema / hint when no tool context is provided', () => {
+    const payload = buildCallToolErrorPayload('Something went wrong');
+    expect(payload).toEqual({ error: 'Something went wrong' });
+  });
+
+  it('attaches name, schema, and a retry hint when a tool is provided', () => {
+    const payload = buildCallToolErrorPayload('Missing required arg: title', {
+      tool: {
+        name: 'github.create_issue',
+        description: 'Create an issue',
+        inputSchema: {
+          type: 'object',
+          properties: { title: { type: 'string' }, body: { type: 'string' } },
+          required: ['title', 'body'],
+        },
+      },
+    });
+    expect(payload.error).toBe('Missing required arg: title');
+    expect(payload.tool).toBe('github.create_issue');
+    expect(payload.schema).toEqual({
+      type: 'object',
+      properties: { title: { type: 'string' }, body: { type: 'string' } },
+      required: ['title', 'body'],
+    });
+    expect(payload.hint).toMatch(/call_tool/);
+    expect(payload.hint).toMatch(/github\.create_issue/);
   });
 });
