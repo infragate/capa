@@ -66,8 +66,35 @@ describe('hook-handlers — buildHookEntry', () => {
       mapping: { event: 'beforeShellExecution' },
     });
     expect(out.eventName).toBe('beforeShellExecution');
+    expect(out.entry.command).toBe('echo blocked');
+    expect(out.entry.type).toBeUndefined();
     expect(out.entry.pattern).toBe('rm -rf');
     expect(out.entry.name).toBe('capa:block-rm');
+  });
+
+  it('cursor shape emits a prompt entry for type: prompt hooks', () => {
+    // Cursor's prompt-based hooks use `{ type: "prompt", prompt: <text> }`
+    // (LLM-evaluated) rather than a `command`. See cursor.com/docs/agent/hooks.
+    const hook: Hook = {
+      id: 'safe-shell',
+      on: 'beforeShell',
+      type: 'prompt',
+      prompt: 'Only allow read-only commands.',
+      matcher: 'rm -rf',
+      timeout: 10,
+    };
+    const out = buildHookEntry(cursorIntegration, {
+      hook,
+      runReference: 'Only allow read-only commands.',
+      mapping: { event: 'beforeShellExecution' },
+    });
+    expect(out.eventName).toBe('beforeShellExecution');
+    expect(out.entry.type).toBe('prompt');
+    expect(out.entry.prompt).toBe('Only allow read-only commands.');
+    expect(out.entry.command).toBeUndefined();
+    expect(out.entry.pattern).toBe('rm -rf');
+    expect(out.entry.timeout).toBe(10);
+    expect(out.entry.name).toBe('capa:safe-shell');
   });
 
   it('claude shape unions matcherPrefix with user matcher (preserves canonical scope)', () => {

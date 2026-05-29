@@ -198,6 +198,49 @@ describe('hooks-installer (claude inline-config)', () => {
     expect(rows[0].scriptPath).toBeNull();
   });
 
+  it('prompt-type local source reads the file contents as the prompt text', async () => {
+    // For a command hook, `source.type=local` references the script in
+    // place. For a PROMPT hook there's no script to execute — the file *is*
+    // the prompt text, so capa must read it inline (like inline/remote
+    // sources) instead of leaving the run reference empty and skipping it.
+    require('fs').mkdirSync(join(projectPath, 'prompts'), { recursive: true });
+    const promptPath = join(projectPath, 'prompts', 'guard.txt');
+    writeFileSync(promptPath, 'Only allow read-only commands.\n', 'utf-8');
+
+    const result = await installHooks({
+      projectPath,
+      projectId,
+      capabilitiesFilePath: join(projectPath, 'capabilities.yaml'),
+      hooks: [
+        {
+          id: 'shell-guard',
+          on: 'beforeShell',
+          type: 'prompt',
+          source: { type: 'local', path: 'prompts/guard.txt' },
+        },
+      ],
+      providers: ['claude-code'],
+      db,
+      authFetch: makeAuthFetch(),
+      getRepoSnapshot: stubGetRepoSnapshot,
+    });
+    expect(result.installed).toBe(1);
+    expect(result.warnings).toEqual([]);
+
+    const settings = JSON.parse(
+      readFileSync(join(projectPath, '.claude', 'settings.json'), 'utf-8'),
+    ) as any;
+    const entry = settings.hooks.PreToolUse[0].hooks[0];
+    expect(entry.type).toBe('prompt');
+    expect(entry.prompt).toBe('Only allow read-only commands.\n');
+
+    // The prompt is inlined into the provider config; nothing is
+    // materialised under ~/.capa, so scriptPath stays null.
+    const rows = db.getManagedHooks(projectId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].scriptPath).toBeNull();
+  });
+
   it('records remote sources in the lockfile builder', async () => {
     const lockBuilder = new LockfileBuilder(null);
     await installHooks({
