@@ -12,7 +12,7 @@ Source-of-truth definition: [`src/shared/providers/registry.ts → claude-code`]
 | --- | --- | --- |
 | Skills | `.claude/skills/<id>/` | Standard SKILL.md tree. |
 | MCP | `.mcp.json` → `mcpServers.capa.url` | JSON map; per-sub-agent entries (`mcpServers.capa-<agentId>`) supported. |
-| Instructions | `CLAUDE.md` | Universal marker blocks; `AGENTS.md` also written if any other provider is active. |
+| Instructions | `CLAUDE.md` | Universal marker blocks. `AGENTS.md` is **only** written if another active provider declares it (e.g. `codex`, `cursor`); a claude-code-only install never produces an `AGENTS.md`. |
 | Rules | `.claude/rules/<id>.md` | YAML frontmatter — capa's `appliesTo` maps to `paths`. A file with no `paths` is loaded unconditionally. |
 | Sub-agents | `.claude/agents/<id>.md` | Markdown + frontmatter (`name`, `description`, `model: inherit`). Also folds a `sub-agent:<id>` snippet into `CLAUDE.md`. |
 | Hooks | `.claude/settings.json` → `hooks` | JSON map keyed by event (`PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `SessionStart`, `SessionEnd`, `Stop`, `SubagentStop`, `PreCompact`, `Notification`). Capa upserts `[{ matcher, hooks: [{ name: "capa:<id>", type, command, timeout }] }]` and only touches the entries it tagged. |
