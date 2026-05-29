@@ -210,6 +210,98 @@ rules:
 
 `capa clean` removes all capa-installed rules. Rules can be scoped per-provider and support the same source types as skills.
 
+## Hooks Section
+
+Lifecycle hooks installed into each provider's hook configuration. The schema is provider-agnostic — capa translates each hook to the provider-specific event name and entry shape using its provider registry.
+
+**Fields:**
+- `id` (required): Stable identifier. Used as a name tag (`capa:<id>`) so capa can surgically update or remove its own entries without disturbing user-authored ones.
+- `description` (optional): Human-readable summary; surfaced in the local web UI.
+- `on` (required): Either a canonical event name or a `<provider>:<event>` override.
+  - **Canonical events**: `sessionStart`, `sessionEnd`, `userPromptSubmit`, `beforeTool`, `afterTool`, `afterToolFailure`, `beforeShell`, `afterShell`, `beforeFileRead`, `afterFileEdit`, `beforeMcpCall`, `afterMcpCall`, `subagentStart`, `subagentStop`, `preCompact`, `stop`.
+  - **Provider-scoped events** (e.g. `cursor:beforeShellExecution`) target a single provider verbatim and are skipped for everyone else.
+- `type` (optional): `command` (default — shell command) or `prompt` (text injected into the model when supported).
+- `command` / `prompt` (one of, when no `source`): Inline body for command/prompt-type hooks.
+- `matcher` (optional): Provider-specific glob/pattern (e.g. Claude `Bash`, Cursor `rm -rf *`).
+- `timeout` (optional): Per-hook timeout in seconds; provider may clamp.
+- `failClosed` (optional): When true, hook failure aborts the action (Cursor only today).
+- `sequential` (optional): Run hooks one-at-a-time instead of in parallel.
+- `providers` (optional): Restrict installation to these provider ids; defaults to all active providers.
+- `source` (optional): Pull the body from elsewhere instead of inlining `command` / `prompt`. Mirrors the Skill / Rule source grammar:
+  - `{ type: inline, content }`
+  - `{ type: remote, url }`
+  - `{ type: github, def: { repo: 'owner/repo::scripts/before.sh' } }` (or `@basename` form)
+  - `{ type: gitlab, def: { repo: 'group/repo::scripts/before.sh' } }`
+  - `{ type: local, path: ./scripts/before.sh }` — relative to the capabilities file
+
+When `source` is `inline` / `remote` / `github` / `gitlab`, capa fetches the body and materialises it under `~/.capa/hooks/<projectId>/<hook-id>` (NOT inside the project), chmod +x, and the provider entry's `command` references that absolute path.
+
+`source.type: local` is special: the script already exists in the project and is version-controlled, so capa references the user's file in place via its absolute path — no copy is made under `~/.capa`, `chmod` is the user's responsibility, and edits to the script take effect immediately without re-running `capa install`. `capa clean` will never delete a local-source script.
+
+> **Important — capa template variables vs shell variables.** capa
+> resolves `${VarName}` placeholders (curly-braced) anywhere in the
+> capabilities file at install time, prompting for any value the project
+> doesn't already have stored. That syntax has nothing to do with the
+> environment your hook script runs under — providers do **not** export
+> the tool input as an env var; instead each fired hook receives a JSON
+> payload on **stdin** (shape varies per provider). For non-trivial
+> hooks that need to inspect the tool input, use `source: { type: local
+> }` and have the script read stdin (e.g. `jq -r '.tool_input.command'`
+> for Claude / Gemini / Codex, or `jq -r '.command'` for Cursor). Don't
+> embed `${...}` in inline commands unless you actually want capa to
+> substitute a project variable at install time.
+
+```yaml
+hooks:
+  # Canonical event with an inline command — installed for every active
+  # provider that maps `beforeShell`. The command is a shell one-liner
+  # that runs at the moment the agent fires the hook; capa does NOT
+  # interpolate anything inside single quotes here.
+  - id: audit-shell
+    description: Timestamp every shell invocation
+    on: beforeShell
+    command: 'date >> ~/.capa/audit.log'
+    timeout: 5
+
+  # Provider-scoped event — only Cursor receives this entry.
+  - id: block-rm-rf
+    on: cursor:beforeShellExecution
+    matcher: 'rm -rf *'
+    failClosed: true
+    command: 'echo "blocked" && exit 1'
+
+  # When you actually need the tool input, use a local script that reads
+  # stdin. The script lives in the project (no copy under ~/.capa).
+  - id: log-bash-commands
+    on: beforeShell
+    source: { type: local, path: scripts/log-bash.sh }
+    # scripts/log-bash.sh:
+    #   #!/usr/bin/env bash
+    #   set -euo pipefail
+    #   cmd=$(jq -r '.tool_input.command // .command // empty')
+    #   printf '%s %s\n' "$(date -u +%FT%TZ)" "$cmd" >> "$HOME/.capa/audit.log"
+
+  # Source pulled from a pinned GitHub path; capa pins the resolved SHA in
+  # capabilities.lock under the new `hooks:` section.
+  - id: lint-staged
+    on: afterFileEdit
+    source:
+      type: github
+      def:
+        repo: acme/dev-toolkit::hooks/lint-staged.sh:v2.0.0
+```
+
+Per provider, hook entries land in:
+
+| Provider | Config | Format | Wrapper |
+| --- | --- | --- | --- |
+| `claude-code` | `.claude/settings.json` → `hooks` | JSON map keyed by event → `[{ matcher, hooks: [...] }]` | `name: capa:<id>` |
+| `cursor` | `.cursor/hooks.json` (standalone) | `{ version: 1, hooks: { ... } }` envelope | `name: capa:<id>` |
+| `codex` | `.codex/config.toml` → `[hooks]` | TOML's nested array-of-tables (`[[hooks.<Event>]] matcher = "..."` + `[[hooks.<Event>.hooks]] type = "command" command = "..."`) — same matcher-grouped envelope as Claude | `name: capa:<id>` (Codex's serde deserialiser ignores unknown fields, so the tag round-trips safely) |
+| `gemini-cli` | `.gemini/settings.json` → `hooks` | JSON map (claude-style) | `name: capa:<id>` |
+
+Providers without a hooks integration (most of the rest of the registry) emit a warning and skip — `capa install` never fails on unsupported hooks. `capa clean` and `capa install` (via the `prune-orphan-hooks` task) keep their own entries in sync without disturbing entries you authored by hand.
+
 ## Plugins Section
 
 Remote plugin packages that bundle skills, servers, and tools from a provider manifest. Plugin tools and skills are NOT auto-exposed — declare the tools you want under the top-level `tools` section and the skills you want under `skills` with `type: plugin`.

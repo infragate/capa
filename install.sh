@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # CAPA Installer Script for macOS and Linux
 # Licensed under the MIT license
 #
@@ -7,6 +7,10 @@
 # verify before running.
 
 set -u
+
+# Tracks whether add_to_path actually modified a shell profile during this run.
+# Used to decide whether to print the "restart your shell" reminder.
+CAPA_MODIFIED_PROFILE=0
 
 APP_NAME="capa"
 GITHUB_REPO="infragate/capa"
@@ -239,44 +243,162 @@ is_in_path() {
     esac
 }
 
-# Add directory to shell profile
+# Return 0 if the given shell profile already references the install dir,
+# either as the expanded absolute path or as $HOME-prefixed form.
+profile_has_dir() {
+    local _profile="$1"
+    local _dir="$2"
+    local _rel
+
+    [ ! -f "$_profile" ] && return 1
+
+    # Literal expanded path match (this is what the installer writes).
+    if grep -qF -- "$_dir" "$_profile"; then
+        return 0
+    fi
+
+    # If _dir is under $HOME, also accept $HOME / ${HOME} prefixed forms
+    # written by hand by the user.
+    #
+    # NOTE: use grep -F for both forms — `_rel` is a path that very often
+    # contains regex metacharacters (e.g. `.local/bin`), and embedding it
+    # into a `grep -E` pattern caused false matches that skipped writing
+    # the PATH update (e.g. `.local/bin` matching `xlocal/bin`).
+    if [ -n "${HOME:-}" ]; then
+        case "$_dir" in
+            "$HOME"/*)
+                _rel="${_dir#"$HOME"/}"
+                if grep -qF -- "\$HOME/${_rel}" "$_profile"; then
+                    return 0
+                fi
+                if grep -qF -- "\${HOME}/${_rel}" "$_profile"; then
+                    return 0
+                fi
+                ;;
+        esac
+    fi
+
+    return 1
+}
+
+# Pick the shell profile file most appropriate for the USER'S shell (not the
+# shell this script is running in). We deliberately ignore $BASH_VERSION and
+# $ZSH_VERSION here -- those reflect the interpreter executing install.sh
+# (which is bash via our shebang), NOT the user's login shell. Trusting them
+# would always pick the bash branch even for zsh users.
+detect_shell_profile() {
+    local _shell_profile=""
+    local _ostype
+    _ostype="$(uname -s 2>/dev/null || echo unknown)"
+
+    # Primary signal: the user's login shell.
+    case "${SHELL:-}" in
+        */zsh)
+            _shell_profile="${HOME}/.zshrc"
+            ;;
+        */bash)
+            # On macOS, login bash sessions read .bash_profile (not .bashrc).
+            # On Linux, interactive non-login bash reads .bashrc.
+            if [ "$_ostype" = "Darwin" ]; then
+                if [ -f "${HOME}/.bash_profile" ]; then
+                    _shell_profile="${HOME}/.bash_profile"
+                elif [ -f "${HOME}/.bashrc" ]; then
+                    _shell_profile="${HOME}/.bashrc"
+                else
+                    _shell_profile="${HOME}/.bash_profile"
+                fi
+            else
+                if [ -f "${HOME}/.bashrc" ]; then
+                    _shell_profile="${HOME}/.bashrc"
+                elif [ -f "${HOME}/.bash_profile" ]; then
+                    _shell_profile="${HOME}/.bash_profile"
+                else
+                    _shell_profile="${HOME}/.bashrc"
+                fi
+            fi
+            ;;
+        */fish)
+            _shell_profile="${HOME}/.config/fish/config.fish"
+            ;;
+        *)
+            # $SHELL is unset or unrecognized -- fall back to which rc file
+            # actually exists, biased toward zsh (macOS default since 10.15).
+            if [ -f "${HOME}/.zshrc" ]; then
+                _shell_profile="${HOME}/.zshrc"
+            elif [ "$_ostype" = "Darwin" ] && [ -f "${HOME}/.bash_profile" ]; then
+                _shell_profile="${HOME}/.bash_profile"
+            elif [ -f "${HOME}/.bashrc" ]; then
+                _shell_profile="${HOME}/.bashrc"
+            elif [ -f "${HOME}/.bash_profile" ]; then
+                _shell_profile="${HOME}/.bash_profile"
+            elif [ -f "${HOME}/.profile" ]; then
+                _shell_profile="${HOME}/.profile"
+            else
+                # Nothing exists -- create the canonical file for the platform.
+                if [ "$_ostype" = "Darwin" ]; then
+                    _shell_profile="${HOME}/.zshrc"
+                else
+                    _shell_profile="${HOME}/.profile"
+                fi
+            fi
+            ;;
+    esac
+
+    RETVAL="$_shell_profile"
+}
+
+# Add directory to shell profile. Sets CAPA_MODIFIED_PROFILE=1 if it actually
+# writes a new export line; returns without writing if the profile already
+# references the directory.
+#
+# IMPORTANT: this function intentionally does NOT consult the live $PATH. The
+# fact that $_dir is currently in $PATH does not imply it is persistently
+# configured in the user's shell profile (e.g. a parent process may have
+# injected it for this session only). Always check the profile.
 add_to_path() {
     local _dir="$1"
     local _shell_profile
+    local _profile_dir
 
     if [ "1" = "$CAPA_NO_MODIFY_PATH" ]; then
         return 0
     fi
 
-    # Detect shell profile file
-    if [ -n "${BASH_VERSION:-}" ]; then
-        if [ -f "${HOME}/.bashrc" ]; then
-            _shell_profile="${HOME}/.bashrc"
-        else
-            _shell_profile="${HOME}/.bash_profile"
-        fi
-    elif [ -n "${ZSH_VERSION:-}" ] || [ -f "${HOME}/.zshrc" ]; then
-        _shell_profile="${HOME}/.zshrc"
-    elif [ -f "${HOME}/.profile" ]; then
-        _shell_profile="${HOME}/.profile"
-    else
-        _shell_profile="${HOME}/.bash_profile"
-    fi
+    detect_shell_profile
+    _shell_profile="$RETVAL"
 
-    # Check if already in profile
-    if [ -f "$_shell_profile" ] && grep -q "export PATH=\"${_dir}:\$PATH\"" "$_shell_profile"; then
+    if profile_has_dir "$_shell_profile" "$_dir"; then
         say_verbose "PATH already configured in $_shell_profile"
         return 0
     fi
 
+    # Ensure the parent directory exists (e.g. ~/.config/fish/ for fish users).
+    _profile_dir="$(dirname "$_shell_profile")"
+    if [ ! -d "$_profile_dir" ]; then
+        ensure mkdir -p "$_profile_dir"
+    fi
+
     info "Adding ${_dir} to PATH in ${_shell_profile}"
-    
-    cat >> "$_shell_profile" <<EOF
+
+    # Use shell-appropriate syntax. fish doesn't understand `export FOO=bar`.
+    case "$_shell_profile" in
+        */fish/config.fish)
+            cat >> "$_shell_profile" <<EOF
+
+# Added by CAPA installer
+fish_add_path -gP "${_dir}"
+EOF
+            ;;
+        *)
+            cat >> "$_shell_profile" <<EOF
 
 # Added by CAPA installer
 export PATH="${_dir}:\$PATH"
 EOF
+            ;;
+    esac
 
+    CAPA_MODIFIED_PROFILE=1
     success "Updated $_shell_profile"
 }
 
@@ -393,11 +515,14 @@ install_capa() {
     ensure chmod +x "${_install_dir}/capa"
     success "Installed CAPA to ${_install_dir}/capa"
 
-    # Add to PATH
-    if ! is_in_path "$_install_dir"; then
-        add_to_path "$_install_dir"
-    else
-        say_verbose "Installation directory already in PATH"
+    # Persist the install dir in the user's shell profile. We always call
+    # add_to_path here -- being in the current process's $PATH does NOT mean
+    # it is persistently configured (a parent process may have injected it for
+    # this session only). add_to_path itself short-circuits if the profile
+    # already references the dir.
+    add_to_path "$_install_dir"
+    if is_in_path "$_install_dir"; then
+        say_verbose "Installation directory already on \$PATH for this session"
     fi
 
     # Print success message
@@ -411,9 +536,11 @@ install_capa() {
     say "  ${BLUE}capa --help${RESET}   # Show all commands"
     say ""
     
-    if [ "0" = "$CAPA_NO_MODIFY_PATH" ]; then
+    if [ "1" = "$CAPA_MODIFIED_PROFILE" ]; then
+        detect_shell_profile
+        local _profile_short="${RETVAL/#$HOME/~}"
         say "Restart your shell or run:"
-        say "  ${YELLOW}source ~/.bashrc${RESET}  # or ~/.zshrc, etc."
+        say "  ${YELLOW}source ${_profile_short}${RESET}"
         say ""
     fi
 

@@ -49,13 +49,14 @@ describe('capabilities', () => {
       expect(result.skills).toEqual([]);
     });
 
-    it('defaults missing servers, tools, plugins, rules, and subagents to empty arrays', () => {
+    it('defaults missing servers, tools, plugins, rules, subagents, and hooks to empty arrays', () => {
       const result = normalizeCapabilities({});
       expect(result.servers).toEqual([]);
       expect(result.tools).toEqual([]);
       expect(result.plugins).toEqual([]);
       expect(result.rules).toEqual([]);
       expect(result.subagents).toEqual([]);
+      expect(result.hooks).toEqual([]);
     });
 
     it('defaults missing options to an empty object', () => {
@@ -109,6 +110,13 @@ describe('capabilities', () => {
           },
         ],
         rules: [{ id: 'my-rule', type: 'inline', content: 'Always be helpful.' }],
+        hooks: [
+          {
+            id: 'my-hook',
+            on: 'sessionStart',
+            command: 'echo hello',
+          },
+        ],
       };
 
       const result = normalizeCapabilities(capabilities);
@@ -160,6 +168,7 @@ describe('capabilities', () => {
         plugins: [],
         rules: [],
         subagents: [],
+        hooks: [],
       });
     });
 
@@ -175,6 +184,7 @@ describe('capabilities', () => {
         plugins: [],
         rules: [],
         subagents: [],
+        hooks: [],
       });
     });
 

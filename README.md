@@ -54,6 +54,7 @@ The Registries tab pulls skills and plugins from external catalogs. Need a priva
 - One MCP server per agent. Tools load on demand, so the context window stays small.
 - Any CLI command can be wrapped as an MCP tool the agent (and `capa sh`) can call.
 - Rules go to each provider's native location: Cursor `.cursor/rules/`, Windsurf `.windsurf/rules/`, Copilot's instructions file, or a managed marker block in `AGENTS.md` / `CLAUDE.md` for providers without a rules directory. Glob scoping works.
+- Lifecycle hooks for providers that support them (Claude Code, Cursor, Codex, Gemini CLI). Declare canonical events like `beforeShell` or `afterFileEdit` once and capa translates them into each provider's hook config — `.claude/settings.json`, `.cursor/hooks.json`, `.codex/config.toml`, `.gemini/settings.json` — using `capa:<id>` tags so user-authored entries are never touched. Providers without hook support emit a warning and skip.
 - Sub-agents get their own filtered MCP endpoint that exposes only the tools the specialist actually needs.
 - Skills and plugins are browsable from `capa add` and the web UI. Add a registry with `capa registry add owner/repo@my-adapter` (GitHub/GitLab/HTTPS sources, slug auto-derived, adapter validated before install) and it shows up too.
 - `capabilities.lock` records resolved commit SHAs. A SHA-keyed content cache makes repeat installs near instant.

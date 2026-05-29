@@ -6,6 +6,7 @@ import { getMcpConfigPath, buildMcpEntry } from '../../shared/providers/handlers
 import { taskLog } from '../ui';
 
 interface McpServerEntry {
+  type?: string;
   url?: string;
   command?: string;
   args?: string[];

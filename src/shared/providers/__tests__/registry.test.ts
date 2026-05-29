@@ -113,6 +113,54 @@ describe('Provider registry', () => {
       expect(replit?.showInUniversalList).toBe(false);
     });
   });
+
+  describe('hooks integration is wired for v1 providers', () => {
+    it('claude-code uses inline-config json with claude shape', () => {
+      const p = getProvider('claude-code');
+      expect(p?.hooks).toBeDefined();
+      expect(p?.hooks?.shape).toBe('claude');
+      expect(p?.hooks?.storage.kind).toBe('inline-config');
+      if (p?.hooks?.storage.kind === 'inline-config') {
+        expect(p.hooks.storage.configPath).toBe('.claude/settings.json');
+        expect(p.hooks.storage.format).toBe('json');
+      }
+      expect(p?.hooks?.eventMap.beforeShell).toEqual({ event: 'PreToolUse', matcherPrefix: 'Bash' });
+    });
+
+    it('cursor uses standalone json with cursor-v1 envelope', () => {
+      const p = getProvider('cursor');
+      expect(p?.hooks?.shape).toBe('cursor');
+      expect(p?.hooks?.storage.kind).toBe('standalone');
+      if (p?.hooks?.storage.kind === 'standalone') {
+        expect(p.hooks.storage.envelope).toBe('cursor-v1');
+        expect(p.hooks.storage.configPath).toBe('.cursor/hooks.json');
+      }
+    });
+
+    it('codex uses inline-config toml with the (matcher-grouped) claude shape', () => {
+      // Codex's TOML hook layout is structurally identical to Claude's
+      // JSON layout (`{ matcher, hooks: [{ type, command, ... }] }` per
+      // event), so capa serialises through the same `claude` shape; the
+      // storage `format` is what makes it land as TOML on disk.
+      const p = getProvider('codex');
+      expect(p?.hooks?.shape).toBe('claude');
+      expect(p?.hooks?.supportsNameTag).toBe(true);
+      expect(p?.hooks?.storage.kind).toBe('inline-config');
+      if (p?.hooks?.storage.kind === 'inline-config') {
+        expect(p.hooks.storage.format).toBe('toml');
+        expect(p.hooks.storage.configPath).toBe('.codex/config.toml');
+      }
+    });
+
+    it('gemini-cli uses inline-config json with gemini shape', () => {
+      const p = getProvider('gemini-cli');
+      expect(p?.hooks?.shape).toBe('gemini');
+      expect(p?.hooks?.storage.kind).toBe('inline-config');
+      if (p?.hooks?.storage.kind === 'inline-config') {
+        expect(p.hooks.storage.configPath).toBe('.gemini/settings.json');
+      }
+    });
+  });
 });
 
 describe('Cursor pilot integration', () => {
@@ -122,6 +170,7 @@ describe('Cursor pilot integration', () => {
     expect(cursor.mcp!.format).toBe('json');
     expect(cursor.mcp!.serversKey).toBe('mcpServers');
     expect(cursor.mcp!.serverKey).toBe('capa');
+    expect(cursor.mcp!.entryType).toBeUndefined();
     expect(cursor.mcp!.supportsSubAgentEntries).toBe(false);
   });
 
@@ -160,6 +209,7 @@ describe('Claude Code pilot integration', () => {
     expect(claude.mcp!.format).toBe('json');
     expect(claude.mcp!.serversKey).toBe('mcpServers');
     expect(claude.mcp!.serverKey).toBe('capa');
+    expect(claude.mcp!.entryType).toBe('http');
     expect(claude.mcp!.supportsSubAgentEntries).toBe(true);
   });
 
@@ -249,6 +299,12 @@ describe('Codex pilot integration', () => {
     const codex = getProvider('codex')!;
     const entry = buildMcpEntry(codex.mcp!, 'http://localhost:3000/mcp');
     expect(entry).toEqual({ url: 'http://localhost:3000/mcp' });
+  });
+
+  it('MCP buildMcpEntry tags the transport type when the provider requires it', () => {
+    const claude = getProvider('claude-code')!;
+    const entry = buildMcpEntry(claude.mcp!, 'http://localhost:3000/mcp');
+    expect(entry).toEqual({ type: 'http', url: 'http://localhost:3000/mcp' });
   });
 
   it('buildSubAgentFile produces valid TOML', () => {
@@ -681,6 +737,7 @@ describe('GitHub Copilot integration', () => {
     expect(copilot.mcp!.serversKey).toBe('servers');
     expect(copilot.mcp!.serverKey).toBe('capa');
     expect(copilot.mcp!.entryUrlKey).toBe('url');
+    expect(copilot.mcp!.entryType).toBe('http');
     expect(copilot.mcp!.supportsSubAgentEntries).toBe(false);
   });
 
@@ -716,6 +773,7 @@ describe('OpenCode integration', () => {
     expect(oc.mcp!.format).toBe('json');
     expect(oc.mcp!.serversKey).toBe('mcp');
     expect(oc.mcp!.serverKey).toBe('capa');
+    expect(oc.mcp!.entryType).toBe('remote');
     expect(oc.mcp!.supportsSubAgentEntries).toBe(true);
   });
 
@@ -764,6 +822,7 @@ describe('Roo Code integration', () => {
     expect(roo.mcp!.format).toBe('json');
     expect(roo.mcp!.serversKey).toBe('mcpServers');
     expect(roo.mcp!.serverKey).toBe('capa');
+    expect(roo.mcp!.entryType).toBe('streamable-http');
     expect(roo.mcp!.supportsSubAgentEntries).toBe(true);
   });
 
@@ -827,6 +886,7 @@ interface ExpectedIntegration {
     format: 'json' | 'toml';
     serversKey: string;
     entryUrlKey: string;
+    entryType?: string;
     supportsSubAgentEntries?: boolean;
   };
   instructions?: string;
@@ -847,11 +907,11 @@ interface ExpectedIntegration {
 const expandedIntegrations: Record<string, ExpectedIntegration> = {
   // Tier 1 — full project-local integrations
   crush: {
-    mcp: { configPath: '.crush.json', format: 'json', serversKey: 'mcp', entryUrlKey: 'url' },
+    mcp: { configPath: '.crush.json', format: 'json', serversKey: 'mcp', entryUrlKey: 'url', entryType: 'http' },
     instructions: 'AGENTS.md',
   },
   droid: {
-    mcp: { configPath: '.factory/mcp.json', format: 'json', serversKey: 'mcpServers', entryUrlKey: 'url' },
+    mcp: { configPath: '.factory/mcp.json', format: 'json', serversKey: 'mcpServers', entryUrlKey: 'url', entryType: 'http' },
     instructions: 'AGENTS.md',
     subagents: { dir: '.factory/droids', extension: '.md', format: 'markdown-frontmatter' },
     // Plugin manifest format (`.factory-plugin/plugin.json`) is documented but
@@ -868,11 +928,11 @@ const expandedIntegrations: Record<string, ExpectedIntegration> = {
     subagents: { dir: '.junie/agents', extension: '.md', format: 'markdown-frontmatter' },
   },
   'iflow-cli': {
-    mcp: { configPath: '.iflow/settings.json', format: 'json', serversKey: 'mcpServers', entryUrlKey: 'url' },
+    mcp: { configPath: '.iflow/settings.json', format: 'json', serversKey: 'mcpServers', entryUrlKey: 'httpUrl' },
     instructions: 'AGENTS.md',
   },
   kilo: {
-    mcp: { configPath: '.kilocode/mcp.json', format: 'json', serversKey: 'mcpServers', entryUrlKey: 'url' },
+    mcp: { configPath: '.kilocode/mcp.json', format: 'json', serversKey: 'mcpServers', entryUrlKey: 'url', entryType: 'streamable-http' },
     instructions: 'AGENTS.md',
     rules: { dir: '.kilo/rules', extension: '.md', frontmatter: 'none' },
     subagents: { dir: '.kilo/agent', extension: '.md', format: 'markdown-frontmatter' },
@@ -883,13 +943,13 @@ const expandedIntegrations: Record<string, ExpectedIntegration> = {
     rules: { dir: '.kiro/steering', extension: '.md', frontmatter: 'none' },
   },
   kode: {
-    mcp: { configPath: '.mcp.json', format: 'json', serversKey: 'mcpServers', entryUrlKey: 'url' },
+    mcp: { configPath: '.mcp.json', format: 'json', serversKey: 'mcpServers', entryUrlKey: 'url', entryType: 'http' },
     instructions: 'AGENTS.md',
     subagents: { dir: '.kode/agents', extension: '.md', format: 'markdown-frontmatter' },
     // `.kode-plugin/plugin.json` is the new manifest path; no capa parser yet.
   },
   neovate: {
-    mcp: { configPath: '.neovate/config.json', format: 'json', serversKey: 'mcpServers', entryUrlKey: 'url' },
+    mcp: { configPath: '.neovate/config.json', format: 'json', serversKey: 'mcpServers', entryUrlKey: 'url', entryType: 'http' },
   },
   pochi: {
     mcp: { configPath: '.pochi/config.jsonc', format: 'json', serversKey: 'mcp', entryUrlKey: 'url' },
@@ -902,7 +962,7 @@ const expandedIntegrations: Record<string, ExpectedIntegration> = {
     subagents: { dir: '.qoder/agents', extension: '.md', format: 'markdown-frontmatter' },
   },
   'qwen-code': {
-    mcp: { configPath: '.qwen/settings.json', format: 'json', serversKey: 'mcpServers', entryUrlKey: 'url' },
+    mcp: { configPath: '.qwen/settings.json', format: 'json', serversKey: 'mcpServers', entryUrlKey: 'httpUrl' },
     instructions: 'AGENTS.md',
     subagents: { dir: '.qwen/agents', extension: '.md', format: 'markdown-frontmatter' },
   },
@@ -917,7 +977,7 @@ const expandedIntegrations: Record<string, ExpectedIntegration> = {
     rules: { dir: '.trae/rules', extension: '.md', frontmatter: 'none' },
   },
   codebuddy: {
-    mcp: { configPath: '.mcp.json', format: 'json', serversKey: 'mcpServers', entryUrlKey: 'url' },
+    mcp: { configPath: '.mcp.json', format: 'json', serversKey: 'mcpServers', entryUrlKey: 'url', entryType: 'http' },
     instructions: 'CODEBUDDY.md',
   },
 
@@ -973,6 +1033,7 @@ describe('Expanded provider integrations', () => {
           expect(provider!.mcp!.serversKey).toBe(exp.mcp!.serversKey);
           expect(provider!.mcp!.entryUrlKey).toBe(exp.mcp!.entryUrlKey);
           expect(provider!.mcp!.serverKey).toBe('capa');
+          expect(provider!.mcp!.entryType).toBe(exp.mcp!.entryType);
         });
       }
 

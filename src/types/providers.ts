@@ -1,3 +1,5 @@
+import type { CanonicalHookEvent } from './hooks';
+
 /**
  * How to register capa's MCP server with a provider's configuration file.
  * All fields are pure data — no functions.
@@ -13,6 +15,8 @@ export interface McpIntegration {
   serverKey: string;
   /** The key inside the server entry that holds the URL (e.g. 'url'). */
   entryUrlKey: string;
+  /** Transport discriminator written as the entry's `type` field, for providers that require it. */
+  entryType?: string;
   /** Whether per-sub-agent MCP entries ('capa-{id}') can coexist with the main entry. */
   supportsSubAgentEntries: boolean;
   /** Fallback config path when the primary `configPath` doesn't exist. */
@@ -55,6 +59,74 @@ export interface RulesIntegration {
      */
     alwaysApplyValues?: { trueValue: string; falseValue: string };
   };
+}
+
+/**
+ * One canonical→provider event mapping. Most providers use a simple rename
+ * (`{ event: 'PreToolUse' }`), but some — e.g. Cursor — fold our `beforeShell`
+ * onto the same event as `beforeTool` and disambiguate with a `matcherPrefix`.
+ */
+export type ProviderEventMapping =
+  | { event: string }
+  | { event: string; matcherPrefix: string };
+
+/**
+ * How a provider stores its hook configuration.
+ *
+ *   - `standalone`     : hook map lives in its own file
+ *                        (e.g. Cursor `.cursor/hooks.json`).
+ *   - `inline-config`  : hook map lives under a top-level key in a shared
+ *                        settings file (e.g. Claude `.claude/settings.json` →
+ *                        `hooks`, Codex `.codex/config.toml` → `hooks`).
+ *   - `directory`      : one JSON file per hook in a directory.
+ *
+ * `envelope: 'cursor-v1'` triggers the `{ version: 1, hooks: { ... } }`
+ * wrapper Cursor expects. Without it the file is the bare hooks map.
+ */
+export type HooksStorage =
+  | {
+      kind: 'standalone';
+      configPath: string;
+      format: 'json';
+      envelope?: 'cursor-v1';
+    }
+  | {
+      kind: 'inline-config';
+      configPath: string;
+      format: 'json' | 'toml';
+      hooksKey: string;
+    }
+  | { kind: 'directory'; dir: string; extension: '.json' };
+
+/**
+ * Per-provider hooks integration descriptor.
+ *
+ * Pure data — every behavior is derived from these fields by the shared
+ * `hooks-installer` and the per-shape entry serialisers in
+ * `shared/providers/hook-handlers.ts`.
+ */
+export interface HooksIntegration {
+  /** Where the provider reads its hook configuration. */
+  storage: HooksStorage;
+  /** Canonical → provider event name (subset is fine; missing events are skipped). */
+  eventMap: Partial<Record<CanonicalHookEvent, ProviderEventMapping>>;
+  /**
+   * Selects the entry shape used to serialise hook entries. `claude` covers
+   * every provider that uses the matcher-grouped layout (Claude Code, Gemini
+   * CLI, Codex, Windsurf, Antigravity); the variant labels exist only as
+   * future-proofing in case a provider diverges (e.g. extra fields). The
+   * `cursor` shape is a flat array with `pattern`+`name` per entry.
+   *
+   * Codex serialises through the same `claude` shape; the storage format is
+   * what makes it land as TOML rather than JSON.
+   */
+  shape: 'cursor' | 'claude' | 'gemini' | 'windsurf' | 'antigravity';
+  /**
+   * When true the provider entry carries an opaque `name` field (used by capa
+   * for the `capa:<hook-id>` tag, allowing surgical updates without disturbing
+   * user-authored entries).
+   */
+  supportsNameTag: boolean;
 }
 
 /**
@@ -106,6 +178,8 @@ export interface ProviderIntegration {
   rules?: RulesIntegration;
   /** Sub-agent file management. */
   subagents?: SubagentsIntegration;
+  /** Lifecycle-hook management. Undefined when capa doesn't install hooks for this provider. */
+  hooks?: HooksIntegration;
   /** Plugin manifest paths relative to the plugin repo root (e.g. '.cursor-plugin/plugin.json'). */
   pluginManifestPaths?: string[];
   /** Id used in the `PluginProvider` union (manifest enum); decouples registry id from manifest id. */
