@@ -20,6 +20,13 @@ import { taskLog } from '../ui';
 
 const UNIVERSAL_AGENTS_FILENAME = 'AGENTS.md';
 
+/**
+ * Reserved marker id for the optional base content seeded by `agents.base`.
+ * Wrapping the base in a marker block makes the whole file capa-managed so
+ * `cleanAgentsFile` can remove it instead of leaving orphan content behind.
+ */
+const BASE_BLOCK_ID = '__base__';
+
 const MARKER_START = (id: string) => `<!-- capa:start:${id} -->`;
 const MARKER_END = (id: string) => `<!-- capa:end:${id} -->`;
 
@@ -43,16 +50,27 @@ function buildBlock(id: string, body: string): string {
 
 /**
  * Determine which agent instruction filenames to manage based on the active providers.
- * Uses the provider registry to collect unique instruction filenames.
- * AGENTS.md is always included as the universal baseline.
+ * Each provider declares the instructions filename it reads (e.g. `AGENTS.md` for
+ * most universal-spec providers, `CLAUDE.md` for Claude Code, `replit.md` for Replit).
+ *
+ * Only filenames declared by an active provider are returned — capa never writes a
+ * file that no configured provider will read. When no providers are passed (e.g. a
+ * fresh `capa clean` with no record of a previous install), we fall back to the
+ * union across the entire registry so legacy artefacts can still be cleaned up.
  */
 export function getTargetFilenames(providers: string[]): string[] {
-  const filenames = new Set<string>([UNIVERSAL_AGENTS_FILENAME]);
+  const filenames = new Set<string>();
   const list = providers.length > 0 ? providers.map(getProvider).filter(Boolean) : getAllProviders();
   for (const p of list) {
     if (p?.instructions) {
       filenames.add(p.instructions.filename);
     }
+  }
+  // Safety net: if the provider list resolves to nothing with an instructions
+  // file (unrecognised id, or a provider whose integration omits instructions),
+  // keep the universal AGENTS.md as a fallback target.
+  if (filenames.size === 0) {
+    filenames.add(UNIVERSAL_AGENTS_FILENAME);
   }
   return [...filenames];
 }
@@ -173,28 +191,38 @@ function applyConfigToFile(
   hasBase: boolean,
   snippetBodies: Map<string, string>
 ): void {
-  let content: string;
+  // The base block is upserted as a marker-wrapped snippet (id `__base__`)
+  // rather than written raw, so:
+  //   1. `cleanAgentsFile` / `removeAllCapaSnippets` can detect it and remove
+  //      the file entirely when nothing user-authored remains (otherwise the
+  //      raw base content would linger forever after `capa clean`).
+  //   2. Re-running install refreshes the base in place without clobbering
+  //      content the user added outside capa markers — this matches the
+  //      contract documented on `AgentFileConfig.base`.
+  let content = readMdFile(projectPath, filename);
 
-  const snippetEntries = [...snippetBodies.entries()].filter(([id]) => id !== '__base__');
+  const snippetEntries = [...snippetBodies.entries()].filter(([id]) => id !== BASE_BLOCK_ID);
+  const currentIds = new Set<string>(snippetEntries.map(([id]) => id));
 
   if (hasBase) {
-    content = snippetBodies.get('__base__')!.trimEnd();
-    for (const [id, body] of snippetEntries) {
-      content = upsertSnippet(content, id, body);
+    const baseBody = snippetBodies.get(BASE_BLOCK_ID);
+    if (baseBody === undefined) {
+      throw new Error(
+        `Internal error: hasBase=true but no '${BASE_BLOCK_ID}' entry in snippetBodies.`
+      );
     }
-  } else {
-    content = readMdFile(projectPath, filename);
+    content = upsertSnippet(content, BASE_BLOCK_ID, baseBody);
+    currentIds.add(BASE_BLOCK_ID);
+  }
 
-    const currentIds = new Set(snippetEntries.map(([id]) => id));
-    for (const [id, body] of snippetEntries) {
-      content = upsertSnippet(content, id, body);
-    }
+  for (const [id, body] of snippetEntries) {
+    content = upsertSnippet(content, id, body);
+  }
 
-    for (const id of listCapaSnippetIds(content)) {
-      if (!currentIds.has(id)) {
-        taskLog(`  Removing stale agent snippet "${id}" from ${filename}`);
-        content = removeSnippet(content, id);
-      }
+  for (const id of listCapaSnippetIds(content)) {
+    if (!currentIds.has(id)) {
+      taskLog(`  Removing stale agent snippet "${id}" from ${filename}`);
+      content = removeSnippet(content, id);
     }
   }
 
@@ -310,7 +338,7 @@ export async function installAgentsFile(
       );
     }
 
-    snippetBodies.set('__base__', applySecurityChecks(baseContent, 'agents:base'));
+    snippetBodies.set(BASE_BLOCK_ID, applySecurityChecks(baseContent, 'agents:base'));
   }
 
   for (const snippet of config.additional ?? []) {

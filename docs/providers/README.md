@@ -126,11 +126,17 @@ documentation.
 
 ### Cross-cutting notes
 
-- **`AGENTS.md` is universal.** Every install run touches `AGENTS.md`
-  if any provider is active — `getTargetFilenames` adds it
-  unconditionally (`agents-file.ts`). Providers with their own
-  `instructions.filename` get the same marker blocks duplicated into
-  that file.
+- **Instructions filename follows the provider.** `getTargetFilenames`
+  (`agents-file.ts`) returns the union of `instructions.filename` across
+  the active providers — `AGENTS.md` for most universal-spec providers,
+  `CLAUDE.md` for Claude Code, `.github/copilot-instructions.md` for
+  Copilot, `replit.md` for Replit, etc. Capa does **not** write a file
+  no configured provider will read; running `capa install --provider
+  claude-code` only produces `CLAUDE.md`. When two providers declare
+  different filenames (e.g. `claude-code` + `codex`) the same marker
+  blocks are written into both. `AGENTS.md` is also used as a
+  last-resort fallback if no active provider declares an instructions
+  filename.
 - **Sub-agent MCP entries** are only written for providers whose
   `mcp.supportsSubAgentEntries === true`. Cursor and GitHub Copilot opt
   out (Cursor additionally has `purgeStaleSubAgentMcp` to clean up
