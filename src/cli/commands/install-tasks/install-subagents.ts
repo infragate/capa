@@ -36,7 +36,15 @@ export function installSubagentsTask(): Task<InstallCtx> {
         ? installedAgents.map(({ agent_id }) => agent_id)
         : removedAgents.map(({ agent_id }) => agent_id);
 
-      const needsPurge = !skipMcpWrites && providers.some((id) => {
+      // Purge stale sub-agent MCP entries for providers that need a sweep
+      // (Cursor doesn't model per-sub-agent entries — its `capa-<id>` entries
+      // can only be cleaned by `purgeCursorSubAgentMCPEntries`). This must
+      // run under `toolExposure: 'none'` too: that's *exactly* the case where
+      // every previously-registered `capa-<id>` entry is now stale and
+      // contradicts the "no .mcp writes" contract. The per-sub-agent
+      // unregister loop below is a no-op for those providers, so without
+      // this purge their entries would linger forever.
+      const needsPurge = providers.some((id) => {
         const provider = getProvider(id);
         return (
           provider &&
