@@ -76,6 +76,7 @@ export const providers: Record<string, ProviderIntegration> = {
       serversKey: 'mcpServers',
       serverKey: 'capa',
       entryUrlKey: 'url',
+      entryType: 'http',
       supportsSubAgentEntries: true,
       defaultMcpFallbackPath: '.mcp.json',
     },
@@ -95,6 +96,36 @@ export const providers: Record<string, ProviderIntegration> = {
     pluginManifestPaths: ['.claude-plugin/plugin.json'],
     pluginProviderId: 'claude',
     foldSubAgentsIntoInstructions: false,
+    hooks: {
+      // Claude Code reads hooks from the project-local .claude/settings.json.
+      // Docs: https://docs.claude.com/en/docs/claude-code/hooks
+      storage: {
+        kind: 'inline-config',
+        configPath: '.claude/settings.json',
+        format: 'json',
+        hooksKey: 'hooks',
+      },
+      shape: 'claude',
+      supportsNameTag: true,
+      eventMap: {
+        sessionStart: { event: 'SessionStart' },
+        sessionEnd: { event: 'SessionEnd' },
+        userPromptSubmit: { event: 'UserPromptSubmit' },
+        beforeTool: { event: 'PreToolUse' },
+        afterTool: { event: 'PostToolUse' },
+        beforeShell: { event: 'PreToolUse', matcherPrefix: 'Bash' },
+        afterShell: { event: 'PostToolUse', matcherPrefix: 'Bash' },
+        afterFileEdit: {
+          event: 'PostToolUse',
+          matcherPrefix: 'Edit|MultiEdit|Write',
+        },
+        beforeMcpCall: { event: 'PreToolUse', matcherPrefix: 'mcp__' },
+        afterMcpCall: { event: 'PostToolUse', matcherPrefix: 'mcp__' },
+        subagentStop: { event: 'SubagentStop' },
+        preCompact: { event: 'PreCompact' },
+        stop: { event: 'Stop' },
+      },
+    },
   },
   openclaw: {
     id: 'openclaw',
@@ -133,6 +164,7 @@ export const providers: Record<string, ProviderIntegration> = {
       serversKey: 'mcpServers',
       serverKey: 'capa',
       entryUrlKey: 'url',
+      entryType: 'http',
       supportsSubAgentEntries: true,
     },
     instructions: { filename: 'CODEBUDDY.md' },
@@ -159,6 +191,55 @@ export const providers: Record<string, ProviderIntegration> = {
       extension: '.toml',
       format: 'toml',
       bodyField: 'developer_instructions',
+    },
+    hooks: {
+      // Codex reads hooks from .codex/config.toml as a [hooks] table whose
+      // shape is *structurally identical* to Claude's `.claude/settings.json`
+      // hook map: a top-level event key holds an array of matcher groups
+      // (`{ matcher, hooks: [...] }`), and each handler in the inner `hooks`
+      // array is a `{ type, command, ... }` table. Capa therefore reuses the
+      // `claude` shape handler — the only difference is TOML vs JSON
+      // serialisation (handled by `storage.format`).
+      //
+      // Codex's TOML form (per `codex-rs/config/src/hook_config.rs`) is:
+      //   [[hooks.PreToolUse]]
+      //   matcher = "Bash"
+      //   [[hooks.PreToolUse.hooks]]
+      //   type = "command"
+      //   command = "..."
+      //
+      // Identification: `MatcherGroup` and `HookHandlerConfig` do NOT use
+      // `#[serde(deny_unknown_fields)]`, so capa appends an opaque
+      // `name = "capa:<id>"` field on entries it owns. Codex ignores it but
+      // round-trips it through writes; capa uses it for surgical updates.
+      //
+      // Built-in matcher tool names are `Bash`, `apply_patch`, and
+      // `mcp__server__tool` for MCP. Events without a matcher
+      // (UserPromptSubmit, Stop, …) accept an empty/omitted matcher.
+      // Docs: https://developers.openai.com/codex/hooks
+      storage: {
+        kind: 'inline-config',
+        configPath: '.codex/config.toml',
+        format: 'toml',
+        hooksKey: 'hooks',
+      },
+      shape: 'claude',
+      supportsNameTag: true,
+      eventMap: {
+        sessionStart: { event: 'SessionStart' },
+        userPromptSubmit: { event: 'UserPromptSubmit' },
+        beforeTool: { event: 'PreToolUse' },
+        afterTool: { event: 'PostToolUse' },
+        beforeShell: { event: 'PreToolUse', matcherPrefix: 'Bash' },
+        afterShell: { event: 'PostToolUse', matcherPrefix: 'Bash' },
+        afterFileEdit: { event: 'PostToolUse', matcherPrefix: 'apply_patch' },
+        beforeMcpCall: { event: 'PreToolUse', matcherPrefix: 'mcp__' },
+        afterMcpCall: { event: 'PostToolUse', matcherPrefix: 'mcp__' },
+        subagentStart: { event: 'SubagentStart' },
+        subagentStop: { event: 'SubagentStop' },
+        preCompact: { event: 'PreCompact' },
+        stop: { event: 'Stop' },
+      },
     },
   },
   'command-code': {
@@ -189,6 +270,7 @@ export const providers: Record<string, ProviderIntegration> = {
       serversKey: 'mcp',
       serverKey: 'capa',
       entryUrlKey: 'url',
+      entryType: 'http',
       supportsSubAgentEntries: true,
     },
     instructions: { filename: 'AGENTS.md' },
@@ -224,6 +306,42 @@ export const providers: Record<string, ProviderIntegration> = {
     pluginManifestPaths: ['.cursor-plugin/plugin.json'],
     pluginProviderId: 'cursor',
     purgeStaleSubAgentMcp: true,
+    hooks: {
+      // Cursor reads hooks from a dedicated .cursor/hooks.json with a
+      // { version: 1, hooks: { ... } } envelope.
+      // Docs: https://cursor.com/docs/agent/hooks
+      storage: {
+        kind: 'standalone',
+        configPath: '.cursor/hooks.json',
+        format: 'json',
+        envelope: 'cursor-v1',
+      },
+      shape: 'cursor',
+      supportsNameTag: true,
+      // Cursor's canonical/provider event surface (see
+      // https://cursor.com/docs/agent/hooks). We map every canonical event
+      // Cursor has a documented equivalent for; provider-only events (e.g.
+      // `afterAgentResponse`, `workspaceOpen`, `beforeTabFileRead`) can be
+      // targeted directly via `on: cursor:<eventName>`.
+      eventMap: {
+        sessionStart: { event: 'sessionStart' },
+        sessionEnd: { event: 'sessionEnd' },
+        beforeTool: { event: 'preToolUse' },
+        afterTool: { event: 'postToolUse' },
+        afterToolFailure: { event: 'postToolUseFailure' },
+        beforeShell: { event: 'beforeShellExecution' },
+        afterShell: { event: 'afterShellExecution' },
+        beforeMcpCall: { event: 'beforeMCPExecution' },
+        afterMcpCall: { event: 'afterMCPExecution' },
+        beforeFileRead: { event: 'beforeReadFile' },
+        afterFileEdit: { event: 'afterFileEdit' },
+        userPromptSubmit: { event: 'beforeSubmitPrompt' },
+        subagentStart: { event: 'subagentStart' },
+        subagentStop: { event: 'subagentStop' },
+        preCompact: { event: 'preCompact' },
+        stop: { event: 'stop' },
+      },
+    },
   },
   droid: {
     id: 'droid',
@@ -237,6 +355,7 @@ export const providers: Record<string, ProviderIntegration> = {
       serversKey: 'mcpServers',
       serverKey: 'capa',
       entryUrlKey: 'url',
+      entryType: 'http',
       supportsSubAgentEntries: true,
     },
     instructions: { filename: 'AGENTS.md' },
@@ -272,6 +391,44 @@ export const providers: Record<string, ProviderIntegration> = {
       extension: '.md',
       format: 'markdown-frontmatter',
     },
+    hooks: {
+      // Gemini CLI hooks live alongside its other settings in
+      // .gemini/settings.json under a top-level `hooks` key. The shape
+      // (matcher group + nested `hooks` array) mirrors Claude's, but the
+      // event names and matcher conventions are Gemini-specific:
+      //   - tool events are BeforeTool/AfterTool (not Pre/PostToolUse).
+      //   - matcher is a regex over the tool name, where built-in tools
+      //     are snake_case (run_shell_command, read_file, write_file, …)
+      //     and MCP tools follow `mcp_<server>_<tool>`.
+      // Events without a Gemini equivalent (`stop`) are simply omitted —
+      // hooks targeting them are skipped with a one-shot warning.
+      // Docs: https://github.com/google-gemini/gemini-cli/blob/main/docs/hooks/reference.md
+      storage: {
+        kind: 'inline-config',
+        configPath: '.gemini/settings.json',
+        format: 'json',
+        hooksKey: 'hooks',
+      },
+      shape: 'gemini',
+      supportsNameTag: true,
+      eventMap: {
+        sessionStart: { event: 'SessionStart' },
+        sessionEnd: { event: 'SessionEnd' },
+        userPromptSubmit: { event: 'BeforeAgent' },
+        beforeTool: { event: 'BeforeTool' },
+        afterTool: { event: 'AfterTool' },
+        beforeShell: { event: 'BeforeTool', matcherPrefix: 'run_shell_command' },
+        afterShell: { event: 'AfterTool', matcherPrefix: 'run_shell_command' },
+        beforeFileRead: { event: 'BeforeTool', matcherPrefix: 'read_file' },
+        afterFileEdit: {
+          event: 'AfterTool',
+          matcherPrefix: 'write_file|replace|edit_file',
+        },
+        beforeMcpCall: { event: 'BeforeTool', matcherPrefix: 'mcp_.*' },
+        afterMcpCall: { event: 'AfterTool', matcherPrefix: 'mcp_.*' },
+        preCompact: { event: 'PreCompress' },
+      },
+    },
   },
   'github-copilot': {
     id: 'github-copilot',
@@ -286,6 +443,7 @@ export const providers: Record<string, ProviderIntegration> = {
       serversKey: 'servers',
       serverKey: 'capa',
       entryUrlKey: 'url',
+      entryType: 'http',
       supportsSubAgentEntries: false,
     },
     instructions: { filename: '.github/copilot-instructions.md' },
@@ -316,6 +474,7 @@ export const providers: Record<string, ProviderIntegration> = {
     skillsDir: '.junie/skills',
     globalSkillsDir: join(home, '.junie/skills'),
     detectInstalled: async () => existsSync(join(home, '.junie')),
+    // Junie's native remote-HTTP schema is undocumented; this bare { url } entry is unverified.
     mcp: {
       configPath: '.junie/mcp/mcp.json',
       format: 'json',
@@ -342,7 +501,7 @@ export const providers: Record<string, ProviderIntegration> = {
       format: 'json',
       serversKey: 'mcpServers',
       serverKey: 'capa',
-      entryUrlKey: 'url',
+      entryUrlKey: 'httpUrl',
       supportsSubAgentEntries: true,
     },
     instructions: { filename: 'AGENTS.md' },
@@ -361,6 +520,7 @@ export const providers: Record<string, ProviderIntegration> = {
       serversKey: 'mcpServers',
       serverKey: 'capa',
       entryUrlKey: 'url',
+      entryType: 'streamable-http',
       supportsSubAgentEntries: true,
     },
     instructions: { filename: 'AGENTS.md' },
@@ -421,6 +581,7 @@ export const providers: Record<string, ProviderIntegration> = {
       serversKey: 'mcpServers',
       serverKey: 'capa',
       entryUrlKey: 'url',
+      entryType: 'http',
       supportsSubAgentEntries: true,
     },
     instructions: { filename: 'AGENTS.md' },
@@ -474,6 +635,7 @@ export const providers: Record<string, ProviderIntegration> = {
       serversKey: 'mcp',
       serverKey: 'capa',
       entryUrlKey: 'url',
+      entryType: 'remote',
       supportsSubAgentEntries: true,
     },
     instructions: { filename: 'AGENTS.md' },
@@ -534,7 +696,7 @@ export const providers: Record<string, ProviderIntegration> = {
       format: 'json',
       serversKey: 'mcpServers',
       serverKey: 'capa',
-      entryUrlKey: 'url',
+      entryUrlKey: 'httpUrl',
       supportsSubAgentEntries: true,
     },
     instructions: { filename: 'AGENTS.md' },
@@ -567,6 +729,7 @@ export const providers: Record<string, ProviderIntegration> = {
       serversKey: 'mcpServers',
       serverKey: 'capa',
       entryUrlKey: 'url',
+      entryType: 'streamable-http',
       supportsSubAgentEntries: true,
     },
   },
@@ -651,6 +814,7 @@ export const providers: Record<string, ProviderIntegration> = {
       serversKey: 'mcpServers',
       serverKey: 'capa',
       entryUrlKey: 'url',
+      entryType: 'http',
       supportsSubAgentEntries: true,
     },
     // No project-root instructions file documented for Neovate.

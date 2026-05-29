@@ -6,6 +6,7 @@ import { parseCapabilitiesFile } from '../../shared/capabilities';
 import { unregisterMCPServer, unregisterSubAgentMCPServer } from '../utils/mcp-client-manager';
 import { cleanAgentsFile, removeSubAgentInstructions } from '../utils/agents-file';
 import { cleanRules } from '../utils/rules-installer';
+import { cleanHooks } from '../utils/hooks-installer';
 import { getLockfilePath } from '../../shared/lockfile';
 import { resolveProvidersForClean } from '../../shared/providers/resolve';
 import { header, footer, info, warn, error, runTasks } from '../ui';
@@ -92,6 +93,17 @@ export async function cleanCommand(): Promise<void> {
       task: async () => {
         const ruleIds = (capabilities.rules ?? []).map((r) => r.id);
         cleanRules(projectPath, providers, ruleIds);
+      },
+    },
+    {
+      title: 'Clean hooks',
+      enabled: () => db.getManagedHooks(projectId).length > 0,
+      task: async (_, task) => {
+        const { removed, warnings } = cleanHooks(projectPath, projectId, db);
+        for (const w of warnings) deferredErrors.push(w);
+        task.title = removed > 0
+          ? `Removed ${removed} hook entr${removed === 1 ? 'y' : 'ies'}`
+          : 'No hooks to clean';
       },
     },
     {

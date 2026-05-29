@@ -94,7 +94,14 @@ flowchart TD
     Unregister --> Subagents
 
     Subagents[install-subagents<br/>purge stale entries,<br/>unregister removed agents,<br/>register current agents +<br/>write subagent files + snippets]
-    Subagents --> Creds
+    Subagents --> PruneHooks
+
+    PruneHooks[prune-orphan-hooks<br/>delete capa-tagged hook entries<br/>no longer in capabilities,<br/>rm materialised scripts under<br/>~/.capa/hooks/<projectId>/] --> InstallHooks
+
+    InstallHooks{capabilities.hooks<br/>set?}
+    InstallHooks -- yes --> WriteHooks[install-hooks<br/>resolve sources to<br/>~/.capa/hooks/<projectId>/,<br/>upsert capa:&lt;id&gt; entries in<br/>provider hooks config]
+    InstallHooks -- no --> Creds
+    WriteHooks --> Creds
 
     Creds{configureResult<br/>needs creds?}
     Creds -- yes --> OpenBrowser[open-credential-setup<br/>open web UI for missing<br/>variables or OAuth2 connect]
@@ -120,6 +127,8 @@ table below is a quick map of what each task reads/writes.
 | `install-agent-instructions` | `install-agent-instructions.ts` | `capabilities.agents` | `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, … |
 | `prune-orphan-rules` | `prune-orphan-rules.ts` | DB managed-files, current rule IDs | rm rule files/marker blocks |
 | `install-rules` | `install-rules.ts` | `capabilities.rules`, snapshot cache | per-provider rules dir **or** marker blocks in instructions file |
+| `prune-orphan-hooks` | `prune-orphan-hooks.ts` | DB `managed_hooks`, current hook IDs | rm capa-tagged hook entries from provider configs, rm scripts in `~/.capa/hooks/<projectId>/` |
+| `install-hooks` | `install-hooks.ts` | `capabilities.hooks`, snapshot cache, lockfile | provider hook config (`.claude/settings.json`, `.cursor/hooks.json`, `.codex/config.toml`, `.gemini/settings.json`), `~/.capa/hooks/<projectId>/<hookId>` script files, `managed_hooks` rows, lock entries |
 | `configure-tools` | `configure-tools.ts` | merged capabilities | POSTs to `/api/projects/:id/configure`, stores `configureResult` |
 | `register-mcp-server` | `register-mcp-server.ts` | provider registry, mcpUrl | provider MCP config (`.cursor/mcp.json`, `.mcp.json`, …) |
 | `install-subagents` | `install-subagents.ts` | `capabilities.subagents`, DB sub-agents | sub-agent files, sub-agent MCP entries, instructions snippets |
@@ -141,10 +150,11 @@ flowchart TD
     Resolve --> RmManaged[1. Remove managed files<br/>iterate db.getManagedFiles]
     RmManaged --> CleanInstr[2. Clean agent instructions<br/>strip every capa:* marker block<br/>from AGENTS.md / CLAUDE.md / …]
     CleanInstr --> CleanRules[3. Clean rules<br/>rm rule files in provider dirs<br/>+ rule marker blocks]
-    CleanRules --> RmLock[4. Remove capabilities.lock]
-    RmLock --> UnregSub[5. Unregister sub-agents<br/>rm MCP entries +<br/>instruction snippets]
-    UnregSub --> UnregMcp[6. Unregister capa MCP<br/>delete capa entry from each<br/>provider's MCP config]
-    UnregMcp --> RmProject[7. Remove project row<br/>db.deleteProject]
+    CleanRules --> CleanHooks[4. Clean hooks<br/>rm capa:* hook entries from<br/>provider hooks config +<br/>rm ~/.capa/hooks/&lt;projectId&gt;/]
+    CleanHooks --> RmLock[5. Remove capabilities.lock]
+    RmLock --> UnregSub[6. Unregister sub-agents<br/>rm MCP entries +<br/>instruction snippets]
+    UnregSub --> UnregMcp[7. Unregister capa MCP<br/>delete capa entry from each<br/>provider's MCP config]
+    UnregMcp --> RmProject[8. Remove project row<br/>db.deleteProject]
     RmProject --> Done([Cleanup complete])
 ```
 
@@ -170,11 +180,25 @@ flowchart TD
   delete on the next install when entries disappear from the capabilities
   file. `capa clean` iterates the same table.
 
+- **Managed-hooks table**. `managed_hooks(project_id, provider_id, hook_id,
+  config_path, locator, script_path)` tracks every hook entry capa wrote
+  into a shared provider config (`.claude/settings.json`,
+  `.cursor/hooks.json`, `.codex/config.toml`, `.gemini/settings.json`). The
+  `locator` is a JSON pointer (or TOML path) into the file so prune/clean
+  can edit a single entry surgically without disturbing user-authored
+  ones. `script_path` points at the materialised body under
+  `~/.capa/hooks/<projectId>/<hookId>` for `inline` / `remote` /
+  `github` / `gitlab` sources, and is `NULL` for inline-command hooks
+  and `source: { type: local }` hooks (which reference the user's file
+  in place and must never be deleted on clean). `prune-orphan-hooks`,
+  `install-hooks`, and `capa clean` all read and mutate this table.
+
 - **Lockfile**. `capabilities.lock` pins resolved commit SHAs for every
-  `github`/`gitlab` skill and plugin. The lockfile is built incrementally
-  during install (`ctx.lockBuilder.upsertSkill/upsertPlugin`) and pruned to the
-  current set of IDs at the end. `--no-cache` disables both lockfile lookups
-  and the on-disk snapshot cache.
+  `github`/`gitlab` skill, plugin, and hook source. The lockfile is built
+  incrementally during install (`ctx.lockBuilder.upsertSkill / upsertPlugin
+  / upsertHook`) and pruned to the current set of IDs at the end.
+  `--no-cache` disables both lockfile lookups and the on-disk snapshot
+  cache.
 
 ---
 
