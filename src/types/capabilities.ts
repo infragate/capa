@@ -37,11 +37,22 @@ export type {
 } from './hooks';
 
 /**
- * Tool exposure modes for MCP clients
- * - 'expose-all': All tools from all skills are exposed immediately (default)
- * - 'on-demand': Tools are only exposed after calling setup_tools
+ * Tool exposure modes for MCP clients.
+ *
+ * - `'expose-all'`: All tools from all skills are exposed immediately via the
+ *   MCP `tools/list` response. Largest context footprint; lowest friction.
+ * - `'on-demand'`: Only the meta-tools `setup_tools` and `call_tool` are
+ *   listed; the agent activates skill-specific tools by calling
+ *   `setup_tools(['<skill>'])`. `setup_tools` returns a compact signature
+ *   list (`tool_name(required, optional?)`); the full input schema is only
+ *   returned in `call_tool` error responses when the agent calls incorrectly.
+ * - `'none'`: capa does **not** write any project-local MCP config files
+ *   (`.mcp.json`, `.cursor/mcp.json`, `.codex/config.toml` `mcp_servers.capa`,
+ *   sub-agent `capa-<id>` entries, etc.) at install time, and the MCP
+ *   endpoints return an empty `tools/list`. The agent is expected to
+ *   discover and execute tools through the `capa sh` CLI fallback instead.
  */
-export type ToolExposureMode = 'expose-all' | 'on-demand';
+export type ToolExposureMode = 'expose-all' | 'on-demand' | 'none';
 
 /**
  * Security options for skill installation.
@@ -70,7 +81,8 @@ export interface SecurityOptions {
  */
 export interface CapabilitiesOptions {
   /**
-   * Determines how tools are exposed to MCP clients
+   * Determines how tools are exposed to MCP clients. See `ToolExposureMode`
+   * for full semantics of each value.
    * @default 'expose-all'
    */
   toolExposure?: ToolExposureMode;
