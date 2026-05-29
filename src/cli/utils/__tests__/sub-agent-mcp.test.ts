@@ -31,6 +31,7 @@ describe('sub-agent MCP client registration', () => {
 
     const config = readConfig(join(tempDir, '.mcp.json'));
     expect(config.mcpServers['capa-infra-agent']).toEqual({
+      type: 'http',
       url: 'http://localhost:5912/proj-1/agents/infra-agent/mcp',
     });
     expect(config.mcpServers['capa']).toBeUndefined();
