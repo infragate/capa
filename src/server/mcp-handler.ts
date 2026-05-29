@@ -69,6 +69,108 @@ export function mergeDefaults(
   return { ...defaults, ...args };
 }
 
+/**
+ * Build a compact function-style signature string for an MCP tool, used as the
+ * response shape of `setup_tools`. Each call to `setup_tools` accumulates the
+ * available tools, and a full schema per tool quickly bloats the context
+ * window — so we emit signatures only and reserve the full schema for the
+ * `call_tool` error path (where the agent has demonstrably called wrong).
+ *
+ * Format:  `tool_name(req1, req2, opt1?, opt2?)`
+ *   - Properties listed in `required` come first, in the order they appear in
+ *     `required`.
+ *   - All other properties follow, suffixed with `?` to mark them optional.
+ *   - Property order within the "remaining" group preserves the schema's
+ *     `properties` declaration order so signatures are stable across calls.
+ *   - Tools with no input schema render as `tool_name()`.
+ */
+export function buildToolSignature(tool: Pick<MCPTool, 'name' | 'inputSchema'>): string {
+  const schema: any = tool.inputSchema;
+  const properties = schema && typeof schema === 'object' ? schema.properties : undefined;
+  if (!properties || typeof properties !== 'object') {
+    return `${tool.name}()`;
+  }
+  const requiredList: string[] = Array.isArray(schema.required) ? schema.required : [];
+  const requiredSet = new Set<string>(requiredList);
+  const allProps = Object.keys(properties);
+
+  // Required first (in `required` order, filtering out missing entries),
+  // then everything else (in declaration order), marked optional.
+  const reqPart = requiredList.filter((name) => name in properties);
+  const optPart = allProps.filter((name) => !requiredSet.has(name)).map((name) => `${name}?`);
+  return `${tool.name}(${[...reqPart, ...optPart].join(', ')})`;
+}
+
+/**
+ * Build the JSON payload returned by `setup_tools`. We return:
+ *   - `tools`: an array of signature strings (see `buildToolSignature`).
+ *   - `skills` / `activeSkills`: skills passed *this call* vs the accumulated
+ *     set (so the agent can tell what's already active without parsing prior
+ *     responses).
+ *   - `hint`: a one-line reminder of how to inspect a tool's full schema
+ *     (call it; on incorrect args the schema is returned).
+ *
+ * This payload is intentionally string-typed (not the MCP `Tool` shape) — the
+ * tool-list-changed notification path already informs MCP-aware clients of
+ * schema updates; this response is for the LLM's working context.
+ */
+export interface SetupToolsPayload {
+  success: true;
+  message: string;
+  skills: string[];
+  activeSkills: string[];
+  tools: string[];
+  hint: string;
+}
+
+export function buildSetupToolsPayload(
+  requestedSkills: string[],
+  activeSkills: string[],
+  toolSignatures: string[]
+): SetupToolsPayload {
+  return {
+    success: true,
+    message:
+      `Activated ${requestedSkills.length} skill(s); ` +
+      `${activeSkills.length} skill(s) and ${toolSignatures.length} tool(s) now available.`,
+    skills: requestedSkills,
+    activeSkills,
+    tools: toolSignatures,
+    hint:
+      'Tools are listed as `name(required, optional?)`. ' +
+      'Invoke with `call_tool`; if you pass wrong/missing args, the full input schema is returned in the error.',
+  };
+}
+
+/**
+ * Build the error payload returned by `call_tool` when a tool invocation
+ * fails. When the failure is plausibly an arg/schema problem (tool exists and
+ * was activated, but execution errored), include the full input schema so the
+ * agent can self-correct without re-running `setup_tools` to discover it.
+ */
+export interface CallToolErrorPayload {
+  error: string;
+  tool?: string;
+  schema?: unknown;
+  hint?: string;
+}
+
+export function buildCallToolErrorPayload(
+  message: string,
+  schemaCtx?: { tool: Pick<MCPTool, 'name' | 'inputSchema' | 'description'> }
+): CallToolErrorPayload {
+  if (!schemaCtx) return { error: message };
+  const { tool } = schemaCtx;
+  return {
+    error: message,
+    tool: tool.name,
+    schema: tool.inputSchema,
+    hint:
+      `Retry \`call_tool\` with \`name: "${tool.name}"\` and a \`data\` object ` +
+      `matching the schema above.`,
+  };
+}
+
 export class CapaMCPServer {
   private server: Server;
   private db: CapaDatabase;
@@ -155,6 +257,14 @@ export class CapaMCPServer {
       // Determine tool exposure mode (default to 'expose-all')
       const toolExposureMode = capabilities?.options?.toolExposure || 'expose-all';
 
+      if (toolExposureMode === 'none') {
+        // Project opted out of MCP-driven tool exposure. The agent is
+        // expected to discover and run tools via `capa sh` instead. Returning
+        // an empty list is the cleanest signal — most clients render this as
+        // "no tools available" rather than throwing.
+        return { tools: [] };
+      }
+
       if (toolExposureMode === 'expose-all') {
         // Expose-all mode: Show all tools from all skills immediately.
         // Sub-agent endpoints additionally filter to only their declared tools.
@@ -175,7 +285,7 @@ export class CapaMCPServer {
         // On-demand mode: Only expose meta-tools (setup_tools and call_tool)
         tools.push({
           name: 'setup_tools',
-          description: 'Activate skills and load their required tools. This tool should always be called when the agent learns (loads) a skill. Returns the full list of available tools with their schemas for your reference.',
+          description: 'Activate skills and load their required tools. Should be called when the agent learns (loads) a skill. Returns a compact signature list (`tool_name(required, optional?)`) for every activated tool — full input schemas are returned in the `call_tool` error response when a call is invalid.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -191,7 +301,7 @@ export class CapaMCPServer {
 
         tools.push({
           name: 'call_tool',
-          description: 'Call any activated tool by name. Use setup_tools first to see available tools and their schemas.',
+          description: 'Call any activated tool by name. Use `setup_tools` first to discover available tools (returned as compact signatures). If you pass invalid or missing args the full input schema is returned in the error so you can retry.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -217,6 +327,26 @@ export class CapaMCPServer {
       const { name, arguments: args } = request.params;
       const capabilities = this.sessionManager.getProjectCapabilities(this.projectId);
       const toolExposureMode = capabilities?.options?.toolExposure || 'expose-all';
+
+      // Tool exposure disabled — instruct the agent to use the CLI fallback
+      // instead of silently failing. This branch should rarely fire because
+      // capa skips writing MCP entries in `'none'` mode, but a user who
+      // hand-wires the endpoint shouldn't hit a confusing generic error.
+      if (toolExposureMode === 'none') {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                error:
+                  'Tool exposure is disabled for this project (toolExposure: none). ' +
+                  'Use the `capa sh` CLI to discover and invoke tools instead.',
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
 
       // Handle setup_tools
       if (name === 'setup_tools' && toolExposureMode === 'on-demand') {
@@ -342,25 +472,11 @@ export class CapaMCPServer {
   private async handleSetupTools(args: { skills: string[] }): Promise<any> {
     try {
       this.ensureSession();
-
-      // Setup tools
       const toolIds = this.sessionManager.setupTools(this.sessionId!, args.skills);
-
-      // Get capabilities to fetch tool schemas
-      const capabilities = this.sessionManager.getProjectCapabilities(this.projectId);
-      const toolSchemas: MCPTool[] = [];
-
-      if (capabilities) {
-        const allowedToolIds = this.getAgentAllowedToolIds(capabilities);
-        for (const qualifiedName of toolIds) {
-          if (allowedToolIds && !allowedToolIds.has(qualifiedName)) continue;
-          const tool = capabilities.tools.find((t) => getQualifiedToolName(t) === qualifiedName);
-          if (tool) {
-            const mcpTool = await this.convertToolToMCP(tool, capabilities);
-            toolSchemas.push(mcpTool);
-          }
-        }
-      }
+      const signatures = await this.buildToolSignaturesFor(toolIds);
+      // `setupTools` updates the session's activeSkills set; read it back so
+      // we report the merged list (not just this call's skills) to the agent.
+      const activeSkills = this.sessionManager.getSession(this.sessionId!)?.activeSkills ?? args.skills;
 
       // Send tools/list_changed notification (for backward compatibility)
       await this.server.notification({
@@ -368,51 +484,113 @@ export class CapaMCPServer {
         params: {},
       });
 
+      const payload = buildSetupToolsPayload(args.skills, activeSkills, signatures);
       return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify({
-              success: true,
-              message: `Activated ${args.skills.length} skill(s) with ${toolIds.length} tool(s)`,
-              skills: args.skills,
-              tools: toolSchemas,
-            }),
-          },
-        ],
+        content: [{ type: 'text', text: JSON.stringify(payload) }],
       };
     } catch (error: any) {
-      // If skill not found, include list of available skills
-      let errorMessage = error.message || 'Failed to setup tools';
-      if (error.message && error.message.startsWith('Skill not found:')) {
-        const capabilities = this.sessionManager.getProjectCapabilities(this.projectId);
-        if (capabilities && capabilities.skills.length > 0) {
-          const availableSkills = capabilities.skills.map(s => s.id).join(', ');
-          errorMessage = `${error.message}. Available skills: ${availableSkills}`;
-        }
-      }
-
+      const errorMessage = this.formatSetupToolsError(error);
+      // Per the MCP spec, tool execution failures are reported with
+      // `isError: true` on the result so the LLM sees the text content —
+      // keep `setup_tools` consistent with the `call_tool` error path so
+      // clients don't have to special-case the meta-tools.
       return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify({
-              error: errorMessage,
-            }),
-          },
-        ],
+        content: [{ type: 'text', text: JSON.stringify({ error: errorMessage }) }],
+        isError: true,
       };
     }
   }
 
+  /**
+   * Resolve a list of qualified tool names to compact signature strings.
+   * Applies the sub-agent allow-list (if any) and skips tools that have no
+   * matching definition in the current capabilities snapshot.
+   */
+  private async buildToolSignaturesFor(toolIds: string[]): Promise<string[]> {
+    const capabilities = this.sessionManager.getProjectCapabilities(this.projectId);
+    if (!capabilities) return [];
+    const allowedToolIds = this.getAgentAllowedToolIds(capabilities);
+    const signatures: string[] = [];
+    for (const qualifiedName of toolIds) {
+      if (allowedToolIds && !allowedToolIds.has(qualifiedName)) continue;
+      const tool = capabilities.tools.find((t) => getQualifiedToolName(t) === qualifiedName);
+      if (!tool) continue;
+      const mcpTool = await this.convertToolToMCP(tool, capabilities);
+      signatures.push(buildToolSignature(mcpTool));
+    }
+    return signatures;
+  }
+
+  /**
+   * Format an error from `SessionManager.setupTools` for the user. Adds the
+   * list of available skill ids when the failure was an unknown skill so the
+   * agent can recover without a separate discovery call.
+   */
+  private formatSetupToolsError(error: any): string {
+    const baseMessage = error?.message || 'Failed to setup tools';
+    if (typeof baseMessage !== 'string' || !baseMessage.startsWith('Skill not found:')) {
+      return baseMessage;
+    }
+    const capabilities = this.sessionManager.getProjectCapabilities(this.projectId);
+    if (capabilities && capabilities.skills.length > 0) {
+      const availableSkills = capabilities.skills.map((s) => s.id).join(', ');
+      return `${baseMessage}. Available skills: ${availableSkills}`;
+    }
+    return baseMessage;
+  }
+
+  /**
+   * Look up the full MCP tool form (including resolved inputSchema) for a
+   * tool name as the agent sent it. Returns null when no matching tool exists
+   * in the current capabilities (e.g. the agent invented a name) so callers
+   * can degrade to a schema-less error.
+   *
+   * Uses the same dot/underscore normalization as `tools/call` so a call like
+   * `brave_search` resolves to the canonical `brave.search` schema.
+   */
+  private async tryGetToolSchema(toolName: string): Promise<MCPTool | null> {
+    const capabilities = this.sessionManager.getProjectCapabilities(this.projectId);
+    if (!capabilities) return null;
+    const normalized = normalizeToolName(toolName);
+    const tool = capabilities.tools.find(
+      (t) => normalizeToolName(getQualifiedToolName(t)) === normalized
+    );
+    if (!tool) return null;
+    try {
+      return await this.convertToolToMCP(tool, capabilities);
+    } catch {
+      // Schema lookup is best-effort — never let it mask the original error.
+      return null;
+    }
+  }
+
+  /**
+   * Build a content-wrapped `CallToolResult` for an error. Per the MCP spec
+   * tool-execution failures are reported with `isError: true` on the result
+   * (not as JSON-RPC errors) so the LLM sees the text content. We embed the
+   * full input schema in the text whenever we can identify the target tool —
+   * that's the whole point of slimming `setup_tools`: keep the schema close
+   * to where the agent actually needs it, not bloating every activation.
+   */
+  private async buildCallToolErrorResult(
+    toolName: string | undefined,
+    message: string,
+    options: { includeSchema?: boolean } = {}
+  ): Promise<{ content: Array<{ type: string; text: string }>; isError: true }> {
+    const includeSchema = options.includeSchema ?? true;
+    const mcpTool = includeSchema && toolName ? await this.tryGetToolSchema(toolName) : null;
+    const payload = buildCallToolErrorPayload(message, mcpTool ? { tool: mcpTool } : undefined);
+    return {
+      content: [{ type: 'text', text: JSON.stringify(payload) }],
+      isError: true,
+    };
+  }
+
   private async handleCallTool(args: { name: string; data: object }): Promise<any> {
+    const toolName = args.name;
+    const toolData = args.data || {};
     try {
       const session = this.ensureSession();
-
-      // Extract tool name and data
-      const toolName = args.name;
-      const toolData = args.data || {};
-
       this.logger.info(`Calling tool via call_tool: ${toolName}`);
       this.logger.debug(`Tool data: ${JSON.stringify(toolData)}`);
 
@@ -420,32 +598,25 @@ export class CapaMCPServer {
       const toolDef = this.sessionManager.getToolDefinition(this.projectId, toolName);
       if (!toolDef) {
         this.logger.warn(`Tool not found: ${toolName}`);
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify({
-                error: `Tool not found: ${toolName}. Make sure you've called setup_tools to activate the required skills.`,
-              }),
-            },
-          ],
-        };
+        // No schema attached — by definition we don't have a matching tool.
+        return await this.buildCallToolErrorResult(
+          toolName,
+          `Tool not found: ${toolName}. Make sure you've called setup_tools to activate the required skills.`,
+          { includeSchema: false }
+        );
       }
 
       // Check if tool is in available tools for the session (normalize for dot/underscore compat)
       const normalizedToolName = normalizeToolName(toolName);
       if (!session.availableTools.some((t) => normalizeToolName(t) === normalizedToolName)) {
         this.logger.warn(`Tool not activated: ${toolName}`);
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify({
-                error: `Tool "${toolName}" is not activated. Call setup_tools with the appropriate skills first.`,
-              }),
-            },
-          ],
-        };
+        // The tool exists but isn't activated — `setup_tools` is the next
+        // step, so don't pre-emptively dump the schema and confuse the agent.
+        return await this.buildCallToolErrorResult(
+          toolName,
+          `Tool "${toolName}" is not activated. Call setup_tools with the appropriate skills first.`,
+          { includeSchema: false }
+        );
       }
 
       this.logger.debug(`Tool type: ${toolDef.type}`);
@@ -461,20 +632,27 @@ export class CapaMCPServer {
           toolData as Record<string, any>
         );
         this.logger.debug(`Command executed, success: ${result.success}`);
+        // Command-tool failures land here as `{success: false, error}` (e.g.
+        // "Missing required argument: title") — they don't throw. Route them
+        // through the error helper so the agent gets the full schema back and
+        // can self-correct on the next call.
+        if (result && result.success === false) {
+          return await this.buildCallToolErrorResult(
+            toolName,
+            result.error || 'Command tool failed'
+          );
+        }
       } else if (toolDef.type === 'mcp') {
         this.logger.debug('Executing MCP tool...');
         const mcpDef = toolDef.def as ToolMCPDefinition;
         const capabilities = this.sessionManager.getProjectCapabilities(this.projectId);
         if (!capabilities) {
           this.logger.warn('Project capabilities not found');
-          return {
-            content: [
-              {
-                type: 'text',
-                text: JSON.stringify({ error: 'Project capabilities not found' }),
-              },
-            ],
-          };
+          return await this.buildCallToolErrorResult(
+            toolName,
+            'Project capabilities not found',
+            { includeSchema: false }
+          );
         }
 
         // Find server definition
@@ -482,14 +660,11 @@ export class CapaMCPServer {
         const serverDef = capabilities.servers.find((s) => s.id === serverId);
         if (!serverDef) {
           this.logger.warn(`Server not found: ${serverId}`);
-          return {
-            content: [
-              {
-                type: 'text',
-                text: JSON.stringify({ error: `Server not found: ${serverId}` }),
-              },
-            ],
-          };
+          return await this.buildCallToolErrorResult(
+            toolName,
+            `Server not found: ${serverId}`,
+            { includeSchema: false }
+          );
         }
 
         this.logger.debug(`Using MCP server: ${serverId}`);
@@ -498,25 +673,15 @@ export class CapaMCPServer {
       }
 
       return {
-        content: [
-          {
-            type: 'text',
-            text: this.serializeToolResult(result),
-          },
-        ],
+        content: [{ type: 'text', text: this.serializeToolResult(result) }],
       };
     } catch (error: any) {
       this.logger.failure(`call_tool execution error: ${error.message}`);
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify({
-              error: error.message || 'Tool execution failed',
-            }),
-          },
-        ],
-      };
+      // Likely an arg/schema problem — attach the schema so the agent can retry.
+      return await this.buildCallToolErrorResult(
+        toolName,
+        error?.message || 'Tool execution failed'
+      );
     }
   }
 
@@ -846,6 +1011,19 @@ export class CapaMCPServer {
       const toolExposureMode = capabilities?.options?.toolExposure || 'expose-all';
       this.logger.debug(`Tool exposure mode: ${toolExposureMode}`);
 
+      if (toolExposureMode === 'none') {
+        // Project opted out of MCP-driven tool exposure. The agent is
+        // expected to discover and run tools via `capa sh` instead. Returning
+        // an empty list is the cleanest signal — most clients render this as
+        // "no tools available" rather than throwing.
+        this.logger.info('Tool exposure disabled (none) — returning empty tools list');
+        return {
+          jsonrpc: '2.0',
+          id: message.id,
+          result: { tools: [] },
+        };
+      }
+
       if (toolExposureMode === 'expose-all') {
         // Expose-all mode: Show all tools from all skills immediately.
         // Sub-agent endpoints additionally filter to only their declared tools.
@@ -867,7 +1045,7 @@ export class CapaMCPServer {
         // On-demand mode: Only expose meta-tools (setup_tools and call_tool)
         tools.push({
           name: 'setup_tools',
-          description: 'Activate skills and load their required tools. This tool should always be called when the agent learns (loads) a skill. Returns the full list of available tools with their schemas for your reference.',
+          description: 'Activate skills and load their required tools. Should be called when the agent learns (loads) a skill. Returns a compact signature list (`tool_name(required, optional?)`) for every activated tool — full input schemas are returned in the `call_tool` error response when a call is invalid.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -883,7 +1061,7 @@ export class CapaMCPServer {
 
         tools.push({
           name: 'call_tool',
-          description: 'Call any activated tool by name. Use setup_tools first to see available tools and their schemas.',
+          description: 'Call any activated tool by name. Use `setup_tools` first to discover available tools (returned as compact signatures). If you pass invalid or missing args the full input schema is returned in the error so you can retry.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -917,30 +1095,13 @@ export class CapaMCPServer {
       this.logger.info(`Call tool: ${name}`);
       this.logger.debug(`Arguments: ${JSON.stringify(args)}`);
 
-      // Handle setup_tools
-      if (name === 'setup_tools') {
-        try {
-          this.ensureSession();
-
-          // Setup tools
-          this.logger.info(`Activating skills: ${args.skills.join(', ')}`);
-          const toolIds = this.sessionManager.setupTools(this.sessionId!, args.skills);
-          this.logger.success(`Loaded ${toolIds.length} tool(s): ${toolIds.join(', ')}`);
-
-          // Get capabilities to fetch tool schemas
-          const capabilities = this.sessionManager.getProjectCapabilities(this.projectId);
-          const toolSchemas: MCPTool[] = [];
-
-          if (capabilities) {
-            for (const qualifiedName of toolIds) {
-              const tool = capabilities.tools.find((t) => getQualifiedToolName(t) === qualifiedName);
-              if (tool) {
-                const mcpTool = await this.convertToolToMCP(tool, capabilities);
-                toolSchemas.push(mcpTool);
-              }
-            }
-          }
-
+      // Tool exposure disabled — reject before doing any per-tool lookup.
+      // Capa skips MCP file writes in `'none'` mode, but a hand-wired endpoint
+      // should still get a helpful nudge toward the CLI fallback.
+      {
+        const caps = this.sessionManager.getProjectCapabilities(this.projectId);
+        if (caps?.options?.toolExposure === 'none') {
+          this.logger.warn(`tools/call hit on a project with toolExposure: none (tool=${name})`);
           return {
             jsonrpc: '2.0',
             id: message.id,
@@ -949,34 +1110,58 @@ export class CapaMCPServer {
                 {
                   type: 'text',
                   text: JSON.stringify({
-                    success: true,
-                    message: `Activated ${args.skills.length} skill(s) with ${toolIds.length} tool(s)`,
-                    skills: args.skills,
-                    tools: toolSchemas,
+                    error:
+                      'Tool exposure is disabled for this project (toolExposure: none). ' +
+                      'Use the `capa sh` CLI to discover and invoke tools instead.',
                   }),
                 },
               ],
+              isError: true,
             },
           };
-        } catch (error: any) {
-          this.logger.failure(`Error: ${error.message}`);
+        }
+      }
 
-          // If skill not found, include list of available skills
-          let errorMessage = error.message || 'Failed to setup tools';
-          if (error.message && error.message.startsWith('Skill not found:')) {
-            const capabilities = this.sessionManager.getProjectCapabilities(this.projectId);
-            if (capabilities && capabilities.skills.length > 0) {
-              const availableSkills = capabilities.skills.map(s => s.id).join(', ');
-              errorMessage = `${error.message}. Available skills: ${availableSkills}`;
-            }
-          }
+      // Handle setup_tools
+      if (name === 'setup_tools') {
+        try {
+          this.ensureSession();
+
+          this.logger.info(`Activating skills: ${args.skills.join(', ')}`);
+          const toolIds = this.sessionManager.setupTools(this.sessionId!, args.skills);
+          this.logger.success(`Loaded ${toolIds.length} tool(s): ${toolIds.join(', ')}`);
+
+          const signatures = await this.buildToolSignaturesFor(toolIds);
+          // `setupTools` updates the session's activeSkills set; read it back so
+          // we report the merged list (not just this call's skills) to the agent.
+          const activeSkills = this.sessionManager.getSession(this.sessionId!)?.activeSkills ?? args.skills;
+          const payload = buildSetupToolsPayload(args.skills, activeSkills, signatures);
 
           return {
             jsonrpc: '2.0',
             id: message.id,
-            error: {
-              code: -32603,
-              message: errorMessage,
+            result: {
+              content: [{ type: 'text', text: JSON.stringify(payload) }],
+            },
+          };
+        } catch (error: any) {
+          this.logger.failure(`Error: ${error.message}`);
+          // Mirror the SDK path and the `call_tool` error contract: surface
+          // tool-execution failures as `result.isError = true` content rather
+          // than a JSON-RPC error so the LLM sees the structured payload (a
+          // JSON-RPC error gets eaten by most clients before it reaches the
+          // model).
+          return {
+            jsonrpc: '2.0',
+            id: message.id,
+            result: {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({ error: this.formatSetupToolsError(error) }),
+                },
+              ],
+              isError: true,
             },
           };
         }
@@ -999,13 +1184,11 @@ export class CapaMCPServer {
           };
         }
 
+        const toolName = args?.name;
+        const toolData = args?.data || {};
+
         try {
           const session = this.ensureSession();
-
-          // Extract tool name and data
-          const toolName = args.name;
-          const toolData = args.data || {};
-
           this.logger.info(`Calling tool via call_tool: ${toolName}`);
           this.logger.debug(`Tool data: ${JSON.stringify(toolData)}`);
 
@@ -1016,10 +1199,11 @@ export class CapaMCPServer {
             return {
               jsonrpc: '2.0',
               id: message.id,
-              error: {
-                code: -32601,
-                message: `Tool not found: ${toolName}. Make sure you've called setup_tools to activate the required skills.`,
-              },
+              result: await this.buildCallToolErrorResult(
+                toolName,
+                `Tool not found: ${toolName}. Make sure you've called setup_tools to activate the required skills.`,
+                { includeSchema: false }
+              ),
             };
           }
 
@@ -1030,10 +1214,11 @@ export class CapaMCPServer {
             return {
               jsonrpc: '2.0',
               id: message.id,
-              error: {
-                code: -32603,
-                message: `Tool "${toolName}" is not activated. Call setup_tools with the appropriate skills first.`,
-              },
+              result: await this.buildCallToolErrorResult(
+                toolName,
+                `Tool "${toolName}" is not activated. Call setup_tools with the appropriate skills first.`,
+                { includeSchema: false }
+              ),
             };
           }
 
@@ -1050,6 +1235,20 @@ export class CapaMCPServer {
               toolData as Record<string, any>
             );
             this.logger.debug(`Command executed, success: ${result.success}`);
+            // Command-tool failures land here as `{success: false, error}`
+            // (e.g. "Missing required argument: title") — they don't throw.
+            // Route them through the error helper so the agent gets the full
+            // schema back and can self-correct on the next call.
+            if (result && result.success === false) {
+              return {
+                jsonrpc: '2.0',
+                id: message.id,
+                result: await this.buildCallToolErrorResult(
+                  toolName,
+                  result.error || 'Command tool failed'
+                ),
+              };
+            }
           } else if (toolDef.type === 'mcp') {
             this.logger.debug('Executing MCP tool...');
             const mcpDef = toolDef.def as ToolMCPDefinition;
@@ -1058,10 +1257,11 @@ export class CapaMCPServer {
               return {
                 jsonrpc: '2.0',
                 id: message.id,
-                error: {
-                  code: -32603,
-                  message: 'Project capabilities not found',
-                },
+                result: await this.buildCallToolErrorResult(
+                  toolName,
+                  'Project capabilities not found',
+                  { includeSchema: false }
+                ),
               };
             }
 
@@ -1073,10 +1273,11 @@ export class CapaMCPServer {
               return {
                 jsonrpc: '2.0',
                 id: message.id,
-                error: {
-                  code: -32603,
-                  message: `Server not found: ${serverId}`,
-                },
+                result: await this.buildCallToolErrorResult(
+                  toolName,
+                  `Server not found: ${serverId}`,
+                  { includeSchema: false }
+                ),
               };
             }
 
@@ -1099,13 +1300,14 @@ export class CapaMCPServer {
           };
         } catch (error: any) {
           this.logger.failure(`call_tool execution error: ${error.message}`);
+          // Likely an arg/schema problem — attach the schema so the agent can self-correct.
           return {
             jsonrpc: '2.0',
             id: message.id,
-            error: {
-              code: -32603,
-              message: error.message || 'Tool execution failed',
-            },
+            result: await this.buildCallToolErrorResult(
+              toolName,
+              error?.message || 'Tool execution failed'
+            ),
           };
         }
       }

@@ -116,11 +116,16 @@ tools: []
 
   it('removes capa-managed snippets from CLAUDE.md / AGENTS.md even when capabilities.yaml has no `agents:` block', async () => {
     // Sub-agent integrations (e.g. Claude's foldSubAgentsIntoInstructions)
-    // can write capa snippets into CLAUDE.md / AGENTS.md without a top-level
-    // `agents:` block, so `capa clean` must always run the agents-file cleanup.
+    // can write capa snippets into the provider's instructions file without
+    // a top-level `agents:` block, so `capa clean` must always run the
+    // agents-file cleanup for each active provider.
+    //
+    // With the `getTargetFilenames` fix, claude-code only manages `CLAUDE.md`
+    // (no stray `AGENTS.md`), so this test enables both `claude-code` and
+    // `codex` to exercise the multi-file cleanup path.
     writeFileSync(
       join(projectDir, 'capabilities.yaml'),
-      `providers: [claude-code]
+      `providers: [claude-code, codex]
 options:
   toolExposure: on-demand
 skills: []
@@ -153,6 +158,40 @@ researcher block
     // Both files were entirely capa-managed, so they should now be gone.
     expect(existsSync(join(projectDir, 'CLAUDE.md'))).toBe(false);
     expect(existsSync(join(projectDir, 'AGENTS.md'))).toBe(false);
+  });
+
+  it('leaves a pre-existing AGENTS.md alone when claude-code is the only provider', async () => {
+    // Regression: capa used to seed AGENTS.md unconditionally into the target
+    // file list, so a claude-code-only `capa clean` would scan AGENTS.md even
+    // though no claude-code install ever writes one. With the fix,
+    // `getTargetFilenames(['claude-code'])` returns just `CLAUDE.md` and a
+    // hand-authored AGENTS.md (e.g. for another tool the user is also using)
+    // must not be touched.
+    writeFileSync(
+      join(projectDir, 'capabilities.yaml'),
+      `providers: [claude-code]
+options:
+  toolExposure: on-demand
+skills: []
+servers: []
+tools: []
+`,
+      'utf-8'
+    );
+    writeFileSync(
+      join(projectDir, 'AGENTS.md'),
+      `# My project
+
+Hand-authored AGENTS.md unrelated to claude-code.
+`,
+      'utf-8'
+    );
+
+    await captureOutput(() => cleanCommand());
+
+    expect(existsSync(join(projectDir, 'AGENTS.md'))).toBe(true);
+    const remaining = readFileSync(join(projectDir, 'AGENTS.md'), 'utf-8');
+    expect(remaining).toContain('Hand-authored AGENTS.md unrelated to claude-code.');
   });
 
   it('preserves non-capa content in CLAUDE.md while removing capa snippets', async () => {
