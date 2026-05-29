@@ -13,6 +13,7 @@ import yaml from 'js-yaml';
 import type {
   Lockfile,
   LockfileFormat,
+  LockHookEntry,
   LockPluginEntry,
   LockSkillEntry,
   LockSource,
@@ -48,11 +49,16 @@ export function emptyLockfile(): Lockfile {
     generatedAt: new Date().toISOString(),
     skills: [],
     plugins: [],
+    hooks: [],
   };
 }
 
 function isLockSource(value: unknown): value is LockSource {
   return value === 'github' || value === 'gitlab';
+}
+
+function isLockHookSource(value: unknown): value is LockHookEntry['source'] {
+  return value === 'github' || value === 'gitlab' || value === 'remote';
 }
 
 function isNullableString(value: unknown): value is string | null {
@@ -72,6 +78,23 @@ export function isValidSkillLockEntry(x: unknown): x is LockSkillEntry {
     isNullableString(e.requestedRef) &&
     typeof e.resolvedRef === 'string' &&
     isNullableString(e.resolvedVersion)
+  );
+}
+
+export function isValidHookLockEntry(x: unknown): x is LockHookEntry {
+  if (!x || typeof x !== 'object') return false;
+  const e = x as Record<string, unknown>;
+  return (
+    typeof e.id === 'string' &&
+    e.id.length > 0 &&
+    isLockHookSource(e.source) &&
+    isNullableString(e.repo) &&
+    isNullableString(e.url) &&
+    isNullableString(e.requestedVersion) &&
+    isNullableString(e.requestedRef) &&
+    isNullableString(e.resolvedRef) &&
+    isNullableString(e.resolvedVersion) &&
+    typeof e.bodySha256 === 'string'
   );
 }
 
@@ -129,12 +152,16 @@ function validateLockfile(parsed: unknown): Lockfile {
   if (!Array.isArray(obj.plugins)) {
     throw new Error('Lockfile.plugins is not an array');
   }
+  // Older lockfiles predate the hooks section — treat a missing field as [].
+  const hooksValue = obj.hooks;
+  const hooksArray = Array.isArray(hooksValue) ? hooksValue : [];
   return {
     version: 1,
     generator: typeof obj.generator === 'string' ? obj.generator : `capa@${VERSION}`,
     generatedAt: typeof obj.generatedAt === 'string' ? obj.generatedAt : new Date().toISOString(),
     skills: filterLockEntries(obj.skills, isValidSkillLockEntry, 'skill'),
     plugins: filterLockEntries(obj.plugins, isValidPluginLockEntry, 'plugin'),
+    hooks: filterLockEntries(hooksArray, isValidHookLockEntry, 'hook'),
   };
 }
 
@@ -199,6 +226,7 @@ export function serializeLockfile(lockfile: Lockfile, format: LockfileFormat): s
 export class LockfileBuilder {
   private skills: Map<string, LockSkillEntry> = new Map();
   private plugins: Map<string, LockPluginEntry> = new Map();
+  private hooks: Map<string, LockHookEntry> = new Map();
   private generator: string;
   private generatedAt: string;
 
@@ -208,6 +236,7 @@ export class LockfileBuilder {
     if (initial) {
       for (const skill of initial.skills) this.skills.set(skill.id, skill);
       for (const plugin of initial.plugins) this.plugins.set(plugin.id, plugin);
+      for (const hook of initial.hooks ?? []) this.hooks.set(hook.id, hook);
     }
   }
 
@@ -267,30 +296,58 @@ export class LockfileBuilder {
     this.plugins.set(entry.id, entry);
   }
 
+  upsertHook(entry: LockHookEntry): void {
+    this.hooks.set(entry.id, entry);
+  }
+
   /**
-   * Drop any skills/plugins not present in the provided id sets. Called at
-   * the end of install to evict stale entries (e.g. user removed a skill).
+   * Look up a hook entry by id. Returns the entry only if its requested
+   * version/ref still matches what the capabilities file is asking for —
+   * otherwise we must re-resolve.
    */
-  pruneToIds(skillIds: Set<string>, pluginIds: Set<string>): void {
+  findHook(
+    id: string,
+    requestedVersion: string | null,
+    requestedRef: string | null
+  ): LockHookEntry | null {
+    const entry = this.hooks.get(id);
+    if (!entry) return null;
+    if ((entry.requestedVersion ?? null) !== (requestedVersion ?? null)) return null;
+    if ((entry.requestedRef ?? null) !== (requestedRef ?? null)) return null;
+    return entry;
+  }
+
+  /**
+   * Drop any skills/plugins/hooks not present in the provided id sets. Called
+   * at the end of install to evict stale entries (e.g. user removed a skill).
+   */
+  pruneToIds(skillIds: Set<string>, pluginIds: Set<string>, hookIds?: Set<string>): void {
     for (const id of [...this.skills.keys()]) {
       if (!skillIds.has(id)) this.skills.delete(id);
     }
     for (const id of [...this.plugins.keys()]) {
       if (!pluginIds.has(id)) this.plugins.delete(id);
     }
+    if (hookIds) {
+      for (const id of [...this.hooks.keys()]) {
+        if (!hookIds.has(id)) this.hooks.delete(id);
+      }
+    }
   }
 
   build(): Lockfile {
     const skills = [...this.skills.values()].sort((a, b) => a.id.localeCompare(b.id));
     const plugins = [...this.plugins.values()].sort((a, b) => a.id.localeCompare(b.id));
+    const hooks = [...this.hooks.values()].sort((a, b) => a.id.localeCompare(b.id));
     return {
       version: 1,
       generator: this.generator,
       generatedAt: new Date().toISOString(),
       skills,
       plugins,
+      hooks,
     };
   }
 }
 
-export type { LockSource, LockSkillEntry, LockPluginEntry, Lockfile };
+export type { LockSource, LockSkillEntry, LockPluginEntry, LockHookEntry, Lockfile };

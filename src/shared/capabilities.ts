@@ -9,11 +9,11 @@ const KNOWN_CAPABILITY_KEYS = new Set([
   'servers',
   'tools',
   'plugins',
-  'resolvedPlugins',
   'options',
   'agents',
   'subagents',
   'rules',
+  'hooks',
 ]);
 
 const objectEntry = z.record(z.string(), z.unknown());
@@ -25,11 +25,11 @@ const capabilitiesSchema = z
     servers: z.preprocess((val) => val ?? [], z.array(objectEntry)),
     tools: z.preprocess((val) => val ?? [], z.array(objectEntry)),
     plugins: z.preprocess((val) => val ?? [], z.array(objectEntry)),
-    resolvedPlugins: z.array(objectEntry).optional(),
     options: z.preprocess((val) => val ?? {}, z.record(z.string(), z.unknown())),
     agents: z.record(z.string(), z.unknown()).optional(),
     subagents: z.preprocess((val) => val ?? [], z.array(objectEntry)),
     rules: z.preprocess((val) => val ?? [], z.array(objectEntry)),
+    hooks: z.preprocess((val) => val ?? [], z.array(objectEntry)),
   })
   .passthrough();
 

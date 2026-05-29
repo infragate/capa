@@ -6,6 +6,7 @@ import type { GitPlatform, GitPATConfig } from '../types/git-integration';
 import { logger } from '../shared/logger';
 import { CAPA_CLOUD_OAUTH_URL } from '../shared/ui-urls';
 import { getGitProvider, getAllGitProviders } from '../shared/git-providers/registry';
+import { isPermanentRefreshFailure } from '../shared/oauth-refresh';
 
 export class GitIntegrationManager {
   private db: CapaDatabase;
@@ -293,18 +294,26 @@ export class GitIntegrationManager {
           refresh_token: integration.refresh_token,
         }),
       });
-      
+
       if (!response.ok) {
         const errorText = await response.text();
         this.logger.failure(`Token refresh failed: ${response.status} ${errorText}`);
-        
-        // If refresh failed, delete the invalid token
-        this.db.deleteGitIntegration(platform, host || null);
+
+        // Only delete the stored token when the refresh_token itself is known to be
+        // unusable (invalid_grant / invalid_token / expired). Transient failures like
+        // proxy 5xx, rate limits, or network blips keep the token so the next
+        // scheduler tick (or user retry) can succeed.
+        if (isPermanentRefreshFailure(undefined, response, errorText)) {
+          this.db.deleteGitIntegration(platform, host || null);
+          this.logger.info(`Deleted invalid token for ${platform}`);
+        } else {
+          this.logger.warn(`Transient refresh failure for ${platform}, keeping token`);
+        }
         return false;
       }
 
       const tokenData = await response.json();
-      
+
       if (!tokenData.access_token) {
         this.logger.failure('No access token in refresh response');
         return false;

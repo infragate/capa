@@ -526,7 +526,19 @@ class CapaServer {
       }
 
       const capabilities = this.sessionManager.getProjectCapabilities(projectId);
-      
+
+      // Pre-fetch managed hooks once and group by hookId so the per-hook
+      // map below stays O(n) instead of issuing one DB query per hook.
+      const installedHooksByHookId = new Map<string, { providerId: string; configPath: string; scriptPath: string | null }[]>();
+      if (capabilities && (capabilities.hooks || []).length > 0) {
+        for (const m of this.db.getManagedHooks(projectId)) {
+          const list = installedHooksByHookId.get(m.hookId);
+          const entry = { providerId: m.providerId, configPath: m.configPath, scriptPath: m.scriptPath };
+          if (list) list.push(entry);
+          else installedHooksByHookId.set(m.hookId, [entry]);
+        }
+      }
+
       const projectDetails = {
         id: project.id,
         path: project.path,
@@ -590,6 +602,21 @@ class CapaServer {
             providers: r.providers || [],
             appliesTo: r.appliesTo || [],
             alwaysApply: r.alwaysApply || false,
+          })),
+          hooks: (capabilities.hooks || []).map(h => ({
+            id: h.id,
+            description: h.description || null,
+            on: h.on,
+            type: h.type || 'command',
+            providers: h.providers || [],
+            matcher: h.matcher || null,
+            timeout: h.timeout ?? null,
+            failClosed: h.failClosed ?? false,
+            sequential: h.sequential ?? false,
+            sourceType: h.source?.type || null,
+            command: h.command ?? null,
+            prompt: h.prompt ?? null,
+            installed: installedHooksByHookId.get(h.id) ?? [],
           })),
           options: capabilities.options ? {
             toolExposure: capabilities.options.toolExposure || null,

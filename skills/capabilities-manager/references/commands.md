@@ -122,7 +122,7 @@ The `--plugin` and `--skill` flags are mutually exclusive. When a source matches
 capa clean
 ```
 
-Removes all skill directories and MCP client configurations that were installed by CAPA. If the capabilities file has an `agents` section, also removes all capa-managed blocks from `AGENTS.md` and `CLAUDE.md` (each file is deleted if it becomes entirely empty after cleaning).
+Removes all skill directories and MCP client configurations that were installed by CAPA. If the capabilities file has an `agents` section, also removes all capa-managed blocks from `AGENTS.md` and `CLAUDE.md` (each file is deleted if it becomes entirely empty after cleaning). Capa-installed hook entries are stripped from each provider's hooks config (entries you authored by hand are preserved) and any materialised hook scripts under `~/.capa/hooks/<projectId>/` are deleted.
 
 **When to use**: Cleaning up before reinstalling or removing CAPA-managed capabilities.
 

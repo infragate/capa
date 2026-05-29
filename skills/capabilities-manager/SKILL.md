@@ -26,6 +26,7 @@ Use this skill when:
 - User needs to define provider-specific rules (Cursor rules, Copilot rules, etc.)
 - User wants to add remote plugins that bundle skills, servers, and tools
 - User needs to configure sub-agents with scoped tools and instructions
+- User wants to install lifecycle hooks (e.g. Claude Code `PreToolUse`, Cursor `beforeShellExecution`)
 - User wants to manage the remote source cache or bypass it
 
 ## Core Concepts
@@ -42,7 +43,8 @@ The `capabilities.yaml` (or `capabilities.json`) file defines everything an agen
 6. **agents**: (Optional) Manages `AGENTS.md` / `CLAUDE.md` content in the project root
 7. **subagents**: (Optional) Named sub-agent configurations with filtered tool access
 8. **rules**: (Optional) Provider rules installed into each provider's rules directory or instructions file
-9. **plugins**: (Optional) Remote plugin packages that bundle skills, servers, and tools
+9. **hooks**: (Optional) Lifecycle hooks installed into each provider's hook config (canonical events translate per provider)
+10. **plugins**: (Optional) Remote plugin packages that bundle skills, servers, and tools
 
 ### Skills vs Tools
 
@@ -86,6 +88,7 @@ Only properties that are present are applied. If a blocked phrase is detected du
 - **Agents**: Optional `base` (ref or type+def) and `additional` list (inline, remote, github, gitlab snippets). Managed files: `AGENTS.md` always; `CLAUDE.md` when a Claude provider is present.
 - **Subagents**: Named sub-agent configurations with filtered tool access, per-provider MCP endpoints and agent files.
 - **Rules**: Types `inline`, `remote`, `github`, `gitlab`. Each has `id`, optional `providers`, `appliesTo` (glob), `alwaysApply`, `description`. Installed as files (Cursor `.cursor/rules/`) or folded into instructions files.
+- **Hooks**: A canonical event name (e.g. `beforeShell`, `afterFileEdit`, `sessionStart`) plus a `command` (or `prompt`) and optional `source` (inline / remote / github / gitlab / local). capa translates each hook to the provider-specific event name and edits the provider's hooks config (`.claude/settings.json`, `.cursor/hooks.json`, `.codex/config.toml`, `.gemini/settings.json`) with `name: capa:<id>` tags so it can update or remove its own entries without touching user-authored ones.
 - **Plugins**: Remote packages (`type: github` or `type: gitlab`, with `def.repo` + optional `def.subpath`) that bundle skills, servers, and tools from a provider manifest.
 
 **Full schema and YAML examples**: See `references/capabilities-schema.md`.

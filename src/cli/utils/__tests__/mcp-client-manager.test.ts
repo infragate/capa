@@ -153,6 +153,7 @@ describe('mcp-client-manager', () => {
       expect(config.mcpServers).toBeDefined();
       expect(config.mcpServers['capa']).toBeDefined();
       expect(config.mcpServers['capa'].url).toBe(mcpUrl);
+      expect(config.mcpServers['capa'].type).toBe('http');
     });
 
     it('should preserve existing servers in claude-code config', async () => {

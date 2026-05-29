@@ -159,6 +159,25 @@ export function initSchema(db: Database): void {
       )
     `);
 
+  // Tracks individual capa-installed hook entries (one row per
+  // (provider, hook) tuple). `locator` is the JSON-encoded path inside
+  // the provider's hooks-root that the entry occupies — see
+  // `shared/providers/hook-handlers.ts` for the layout per shape.
+  db.run(`
+      CREATE TABLE IF NOT EXISTS managed_hooks (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id   TEXT NOT NULL,
+        provider_id  TEXT NOT NULL,
+        hook_id      TEXT NOT NULL,
+        config_path  TEXT NOT NULL,
+        locator      TEXT NOT NULL,
+        script_path  TEXT,
+        created_at   INTEGER NOT NULL,
+        FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+        UNIQUE(project_id, provider_id, hook_id)
+      )
+    `);
+
   // Generic key/value store for small server-wide flags that don't deserve
   // their own table (e.g. "have we seeded the default registries yet").
   db.run(`

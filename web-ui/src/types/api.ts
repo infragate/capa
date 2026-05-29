@@ -90,6 +90,30 @@ export interface Rule {
   alwaysApply: boolean;
 }
 
+export interface InstalledHook {
+  providerId: string;
+  configPath: string;
+  scriptPath: string | null;
+}
+
+export interface Hook {
+  id: string;
+  description: string | null;
+  on: string;
+  type: 'command' | 'prompt';
+  providers: string[];
+  matcher: string | null;
+  timeout: number | null;
+  failClosed: boolean;
+  sequential: boolean;
+  /** Source type when the hook body is fetched from outside (`inline`/`remote`/`github`/`gitlab`/`local`). */
+  sourceType: 'inline' | 'remote' | 'github' | 'gitlab' | 'local' | null;
+  command: string | null;
+  prompt: string | null;
+  /** One row per provider where capa successfully installed this hook. */
+  installed: InstalledHook[];
+}
+
 export interface RequiredCommand {
   cli: string;
   description: string | null;
@@ -114,6 +138,7 @@ export interface ProjectCapabilities {
   providers: string[];
   subagents: SubAgent[];
   rules: Rule[];
+  hooks: Hook[];
   options: CapabilitiesOptions | null;
 }
 

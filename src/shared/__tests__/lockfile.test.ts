@@ -287,5 +287,37 @@ describe('lockfile', () => {
       const lf = b.build();
       expect(lf.skills.map((s) => s.id)).toEqual(['alpha', 'zeta']);
     });
+
+    it('upserts and prunes hook entries', () => {
+      const b = new LockfileBuilder(null);
+      b.upsertHook({
+        id: 'remote-hook',
+        source: 'remote',
+        repo: null,
+        url: 'https://example.com/x.sh',
+        requestedVersion: null,
+        requestedRef: null,
+        resolvedRef: null,
+        resolvedVersion: null,
+        bodySha256: 'a'.repeat(64),
+      });
+      b.upsertHook({
+        id: 'gh-hook',
+        source: 'github',
+        repo: 'owner/repo',
+        url: null,
+        requestedVersion: 'v1.0.0',
+        requestedRef: null,
+        resolvedRef: 'b'.repeat(40),
+        resolvedVersion: 'v1.0.0',
+        bodySha256: 'b'.repeat(64),
+      });
+      let lf = b.build();
+      expect(lf.hooks.map((h) => h.id)).toEqual(['gh-hook', 'remote-hook']);
+
+      b.pruneToIds(new Set(), new Set(), new Set(['gh-hook']));
+      lf = b.build();
+      expect(lf.hooks.map((h) => h.id)).toEqual(['gh-hook']);
+    });
   });
 });

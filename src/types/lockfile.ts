@@ -69,6 +69,34 @@ export interface LockPluginEntry {
 }
 
 /**
+ * Locked entry for a hook with a remote source (`github`/`gitlab`/`remote`).
+ *
+ * Inline and local hooks are not tracked in the lockfile because their bodies
+ * either travel inside the capabilities file (inline) or already live next to
+ * the project (local).
+ */
+export interface LockHookEntry {
+  /** Hook id from capabilities. Matches `Hook.id`. */
+  id: string;
+  /** Source type. `remote` covers raw URLs; `github`/`gitlab` for repos. */
+  source: 'github' | 'gitlab' | 'remote';
+  /** "owner/repo" path for github/gitlab; null for remote. */
+  repo: string | null;
+  /** Raw URL for remote sources; null for github/gitlab. */
+  url: string | null;
+  /** Version requested (tag/branch); null when unset. */
+  requestedVersion: string | null;
+  /** Commit SHA explicitly requested; null when unset. */
+  requestedRef: string | null;
+  /** Full commit SHA actually checked out; null for remote URL fetches. */
+  resolvedRef: string | null;
+  /** Resolved tag, when discoverable. */
+  resolvedVersion: string | null;
+  /** SHA-256 (hex) of the resolved hook body — pin against silent rewrites. */
+  bodySha256: string;
+}
+
+/**
  * Top-level lockfile schema.
  */
 export interface Lockfile {
@@ -82,4 +110,6 @@ export interface Lockfile {
   skills: LockSkillEntry[];
   /** Locked remote plugin entries. */
   plugins: LockPluginEntry[];
+  /** Locked hook source entries (only for hooks with a `source`). */
+  hooks: LockHookEntry[];
 }

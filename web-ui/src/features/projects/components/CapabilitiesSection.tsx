@@ -1,13 +1,14 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useQueries } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import type { Skill, Tool, Server, ToolSchema, EnrichedTool, SubAgent, Rule } from '../../../types/api';
+import type { Skill, Tool, Server, ToolSchema, EnrichedTool, SubAgent, Rule, Hook } from '../../../types/api';
 import { SearchInput } from '../../../components/common/SearchInput';
 import { SkillsList } from './SkillsList';
 import { ToolsList } from './ToolsList';
 import { ServersList } from './ServersList';
 import { SubagentsList } from './SubagentsList';
 import { RulesList } from './RulesList';
+import { HooksList } from './HooksList';
 import { TokenSavingsBar } from './TokenSavingsBar';
 import { computeTokenSavings } from './tokenStats';
 import { projectsApi } from '../api';
@@ -18,10 +19,11 @@ interface CapabilitiesSectionProps {
   servers: Server[];
   subagents: SubAgent[];
   rules: Rule[];
+  hooks: Hook[];
   projectId: string;
 }
 
-export function CapabilitiesSection({ skills, tools, servers, subagents, rules, projectId }: CapabilitiesSectionProps) {
+export function CapabilitiesSection({ skills, tools, servers, subagents, rules, hooks, projectId }: CapabilitiesSectionProps) {
   const { t } = useTranslation('projects');
   const [search, setSearch] = useState('');
 
@@ -78,7 +80,14 @@ export function CapabilitiesSection({ skills, tools, servers, subagents, rules, 
     return computeTokenSavings(tools as EnrichedTool[], serverToolsMap, servers.length);
   }, [tools, servers, serverToolsMap, serverToolQueries]);
 
-  if (skills.length === 0 && tools.length === 0 && servers.length === 0 && subagents.length === 0 && rules.length === 0) {
+  if (
+    skills.length === 0 &&
+    tools.length === 0 &&
+    servers.length === 0 &&
+    subagents.length === 0 &&
+    rules.length === 0 &&
+    hooks.length === 0
+  ) {
     return null;
   }
 
@@ -108,6 +117,7 @@ export function CapabilitiesSection({ skills, tools, servers, subagents, rules, 
         <ServersList servers={servers} search={search} projectId={projectId} serverToolsMap={serverToolsMap} />
         {subagents.length > 0 && <SubagentsList subagents={subagents} search={search} />}
         {rules.length > 0 && <RulesList rules={rules} search={search} />}
+        {hooks.length > 0 && <HooksList hooks={hooks} search={search} />}
       </div>
     </div>
   );
