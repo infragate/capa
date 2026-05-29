@@ -15,7 +15,7 @@ Source-of-truth definition: [`src/shared/providers/registry.ts → cursor`](../.
 | Instructions | `AGENTS.md` | — |
 | Rules | `.cursor/rules/<id>.mdc` | YAML frontmatter: `description`, `globs` (from capa's `appliesTo`), `alwaysApply`. |
 | Sub-agents | `.cursor/agents/<id>.md` | Markdown + frontmatter (`model`, `readonly`, `is_background`). |
-| Hooks | `.cursor/hooks.json` (standalone) | `{ version: 1, hooks: { <eventName>: [ { name: "capa:<id>", command, … } ] } }` envelope. Cursor lets a hook fail-close on a non-zero exit (`failClosed: true`). |
+| Hooks | `.cursor/hooks.json` (standalone) | `{ version: 1, hooks: { <eventName>: [ { name: "capa:<id>", command, … } ] } }` envelope. Supports both command-based hooks (`command`) and prompt-based, LLM-evaluated hooks (`type: "prompt"` + `prompt`). Cursor lets a hook fail-close on a non-zero exit (`failClosed: true`). |
 | Plugin manifests | `.cursor-plugin/plugin.json` (`pluginProviderId: cursor`) | Parsed by `parseCursorManifest` — see [plugin docs](../README.md#plugin-discovery-and-unpack). |
 
 ## Hooks event mapping

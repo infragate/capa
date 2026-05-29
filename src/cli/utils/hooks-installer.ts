@@ -296,9 +296,10 @@ export function cleanHooks(projectPath: string, projectId: string, db: CapaDatab
 
 interface ResolvedHookBody {
   /**
-   * Resolved body text. For `local` sources this is left empty — the script
-   * already exists on disk at `localPath` and we reference it directly
-   * instead of copying it into ~/.capa.
+   * Resolved body text. For command-type `local` sources this is left empty
+   * — the script already exists on disk at `localPath` and we reference it
+   * directly instead of copying it into ~/.capa. For prompt-type `local`
+   * sources the file *is* the prompt text, so it's read in full here.
    */
   text: string;
   /**
@@ -376,11 +377,17 @@ async function resolveHookBody(hook: Hook, opts: InstallHooksOptions): Promise<R
       break;
     }
     case 'local': {
-      // We don't read the body — local scripts are referenced in place.
       if (!source.path) throw new Error('source.type=local requires path');
       const baseDir = dirname(opts.capabilitiesFilePath);
       const fullPath = resolvePath(baseDir, source.path);
       if (!existsSync(fullPath)) throw new Error(`local file does not exist: ${fullPath}`);
+      // Prompt-type hooks have no script to execute — the file *is* the
+      // prompt text, so read it inline like every other source. Only
+      // command-type local hooks are referenced in place (the provider
+      // entry's `command` points at the user's script verbatim, no copy).
+      if (!isCommand) {
+        return { text: readFileSync(fullPath, 'utf-8'), needsMaterialisation: false };
+      }
       return { text: '', needsMaterialisation: false, localPath: fullPath };
     }
   }

@@ -137,9 +137,15 @@ function buildClaudeLikeEntry(
 
 function buildCursorEntry(input: HookEntryInput): HookEntryOutput {
   const { hook, mapping, runReference } = input;
-  const entry: Record<string, unknown> = {
-    command: runReference,
-  };
+  // Cursor supports two execution types: command-based (default) and
+  // prompt-based (LLM-evaluated). A prompt entry uses `{ type: "prompt",
+  // prompt: <text> }`; a command entry uses a bare `{ command: <path> }`
+  // (no `type` field needed — command is Cursor's default).
+  // Docs: https://cursor.com/docs/agent/hooks
+  const isPrompt = (hook.type ?? "command") === "prompt";
+  const entry: Record<string, unknown> = isPrompt
+    ? { type: "prompt", prompt: runReference }
+    : { command: runReference };
   const matcher = resolveMatcher(input);
   if (matcher) entry.pattern = matcher;
   if (hook.timeout !== undefined) entry.timeout = hook.timeout;
