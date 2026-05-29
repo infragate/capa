@@ -206,6 +206,52 @@ describe('handleMessage > setup_tools (signature output)', () => {
   });
 });
 
+// ─── setup_tools errors mirror the call_tool isError contract ────────────────
+
+describe('handleMessage > setup_tools (error contract)', () => {
+  let h: Harness;
+
+  beforeEach(() => {
+    h = makeHarness({
+      providers: ['claude-code'],
+      options: { toolExposure: 'on-demand' },
+      skills: [
+        {
+          id: 'real-skill',
+          type: 'inline',
+          def: { description: 'x', requires: [], content: '# real-skill' },
+        },
+      ],
+      servers: [],
+      tools: [],
+    });
+  });
+
+  afterEach(() => destroyHarness(h));
+
+  it('returns result.isError=true (not a JSON-RPC error) for an unknown skill', async () => {
+    // Per the MCP spec tool execution failures travel as `result.isError`
+    // content so the LLM actually sees the text. JSON-RPC errors are
+    // typically swallowed by the host before reaching the model, so the
+    // agent would have no idea what went wrong or how to recover.
+    await h.mcp.handleMessage({ jsonrpc: '2.0', id: 1, method: 'initialize' });
+
+    const resp = await h.mcp.handleMessage({
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'tools/call',
+      params: { name: 'setup_tools', arguments: { skills: ['does-not-exist'] } },
+    });
+
+    expect(resp.error).toBeUndefined();
+    expect(resp.result?.isError).toBe(true);
+    const payload = parseToolText(resp.result);
+    expect(payload.error).toMatch(/Skill not found/);
+    // The "available skills" hint is the actionable recovery; keep it pinned.
+    expect(payload.error).toMatch(/Available skills: real-skill/);
+  });
+});
+
 // ─── call_tool errors include the full schema ────────────────────────────────
 
 describe('handleMessage > call_tool (schema-on-error)', () => {
@@ -405,5 +451,46 @@ describe('registerMcpServerTask + toolExposure: none', () => {
     expect(shouldRegister('on-demand', false, true)).toBe('register');
     expect(shouldRegister('on-demand', false, false)).toBe('unregister');
     expect(shouldRegister(undefined, true, false)).toBe('register');
+  });
+});
+
+// ─── installSubagentsTask: purge under toolExposure: 'none' ──────────────────
+// Cursor doesn't model per-sub-agent MCP entries — its `capa-<id>` entries
+// can only be removed via `purgeCursorSubAgentMCPEntries`. The per-agent
+// `unregisterSubAgentMCPServer` loop is a no-op for that provider. So the
+// `'none'` case MUST still trigger the purge, otherwise stale `capa-<id>`
+// entries would linger forever in `.cursor/mcp.json`, contradicting the
+// "no .mcp writes" contract this mode promises. This was a Copilot review
+// catch on PR #80 — pin it here so a future refactor can't silently
+// regress.
+
+describe('installSubagentsTask + toolExposure: none', () => {
+  it('the purge predicate fires for purge-style providers regardless of skipMcpWrites', () => {
+    // Mirror the predicate in install-subagents.ts. The key invariant: the
+    // `'none'` mode (skipMcpWrites=true) must NOT short-circuit the purge,
+    // because purge is the *only* cleanup mechanism for purge-style
+    // providers (`supportsSubAgentEntries: false` or
+    // `purgeStaleSubAgentMcp: true`).
+    function needsPurge(
+      _skipMcpWrites: boolean,
+      providerCaps: Array<{ supportsSubAgentEntries?: boolean; purgeStale?: boolean }>
+    ): boolean {
+      return providerCaps.some(
+        (p) => p.supportsSubAgentEntries === false || p.purgeStale === true
+      );
+    }
+
+    // Cursor-like provider (supportsSubAgentEntries: false) — purge MUST run
+    // even under 'none'.
+    expect(needsPurge(true, [{ supportsSubAgentEntries: false }])).toBe(true);
+    expect(needsPurge(false, [{ supportsSubAgentEntries: false }])).toBe(true);
+
+    // Opt-in purge provider — same.
+    expect(needsPurge(true, [{ purgeStale: true }])).toBe(true);
+
+    // Per-sub-agent capable providers — no purge needed; the unregister loop
+    // handles them.
+    expect(needsPurge(true, [{ supportsSubAgentEntries: true }])).toBe(false);
+    expect(needsPurge(false, [])).toBe(false);
   });
 });

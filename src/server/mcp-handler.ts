@@ -490,8 +490,13 @@ export class CapaMCPServer {
       };
     } catch (error: any) {
       const errorMessage = this.formatSetupToolsError(error);
+      // Per the MCP spec, tool execution failures are reported with
+      // `isError: true` on the result so the LLM sees the text content —
+      // keep `setup_tools` consistent with the `call_tool` error path so
+      // clients don't have to special-case the meta-tools.
       return {
         content: [{ type: 'text', text: JSON.stringify({ error: errorMessage }) }],
+        isError: true,
       };
     }
   }
@@ -1141,12 +1146,22 @@ export class CapaMCPServer {
           };
         } catch (error: any) {
           this.logger.failure(`Error: ${error.message}`);
+          // Mirror the SDK path and the `call_tool` error contract: surface
+          // tool-execution failures as `result.isError = true` content rather
+          // than a JSON-RPC error so the LLM sees the structured payload (a
+          // JSON-RPC error gets eaten by most clients before it reaches the
+          // model).
           return {
             jsonrpc: '2.0',
             id: message.id,
-            error: {
-              code: -32603,
-              message: this.formatSetupToolsError(error),
+            result: {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({ error: this.formatSetupToolsError(error) }),
+                },
+              ],
+              isError: true,
             },
           };
         }
