@@ -27,6 +27,7 @@ describe('SessionManager', () => {
   });
 
   afterEach(() => {
+    sessionManager.dispose();
     db.close();
     try {
       rmSync(tempDir, { recursive: true, force: true });
