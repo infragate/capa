@@ -5,6 +5,7 @@
 [![Release](https://img.shields.io/github/actions/workflow/status/infragate/capa/release.yml?style=flat-square&label=release&logo=github)](https://github.com/infragate/capa/actions/workflows/release.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 [![Platforms](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey?style=flat-square)](https://github.com/infragate/capa/releases/latest)
+[![SafeSkill 70/100](https://img.shields.io/badge/SafeSkill-70%2F100_Passes%20with%20Notes-yellow)](https://safeskill.dev/scan/infragate-capa)
 
 CAPA is a capabilities manager for AI coding agents. You declare skills, tools, rules, sub-agents, MCP servers, and plugins once in `capabilities.yaml`, run `capa install`, and CAPA writes them into Cursor, Claude Code, Codex, Windsurf, GitHub Copilot, and 30+ other agents.
 
