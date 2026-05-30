@@ -328,26 +328,6 @@ export class CapaMCPServer {
       const capabilities = this.sessionManager.getProjectCapabilities(this.projectId);
       const toolExposureMode = capabilities?.options?.toolExposure || 'expose-all';
 
-      // Tool exposure disabled — instruct the agent to use the CLI fallback
-      // instead of silently failing. This branch should rarely fire because
-      // capa skips writing MCP entries in `'none'` mode, but a user who
-      // hand-wires the endpoint shouldn't hit a confusing generic error.
-      if (toolExposureMode === 'none') {
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify({
-                error:
-                  'Tool exposure is disabled for this project (toolExposure: none). ' +
-                  'Use the `capa sh` CLI to discover and invoke tools instead.',
-              }),
-            },
-          ],
-          isError: true,
-        };
-      }
-
       // Handle setup_tools
       if (name === 'setup_tools' && toolExposureMode === 'on-demand') {
         return await this.handleSetupTools(args as { skills: string[] });
@@ -1094,33 +1074,6 @@ export class CapaMCPServer {
       const { name, arguments: args } = message.params;
       this.logger.info(`Call tool: ${name}`);
       this.logger.debug(`Arguments: ${JSON.stringify(args)}`);
-
-      // Tool exposure disabled — reject before doing any per-tool lookup.
-      // Capa skips MCP file writes in `'none'` mode, but a hand-wired endpoint
-      // should still get a helpful nudge toward the CLI fallback.
-      {
-        const caps = this.sessionManager.getProjectCapabilities(this.projectId);
-        if (caps?.options?.toolExposure === 'none') {
-          this.logger.warn(`tools/call hit on a project with toolExposure: none (tool=${name})`);
-          return {
-            jsonrpc: '2.0',
-            id: message.id,
-            result: {
-              content: [
-                {
-                  type: 'text',
-                  text: JSON.stringify({
-                    error:
-                      'Tool exposure is disabled for this project (toolExposure: none). ' +
-                      'Use the `capa sh` CLI to discover and invoke tools instead.',
-                  }),
-                },
-              ],
-              isError: true,
-            },
-          };
-        }
-      }
 
       // Handle setup_tools
       if (name === 'setup_tools') {
