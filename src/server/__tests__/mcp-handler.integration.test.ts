@@ -38,6 +38,7 @@ function makeHarness(initial: Capabilities): Harness {
 }
 
 function destroyHarness(h: Harness): void {
+  h.sessionManager.dispose();
   h.db.close();
   try {
     rmSync(h.tempDir, { recursive: true, force: true });
