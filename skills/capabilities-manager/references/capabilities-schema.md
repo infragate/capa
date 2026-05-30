@@ -90,7 +90,7 @@ Controls how capa exposes skill tools to the MCP client. Three modes:
 | `'none'` | Empty list | **No** — capa skips all project-local MCP config files (`.mcp.json`, `.cursor/mcp.json`, `.codex/config.toml` `mcp_servers.capa`, sub-agent `capa-<id>` entries). Any previously-written entries are removed on install. | The agent must use `capa sh <group> <tool> [--args]` (see [`commands.md`](./commands.md)). Sub-agent instruction files are still installed for documentation but their tools are not reachable over MCP. |
 
 Notes on `'none'`:
-- The capa HTTP server still runs and the project endpoints stay live; `tools/list` just returns empty and `tools/call` rejects with a hint to use `capa sh`.
+- The capa HTTP server still runs and the project endpoints stay live; `tools/list` returns empty so MCP-aware agents don't try to discover tools through capa's MCP endpoint. `tools/call` is **not** gated — that's the path `capa sh` uses to execute tools, and gating it would mean rejecting `capa sh` itself.
 - Useful when the user prefers to keep `.mcp.json` clean or has policy restrictions against writing per-project MCP configs.
 - Switching to `'none'` on a project that previously installed under another mode cleans up the old entries on the next `capa install`.
 
