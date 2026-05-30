@@ -1982,6 +1982,7 @@ class CapaServer {
     this.oauthCallbackServers.clear();
 
     // Close database
+    this.sessionManager.dispose();
     this.db.close();
 
     this.logger.success('CAPA server stopped');
