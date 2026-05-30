@@ -18,11 +18,30 @@ export class SessionManager {
   private sessions = new Map<string, SessionInfo>();
   private projectCapabilities = new Map<string, Capabilities>();
   private capabilitiesLoadInflight = new Map<string, Promise<Capabilities | null>>();
+  private cleanupTimer: ReturnType<typeof setInterval> | null = null;
+  private disposed = false;
   private logger = logger.child('SessionManager');
 
   constructor(db: CapaDatabase) {
     this.db = db;
     this.startCleanupTimer();
+  }
+
+  /**
+   * Stop background work (cleanup timer) and release references.
+   *
+   * Idempotent. Safe to call multiple times. Must be called by tests and by
+   * the production graceful-shutdown path before closing the underlying
+   * database; otherwise the cleanup interval will keep a strong reference to
+   * `this` (and the closed DB) and fire after teardown.
+   */
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = null;
+    }
   }
 
   /**
@@ -288,14 +307,27 @@ export class SessionManager {
    * Clean up expired sessions
    */
   private startCleanupTimer(): void {
-    setInterval(() => {
+    const timer = setInterval(() => {
       this.cleanupExpiredSessions();
     }, 60000); // Run every minute
+    // Don't keep the event loop alive solely for this cleanup task. This is a
+    // no-op on platforms/runtimes that don't support `unref` on timers.
+    (timer as { unref?: () => void }).unref?.();
+    this.cleanupTimer = timer;
   }
 
   private cleanupExpiredSessions(): void {
+    if (this.disposed) return;
     const timeout = 60; // 60 minutes
-    this.db.deleteExpiredSessions(timeout);
+    try {
+      this.db.deleteExpiredSessions(timeout);
+    } catch (error) {
+      // The database may have been closed between scheduling and the timer
+      // firing (e.g. during shutdown or in tests). Swallow the error rather
+      // than crash the process with an unhandled rejection.
+      this.logger.debug(`Skipping session cleanup: ${(error as Error).message}`);
+      return;
+    }
 
     // Clean up in-memory sessions
     const cutoff = Date.now() - timeout * 60 * 1000;
