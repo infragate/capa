@@ -109,12 +109,20 @@ export function configureToolsTask(): Task<InstallCtx> {
         }
       }
 
-      const unexposed = getUnexposedToolIds(ctx.capabilitiesToUse);
-      if (unexposed.length > 0) {
-        ctx.warnings.push(
-          `${unexposed.length} tool(s) are not exposed to MCP clients (not required by any skill): ` +
-            `${unexposed.sort().join(', ')}. Add them to a skill's \`requires\` list to expose.`,
-        );
+      // The "tool is not required by any skill" check is meaningless under
+      // `toolExposure: 'none'` — capa never exposes any tools to MCP clients
+      // in that mode by design (the agent invokes them via `capa sh`), so
+      // `requires` lists don't gate anything. Suppress the warning to avoid
+      // noise that would push users to "fix" a non-issue.
+      const toolExposure = ctx.capabilitiesToUse.options?.toolExposure;
+      if (toolExposure !== 'none') {
+        const unexposed = getUnexposedToolIds(ctx.capabilitiesToUse);
+        if (unexposed.length > 0) {
+          ctx.warnings.push(
+            `${unexposed.length} tool(s) are not exposed to MCP clients (not required by any skill): ` +
+              `${unexposed.sort().join(', ')}. Add them to a skill's \`requires\` list to expose.`,
+          );
+        }
       }
     },
   };
