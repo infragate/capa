@@ -1,10 +1,20 @@
-# CAPA: Agentic Capabilities and Package Manager
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/banner-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="assets/banner-light.svg">
+    <img alt="CAPA" src="assets/banner-light.svg" width="280">
+  </picture>
+</p>
 
-[![Latest Release](https://img.shields.io/github/v/release/infragate/capa?style=flat-square&label=latest&color=6366f1)](https://github.com/infragate/capa/releases/latest)
-[![Tests](https://img.shields.io/github/actions/workflow/status/infragate/capa/test.yml?style=flat-square&label=tests&logo=github)](https://github.com/infragate/capa/actions/workflows/test.yml)
-[![Release](https://img.shields.io/github/actions/workflow/status/infragate/capa/release.yml?style=flat-square&label=release&logo=github)](https://github.com/infragate/capa/actions/workflows/release.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
-[![Platforms](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey?style=flat-square)](https://github.com/infragate/capa/releases/latest)
+<h3 align="center">Agentic Capabilities and Package Manager</h3>
+
+<p align="center">
+  <a href="https://github.com/infragate/capa/releases/latest"><img src="https://img.shields.io/github/v/release/infragate/capa?style=flat-square&label=latest&color=6366f1" alt="Latest Release"></a>
+  <a href="https://github.com/infragate/capa/actions/workflows/test.yml"><img src="https://img.shields.io/github/actions/workflow/status/infragate/capa/test.yml?style=flat-square&label=tests&logo=github" alt="Tests"></a>
+  <a href="https://github.com/infragate/capa/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/infragate/capa/release.yml?style=flat-square&label=release&logo=github" alt="Release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License: MIT"></a>
+  <a href="https://github.com/infragate/capa/releases/latest"><img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey?style=flat-square" alt="Platforms"></a>
+</p>
 
 CAPA is a capabilities manager for AI coding agents. You declare skills, tools, rules, sub-agents, MCP servers, and plugins once in `capabilities.yaml`, run `capa install`, and CAPA writes them into Cursor, Claude Code, Codex, Windsurf, GitHub Copilot, and 30+ other agents.
 
