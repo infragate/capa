@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 64" fill="none">
+  <!-- Shield-C mark -->
+  <path d="M52 14 Q52 8 44 8 L20 8 Q12 8 12 16 L12 38 Q12 46 18 50 L32 56 L46 50 Q52 46 52 38" stroke="#818cf8" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <line x1="24" y1="40" x2="34" y2="40" stroke="#818cf8" stroke-width="4" stroke-linecap="round"/>
+  <!-- Wordmark -->
+  <text x="72" y="44" fill="#e2e8f0" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="32" font-weight="700" letter-spacing="0.08em">CAPA</text>
+</svg>
