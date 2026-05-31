@@ -38,6 +38,7 @@ function makeHarness(initial: Capabilities): Harness {
 }
 
 function destroyHarness(h: Harness): void {
+  h.sessionManager.dispose();
   h.db.close();
   try {
     rmSync(h.tempDir, { recursive: true, force: true });
@@ -413,20 +414,32 @@ describe('handleMessage > toolExposure: none', () => {
     expect(resp.result?.tools).toEqual([]);
   });
 
-  it('rejects every tools/call (including setup_tools / call_tool) with a capa-sh hint', async () => {
-    for (const name of ['setup_tools', 'call_tool', 't', 'whatever']) {
-      const resp = await h.mcp.handleMessage({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'tools/call',
-        params: { name, arguments: {} },
-      });
-      expect(resp.error).toBeUndefined();
-      expect(resp.result?.isError).toBe(true);
-      const payload = parseToolText(resp.result);
-      expect(payload.error).toMatch(/toolExposure: none/);
-      expect(payload.error).toMatch(/capa sh/);
-    }
+  // `tools/list` hides tools from MCP-aware agents (so they don't try to
+  // discover them through capa's MCP endpoint), but `tools/call` is *not*
+  // gated on `toolExposure`. The `capa sh` CLI is the documented escape
+  // hatch for this mode and uses this exact endpoint as its execution
+  // channel — gating it here would mean rejecting `capa sh` itself.
+  it('executes a configured tool by qualified name (capa sh fallback path)', async () => {
+    const resp = await h.mcp.handleMessage({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: { name: 't', arguments: {} },
+    });
+    expect(resp.error).toBeUndefined();
+    expect(resp.result?.isError).toBeFalsy();
+    expect(resp.result?.content).toBeDefined();
+  });
+
+  it('returns the standard "Tool not found" error for unknown names', async () => {
+    const resp = await h.mcp.handleMessage({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: { name: 'totally-made-up', arguments: {} },
+    });
+    expect(resp.error).toBeDefined();
+    expect(resp.error?.message).toMatch(/Tool not found/);
   });
 });
 
