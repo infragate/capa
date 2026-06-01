@@ -21,18 +21,23 @@ async function buildWeb() {
   // Step 0: Read logo assets
   const ASSETS = join(ROOT, 'assets');
   const faviconSvgPath = join(ASSETS, 'favicon.svg');
-  const logoPngPath = join(ASSETS, 'favicon-white.png');
+  // The nav logo is rendered as a CSS mask tinted with the accent color, so the
+  // shape is all that matters here (color comes from --accent-primary).
+  const logoSvgPath = join(ASSETS, 'logo-dark.svg');
 
   let faviconDataUrl = '';
-  let logoPngDataUrl = '';
+  let logoDataUrl = '';
+
+  const svgToDataUrl = async (path: string) => {
+    const buf = await Bun.file(path).arrayBuffer();
+    return `data:image/svg+xml;base64,${Buffer.from(buf).toString('base64')}`;
+  };
 
   if (existsSync(faviconSvgPath)) {
-    const svgBuf = await Bun.file(faviconSvgPath).arrayBuffer();
-    faviconDataUrl = `data:image/svg+xml;base64,${Buffer.from(svgBuf).toString('base64')}`;
+    faviconDataUrl = await svgToDataUrl(faviconSvgPath);
   }
-  if (existsSync(logoPngPath)) {
-    const pngBuf = await Bun.file(logoPngPath).arrayBuffer();
-    logoPngDataUrl = `data:image/png;base64,${Buffer.from(pngBuf).toString('base64')}`;
+  if (existsSync(logoSvgPath)) {
+    logoDataUrl = await svgToDataUrl(logoSvgPath);
   }
 
   // Step 1: Compile Tailwind CSS
@@ -95,7 +100,7 @@ ${faviconLink}
 <style>${cssContent}</style>
 </head>
 <body>
-<div id="root" data-logo="${logoPngDataUrl}"></div>
+<div id="root" data-logo="${logoDataUrl}"></div>
 <script type="module">${jsContent}</script>
 </body>
 </html>`;
