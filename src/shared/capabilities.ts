@@ -1,4 +1,5 @@
 import yaml from 'js-yaml';
+import { parseDocument, isSeq } from 'yaml';
 import { z } from 'zod';
 import type { Capabilities, CapabilitiesFormat } from '../types/capabilities';
 import { logger } from './logger';
@@ -102,4 +103,49 @@ export async function writeCapabilitiesFile(
   }
 
   await Bun.write(path, content);
+}
+
+type ArrayCapabilitySection =
+  | 'skills'
+  | 'servers'
+  | 'tools'
+  | 'plugins'
+  | 'subagents'
+  | 'rules'
+  | 'hooks';
+
+/**
+ * Append a single entry to one of the array-valued capability sections,
+ * preserving the rest of the file verbatim — comments, key ordering, and
+ * formatting all survive. Used by `capa add` so editing the file in place
+ * never rearranges what the user already wrote.
+ *
+ * The entry is added at the end of the target section's list. If the section
+ * is missing it is created.
+ */
+export async function appendCapabilityEntry(
+  path: string,
+  format: CapabilitiesFormat,
+  section: ArrayCapabilitySection,
+  entry: Record<string, unknown>
+): Promise<void> {
+  const content = await Bun.file(path).text();
+
+  if (format === 'json') {
+    const data = JSON.parse(content) as Record<string, unknown>;
+    const list = Array.isArray(data[section]) ? (data[section] as unknown[]) : [];
+    list.push(entry);
+    data[section] = list;
+    await Bun.write(path, JSON.stringify(data, null, 2) + '\n');
+    return;
+  }
+
+  const doc = parseDocument(content);
+  const existing = doc.get(section);
+  if (isSeq(existing)) {
+    existing.add(doc.createNode(entry));
+  } else {
+    doc.set(section, doc.createNode([entry]));
+  }
+  await Bun.write(path, doc.toString());
 }

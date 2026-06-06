@@ -4,6 +4,7 @@ import {
   createDefaultCapabilities,
   writeCapabilitiesFile,
   normalizeCapabilities,
+  appendCapabilityEntry,
 } from '../capabilities';
 import { logger } from '../logger';
 import { mkdtempSync, rmSync } from 'fs';
@@ -247,6 +248,75 @@ describe('capabilities', () => {
       
       expect(parsedJson.skills[0].id).toBe('custom-skill');
       expect(parsedJson.tools[0].id).toBe('custom-tool');
+    });
+  });
+
+  describe('appendCapabilityEntry', () => {
+    it('preserves comments and key order when appending to YAML (#93)', async () => {
+      const filePath = join(tempDir, 'capabilities.yaml');
+      const original = [
+        '# Top-level comment that must survive',
+        'options:',
+        '  toolExposure: on-demand # inline comment',
+        'skills:',
+        '  # existing skill below',
+        '  - id: first-skill',
+        '    type: github',
+        '    def:',
+        '      repo: owner/first',
+        'servers: []',
+        '',
+      ].join('\n');
+      await Bun.write(filePath, original);
+
+      await appendCapabilityEntry(filePath, 'yaml', 'skills', {
+        id: 'second-skill',
+        type: 'github',
+        def: { repo: 'owner/second' },
+      });
+
+      const content = await Bun.file(filePath).text();
+
+      // Comments survive
+      expect(content).toContain('# Top-level comment that must survive');
+      expect(content).toContain('# inline comment');
+      expect(content).toContain('# existing skill below');
+
+      // Original ordering is intact: options block precedes skills, which precedes servers
+      expect(content.indexOf('options:')).toBeLessThan(content.indexOf('skills:'));
+      expect(content.indexOf('skills:')).toBeLessThan(content.indexOf('servers:'));
+
+      // The new entry was appended and parses correctly
+      const parsed = await parseCapabilitiesFile(filePath, 'yaml');
+      expect(parsed.skills.map(s => s.id)).toEqual(['first-skill', 'second-skill']);
+    });
+
+    it('creates the section when it is missing (YAML)', async () => {
+      const filePath = join(tempDir, 'capabilities.yaml');
+      await Bun.write(filePath, 'options:\n  toolExposure: on-demand\n');
+
+      await appendCapabilityEntry(filePath, 'yaml', 'plugins', {
+        id: 'p1',
+        type: 'github',
+        def: { repo: 'owner/repo' },
+      });
+
+      const parsed = await parseCapabilitiesFile(filePath, 'yaml');
+      expect(parsed.plugins?.map(p => p.id)).toEqual(['p1']);
+    });
+
+    it('appends to JSON capabilities files', async () => {
+      const filePath = join(tempDir, 'capabilities.json');
+      await writeCapabilitiesFile(filePath, 'json', createDefaultCapabilities());
+
+      await appendCapabilityEntry(filePath, 'json', 'tools', {
+        id: 't1',
+        type: 'mcp',
+        def: { server: '@srv', tool: 'search' },
+      });
+
+      const parsed = await parseCapabilitiesFile(filePath, 'json');
+      expect(parsed.tools.map(t => t.id)).toEqual(['t1']);
     });
   });
 });

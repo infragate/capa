@@ -1,5 +1,5 @@
 import { detectCapabilitiesFile } from '../../shared/paths';
-import { parseCapabilitiesFile, writeCapabilitiesFile } from '../../shared/capabilities';
+import { parseCapabilitiesFile, appendCapabilityEntry } from '../../shared/capabilities';
 import { installCommand } from './install';
 import { RegistryManager } from '../../shared/registries/manager';
 import type { Skill } from '../../types/capabilities';
@@ -457,7 +457,12 @@ export async function addCommand(
           process.exit(1);
         }
         const newSkill: Skill = { ...(snippet as Skill), id: itemName };
-        capabilities.skills.push(newSkill);
+        await appendCapabilityEntry(
+          capabilitiesFile.path,
+          capabilitiesFile.format,
+          'skills',
+          newSkill as unknown as Record<string, unknown>
+        );
       } else if (resolvedCapability === 'plugins') {
         if (!capabilities.plugins) capabilities.plugins = [];
         const newPlugin = snippet as Plugin;
@@ -471,10 +476,13 @@ export async function addCommand(
           console.error(`  Rename or remove the existing entry in ${capabilitiesFile.path} and try again.`);
           process.exit(1);
         }
-        capabilities.plugins.push({ ...newPlugin, id: itemName });
+        await appendCapabilityEntry(
+          capabilitiesFile.path,
+          capabilitiesFile.format,
+          'plugins',
+          { ...newPlugin, id: itemName } as unknown as Record<string, unknown>
+        );
       }
-
-      await writeCapabilitiesFile(capabilitiesFile.path, capabilitiesFile.format, capabilities);
 
       console.log(`\u2713 Added ${resolvedCapability.slice(0, -1)} "${itemName}" from registry "${registryId}" to ${capabilitiesFile.path}`);
       console.log('\n\u{1F4E6} Running installation...\n');
@@ -507,8 +515,12 @@ export async function addCommand(
       process.exit(1);
     }
 
-    capabilities.plugins.push({ id, type: parsed.type, def: parsed.def });
-    await writeCapabilitiesFile(capabilitiesFile.path, capabilitiesFile.format, capabilities);
+    await appendCapabilityEntry(
+      capabilitiesFile.path,
+      capabilitiesFile.format,
+      'plugins',
+      { id, type: parsed.type, def: parsed.def } as unknown as Record<string, unknown>
+    );
 
     console.log(`✓ Added plugin "${id}" to ${capabilitiesFile.path}`);
     console.log(`  Type: ${parsed.type}`);
@@ -543,12 +555,11 @@ export async function addCommand(
     def: skillDef.def
   };
 
-  capabilities.skills.push(newSkill);
-
-  await writeCapabilitiesFile(
+  await appendCapabilityEntry(
     capabilitiesFile.path,
     capabilitiesFile.format,
-    capabilities
+    'skills',
+    newSkill as unknown as Record<string, unknown>
   );
 
   console.log(`✓ Added skill "${skillDef.id}" to ${capabilitiesFile.path}`);

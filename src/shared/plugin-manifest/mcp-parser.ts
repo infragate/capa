@@ -202,16 +202,25 @@ export function parseMcpServers(
   return result;
 }
 
-/** Replace ${CLAUDE_PLUGIN_ROOT} and resolve relative paths in a string */
+/**
+ * Replace ${CLAUDE_PLUGIN_ROOT} and resolve explicit plugin-relative paths.
+ *
+ * Only strings that actually reference the plugin directory are rewritten:
+ * the `${CLAUDE_PLUGIN_ROOT}` placeholder, or an explicit relative path
+ * (`./x`, `../x`, `.`). Bare tokens — executable names (`uvx`, `npx`,
+ * `python`), flags (`-y`), and package specs (`@scope/pkg`, `awslabs.foo`) —
+ * are returned untouched so they resolve from PATH or are interpreted by the
+ * launched process. Rewriting them to `<pluginRoot>/<token>` produced
+ * non-existent paths and silently broke command-based MCP servers (#94).
+ */
 function resolvePluginRootInString(value: string, pluginRoot: string): string {
-  const replaced = value.replace(/\$\{CLAUDE_PLUGIN_ROOT\}/g, pluginRoot);
-  if (replaced.startsWith('./') || (replaced.startsWith('.') && !replaced.startsWith('..'))) {
-    return resolve(pluginRoot, replaced);
+  if (value.includes('${CLAUDE_PLUGIN_ROOT}')) {
+    return value.replace(/\$\{CLAUDE_PLUGIN_ROOT\}/g, pluginRoot);
   }
-  if (!isAbsolute(replaced) && !replaced.includes('${')) {
-    return resolve(pluginRoot, replaced);
+  if (value === '.' || value.startsWith('./') || value.startsWith('../')) {
+    return resolve(pluginRoot, value);
   }
-  return replaced;
+  return value;
 }
 
 /**
