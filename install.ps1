@@ -314,8 +314,32 @@ function Install-Capa {
     }
     Write-Success "Verified binary integrity"
     
-    # Replace existing binary. When invoked by "capa upgrade", capa exits before we run, so the exe
-    # may still be released briefly by Windows — retry a few times before failing.
+    # Replace existing binary (fixes #19). On Windows a running .exe is locked
+    # and cannot be overwritten, but it *can* be renamed within the same
+    # directory while it runs (the OS keeps the file handle regardless of name).
+    # So move the old binary aside first — that frees $destPath — then drop the
+    # new binary in. This makes the upgrade succeed even if the previous capa
+    # process hasn't fully exited yet, instead of relying on a timing race.
+    $backupPath = "$destPath.old"
+    if (Test-Path $destPath) {
+        # Remove any leftover backup from a prior upgrade (best-effort; harmless
+        # if it's still locked — it'll be cleaned on the next run).
+        if (Test-Path $backupPath) {
+            Remove-Item -LiteralPath $backupPath -Force -ErrorAction SilentlyContinue
+        }
+        try {
+            Move-Item -Path $destPath -Destination $backupPath -Force
+        }
+        catch {
+            # Rename of a locked exe normally succeeds; if it somehow didn't,
+            # fall through and let the retry loop attempt a direct replace.
+            Write-Verbose-Custom "Could not rename existing binary aside: $_"
+        }
+    }
+
+    # Move the new binary into place. If the rename above succeeded, $destPath is
+    # free and this lands on the first try. The retry loop is a fallback for the
+    # rare case the destination is still occupied (e.g. rename failed).
     $replaceOk = $false
     $maxRetries = 5
     $retryDelaySeconds = 2
@@ -332,15 +356,27 @@ function Install-Capa {
             }
             else {
                 Remove-Item -LiteralPath $tempPath -Force -ErrorAction SilentlyContinue
+                # Restore the original binary if we renamed it aside but couldn't
+                # install the new one, so the user isn't left without a capa.exe.
+                if ((-not (Test-Path $destPath)) -and (Test-Path $backupPath)) {
+                    Move-Item -Path $backupPath -Destination $destPath -Force -ErrorAction SilentlyContinue
+                }
                 Write-Error-Custom "Could not replace $destPath. Close any process using it and run the installer again, or run: capa upgrade"
             }
         }
     }
-    
+
     if (-not $replaceOk) {
         exit 1
     }
-    
+
+    # New binary is in place; clean up the old one. This will fail silently if
+    # the previous capa process is still running (the file stays locked) — the
+    # leftover .old is then removed by the next upgrade.
+    if (Test-Path $backupPath) {
+        Remove-Item -LiteralPath $backupPath -Force -ErrorAction SilentlyContinue
+    }
+
     Write-Success "Installed CAPA to $destPath"
     
     # Add to PATH
