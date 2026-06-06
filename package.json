@@ -49,6 +49,7 @@
     "react-router-dom": "^7.15.0",
     "tailwind-merge": "^3.5.0",
     "xdg-basedir": "^5.1.0",
+    "yaml": "^2.9.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
