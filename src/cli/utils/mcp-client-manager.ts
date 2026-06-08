@@ -3,6 +3,7 @@ import { join, dirname } from 'path';
 import { getProvider, getAllProviders } from '../../shared/providers';
 import { readTomlFile, writeTomlFile, setNestedKey, deleteNestedKey } from '../../shared/toml-io';
 import { getMcpConfigPath, buildMcpEntry } from '../../shared/providers/handlers';
+import type { McpIntegration } from '../../types/providers';
 import { taskLog } from '../ui';
 
 interface McpServerEntry {
@@ -51,6 +52,22 @@ function getServerMap(config: McpJsonConfig, serversKey: string): Record<string,
 }
 
 /**
+ * Apply the provider's optional sub-agent scope-fence at the top level of
+ * the MCP config. For OpenCode this writes
+ *   { permission: { 'capa-*_*': 'deny' } }
+ * so per-sub-agent MCP entries don't leak into the primary session. No-op
+ * for providers without `subAgentScopeFence`. Idempotent.
+ */
+function applySubAgentScopeFence(config: McpJsonConfig, mcp: McpIntegration): void {
+  const fence = mcp.subAgentScopeFence;
+  if (!fence) return;
+  const existing = config[fence.key];
+  const block: Record<string, unknown> = isPlainObject(existing) ? { ...existing } : {};
+  block[fence.pattern] = fence.value;
+  config[fence.key] = block;
+}
+
+/**
  * Register MCP server with client configuration files
  */
 export async function registerMCPServer(
@@ -92,6 +109,7 @@ export async function registerMCPServer(
         }
         const servers = getServerMap(config, mcp.serversKey);
         servers[mcp.serverKey] = buildMcpEntry(mcp, mcpUrl) as McpServerEntry;
+        applySubAgentScopeFence(config, mcp);
         writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
       } else if (mcp.format === 'toml') {
         const config = readTomlFile(configPath);
@@ -140,6 +158,7 @@ export async function registerSubAgentMCPServer(
         }
         const servers = getServerMap(config, mcp.serversKey);
         servers[serverKey] = buildMcpEntry(mcp, mcpUrl) as McpServerEntry;
+        applySubAgentScopeFence(config, mcp);
         writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
       } else if (mcp.format === 'toml') {
         const config = readTomlFile(configPath);

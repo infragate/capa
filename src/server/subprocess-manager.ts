@@ -129,6 +129,7 @@ export class SubprocessManager {
       stdio: ['pipe', 'pipe', 'pipe'],
       detached: false,
       cwd,
+      windowsHide: true,
     });
 
     info.process = proc;
