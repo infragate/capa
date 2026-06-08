@@ -17,6 +17,8 @@ export interface McpIntegration {
   entryUrlKey: string;
   /** Transport discriminator written as the entry's `type` field, for providers that require it. */
   entryType?: string;
+  /** Static fields merged into the server entry (e.g. { enabled: true }). */
+  entryExtraFields?: Record<string, unknown>;
   /** Whether per-sub-agent MCP entries ('capa-{id}') can coexist with the main entry. */
   supportsSubAgentEntries: boolean;
   /** Fallback config path when the primary `configPath` doesn't exist. */

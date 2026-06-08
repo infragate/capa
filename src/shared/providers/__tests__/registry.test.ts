@@ -766,15 +766,25 @@ describe('GitHub Copilot integration', () => {
 });
 
 describe('OpenCode integration', () => {
-  it('has MCP integration (.opencode/opencode.json)', () => {
+  it('has MCP integration (opencode.json)', () => {
     const oc = getProvider('opencode')!;
     expect(oc.mcp).toBeDefined();
-    expect(oc.mcp!.configPath).toBe('.opencode/opencode.json');
+    expect(oc.mcp!.configPath).toBe('opencode.json');
     expect(oc.mcp!.format).toBe('json');
     expect(oc.mcp!.serversKey).toBe('mcp');
     expect(oc.mcp!.serverKey).toBe('capa');
     expect(oc.mcp!.entryType).toBe('remote');
+    expect(oc.mcp!.entryExtraFields).toEqual({ enabled: true });
     expect(oc.mcp!.supportsSubAgentEntries).toBe(true);
+  });
+
+  it('buildMcpEntry includes type, url, and enabled', () => {
+    const oc = getProvider('opencode')!;
+    expect(buildMcpEntry(oc.mcp!, 'http://x/mcp')).toEqual({
+      type: 'remote',
+      url: 'http://x/mcp',
+      enabled: true,
+    });
   });
 
   it('has instructions integration (AGENTS.md)', () => {
@@ -789,6 +799,7 @@ describe('OpenCode integration', () => {
     expect(oc.subagents!.dir).toBe('.opencode/agents');
     expect(oc.subagents!.extension).toBe('.md');
     expect(oc.subagents!.format).toBe('markdown-frontmatter');
+    expect(oc.subagents!.fields).toEqual({ mode: 'subagent' });
   });
 });
 
