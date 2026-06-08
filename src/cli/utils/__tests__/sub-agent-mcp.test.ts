@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { existsSync, mkdtempSync, rmSync, readFileSync } from 'fs';
+import { existsSync, mkdtempSync, rmSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import {
@@ -111,5 +111,64 @@ describe('sub-agent MCP client registration', () => {
     const claudeConfig = readConfig(join(tempDir, '.mcp.json'));
     expect(claudeConfig.mcpServers['capa-infra-agent']).toBeDefined();
     expect(existsSync(join(tempDir, '.cursor', 'mcp.json'))).toBe(false);
+  });
+
+  it('writes the OpenCode sub-agent scope fence so per-sub-agent MCPs are not auto-exposed to primary sessions', async () => {
+    await registerMCPServer(tempDir, 'proj-1', 'http://localhost:5912/proj-1/mcp', ['opencode']);
+    await registerSubAgentMCPServer(
+      tempDir,
+      'reviewer',
+      'http://localhost:5912/proj-1/agents/reviewer/mcp',
+      ['opencode']
+    );
+
+    const config = readConfig(join(tempDir, 'opencode.json'));
+    // Main + sub-agent entries coexist with `enabled: true`.
+    expect(config.mcp.capa).toEqual({
+      type: 'remote',
+      url: 'http://localhost:5912/proj-1/mcp',
+      enabled: true,
+    });
+    expect(config.mcp['capa-reviewer']).toEqual({
+      type: 'remote',
+      url: 'http://localhost:5912/proj-1/agents/reviewer/mcp',
+      enabled: true,
+    });
+    // The fence denies sub-agent MCP tool exposure globally; `permission`
+    // is OpenCode's modern, glob-aware mechanism per their docs.
+    expect(config.permission).toEqual({ 'capa-*_*': 'deny' });
+  });
+
+  it('does not write a scope fence for providers that do not declare one (claude-code)', async () => {
+    await registerSubAgentMCPServer(
+      tempDir,
+      'infra-agent',
+      'http://localhost:5912/proj-1/agents/infra-agent/mcp',
+      ['claude-code']
+    );
+
+    const config = readConfig(join(tempDir, '.mcp.json'));
+    expect(config.permission).toBeUndefined();
+    expect(config.tools).toBeUndefined();
+  });
+
+  it('preserves user-authored permission keys when applying the OpenCode scope fence', async () => {
+    // Pre-existing user config with their own permission entries.
+    writeFileSync(
+      join(tempDir, 'opencode.json'),
+      JSON.stringify({
+        permission: { edit: 'ask', bash: 'allow' },
+      }),
+      'utf-8'
+    );
+
+    await registerMCPServer(tempDir, 'proj-1', 'http://localhost:5912/proj-1/mcp', ['opencode']);
+
+    const config = readConfig(join(tempDir, 'opencode.json'));
+    expect(config.permission).toEqual({
+      edit: 'ask',
+      bash: 'allow',
+      'capa-*_*': 'deny',
+    });
   });
 });

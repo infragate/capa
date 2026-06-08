@@ -778,6 +778,15 @@ describe('OpenCode integration', () => {
     expect(oc.mcp!.supportsSubAgentEntries).toBe(true);
   });
 
+  it('declares a sub-agent scope fence so per-sub-agent MCPs are not exposed to primary sessions', () => {
+    const oc = getProvider('opencode')!;
+    expect(oc.mcp!.subAgentScopeFence).toEqual({
+      key: 'permission',
+      pattern: 'capa-*_*',
+      value: 'deny',
+    });
+  });
+
   it('buildMcpEntry includes type, url, and enabled', () => {
     const oc = getProvider('opencode')!;
     expect(buildMcpEntry(oc.mcp!, 'http://x/mcp')).toEqual({
@@ -800,6 +809,41 @@ describe('OpenCode integration', () => {
     expect(oc.subagents!.extension).toBe('.md');
     expect(oc.subagents!.format).toBe('markdown-frontmatter');
     expect(oc.subagents!.fields).toEqual({ mode: 'subagent' });
+  });
+
+  it('declares a per-sub-agent allow rule that re-opens its own MCP tools', () => {
+    const oc = getProvider('opencode')!;
+    expect(oc.subagents!.perAgentToolScope).toEqual({
+      key: 'permission',
+      patternTemplate: 'capa-{id}_*',
+      value: 'allow',
+    });
+  });
+
+  it('buildSubAgentFile emits the per-sub-agent permission allow in frontmatter', () => {
+    const oc = getProvider('opencode')!;
+    const subAgent = {
+      id: 'reviewer',
+      description: 'Reviews PRs',
+      skills: [],
+      tools: [],
+      instructions: 'Be thorough.',
+    };
+    const capabilities = {
+      providers: ['opencode'],
+      skills: [],
+      servers: [],
+      tools: [],
+    };
+
+    const result = buildSubAgentFile(oc, subAgent, capabilities);
+
+    expect(result).toContain('mode: subagent');
+    expect(result).toContain('permission:');
+    expect(result).toContain('"capa-reviewer_*": allow');
+    // The fence pattern must NOT appear in the agent file — that's the
+    // global deny, agents only carry the allow.
+    expect(result).not.toContain('capa-*_*');
   });
 });
 
