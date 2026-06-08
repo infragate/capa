@@ -109,13 +109,24 @@ export class CommandToolExecutor {
     this.logger.info(`          Working directory: ${cwd}`);
 
     // Execute command
+    const env = { ...process.env, ...spec.env };
+    const isWindows = process.platform === 'win32';
+
     return new Promise((resolve) => {
-      const proc = spawn(cmd, {
-        cwd,
-        env: { ...process.env, ...spec.env },
-        shell: true,
-        timeout: 60000, // 60 second timeout
-      });
+      const proc = isWindows
+        ? spawn('cmd.exe', ['/d', '/s', '/c', cmd], {
+            cwd,
+            env,
+            windowsHide: true,
+            timeout: 60000,
+          })
+        : spawn(cmd, {
+            cwd,
+            env,
+            shell: true,
+            windowsHide: true,
+            timeout: 60000,
+          });
 
       let stdout = '';
       let stderr = '';

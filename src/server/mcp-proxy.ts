@@ -1,5 +1,5 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { HiddenStdioClientTransport as StdioClientTransport } from './stdio-client-transport';
 import { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 import type { CapaDatabase } from '../db/database';
