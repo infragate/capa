@@ -1,4 +1,4 @@
-import spawn from 'cross-spawn';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { PassThrough } from 'node:stream';
 import type { IOType } from 'node:child_process';
 import type { Stream } from 'node:stream';
@@ -21,7 +21,7 @@ export type HiddenStdioServerParameters = {
  * a cmd.exe window on Windows (capa runs outside Electron).
  */
 export class HiddenStdioClientTransport implements Transport {
-  private _process?: ReturnType<typeof spawn>;
+  private _process?: ChildProcess;
   private _readBuffer = new ReadBuffer();
   private _serverParams: HiddenStdioServerParameters;
   private _stderrStream: PassThrough | null = null;
@@ -56,7 +56,7 @@ export class HiddenStdioClientTransport implements Transport {
         cwd: this._serverParams.cwd,
       });
 
-      this._process.on('error', (error) => {
+      this._process.on('error', (error: Error) => {
         reject(error);
         this.onerror?.(error);
       });
@@ -70,16 +70,16 @@ export class HiddenStdioClientTransport implements Transport {
         this.onclose?.();
       });
 
-      this._process.stdin?.on('error', (error) => {
+      this._process.stdin?.on('error', (error: Error) => {
         this.onerror?.(error);
       });
 
-      this._process.stdout?.on('data', (chunk) => {
+      this._process.stdout?.on('data', (chunk: Buffer) => {
         this._readBuffer.append(chunk);
         this.processReadBuffer();
       });
 
-      this._process.stdout?.on('error', (error) => {
+      this._process.stdout?.on('error', (error: Error) => {
         this.onerror?.(error);
       });
 
