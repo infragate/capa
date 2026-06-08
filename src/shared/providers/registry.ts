@@ -630,12 +630,13 @@ export const providers: Record<string, ProviderIntegration> = {
     detectInstalled: async () =>
       existsSync(join(configHome, 'opencode')) || existsSync(join(claudeHome, 'skills')),
     mcp: {
-      configPath: '.opencode/opencode.json',
+      configPath: 'opencode.json',
       format: 'json',
       serversKey: 'mcp',
       serverKey: 'capa',
       entryUrlKey: 'url',
       entryType: 'remote',
+      entryExtraFields: { enabled: true },
       supportsSubAgentEntries: true,
     },
     instructions: { filename: 'AGENTS.md' },
@@ -643,6 +644,7 @@ export const providers: Record<string, ProviderIntegration> = {
       dir: '.opencode/agents',
       extension: '.md',
       format: 'markdown-frontmatter',
+      fields: { mode: 'subagent' },
     },
   },
   openhands: {

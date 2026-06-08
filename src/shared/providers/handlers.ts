@@ -13,6 +13,7 @@ export function buildMcpEntry(mcp: McpIntegration, url: string): Record<string, 
   const entry: Record<string, unknown> = {};
   if (mcp.entryType) entry.type = mcp.entryType;
   entry[mcp.entryUrlKey] = url;
+  if (mcp.entryExtraFields) Object.assign(entry, mcp.entryExtraFields);
   return entry;
 }
 
