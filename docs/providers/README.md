@@ -77,7 +77,7 @@ included for completeness but lack any project-local write paths.
 | [Mux (`mux`)](./mux.md) | `.mux/skills/` | — *(bare-command strings, no URL field)* | — | — | — |
 | [Neovate (`neovate`)](./neovate.md) | `.neovate/skills/` | `.neovate/config.json` → `mcpServers.capa.url` | — | — | — |
 | [OpenClaw (`openclaw`)](./openclaw.md) | `skills/` | — *(home-workspace based)* | — | — | — |
-| **[OpenCode (`opencode`)](./opencode.md)** | `.agents/skills/` | `.opencode/opencode.json` → `mcp.capa.url` *(`mcp` key)* | `AGENTS.md` | folded into `AGENTS.md` | `.opencode/agents/*.md` |
+| **[OpenCode (`opencode`)](./opencode.md)** | `.agents/skills/` | `opencode.json` → `mcp.capa.url` *(`mcp` key, `enabled: true`)* | `AGENTS.md` | folded into `AGENTS.md` | `.opencode/agents/*.md` *(mode: subagent)* |
 | [OpenHands (`openhands`)](./openhands.md) | `.openhands/skills/` | — *(global only)* | `AGENTS.md` | — | — |
 | [Pi (`pi`)](./pi.md) | `.pi/skills/` | — *(community extension only)* | `AGENTS.md` | — | — |
 | **[Pochi (`pochi`)](./pochi.md)** | `.pochi/skills/` | `.pochi/config.jsonc` → `mcp.capa.url` *(JSONC; `mcp` key)* | `README.pochi.md` | folded into `README.pochi.md` | `.pochi/agents/*.md` |

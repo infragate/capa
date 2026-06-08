@@ -1,6 +1,4 @@
 import { existsSync, mkdirSync } from 'fs';
-import { execFile } from 'child_process';
-import { promisify } from 'util';
 import type { AuthenticatedFetch } from '../authenticated-fetch';
 import { validateRepoPath } from './validate';
 import {
@@ -8,14 +6,7 @@ import {
   getRepoCacheDir,
   getRepoMirrorDir,
 } from './paths';
-
-// Argv-array form of execFile (no shell interpretation) so user-controlled
-// repo paths, refs, and URLs can never inject shell metacharacters.
-const execFileAsync = promisify(execFile);
-
-async function git(args: string[]): Promise<{ stdout: string; stderr: string }> {
-  return execFileAsync('git', args);
-}
+import { git } from './git-cli';
 
 /**
  * Build the authenticated git URL for cloning, embedding an OAuth token when

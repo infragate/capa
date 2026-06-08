@@ -17,12 +17,35 @@ export interface McpIntegration {
   entryUrlKey: string;
   /** Transport discriminator written as the entry's `type` field, for providers that require it. */
   entryType?: string;
+  /** Static fields merged into the server entry (e.g. { enabled: true }). */
+  entryExtraFields?: Record<string, unknown>;
   /** Whether per-sub-agent MCP entries ('capa-{id}') can coexist with the main entry. */
   supportsSubAgentEntries: boolean;
   /** Fallback config path when the primary `configPath` doesn't exist. */
   defaultMcpFallbackPath?: string;
   /** Env var name that points to the provider's plugin root (e.g. `CURSOR_PLUGIN_ROOT`). */
   pluginRootEnvVar?: string;
+  /**
+   * Top-level scope-fence written next to the MCP map so per-sub-agent MCP
+   * entries are NOT auto-exposed to primary sessions. OpenCode is the
+   * canonical example: every entry under the global `mcp` key is connected
+   * for primary agents (Build, Plan, …) by default, so without this fence
+   * users see a `capa-<id>_*` tool block from every sub-agent in the main
+   * conversation. The companion `subagents.perAgentToolScope` re-allows
+   * each sub-agent's own tools in its own agent file.
+   *
+   * Only applies to JSON-format configs. Idempotent — safe to re-write.
+   *
+   * Reference: https://opencode.ai/docs/mcp-servers/#per-agent
+   */
+  subAgentScopeFence?: {
+    /** Top-level config key — `'permission'` (modern) or `'tools'` (deprecated, still works). */
+    key: 'permission' | 'tools';
+    /** Glob pattern matching sub-agent MCP tool names (e.g. `'capa-*_*'`). Must NOT match the main `capa_*` tools. */
+    pattern: string;
+    /** Deny value — `'deny'` for `permission`, `false` for `tools`. */
+    value: 'deny' | false;
+  };
 }
 
 /**
@@ -143,6 +166,23 @@ export interface SubagentsIntegration {
   fields?: Record<string, string | boolean | number>;
   /** For TOML format: the key name used for the body text (e.g. 'developer_instructions'). */
   bodyField?: string;
+  /**
+   * Per-sub-agent re-allow rule, paired with `mcp.subAgentScopeFence`.
+   * When set, capa emits a nested `<key>: { <pattern>: <value> }` block in
+   * each sub-agent's frontmatter so the agent can reach its own MCP tools
+   * after the global fence denies them. `{id}` is replaced with the
+   * sub-agent id.
+   *
+   * Only used by markdown-frontmatter providers today.
+   */
+  perAgentToolScope?: {
+    /** Frontmatter key — `'permission'` (modern) or `'tools'` (deprecated). */
+    key: 'permission' | 'tools';
+    /** Glob pattern with `{id}` placeholder (e.g. `'capa-{id}_*'`). */
+    patternTemplate: string;
+    /** Allow value — `'allow'` for `permission`, `true` for `tools`. */
+    value: 'allow' | true;
+  };
 }
 
 /**
