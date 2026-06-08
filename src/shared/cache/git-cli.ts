@@ -1,4 +1,5 @@
-import { execFile, type ExecFileOptions } from 'child_process';
+import * as childProcess from 'child_process';
+import type { ExecFileOptions } from 'child_process';
 import { promisify } from 'util';
 
 /** Git -c flags that disable LFS smudge/clean so clones work without git-lfs or LFS API access. */
@@ -13,8 +14,6 @@ export const LFS_SKIP_ARGS = [
   'filter.lfs.required=false',
 ];
 
-const execFileAsync = promisify(execFile);
-
 /**
  * Run git with LFS filters disabled. Skills only need text files (SKILL.md, etc.),
  * never LFS-backed binary blobs.
@@ -27,6 +26,7 @@ export async function git(
   args: string[],
   opts: ExecFileOptions = {}
 ): Promise<{ stdout: string; stderr: string }> {
+  const execFileAsync = promisify(childProcess.execFile);
   const { stdout, stderr } = await execFileAsync('git', gitCommandArgs(args), {
     ...opts,
     windowsHide: true,
