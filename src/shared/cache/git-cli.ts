@@ -29,6 +29,7 @@ export async function git(
 ): Promise<{ stdout: string; stderr: string }> {
   const { stdout, stderr } = await execFileAsync('git', gitCommandArgs(args), {
     ...opts,
+    windowsHide: true,
     env: { ...process.env, GIT_LFS_SKIP_SMUDGE: '1', ...(opts.env ?? {}) },
   });
   return { stdout: String(stdout), stderr: String(stderr) };
