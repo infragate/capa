@@ -1,7 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach, spyOn } from 'bun:test';
 import { mkdtempSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import * as childProcess from 'child_process';
 import { CapaDatabase } from '../../db/database';
 import { SubprocessManager } from '../subprocess-manager';
 import type { MCPServerDefinition } from '../../types/capabilities';
@@ -53,5 +54,31 @@ describe('SubprocessManager', () => {
     expect(createCount).toBe(1);
     expect(first.id).toBe('server-a');
     expect(second.id).toBe('server-a');
+  });
+
+  it('spawns subprocesses with windowsHide: true', async () => {
+    const spawnSpy = spyOn(childProcess, 'spawn').mockImplementation(((
+      _cmd: string,
+      _args: string[],
+      options: { windowsHide?: boolean }
+    ) => {
+      expect(options.windowsHide).toBe(true);
+      const { EventEmitter } = require('events');
+      const proc = new EventEmitter() as any;
+      proc.pid = 99999;
+      proc.stdin = { on: () => {}, end: () => {} };
+      proc.stdout = { on: () => {} };
+      proc.stderr = { on: () => {} };
+      proc.killed = false;
+      proc.kill = () => {
+        proc.killed = true;
+      };
+      queueMicrotask(() => proc.emit('spawn'));
+      return proc;
+    }) as typeof childProcess.spawn);
+
+    await manager.getOrCreateSubprocess('server-b', definition, tempDir);
+    expect(spawnSpy).toHaveBeenCalled();
+    spawnSpy.mockRestore();
   });
 });

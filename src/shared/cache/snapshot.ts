@@ -1,7 +1,5 @@
 import { existsSync, mkdirSync, rmSync } from 'fs';
 import { join } from 'path';
-import { execFile } from 'child_process';
-import { promisify } from 'util';
 import type { AuthenticatedFetch } from '../authenticated-fetch';
 import { validateRepoPath } from './validate';
 import {
@@ -14,11 +12,7 @@ import {
   resolveRef,
   type ResolveOptions,
 } from './mirror';
-
-const execFileAsync = promisify(execFile);
-async function git(args: string[]): Promise<{ stdout: string; stderr: string }> {
-  return execFileAsync('git', args);
-}
+import { git } from './git-cli';
 
 /**
  * Materialize a snapshot directory at the given SHA from a mirror clone. If

@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeAll, afterAll } from 'bun:test';
+import { describe, it, expect, beforeAll, afterAll, spyOn } from 'bun:test';
+import * as childProcess from 'child_process';
 import { CommandToolExecutor } from '../tool-executor';
 import { CapaDatabase } from '../../db/database';
 import { mkdtempSync, rmSync } from 'fs';
@@ -180,6 +181,44 @@ describe('CommandToolExecutor', () => {
       const result = await executor.execute('test-tool', def, {});
       expect(result.success).toBe(true);
       expect(result.result?.trim()).toBe('done');
+    });
+  });
+
+  describe('windows spawn options', () => {
+    it('passes windowsHide: true when spawning command tools', async () => {
+      const spawnSpy = spyOn(childProcess, 'spawn').mockImplementation(((
+        command: string,
+        args: string[] | childProcess.SpawnOptions,
+        options?: childProcess.SpawnOptions
+      ) => {
+        const isWindows = process.platform === 'win32';
+        if (isWindows) {
+          expect(command).toBe('cmd.exe');
+          expect(args).toEqual(['/d', '/s', '/c', 'echo hello']);
+          expect(options?.windowsHide).toBe(true);
+        } else {
+          expect(typeof args).toBe('object');
+          expect((args as childProcess.SpawnOptions).windowsHide).toBe(true);
+        }
+        const { EventEmitter } = require('events');
+        const proc = new EventEmitter() as any;
+        proc.stdout = { on: (_: string, cb: (d: Buffer) => void) => cb(Buffer.from('hello\n')) };
+        proc.stderr = { on: () => {} };
+        queueMicrotask(() => proc.emit('exit', 0));
+        return proc;
+      }) as typeof childProcess.spawn);
+
+      const def: ToolCommandDefinition = {
+        run: {
+          cmd: 'echo hello',
+          args: [],
+        },
+      };
+
+      const result = await executor.execute('spawn-test', def, {});
+      expect(result.success).toBe(true);
+      expect(spawnSpy).toHaveBeenCalled();
+      spawnSpy.mockRestore();
     });
   });
 });

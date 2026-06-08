@@ -1,6 +1,11 @@
 import { join } from 'path';
 import TOML from '@iarna/toml';
-import type { McpIntegration, ProviderIntegration, RulesIntegration } from '../../types/providers';
+import type {
+  McpIntegration,
+  ProviderIntegration,
+  RulesIntegration,
+  SubagentsIntegration,
+} from '../../types/providers';
 import type { SubAgent, Capabilities } from '../../types/capabilities';
 import { getQualifiedToolName } from '../../types/capabilities';
 import type { Rule } from '../../types/rules';
@@ -13,6 +18,7 @@ export function buildMcpEntry(mcp: McpIntegration, url: string): Record<string, 
   const entry: Record<string, unknown> = {};
   if (mcp.entryType) entry.type = mcp.entryType;
   entry[mcp.entryUrlKey] = url;
+  if (mcp.entryExtraFields) Object.assign(entry, mcp.entryExtraFields);
   return entry;
 }
 
@@ -67,7 +73,13 @@ export function buildSubAgentFile(
   const mcpServerKey = `capa-${subAgent.id}`;
 
   if (sa.format === 'markdown-frontmatter') {
-    return buildMarkdownSubAgent(sa.fields ?? {}, subAgent, capabilities, mcpServerKey);
+    return buildMarkdownSubAgent(
+      sa.fields ?? {},
+      sa.perAgentToolScope,
+      subAgent,
+      capabilities,
+      mcpServerKey
+    );
   }
   return buildTomlSubAgent(sa.fields ?? {}, sa.bodyField ?? 'developer_instructions', subAgent, capabilities, mcpServerKey);
 }
@@ -121,6 +133,7 @@ function buildPlainBody(subAgent: SubAgent, capabilities: Capabilities, mcpServe
 
 function buildMarkdownSubAgent(
   fields: Record<string, string | boolean | number>,
+  perAgentToolScope: SubagentsIntegration['perAgentToolScope'] | undefined,
   subAgent: SubAgent,
   capabilities: Capabilities,
   mcpServerKey: string
@@ -136,6 +149,12 @@ function buildMarkdownSubAgent(
 
   for (const [key, value] of Object.entries(fields)) {
     fmLines.push(`${key}: ${value}`);
+  }
+
+  if (perAgentToolScope) {
+    const pattern = perAgentToolScope.patternTemplate.replace('{id}', subAgent.id);
+    // Quote the glob — `*` is a YAML reserved char if it leads a token.
+    fmLines.push(`${perAgentToolScope.key}:`, `  "${pattern}": ${perAgentToolScope.value}`);
   }
 
   fmLines.push('---');
