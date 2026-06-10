@@ -159,10 +159,11 @@ describe('hooks-installer (claude inline-config)', () => {
     expect(result.warnings.some((w) => /no mapping/.test(w))).toBe(true);
   });
 
-  it('source.type=local references the user\'s script directly (no copy under ~/.capa)', async () => {
-    // Place a script alongside the (synthetic) capabilities file and point
-    // the hook at it via a relative path. capa should embed the absolute
-    // path of THAT script in the provider config, not a path under ~/.capa.
+  it('source.type=local inside the project is referenced by a portable relative path', async () => {
+    // Place a script inside the project and point the hook at it. Because the
+    // script lives in the repo, capa must embed a PROJECT-RELATIVE path in the
+    // provider config (not the author's absolute, machine-specific path) so the
+    // committed config works for everyone who clones the repo.
     require('fs').mkdirSync(join(projectPath, 'scripts'), { recursive: true });
     const scriptPath = join(projectPath, 'scripts', 'lint.sh');
     writeFileSync(scriptPath, '#!/bin/sh\necho lint\n', 'utf-8');
@@ -189,13 +190,48 @@ describe('hooks-installer (claude inline-config)', () => {
       readFileSync(join(projectPath, '.claude', 'settings.json'), 'utf-8'),
     ) as any;
     const entry = settings.hooks.PostToolUse[0].hooks[0];
-    expect(entry.command).toBe(scriptPath);
+    // Relative, forward-slashed, ./-prefixed — and crucially NOT absolute.
+    expect(entry.command).toBe('./scripts/lint.sh');
+    expect(entry.command).not.toContain(projectPath);
 
     // No copy in ~/.capa — managed_hooks.scriptPath stays null so clean
     // never tries to unlink the user's file.
     const rows = db.getManagedHooks(projectId);
     expect(rows).toHaveLength(1);
     expect(rows[0].scriptPath).toBeNull();
+  });
+
+  it('source.type=local outside the project keeps the absolute path', async () => {
+    // A script that lives outside the project can't be committed, so a relative
+    // path would be meaningless — capa keeps the absolute path in that case.
+    const outsideDir = join(tempDir, 'outside');
+    require('fs').mkdirSync(outsideDir, { recursive: true });
+    const scriptPath = join(outsideDir, 'global-hook.sh');
+    writeFileSync(scriptPath, '#!/bin/sh\necho hi\n', 'utf-8');
+
+    const result = await installHooks({
+      projectPath,
+      projectId,
+      capabilitiesFilePath: join(projectPath, 'capabilities.yaml'),
+      hooks: [
+        {
+          id: 'global-edit',
+          on: 'afterFileEdit',
+          source: { type: 'local', path: '../outside/global-hook.sh' },
+        },
+      ],
+      providers: ['claude-code'],
+      db,
+      authFetch: makeAuthFetch(),
+      getRepoSnapshot: stubGetRepoSnapshot,
+    });
+    expect(result.installed).toBe(1);
+
+    const settings = JSON.parse(
+      readFileSync(join(projectPath, '.claude', 'settings.json'), 'utf-8'),
+    ) as any;
+    const entry = settings.hooks.PostToolUse[0].hooks[0];
+    expect(entry.command).toBe(scriptPath);
   });
 
   it('prompt-type local source reads the file contents as the prompt text', async () => {
