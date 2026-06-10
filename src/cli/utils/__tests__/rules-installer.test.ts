@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import type { Rule } from '../../../types/rules';
@@ -47,6 +47,117 @@ describe('rules-installer', () => {
 
     cleanRules(projectPath, ['cursor'], ['style-guide']);
     expect(existsSync(rulePath)).toBe(false);
+  });
+
+  it('installRules merges body frontmatter with capa fields, capa wins, appliesTo synonyms dropped (claude-code)', () => {
+    const bodyWithCursorFm = [
+      '---',
+      'description: legacy cursor-style frontmatter',
+      'globs: **/*.sql',
+      'alwaysApply: false',
+      '---',
+      '',
+      '# Real body',
+      'do the thing',
+      '',
+    ].join('\n');
+    const rules: Rule[] = [
+      {
+        id: 'with-fm',
+        type: 'local',
+        path: 'rules/with-fm.md',
+        description: 'capa-side description',
+        appliesTo: ['**/*.sql'],
+      },
+    ];
+    const content = new Map([['with-fm', bodyWithCursorFm]]);
+
+    installRules(projectPath, rules, ['claude-code'], content);
+
+    const installed = readFileSync(
+      join(projectPath, '.claude', 'rules', 'with-fm.md'),
+      'utf8'
+    );
+    // Exactly one frontmatter block — the merged one.
+    const fmBlocks = installed.match(/^---[\s\S]*?\n---/gm) ?? [];
+    expect(fmBlocks.length).toBe(1);
+    const fm = fmBlocks[0];
+    // Capa's appliesTo → paths (claude-code dialect)
+    expect(fm).toContain('paths:');
+    // Source's `globs` is a synonym for `paths` and must be dropped
+    expect(fm).not.toContain('globs:');
+    // Source extras that don't collide survive
+    expect(fm).toContain('alwaysApply: false');
+    // claude-code's fieldMap has no `description`, so source's `description` survives
+    expect(fm).toContain('description: legacy cursor-style frontmatter');
+    expect(installed).toContain('# Real body');
+  });
+
+  it('installRules preserves a body with no leading frontmatter unchanged', () => {
+    const plainBody = '# Plain rule\n\nno frontmatter here.\n';
+    const rules: Rule[] = [
+      { id: 'plain', type: 'local', path: 'rules/plain.md', appliesTo: ['**/*.ts'] },
+    ];
+    const content = new Map([['plain', plainBody]]);
+
+    installRules(projectPath, rules, ['claude-code'], content);
+
+    const installed = readFileSync(
+      join(projectPath, '.claude', 'rules', 'plain.md'),
+      'utf8'
+    );
+    expect(installed).toContain('paths:');
+    expect(installed).toContain('# Plain rule');
+    expect(installed).toContain('no frontmatter here.');
+  });
+
+  it('installRules preserves source frontmatter when capa would emit nothing of its own', () => {
+    // claude-code with no appliesTo / alwaysApply / etc. → capa emits empty fm.
+    // Source's frontmatter should reach the installed file intact.
+    const bodyWithFm = '---\nkeep: me\nalso: this\n---\n\n# Body\n';
+    const rules: Rule[] = [{ id: 'no-fm-fields', type: 'local', path: 'rules/x.md' }];
+    const content = new Map([['no-fm-fields', bodyWithFm]]);
+
+    installRules(projectPath, rules, ['claude-code'], content);
+
+    const installed = readFileSync(
+      join(projectPath, '.claude', 'rules', 'no-fm-fields.md'),
+      'utf8'
+    );
+    const fmBlocks = installed.match(/^---[\s\S]*?\n---/gm) ?? [];
+    expect(fmBlocks.length).toBe(1);
+    expect(installed).toContain('keep: me');
+    expect(installed).toContain('also: this');
+  });
+
+  it('installRules with cursor provider drops source `globs` and emits cursor-shaped frontmatter', () => {
+    // Same source body, different provider — verifies appliesTo synonym collection
+    // doesn't accidentally drop the provider's OWN appliesTo key name.
+    const bodyWithFm = '---\ndescription: from source\nglobs: **/*.md\n---\n\nbody\n';
+    const rules: Rule[] = [
+      {
+        id: 'cursor-rule',
+        type: 'local',
+        path: 'rules/cursor-rule.md',
+        description: 'capa description',
+        appliesTo: ['**/*.ts'],
+      },
+    ];
+    const content = new Map([['cursor-rule', bodyWithFm]]);
+
+    installRules(projectPath, rules, ['cursor'], content);
+
+    const installed = readFileSync(
+      join(projectPath, '.cursor', 'rules', 'cursor-rule.mdc'),
+      'utf8'
+    );
+    // Cursor's appliesTo → globs, so capa's value must win and the *single*
+    // globs entry must reference `**/*.ts` (not the source's `**/*.md`).
+    expect(installed).toMatch(/globs: \*\*\/\*\.ts/);
+    expect(installed).not.toMatch(/globs: \*\*\/\*\.md/);
+    // Cursor's fieldMap covers description, so capa's value wins there too.
+    expect(installed).toContain('description: capa description');
+    expect(installed).not.toContain('description: from source');
   });
 
   it('pruneRules returns empty result when nothing is stale', () => {
