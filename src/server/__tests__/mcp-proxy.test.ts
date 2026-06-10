@@ -77,4 +77,45 @@ describe('mcp-proxy', () => {
       expect(shouldSkipTlsVerify(true, 'MCP HTTP transport (test-server)')).toBe(true);
     });
   });
+
+  describe('OAuth2 disconnected handling', () => {
+    function makeOauthServerDef(): MCPServerDefinition {
+      return {
+        url: 'https://mcp.example.com',
+        oauth2: { clientId: 'x', authorizationUrl: 'a', tokenUrl: 't' },
+      } as MCPServerDefinition;
+    }
+
+    function makeProxyWithDisconnectedOauth(): MCPProxy {
+      const proxy = new MCPProxy(makeMockDb(), 'proj-1', '/tmp/project');
+      (proxy as any).oauth2Manager = { isServerConnected: () => false };
+      return proxy;
+    }
+
+    it('listTools throws an auth-specific error (not "could not connect") when throwOnError is true', async () => {
+      const proxy = makeProxyWithDisconnectedOauth();
+      await expect(
+        proxy.listTools('atlassian', makeOauthServerDef(), { throwOnError: true })
+      ).rejects.toThrow(/Authentication failed for "atlassian"\. Please reconnect OAuth2/);
+    });
+
+    it('listTools returns [] silently when throwOnError is false (default install path)', async () => {
+      const proxy = makeProxyWithDisconnectedOauth();
+      const result = await proxy.listTools('atlassian', makeOauthServerDef());
+      expect(result).toEqual([]);
+    });
+
+    it('executeTool returns auth-specific failure (not "failed to connect") when OAuth disconnected', async () => {
+      const proxy = makeProxyWithDisconnectedOauth();
+      const result = await proxy.executeTool(
+        'atlassian.search',
+        { server: 'atlassian', tool: 'search' } as any,
+        makeOauthServerDef(),
+        { query: 'abc' }
+      );
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/Authentication failed for "atlassian"\. Please reconnect OAuth2/);
+      expect(result.error).not.toMatch(/Failed to connect/);
+    });
+  });
 });
