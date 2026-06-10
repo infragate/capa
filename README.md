@@ -143,6 +143,15 @@ rules:
       Always use Conventional Commits (feat/fix/chore/docs/refactor).
       Subject ≤ 72 chars, imperative mood, no trailing period.
 
+  - id: typescript-conventions
+    type: local
+    description: Team TypeScript conventions
+    appliesTo:
+      - "**/*.ts"
+      - "**/*.tsx"
+    # Path is resolved relative to this capabilities file.
+    path: rules/typescript.md
+
 servers:
   - id: brave
     type: mcp
