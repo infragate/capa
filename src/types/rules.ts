@@ -12,7 +12,7 @@ import type { AgentSnippetDef } from './capabilities';
 export interface Rule {
   /** Unique identifier, used as the filename stem and capa marker id. */
   id: string;
-  type: 'inline' | 'remote' | 'github' | 'gitlab';
+  type: 'inline' | 'remote' | 'github' | 'gitlab' | 'local';
   /** Restrict this rule to specific providers. When empty/omitted, applies to all. */
   providers?: string[];
   /** Glob patterns for auto-attached rules (Cursor `globs`, Copilot `applyTo`). */
@@ -25,6 +25,11 @@ export interface Rule {
   content?: string;
   /** Raw URL to fetch content from (required when type is 'remote'). */
   url?: string;
+  /**
+   * Path to a local markdown file (required when type is 'local'). Relative
+   * paths are resolved from the directory containing the capabilities file.
+   */
+  path?: string;
   /** Repository + file definition (required when type is 'github' or 'gitlab'). */
   def?: AgentSnippetDef;
 }
