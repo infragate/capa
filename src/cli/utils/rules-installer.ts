@@ -1,7 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, unlinkSync } from 'fs';
 import { join, dirname, basename, sep } from 'path';
+import yaml from 'js-yaml';
 import type { Rule } from '../../types/rules';
-import { getProvider } from '../../shared/providers';
+import { getAllProviders, getProvider } from '../../shared/providers';
 import { buildRuleFrontmatter } from '../../shared/providers/handlers';
 import { taskLog } from '../ui';
 
@@ -36,6 +37,62 @@ function buildYamlFrontmatter(fields: Record<string, unknown>): string {
   }
   lines.push('---');
   return lines.join('\n');
+}
+
+/**
+ * Provider-dialect names for the `appliesTo` rule concept (claude-code calls
+ * it `paths`, Cursor `globs`, GitHub Copilot `applyTo`). Used to drop a
+ * source file's already-translated synonym when capa is emitting its own.
+ * Captured lazily so `getAllProviders()` is only walked once.
+ */
+let APPLIES_TO_SYNONYMS: Set<string> | null = null;
+function appliesToSynonyms(): Set<string> {
+  if (APPLIES_TO_SYNONYMS) return APPLIES_TO_SYNONYMS;
+  APPLIES_TO_SYNONYMS = new Set(
+    getAllProviders()
+      .map((p) => p.rules?.fieldMap?.appliesTo)
+      .filter((s): s is string => Boolean(s))
+  );
+  return APPLIES_TO_SYNONYMS;
+}
+
+/**
+ * Permissive YAML load for rule frontmatter. Cursor-style `.mdc` files
+ * allow unquoted glob values that strict YAML rejects as alias references
+ * (anything starting with `*`), e.g. an unquoted `globs:` line. We retry
+ * once with such values quoted so we can still merge surrounding metadata.
+ */
+function loadFrontmatterYaml(text: string): unknown {
+  try {
+    return yaml.load(text);
+  } catch {
+    const requoted = text.replace(
+      /^([ \t]*[\w-]+[ \t]*:[ \t]*)(\*[^\n#]*?)(\s*)$/gm,
+      (_m, prefix, value, trailing) =>
+        `${prefix}"${(value as string).replace(/"/g, '\\"')}"${trailing}`
+    );
+    if (requoted === text) return null;
+    try {
+      return yaml.load(requoted);
+    } catch {
+      return null;
+    }
+  }
+}
+
+/**
+ * Parse a leading YAML frontmatter block (`---\n...\n---`) from `body`.
+ * Returns the parsed object and the remaining body, or `null` if there is
+ * no well-formed frontmatter (so the caller can leave `body` untouched).
+ */
+function parseLeadingFrontmatter(
+  body: string
+): { data: Record<string, unknown>; rest: string } | null {
+  const m = body.match(/^---\r?\n([\s\S]*?)\r?\n---(\r?\n|$)/);
+  if (!m) return null;
+  const parsed = loadFrontmatterYaml(m[1]);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  return { data: parsed as Record<string, unknown>, rest: body.slice(m[0].length) };
 }
 
 // ---------------------------------------------------------------------------
@@ -178,13 +235,30 @@ export function installRules(
         if (!content) continue;
 
         let fileContent = '';
+        let body = content;
         if (provider.rules.frontmatter === 'yaml' && provider.rules.fieldMap) {
           const fm = buildRuleFrontmatter(provider.rules, rule);
+          const parsed = parseLeadingFrontmatter(body);
+          if (parsed) {
+            body = parsed.rest;
+            // Merge source extras after capa's fields: capa wins on literal-key
+            // collisions, and any source synonym for an `appliesTo` field capa
+            // already emitted (e.g. source `globs:` when capa wrote `paths:`)
+            // is dropped so the same concept isn't duplicated.
+            const appliesToKey = provider.rules.fieldMap.appliesTo;
+            const capaEmitsAppliesTo = !!appliesToKey && appliesToKey in fm;
+            const synonyms = capaEmitsAppliesTo ? appliesToSynonyms() : null;
+            for (const [k, v] of Object.entries(parsed.data)) {
+              if (k in fm) continue;
+              if (synonyms?.has(k)) continue;
+              fm[k] = v;
+            }
+          }
           if (Object.keys(fm).length > 0) {
             fileContent = buildYamlFrontmatter(fm) + '\n';
           }
         }
-        fileContent += content;
+        fileContent += body;
         if (!fileContent.endsWith('\n')) fileContent += '\n';
 
         const filePath = join(rulesDir, `${rule.id}${provider.rules.extension}`);
