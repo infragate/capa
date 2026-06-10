@@ -507,3 +507,106 @@ describe('installSubagentsTask + toolExposure: none', () => {
     expect(needsPurge(false, [])).toBe(false);
   });
 });
+
+// ─── capa shell: metadata listing vs. lazy per-tool schema ───────────────────
+//
+// `capa sh` (and group/subcommand listing) hits getAllShellTools on every
+// invocation, so it must NOT contact remote MCP servers — otherwise one slow or
+// down server stalls or crashes the whole shell. The remote round-trip is
+// deferred to getShellToolSchema, called only when a specific tool is run or
+// `--help`'d. These tests pin that split.
+
+describe('getAllShellTools / getShellToolSchema (lazy MCP schema)', () => {
+  let h: Harness;
+
+  const caps: Capabilities = {
+    providers: ['claude-code'],
+    options: {},
+    skills: [],
+    servers: [{ id: 'brave', def: { url: 'http://127.0.0.1:1/mcp' } } as any],
+    tools: [
+      {
+        id: 'run_tests',
+        type: 'command',
+        def: { run: { cmd: 'npm test', args: [{ name: 'pattern', type: 'string' }] } },
+      },
+      {
+        id: 'search',
+        type: 'mcp',
+        def: { server: '@brave', tool: 'brave_web_search' },
+      } as any,
+    ],
+  };
+
+  beforeEach(() => {
+    h = makeHarness(caps);
+  });
+
+  afterEach(() => destroyHarness(h));
+
+  it('getAllShellTools makes no remote listTools calls and omits MCP schemas', async () => {
+    let listToolsCalls = 0;
+    (h.mcp as any).mcpProxy.listTools = async () => {
+      listToolsCalls++;
+      return [];
+    };
+
+    const tools = await h.mcp.getAllShellTools(caps);
+
+    expect(listToolsCalls).toBe(0);
+
+    const cmd = tools.find((t) => t.id === 'run_tests')!;
+    expect(cmd.type).toBe('command');
+    // Command schemas are local and cheap — included up front.
+    expect(cmd.inputSchema?.properties?.pattern).toBeDefined();
+
+    const mcp = tools.find((t) => t.id === 'brave.search')!;
+    expect(mcp.type).toBe('mcp');
+    expect(mcp.serverId).toBe('brave');
+    // MCP schema is resolved lazily, so it is absent here.
+    expect(mcp.inputSchema).toBeUndefined();
+  });
+
+  it('getShellToolSchema resolves an MCP tool with exactly one remote call', async () => {
+    let listToolsCalls = 0;
+    (h.mcp as any).mcpProxy.listTools = async () => {
+      listToolsCalls++;
+      return [
+        {
+          name: 'brave_web_search',
+          description: 'Search the web',
+          inputSchema: { type: 'object', properties: { q: { type: 'string' } }, required: ['q'] },
+        },
+      ];
+    };
+
+    const schema = await h.mcp.getShellToolSchema('brave.search', caps);
+
+    expect(listToolsCalls).toBe(1);
+    expect(schema.description).toBe('Search the web');
+    expect(schema.inputSchema.properties.q).toBeDefined();
+  });
+
+  it('getShellToolSchema propagates remote failures instead of swallowing them', async () => {
+    (h.mcp as any).mcpProxy.listTools = async () => {
+      throw new Error('Could not connect to MCP server "brave"');
+    };
+
+    await expect(h.mcp.getShellToolSchema('brave.search', caps)).rejects.toThrow(
+      /Could not connect/
+    );
+  });
+
+  it('getShellToolSchema resolves command tools locally without any remote call', async () => {
+    let listToolsCalls = 0;
+    (h.mcp as any).mcpProxy.listTools = async () => {
+      listToolsCalls++;
+      return [];
+    };
+
+    const schema = await h.mcp.getShellToolSchema('run_tests', caps);
+
+    expect(listToolsCalls).toBe(0);
+    expect(schema.inputSchema.properties.pattern).toBeDefined();
+  });
+});
