@@ -48,7 +48,22 @@ export async function ensureMirrorClone(
   }
   mkdirSync(getRepoCacheDir(platform, repoPath), { recursive: true });
   const url = repoUrl ?? buildAuthenticatedRepoUrl(platform, repoPath, authFetch);
-  await git(['clone', '--mirror', url, mirrorDir]);
+  // Blobless partial clone: fetch the full commit/tree graph (so any SHA, tag,
+  // or branch still resolves offline via resolveRef) but skip all historical
+  // file contents. On a big repo (e.g. remotion) this avoids downloading every
+  // blob across all history — the dominant cost. The blobs for the single
+  // revision we actually check out are fetched lazily by `git worktree add`
+  // during materializeSnapshot, so snapshots stay byte-identical and no consumer
+  // (skills/rules/hooks/plugins, `@`-search or `::`-exact) is affected.
+  //
+  // Why not sparse-checkout per file? Consumers walk whole trees (`@` search)
+  // and copy entire skill directories that reference sibling files, so we can't
+  // know the full file set up front without risking regressions. Blobless keeps
+  // the materialized tree complete while still skipping the expensive history.
+  //
+  // Requires git >= 2.19. Servers without partial-clone support degrade
+  // gracefully to a full clone (git warns and ignores the filter).
+  await git(['clone', '--mirror', '--filter=blob:none', url, mirrorDir]);
   return mirrorDir;
 }
 

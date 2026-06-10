@@ -25,6 +25,22 @@ export interface ShellCommand {
   argSlugs: Map<string, string>;
   /** Default argument values */
   defaults?: Record<string, any>;
+  /**
+   * Whether `inputSchema` is populated. Command tools ship their schema with the
+   * metadata listing; MCP tool schemas are fetched lazily (see ensureSchema) only
+   * when the tool is run or `--help`'d, so this is false for them until resolved.
+   */
+  schemaLoaded: boolean;
+}
+
+/** Build the slugified-arg-name → original-arg-name map from a tool input schema. */
+function buildArgSlugs(inputSchema: any): Map<string, string> {
+  const argSlugs = new Map<string, string>();
+  const props = inputSchema?.properties || {};
+  for (const argName of Object.keys(props)) {
+    argSlugs.set(slugify(argName), argName);
+  }
+  return argSlugs;
 }
 
 interface ShellGroup {
@@ -47,12 +63,7 @@ class ShellRegistry {
 
     for (const tool of tools) {
       const commandSlug = slugify(tool.id);
-      const argSlugs = new Map<string, string>();
-
-      const props = tool.inputSchema?.properties || {};
-      for (const argName of Object.keys(props)) {
-        argSlugs.set(slugify(argName), argName);
-      }
+      const argSlugs = buildArgSlugs(tool.inputSchema);
 
       const cmd: ShellCommand = {
         id: tool.id,
@@ -62,6 +73,8 @@ class ShellRegistry {
         inputSchema: tool.inputSchema,
         argSlugs,
         defaults: tool.defaults,
+        // MCP schemas are fetched on demand; command schemas arrive with the listing.
+        schemaLoaded: tool.type === 'command',
       };
 
       if (tool.type === 'mcp' && tool.serverId) {
@@ -103,18 +116,14 @@ class ShellRegistry {
         const dotIdx = tool.id.indexOf('.');
         const shortName = dotIdx >= 0 ? tool.id.slice(dotIdx + 1) : tool.id;
         const commandSlug = slugify(shortName);
-        const argSlugs = new Map<string, string>();
-        const props = tool.inputSchema?.properties || {};
-        for (const argName of Object.keys(props)) {
-          argSlugs.set(slugify(argName), argName);
-        }
         this.topLevelCommands.set(commandSlug, {
           id: tool.id,
           slug: commandSlug,
           type: tool.type,
           description: tool.description,
           inputSchema: tool.inputSchema,
-          argSlugs,
+          argSlugs: buildArgSlugs(tool.inputSchema),
+          schemaLoaded: tool.type === 'command',
         });
       } else {
         // Create the group
@@ -129,18 +138,14 @@ class ShellRegistry {
           const dotIdx = tool.id.indexOf('.');
           const shortName = dotIdx >= 0 ? tool.id.slice(dotIdx + 1) : tool.id;
           const commandSlug = slugify(shortName);
-          const argSlugs = new Map<string, string>();
-          const props = tool.inputSchema?.properties || {};
-          for (const argName of Object.keys(props)) {
-            argSlugs.set(slugify(argName), argName);
-          }
           group.commands.set(commandSlug, {
             id: tool.id,
             slug: commandSlug,
             type: tool.type,
             description: tool.description,
             inputSchema: tool.inputSchema,
-            argSlugs,
+            argSlugs: buildArgSlugs(tool.inputSchema),
+            schemaLoaded: tool.type === 'command',
           });
         }
         this.groups.set(groupSlug, group);
@@ -259,6 +264,45 @@ async function fetchShellTools(serverUrl: string, projectId: string): Promise<Sh
   }
   const data = await response.json() as { tools: ShellToolInfo[] };
   return data.tools;
+}
+
+/**
+ * Fetch the input schema for a single tool on demand. Used right before a tool is
+ * run or `--help`'d. Throws a descriptive error (e.g. remote server down / timed
+ * out / tool missing) which the caller surfaces for that one tool.
+ */
+async function fetchToolSchema(
+  serverUrl: string,
+  projectId: string,
+  toolId: string
+): Promise<{ description: string; inputSchema: any }> {
+  const response = await fetch(
+    `${serverUrl}/api/projects/${projectId}/shell-tool-schema?tool=${encodeURIComponent(toolId)}`,
+    { signal: AbortSignal.timeout(20000) }
+  );
+  if (!response.ok) {
+    const body = await response.json().catch(() => null) as { error?: string } | null;
+    throw new Error(body?.error || `Failed to load schema for "${toolId}" (${response.status})`);
+  }
+  return await response.json() as { description: string; inputSchema: any };
+}
+
+/**
+ * Ensure a command's input schema is loaded before it is run or `--help`'d.
+ * Command tools already carry their schema; MCP tool schemas are fetched lazily
+ * here so listing commands never blocks on (or fails because of) a remote server.
+ */
+async function ensureSchema(
+  cmd: ShellCommand,
+  serverUrl: string,
+  projectId: string
+): Promise<void> {
+  if (cmd.schemaLoaded) return;
+  const { description, inputSchema } = await fetchToolSchema(serverUrl, projectId, cmd.id);
+  cmd.inputSchema = inputSchema;
+  cmd.argSlugs = buildArgSlugs(inputSchema);
+  if (description) cmd.description = description;
+  cmd.schemaLoaded = true;
 }
 
 async function executeToolViaMCP(
@@ -474,6 +518,24 @@ function isHelpFlag(token: string): boolean {
   return token === '--help' || token === '-h' || token === 'help';
 }
 
+/**
+ * Load a command's schema before help/execution, exiting with a clear message if
+ * the remote server backing it is unreachable. Scoped to the single tool, so other
+ * commands in the session are unaffected.
+ */
+async function loadSchemaOrExit(
+  cmd: ShellCommand,
+  serverUrl: string,
+  projectId: string
+): Promise<void> {
+  try {
+    await ensureSchema(cmd, serverUrl, projectId);
+  } catch (err: any) {
+    console.error(`Could not load "${cmd.slug}": ${err.message}`);
+    process.exit(1);
+  }
+}
+
 async function dispatch(
   tokens: string[],
   registry: ShellRegistry,
@@ -516,6 +578,9 @@ async function dispatch(
 
     const cmd = group.commands.get(subSlug)!;
 
+    // Using a specific tool (help or run) → resolve its schema now.
+    await loadSchemaOrExit(cmd, serverUrl, projectId);
+
     // `capa sh <group> <subcommand> --help` → show command arg info
     if (subRest.length > 0 && isHelpFlag(subRest[0])) {
       printCommandHelp(cmd);
@@ -529,6 +594,9 @@ async function dispatch(
   // Top-level capa command
   if (registry.topLevelCommands.has(first)) {
     const cmd = registry.topLevelCommands.get(first)!;
+
+    // Using a specific tool (help or run) → resolve its schema now.
+    await loadSchemaOrExit(cmd, serverUrl, projectId);
 
     // `capa sh <command> --help` → show command arg info
     if (rest.length > 0 && isHelpFlag(rest[0])) {

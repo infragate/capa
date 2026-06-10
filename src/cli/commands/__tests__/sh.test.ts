@@ -14,6 +14,7 @@ function makeCommand(overrides: Partial<ShellCommand> = {}): ShellCommand {
       required: [],
     },
     argSlugs: new Map(),
+    schemaLoaded: true,
     ...overrides,
   };
 }

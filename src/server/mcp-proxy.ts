@@ -24,6 +24,21 @@ class MCPSessionExpiredError extends Error {
   }
 }
 
+/**
+ * Thrown from `createHttpClient` when an OAuth2-protected server has no
+ * active connection. Tolerant callers (install-time validation, default
+ * `listTools`) catch this and degrade silently — so a disconnected server
+ * doesn't spam 401s. On-demand callers (an explicit `capa sh` tool call,
+ * `listTools` with `throwOnError`) rethrow it as a user-facing
+ * "Authentication failed" instead of the misleading "Could not connect."
+ */
+class MCPOAuthDisconnectedError extends Error {
+  constructor(public readonly serverId: string) {
+    super(`Authentication failed for "${serverId}". Please reconnect OAuth2.`);
+    this.name = 'MCPOAuthDisconnectedError';
+  }
+}
+
 export class MCPProxy {
   private db: CapaDatabase;
   private projectId: string;
@@ -71,7 +86,16 @@ export class MCPProxy {
     }
 
     // Get or create MCP client
-    const client = await this.getOrCreateClient(serverId, resolvedServerDef);
+    let client: Client | null;
+    try {
+      client = await this.getOrCreateClient(serverId, resolvedServerDef);
+    } catch (error) {
+      if (error instanceof MCPOAuthDisconnectedError) {
+        this.logger.failure(error.message);
+        return { success: false, error: error.message };
+      }
+      throw error;
+    }
 
     if (!client) {
       this.logger.failure('Failed to get client');
@@ -97,7 +121,15 @@ export class MCPProxy {
       if (error instanceof MCPSessionExpiredError) {
         this.logger.warn(`Session expired for ${serverId}, reconnecting and retrying tool call...`);
         this.clients.delete(serverId);
-        const freshClient = await this.getOrCreateClient(serverId, resolvedServerDef);
+        let freshClient: Client | null;
+        try {
+          freshClient = await this.getOrCreateClient(serverId, resolvedServerDef);
+        } catch (reconnectError) {
+          if (reconnectError instanceof MCPOAuthDisconnectedError) {
+            return { success: false, error: reconnectError.message };
+          }
+          throw reconnectError;
+        }
         if (!freshClient) {
           return { success: false, error: `Failed to reconnect to MCP server: ${serverId}` };
         }
@@ -122,41 +154,80 @@ export class MCPProxy {
   }
 
   /**
-   * List tools available on an MCP server
+   * List tools available on an MCP server.
+   *
+   * By default this is tolerant: connection/listing failures are logged and an
+   * empty array is returned so aggregate callers don't blow up on one bad server.
+   * Pass `throwOnError: true` (used by on-demand schema resolution) to surface
+   * the underlying failure to the caller instead. `timeoutMs` bounds the request
+   * so a hung server can't block indefinitely.
    */
-  async listTools(serverId: string, serverDefinition: MCPServerDefinition): Promise<any[]> {
+  async listTools(
+    serverId: string,
+    serverDefinition: MCPServerDefinition,
+    options: { throwOnError?: boolean; timeoutMs?: number } = {}
+  ): Promise<any[]> {
+    const { throwOnError = false, timeoutMs = 15000 } = options;
     // Strip @ prefix from server ID if present
     const cleanServerId = serverId.replace('@', '');
-    
+
     const resolvedServerDef = resolveVariablesInObject(
       serverDefinition,
       this.projectId,
       this.db
     );
 
-    const client = await this.getOrCreateClient(cleanServerId, resolvedServerDef);
+    let client: Client | null;
+    try {
+      client = await this.getOrCreateClient(cleanServerId, resolvedServerDef);
+    } catch (error) {
+      if (error instanceof MCPOAuthDisconnectedError) {
+        if (throwOnError) throw error;
+        return [];
+      }
+      throw error;
+    }
     if (!client) {
+      if (throwOnError) {
+        throw new Error(`Could not connect to MCP server "${cleanServerId}"`);
+      }
       return [];
     }
 
     try {
-      const result = await client.listTools();
+      const result = await client.listTools(undefined, { timeout: timeoutMs });
       return result.tools;
     } catch (error) {
       if (error instanceof MCPSessionExpiredError) {
         this.logger.warn(`Session expired for ${cleanServerId}, reconnecting...`);
         this.clients.delete(cleanServerId);
-        const freshClient = await this.getOrCreateClient(cleanServerId, resolvedServerDef);
-        if (!freshClient) return [];
+        let freshClient: Client | null;
         try {
-          const result = await freshClient.listTools();
+          freshClient = await this.getOrCreateClient(cleanServerId, resolvedServerDef);
+        } catch (reconnectError) {
+          if (reconnectError instanceof MCPOAuthDisconnectedError) {
+            if (throwOnError) throw reconnectError;
+            return [];
+          }
+          throw reconnectError;
+        }
+        if (!freshClient) {
+          if (throwOnError) {
+            throw new Error(`Could not reconnect to MCP server "${cleanServerId}"`);
+          }
+          return [];
+        }
+        try {
+          const result = await freshClient.listTools(undefined, { timeout: timeoutMs });
           return result.tools;
         } catch (retryError) {
           this.logger.error(`Failed to list tools from ${cleanServerId} after reconnect:`, retryError);
+          if (throwOnError) throw retryError;
           return [];
         }
       }
       this.logger.error(`Failed to list tools from ${cleanServerId}:`, error);
+      if (throwOnError) throw error;
       return [];
     }
   }
@@ -191,13 +262,17 @@ export class MCPProxy {
     serverId: string,
     serverDefinition: MCPServerDefinition
   ): Promise<Client | null> {
-    try {
-      // Skip connecting to OAuth2 servers until the user has connected (avoids 401 during install/validation)
-      if (serverDefinition.oauth2 && !this.oauth2Manager.isServerConnected(this.projectId, serverId)) {
-        this.logger.debug(`Skipping HTTP client for ${serverId} (OAuth2 required, not connected)`);
-        return null;
-      }
+    // Surface OAuth-disconnect as a typed error rather than a bare `null`, so
+    // on-demand callers (e.g. `capa sh <tool>`) can show "Authentication
+    // failed" instead of the misleading "Could not connect." Tolerant callers
+    // catch this and degrade silently, preserving the no-401-during-install
+    // behavior that the original early-return guaranteed.
+    if (serverDefinition.oauth2 && !this.oauth2Manager.isServerConnected(this.projectId, serverId)) {
+      this.logger.debug(`Skipping HTTP client for ${serverId} (OAuth2 required, not connected)`);
+      throw new MCPOAuthDisconnectedError(serverId);
+    }
 
+    try {
       this.logger.info(`Creating HTTP client for: ${serverId}`);
       this.logger.debug(`URL: ${serverDefinition.url}`);
 
