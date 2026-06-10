@@ -122,12 +122,23 @@ export class MCPProxy {
   }
 
   /**
-   * List tools available on an MCP server
+   * List tools available on an MCP server.
+   *
+   * By default this is tolerant: connection/listing failures are logged and an
+   * empty array is returned so aggregate callers don't blow up on one bad server.
+   * Pass `throwOnError: true` (used by on-demand schema resolution) to surface
+   * the underlying failure to the caller instead. `timeoutMs` bounds the request
+   * so a hung server can't block indefinitely.
    */
-  async listTools(serverId: string, serverDefinition: MCPServerDefinition): Promise<any[]> {
+  async listTools(
+    serverId: string,
+    serverDefinition: MCPServerDefinition,
+    options: { throwOnError?: boolean; timeoutMs?: number } = {}
+  ): Promise<any[]> {
+    const { throwOnError = false, timeoutMs = 15000 } = options;
     // Strip @ prefix from server ID if present
     const cleanServerId = serverId.replace('@', '');
-    
+
     const resolvedServerDef = resolveVariablesInObject(
       serverDefinition,
       this.projectId,
@@ -136,27 +147,37 @@ export class MCPProxy {
 
     const client = await this.getOrCreateClient(cleanServerId, resolvedServerDef);
     if (!client) {
+      if (throwOnError) {
+        throw new Error(`Could not connect to MCP server "${cleanServerId}"`);
+      }
       return [];
     }
 
     try {
-      const result = await client.listTools();
+      const result = await client.listTools(undefined, { timeout: timeoutMs });
       return result.tools;
     } catch (error) {
       if (error instanceof MCPSessionExpiredError) {
         this.logger.warn(`Session expired for ${cleanServerId}, reconnecting...`);
         this.clients.delete(cleanServerId);
         const freshClient = await this.getOrCreateClient(cleanServerId, resolvedServerDef);
-        if (!freshClient) return [];
+        if (!freshClient) {
+          if (throwOnError) {
+            throw new Error(`Could not reconnect to MCP server "${cleanServerId}"`);
+          }
+          return [];
+        }
         try {
-          const result = await freshClient.listTools();
+          const result = await freshClient.listTools(undefined, { timeout: timeoutMs });
           return result.tools;
         } catch (retryError) {
           this.logger.error(`Failed to list tools from ${cleanServerId} after reconnect:`, retryError);
+          if (throwOnError) throw retryError;
           return [];
         }
       }
       this.logger.error(`Failed to list tools from ${cleanServerId}:`, error);
+      if (throwOnError) throw error;
       return [];
     }
   }
