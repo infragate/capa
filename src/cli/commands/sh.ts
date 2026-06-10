@@ -28,9 +28,9 @@ export interface ShellCommand {
   /**
    * Whether `inputSchema` is populated. Command tools ship their schema with the
    * metadata listing; MCP tool schemas are fetched lazily (see ensureSchema) only
-   * when the tool is run or `--help`'d, so this is falsy for them until resolved.
+   * when the tool is run or `--help`'d, so this is false for them until resolved.
    */
-  schemaLoaded?: boolean;
+  schemaLoaded: boolean;
 }
 
 /** Build the slugified-arg-name → original-arg-name map from a tool input schema. */
