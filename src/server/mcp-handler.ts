@@ -676,23 +676,29 @@ export class CapaMCPServer {
   }
 
   /**
-   * Return all tools with full schemas for the capa shell, regardless of toolExposure mode.
-   * Each entry includes the original tool id, type, optional server group id, description, and inputSchema.
+   * Return shell-tool metadata for the capa shell, regardless of toolExposure mode.
+   *
+   * This is the hot path for `capa sh` (top-level command list and group/subcommand
+   * listing), so it must be fast and must NOT contact remote MCP servers. Command
+   * tools carry their input schema (derived locally from the capabilities file);
+   * MCP tools are returned WITHOUT an `inputSchema` — it is resolved lazily and
+   * per-tool via {@link getShellToolSchema} only when the user runs the tool or asks
+   * for its `--help`. That keeps one slow/down server from stalling the whole shell.
    */
   async getAllShellTools(capabilities: Capabilities): Promise<ShellToolInfo[]> {
     const result: ShellToolInfo[] = [];
     for (const tool of capabilities.tools) {
-      const mcpTool = await this.convertToolToMCP(tool, capabilities);
-      const info: ShellToolInfo = {
-        id: getQualifiedToolName(tool),
-        type: tool.type as 'command' | 'mcp',
-        description: mcpTool.description || '',
-        inputSchema: mcpTool.inputSchema,
-      };
       if (tool.type === 'mcp') {
         const mcpDef = tool.def as ToolMCPDefinition;
         const serverId = mcpDef.server.replace('@', '');
-        info.serverId = serverId;
+        const info: ShellToolInfo = {
+          id: getQualifiedToolName(tool),
+          type: 'mcp',
+          description: tool.description || '',
+          // Resolved on demand — see getShellToolSchema.
+          inputSchema: undefined,
+          serverId,
+        };
         const serverDef = capabilities.servers.find((s) => s.id === serverId);
         if (serverDef?.description) {
           info.serverDescription = serverDef.description;
@@ -700,7 +706,16 @@ export class CapaMCPServer {
         if (mcpDef.defaults) {
           info.defaults = mcpDef.defaults;
         }
+        result.push(info);
       } else {
+        // Command tool — schema is built locally and is cheap, so include it.
+        const mcpTool = await this.convertToolToMCP(tool, capabilities);
+        const info: ShellToolInfo = {
+          id: getQualifiedToolName(tool),
+          type: 'command',
+          description: mcpTool.description || '',
+          inputSchema: mcpTool.inputSchema,
+        };
         if (tool.group) {
           info.group = tool.group;
         }
@@ -716,10 +731,65 @@ export class CapaMCPServer {
             info.defaults = cmdDefaults;
           }
         }
+        result.push(info);
       }
-      result.push(info);
     }
     return result;
+  }
+
+  /**
+   * Resolve the input schema for a single shell tool on demand.
+   *
+   * Used by the capa shell when the user runs a specific tool or asks for its
+   * `--help`. Unlike {@link getAllShellTools}, this DOES contact the remote MCP
+   * server for `mcp` tools and throws a descriptive error if the server is
+   * unreachable, times out, or doesn't expose the tool — so the shell can surface
+   * the failure for that one tool without affecting the rest of the session.
+   */
+  async getShellToolSchema(
+    toolId: string,
+    capabilities: Capabilities
+  ): Promise<{ description: string; inputSchema: any }> {
+    const tool = capabilities.tools.find((t) => getQualifiedToolName(t) === toolId);
+    if (!tool) {
+      throw new Error(`Tool not found: ${toolId}`);
+    }
+
+    if (tool.type === 'command') {
+      const mcpTool = await this.convertToolToMCP(tool, capabilities);
+      return { description: mcpTool.description || '', inputSchema: mcpTool.inputSchema };
+    }
+
+    const mcpDef = tool.def as ToolMCPDefinition;
+    const serverId = mcpDef.server.replace('@', '');
+    const serverDef = capabilities.servers.find((s) => s.id === serverId);
+    if (!serverDef) {
+      throw new Error(`Server not found: ${serverId}`);
+    }
+
+    const remoteTools = await this.mcpProxy.listTools(serverId, serverDef.def, {
+      throwOnError: true,
+    });
+    const remoteTool = remoteTools.find((t: any) => t.name === mcpDef.tool);
+    if (!remoteTool) {
+      const available = remoteTools.map((t: any) => t.name).join(', ');
+      throw new Error(
+        `Tool "${mcpDef.tool}" not found on server "${serverId}". Available tools: ${available || '(none)'}`
+      );
+    }
+
+    const inputSchema = remoteTool.inputSchema
+      ? JSON.parse(JSON.stringify(remoteTool.inputSchema))
+      : { type: 'object' as const, properties: {} };
+    if (mcpDef.defaults) {
+      applyDefaultsToSchema(inputSchema, mcpDef.defaults);
+    }
+
+    const description = remoteTool.description || `MCP tool: ${toolId}`;
+    // Warm the shared cache so a subsequent tools/call doesn't re-fetch.
+    this.toolSchemaCache.set(toolId, { name: toolId, description, inputSchema });
+
+    return { description, inputSchema };
   }
 
   /**
