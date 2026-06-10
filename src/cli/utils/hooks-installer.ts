@@ -23,7 +23,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync, unlinkSync } from 'fs';
-import { dirname, join, resolve as resolvePath, sep as pathSep } from 'path';
+import { dirname, join, relative as relativePath, isAbsolute, resolve as resolvePath, sep as pathSep } from 'path';
 import { createHash } from 'crypto';
 import type { CapaDatabase } from '../../db/database';
 import type { ManagedHookRow } from '../../db/managed-hooks';
@@ -110,8 +110,12 @@ export async function installHooks(opts: InstallHooksOptions): Promise<InstallHo
   // Step 2: figure out the run reference for each command-type hook.
   //
   //  - inline `command:` (no source) -> use the literal command string;
-  //  - `source.type=local`           -> reference the user's script in place
-  //                                     via its absolute path (no copy);
+  //  - `source.type=local`           -> reference the user's script in place.
+  //                                     When the script lives inside the project
+  //                                     it's referenced by a project-relative
+  //                                     path (so the committed provider config is
+  //                                     portable across machines); otherwise its
+  //                                     absolute path is used. No copy either way.
   //  - inline / remote / github / gitlab -> materialise to
   //                                     ~/.capa/hooks/<projectId>/<hookId>
   //                                     and reference that absolute path.
@@ -127,7 +131,7 @@ export async function installHooks(opts: InstallHooksOptions): Promise<InstallHo
     }
 
     if (body.localPath) {
-      hookScriptPaths.set(hook.id, body.localPath);
+      hookScriptPaths.set(hook.id, toPortableHookReference(body.localPath, projectPath));
       continue;
     }
 
@@ -310,14 +314,38 @@ interface ResolvedHookBody {
   needsMaterialisation: boolean;
   /**
    * Set for `source.type='local'`: the absolute path of the user's script.
-   * The provider entry's `command` is set to this path verbatim, so the
-   * user's file becomes the live hook script — no copy in ~/.capa, no
-   * scriptPath tracked in `managed_hooks`, no chmod, and edits to the
-   * file take effect immediately without re-running `capa install`.
+   * The provider entry's `command` points at this file (project-relative when
+   * it lives inside the project — see toPortableHookReference — otherwise
+   * absolute), so the user's file becomes the live hook script: no copy in
+   * ~/.capa, no scriptPath tracked in `managed_hooks`, no chmod, and edits to
+   * the file take effect immediately without re-running `capa install`.
    */
   localPath?: string;
   /** Optional lockfile pin for remote / repo sources. */
   lockEntry?: LockHookEntry;
+}
+
+/**
+ * Turn the absolute path of a `local` hook script into the reference written
+ * into the provider config.
+ *
+ * Provider hooks run with their working directory at the project root, so a
+ * script that lives inside the project is referenced by a project-relative
+ * path (forward slashes, `./`-prefixed so it executes as a path rather than a
+ * PATH lookup). That keeps the committed config portable — other clones don't
+ * inherit the author's absolute, machine-specific path.
+ *
+ * A script outside the project can't be committed meaningfully, so its
+ * absolute path is kept as-is.
+ */
+function toPortableHookReference(absScriptPath: string, projectPath: string): string {
+  const rel = relativePath(projectPath, absScriptPath);
+  // Empty (same path), climbs out with `..`, or absolute (e.g. a different
+  // Windows drive) all mean the script isn't inside the project → keep absolute.
+  if (!rel || rel.startsWith('..') || isAbsolute(rel)) {
+    return absScriptPath;
+  }
+  return `./${rel.split(pathSep).join('/')}`;
 }
 
 async function resolveHookBody(hook: Hook, opts: InstallHooksOptions): Promise<ResolvedHookBody> {
