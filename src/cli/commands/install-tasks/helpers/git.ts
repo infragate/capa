@@ -60,9 +60,19 @@ export function explainGitError(
 
   if (
     errorMessage.includes('Authentication failed') ||
-    errorMessage.includes('could not read Username')
+    errorMessage.includes('could not read Username') ||
+    errorMessage.includes('could not read Password') ||
+    // git emits this when GIT_TERMINAL_PROMPT=0 stops it prompting for creds.
+    errorMessage.includes('terminal prompts disabled')
   ) {
-    return new Error(`${platformName} authentication failed — token may be expired; reconnect in the integrations page.`);
+    // Keep the substrings "authentication failed" and "not accessible" in the
+    // message — install-one-skill keys off them to append an integrations link.
+    const hint = hasAuth
+      ? `Your ${platformName} token may be expired or lacks access — reconnect in the integrations page.`
+      : `${repoPath} is private or does not exist. Connect ${platformName} in the integrations page if it's private, then re-run \`capa install\`.`;
+    return new Error(
+      `${platformName} authentication failed for ${repoPath} (repository not accessible)\n${repoUrl}\n${hint}`
+    );
   }
 
   if (

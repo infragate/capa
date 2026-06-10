@@ -347,11 +347,19 @@ class CapaServer {
       return this.handleGetServerTools(projectId, serverId);
     }
 
-    // Shell tools endpoint — all tools with schemas, regardless of exposure mode
+    // Shell tools endpoint — tool metadata for the capa shell, regardless of exposure mode
     const shellToolsMatch = path.match(/^\/api\/projects\/([^/]+)\/shell-tools$/);
     if (shellToolsMatch && request.method === 'GET') {
       const projectId = shellToolsMatch[1];
       return this.handleGetShellTools(projectId);
+    }
+
+    // On-demand schema for a single shell tool (?tool=<qualified-id>)
+    const shellToolSchemaMatch = path.match(/^\/api\/projects\/([^/]+)\/shell-tool-schema$/);
+    if (shellToolSchemaMatch && request.method === 'GET') {
+      const projectId = shellToolSchemaMatch[1];
+      const toolId = url.searchParams.get('tool') || '';
+      return this.handleGetShellToolSchema(projectId, toolId);
     }
 
     // Disconnect OAuth2
@@ -739,6 +747,49 @@ class CapaServer {
       return new Response(
         JSON.stringify({ error: error.message }),
         { status: 500, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+  }
+
+  private async handleGetShellToolSchema(projectId: string, toolId: string): Promise<Response> {
+    const apiLogger = this.logger.child('API');
+    apiLogger.info(`Get shell tool schema for ${projectId}: ${toolId}`);
+    try {
+      if (!toolId) {
+        return new Response(
+          JSON.stringify({ error: 'Missing "tool" query parameter' }),
+          { status: 400, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      const capabilities = this.sessionManager.getProjectCapabilities(projectId);
+      if (!capabilities) {
+        return new Response(
+          JSON.stringify({ error: 'Project not configured' }),
+          { status: 404, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      const mcpServer = this.getOrCreateMCPServer(projectId);
+      if (!mcpServer) {
+        return new Response(
+          JSON.stringify({ error: 'Project not found' }),
+          { status: 404, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      const schema = await mcpServer.getShellToolSchema(toolId, capabilities);
+      return new Response(
+        JSON.stringify(schema),
+        { headers: { 'Content-Type': 'application/json' } }
+      );
+    } catch (error: any) {
+      apiLogger.failure(`Error resolving schema for ${toolId}: ${error.message}`);
+      // 502: the failure is upstream (remote MCP server unreachable / tool missing),
+      // not a bug in this endpoint — let the shell surface it for this one tool.
+      return new Response(
+        JSON.stringify({ error: error.message }),
+        { status: 502, headers: { 'Content-Type': 'application/json' } }
       );
     }
   }

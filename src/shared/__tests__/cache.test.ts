@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll } from 'bun:test';
+import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll, spyOn } from 'bun:test';
 import {
   existsSync,
   mkdirSync,
@@ -9,6 +9,7 @@ import {
 } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import * as childProcess from 'child_process';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import {
@@ -281,6 +282,36 @@ describe('cache', () => {
       const mirrorDir = await seedMirrorFromFixture('github', 'owner/repo', fixture.url);
       const result = await ensureMirrorClone('github', 'owner/repo', noAuthFetch);
       expect(result).toBe(mirrorDir);
+    });
+
+    it('blobless clone still materializes a complete snapshot (no regression)', async () => {
+      // Drives the real ensureMirrorClone (which now passes --filter=blob:none).
+      // Over file:// the filter is ignored and git does a full clone, but this
+      // guards the end-to-end path: cloning then materializing must still produce
+      // every file at the revision, since consumers walk the snapshot tree.
+      const mirrorDir = await ensureMirrorClone('github', 'owner/repo', noAuthFetch, fixture.url);
+      const { sha } = await resolveRef(mirrorDir, { version: fixture.tag });
+      const snapshotDir = await materializeSnapshot(mirrorDir, 'github', 'owner/repo', sha);
+      expect(existsSync(join(snapshotDir, 'SKILL.md'))).toBe(true);
+      expect(existsSync(join(snapshotDir, 'README.md'))).toBe(true);
+    });
+
+    it('requests a blobless partial clone (--filter=blob:none right after --mirror)', async () => {
+      let capturedArgs: string[] = [];
+      const execFileSpy = spyOn(childProcess, 'execFile').mockImplementation(
+        ((_cmd: string, args: string[], _opts: object, cb: (err: null, result: { stdout: string; stderr: string }) => void) => {
+          capturedArgs = args;
+          cb(null, { stdout: '', stderr: '' });
+        }) as typeof childProcess.execFile
+      );
+
+      await ensureMirrorClone('github', 'owner/repo', noAuthFetch, 'https://example.com/owner/repo.git');
+
+      const mirrorIdx = capturedArgs.indexOf('--mirror');
+      expect(mirrorIdx).toBeGreaterThanOrEqual(0);
+      expect(capturedArgs[mirrorIdx + 1]).toBe('--filter=blob:none');
+
+      execFileSpy.mockRestore();
     });
   });
 });
