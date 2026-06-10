@@ -69,7 +69,7 @@ function loadFrontmatterYaml(text: string): unknown {
     const requoted = text.replace(
       /^([ \t]*[\w-]+[ \t]*:[ \t]*)(\*[^\n#]*?)(\s*)$/gm,
       (_m, prefix, value, trailing) =>
-        `${prefix}"${(value as string).replace(/"/g, '\\"')}"${trailing}`
+        `${prefix}"${(value as string).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"${trailing}`
     );
     if (requoted === text) return null;
     try {
