@@ -45,8 +45,8 @@ describe('git-cli', () => {
   it('runs git non-interactively so a missing credential never hangs the install', async () => {
     let capturedEnv: Record<string, string | undefined> = {};
     const execFileSpy = spyOn(childProcess, 'execFile').mockImplementation(
-      ((_cmd: string, _args: string[], opts: { env?: Record<string, string | undefined> }, cb: (err: null, result: { stdout: string; stderr: string }) => void) => {
-        capturedEnv = opts.env ?? {};
+      ((_cmd: string, _args: string[], opts: object, cb: (err: null, result: { stdout: string; stderr: string }) => void) => {
+        capturedEnv = (opts as { env?: Record<string, string | undefined> }).env ?? {};
         cb(null, { stdout: '', stderr: '' });
       }) as typeof childProcess.execFile
     );
@@ -66,8 +66,8 @@ describe('git-cli', () => {
   it('lets a caller-provided env override the non-interactive defaults', async () => {
     let capturedEnv: Record<string, string | undefined> = {};
     const execFileSpy = spyOn(childProcess, 'execFile').mockImplementation(
-      ((_cmd: string, _args: string[], opts: { env?: Record<string, string | undefined> }, cb: (err: null, result: { stdout: string; stderr: string }) => void) => {
-        capturedEnv = opts.env ?? {};
+      ((_cmd: string, _args: string[], opts: object, cb: (err: null, result: { stdout: string; stderr: string }) => void) => {
+        capturedEnv = (opts as { env?: Record<string, string | undefined> }).env ?? {};
         cb(null, { stdout: '', stderr: '' });
       }) as typeof childProcess.execFile
     );
