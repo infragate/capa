@@ -1,4 +1,4 @@
-import type { Task } from '../../ui';
+import type { Task, TaskWrapper } from '../../ui';
 import type { InstallCtx } from './context';
 import { getUnexposedToolIds } from './helpers/tool-warnings';
 
@@ -37,7 +37,14 @@ export function configureToolsTask(): Task<InstallCtx> {
         `${ctx.serverStatus.url}/api/projects/${ctx.projectId}/configure`,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            // Ask the server to stream NDJSON progress so we can render a
+            // live "X of Y validated · last-server done" counter instead of
+            // a static spinner. The server falls back to a single JSON
+            // body if it doesn't support streaming.
+            Accept: 'application/x-ndjson, application/json',
+          },
           body: JSON.stringify(ctx.capabilitiesToUse),
         },
       );
@@ -47,8 +54,13 @@ export function configureToolsTask(): Task<InstallCtx> {
         throw new Error(`Failed to configure project: ${errorText}`);
       }
 
-      task.output = 'parsing validation results…';
-      ctx.configureResult = await response.json();
+      const contentType = (response.headers.get('content-type') ?? '').toLowerCase();
+      if (contentType.includes('application/x-ndjson') && response.body) {
+        ctx.configureResult = await consumeConfigureStream(response.body, task);
+      } else {
+        task.output = 'parsing validation results…';
+        ctx.configureResult = await response.json();
+      }
 
       const result = ctx.configureResult as {
         toolValidation?: Array<{
@@ -126,4 +138,114 @@ export function configureToolsTask(): Task<InstallCtx> {
       }
     },
   };
+}
+
+/**
+ * Consume an NDJSON progress stream from `POST /api/projects/:id/configure`,
+ * updating the task spinner as the server fans out OAuth2 detection and
+ * tool validation. Returns the body of the terminal `result` event, which
+ * is the same shape the non-streaming endpoint returned in a single JSON
+ * payload — so callers don't need to know which path produced it.
+ */
+async function consumeConfigureStream(
+  body: ReadableStream<Uint8Array>,
+  task: TaskWrapper,
+): Promise<Record<string, unknown>> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let result: Record<string, unknown> | null = null;
+
+  const fmt = (state: ProgressState): string => {
+    const parts: string[] = [];
+    if (state.totalOauth2 > 0 && state.oauth2Done < state.totalOauth2) {
+      parts.push(`OAuth2 ${state.oauth2Done}/${state.totalOauth2}`);
+    }
+    if (state.totalTools > 0) {
+      parts.push(`${state.validated}/${state.totalTools} validated`);
+    }
+    if (state.lastServerId) {
+      parts.push(`${state.lastServerId} ✓`);
+    }
+    return parts.length > 0 ? parts.join(' · ') : 'validating…';
+  };
+
+  const state: ProgressState = {
+    totalOauth2: 0,
+    oauth2Done: 0,
+    totalTools: 0,
+    validated: 0,
+    lastServerId: '',
+  };
+
+  const handleLine = (line: string) => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    let event: any;
+    try {
+      event = JSON.parse(trimmed);
+    } catch {
+      return;
+    }
+    switch (event.type) {
+      case 'oauth2_init':
+        state.totalOauth2 = event.totalServers ?? 0;
+        if (state.totalOauth2 > 0) {
+          task.output = fmt(state);
+        }
+        return;
+      case 'oauth2_done':
+        state.oauth2Done = event.done ?? state.oauth2Done + 1;
+        task.output = fmt(state);
+        return;
+      case 'validation_init':
+        state.totalTools = event.totalTools ?? 0;
+        state.validated = event.commandTools ?? 0;
+        task.output = fmt(state);
+        return;
+      case 'server_done':
+        state.validated = event.validated ?? state.validated;
+        state.lastServerId = event.serverId ?? state.lastServerId;
+        task.output = fmt(state);
+        return;
+      case 'result': {
+        const { type: _type, ...rest } = event;
+        result = rest;
+        return;
+      }
+      case 'error':
+        throw new Error(event.error ?? 'configure failed');
+      default:
+        return;
+    }
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let newlineIdx: number;
+    while ((newlineIdx = buffer.indexOf('\n')) !== -1) {
+      const line = buffer.slice(0, newlineIdx);
+      buffer = buffer.slice(newlineIdx + 1);
+      handleLine(line);
+    }
+  }
+  buffer += decoder.decode();
+  if (buffer.length > 0) {
+    handleLine(buffer);
+  }
+
+  if (result === null) {
+    throw new Error('configure stream ended without a result event');
+  }
+  return result;
+}
+
+interface ProgressState {
+  totalOauth2: number;
+  oauth2Done: number;
+  totalTools: number;
+  validated: number;
+  lastServerId: string;
 }
