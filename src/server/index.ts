@@ -836,20 +836,31 @@ class CapaServer {
     const encoder = new TextEncoder();
     // Buffer events that arrive before `start()` has wired the controller —
     // synchronous emits from runProjectConfigure (e.g. `oauth2_init`) would
-    // otherwise be lost.
-    const pending: string[] = [];
+    // otherwise be lost. Once `streamClosed` flips (client disconnect or
+    // terminal write), both the buffer and any further emits are dropped,
+    // so a client that hangs up partway through a long configure run can't
+    // grow `pending` unboundedly for the remainder of the work.
     let controllerRef: ReadableStreamDefaultController<Uint8Array> | null = null;
-    const emit = (event: Record<string, unknown>) => {
-      const line = `${JSON.stringify(event)}\n`;
-      if (controllerRef) {
-        try {
-          controllerRef.enqueue(encoder.encode(line));
-        } catch {
-          // Stream already closed (client disconnected) — drop the event.
-        }
-      } else {
+    let streamClosed = false;
+    let pending: string[] = [];
+
+    const writeLine = (line: string): void => {
+      if (streamClosed) return;
+      if (!controllerRef) {
         pending.push(line);
+        return;
       }
+      try {
+        controllerRef.enqueue(encoder.encode(line));
+      } catch {
+        // Stream already closed underneath us (e.g. client disconnected) —
+        // mark closed so subsequent emits short-circuit instead of throwing.
+        streamClosed = true;
+      }
+    };
+
+    const emit = (event: Record<string, unknown>) => {
+      writeLine(`${JSON.stringify(event)}\n`);
     };
 
     // Kick off the work eagerly so the actual server-side latency starts
@@ -863,31 +874,35 @@ class CapaServer {
     const stream = new ReadableStream<Uint8Array>({
       start: (controller) => {
         controllerRef = controller;
-        for (const line of pending) {
-          controller.enqueue(encoder.encode(line));
-        }
-        pending.length = 0;
+        const buffered = pending;
+        pending = [];
+        for (const line of buffered) writeLine(line);
         work.then((outcome) => {
-          try {
-            if (outcome.ok) {
-              controller.enqueue(
-                encoder.encode(`${JSON.stringify({ type: 'result', ...outcome.body })}\n`),
-              );
-            } else {
-              apiLogger.failure(`Error: ${outcome.error?.message ?? outcome.error}`);
-              controller.enqueue(
-                encoder.encode(
-                  `${JSON.stringify({ type: 'error', error: outcome.error?.message ?? String(outcome.error) })}\n`,
-                ),
-              );
+          if (outcome.ok) {
+            writeLine(`${JSON.stringify({ type: 'result', ...outcome.body })}\n`);
+          } else {
+            apiLogger.failure(`Error: ${outcome.error?.message ?? outcome.error}`);
+            writeLine(
+              `${JSON.stringify({ type: 'error', error: outcome.error?.message ?? String(outcome.error) })}\n`,
+            );
+          }
+          if (!streamClosed) {
+            try {
+              controller.close();
+            } catch {
+              // Already closed — nothing to do.
             }
-          } finally {
-            controller.close();
+            streamClosed = true;
           }
         });
       },
       cancel: () => {
+        // Client disconnected. Drop the buffer and prevent any further
+        // emits from accumulating — `runProjectConfigure` may still be
+        // running for many seconds against slow MCP servers.
+        streamClosed = true;
         controllerRef = null;
+        pending = [];
       },
     });
 
