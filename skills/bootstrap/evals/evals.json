@@ -1,0 +1,19 @@
+{
+  "skill_name": "bootstrap",
+  "evals": [
+    {
+      "id": 0,
+      "name": "cursor-only-project",
+      "prompt": "I want to start using capa on this Cursor project. The project has Cursor-specific config in .cursor/ and a legacy .cursorrules file. Please bootstrap capa onto it: generate a capabilities.yaml that captures the MCP servers and rules I already have, move things into shared top-level directories where it makes sense, and update .gitignore. Don't run capa install at the end — just stop after the capabilities.yaml is written and tell me what you did. Work on a new branch.",
+      "expected_output": "capabilities.yaml at project root with discovered MCP servers (postgres, github) and the two .cursor/rules captured. A new branch capa/bootstrap (or similar) created. .gitignore updated. Secrets in env replaced with ${...} placeholders.",
+      "files": []
+    },
+    {
+      "id": 1,
+      "name": "claude-cursor-multi-provider",
+      "prompt": "Please bootstrap capa onto this project. It already has both Claude Code and Cursor configured — there's a sub-agent in .claude/agents/, a skill in .claude/skills/, MCP servers in both .claude/settings.json and .cursor/mcp.json (postgres is registered twice with the same config), hooks in .claude/settings.json, and rules in .cursor/. There's also a shell script the hooks reference. Generate the capabilities.yaml, move things into shared dirs, dedupe the postgres entry, and update .gitignore. Don't run capa install — stop once the file is written and tell me what you migrated. Work on a new branch.",
+      "expected_output": "capabilities.yaml at project root with: providers (claude-code, cursor), the local skill referenced via type:local, the sub-agent in subagents:, hooks translated to canonical events, MCP servers deduped (one postgres entry), the audit-shell.sh script referenced via source:type:local. A new branch created. .gitignore updated. Secrets replaced with ${...} placeholders.",
+      "files": []
+    }
+  ]
+}

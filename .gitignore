@@ -87,3 +87,7 @@ capa-docs
 # Web UI build artifacts
 web-ui/dist/
 web-ui/src/.generated/
+.claude/
+capabilities.yaml
+capabilities.lock
+skills/bootstrap-workspace/
