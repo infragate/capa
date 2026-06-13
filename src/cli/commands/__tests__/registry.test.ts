@@ -9,8 +9,10 @@ import {
   registryListCommand,
   registryRefreshCommand,
   registryRemoveCommand,
+  registrySearchCommand,
   registrySetEnabledCommand,
 } from '../registry';
+import { setFlags } from '../../ui';
 
 const VALID_ADAPTER = `export default {
   manifest: { id: 'demo-registry', name: 'Demo', capabilities: ['skills'] },
@@ -211,5 +213,252 @@ describe('registry CLI commands', () => {
     await expect(registryRemoveCommand('nope')).rejects.toThrow(/process\.exit\(1\)/);
     await expect(registryRefreshCommand('nope')).rejects.toThrow(/process\.exit\(1\)/);
     await expect(registrySetEnabledCommand('nope', true)).rejects.toThrow(/process\.exit\(1\)/);
+  });
+});
+
+const SEARCH_ADAPTER_SKILLS = `export default {
+  manifest: { id: 'search-one', name: 'Search One', capabilities: ['skills'] },
+  search: async ({ query }) => ({
+    items: [
+      { id: 'foo-skill', capability: 'skills', title: 'Foo Skill', description: 'A skill matching ' + (query ?? '') },
+      { id: 'bar-skill', capability: 'skills', title: 'Bar Skill', description: 'Another skill' },
+    ],
+  }),
+  view: async () => ({
+    id: 'foo-skill', capability: 'skills', title: 'Foo Skill', preview: '',
+    installSnippet: { id: 'foo-skill', type: 'inline', def: { content: '' } },
+  }),
+};`;
+
+const SEARCH_ADAPTER_PLUGINS = `export default {
+  manifest: { id: 'search-two', name: 'Search Two', capabilities: ['plugins'] },
+  search: async ({ query }) => ({
+    items: [
+      { id: 'baz-plugin', capability: 'plugins', title: 'Baz Plugin', description: 'A plugin matching ' + (query ?? '') },
+    ],
+  }),
+  view: async () => ({
+    id: 'baz-plugin', capability: 'plugins', title: 'Baz Plugin', preview: '',
+    installSnippet: { id: 'baz-plugin', type: 'inline', def: { content: '' } },
+  }),
+};`;
+
+const SEARCH_ADAPTER_THROWS = `export default {
+  manifest: { id: 'search-broken', name: 'Search Broken', capabilities: ['skills'] },
+  search: async () => { throw new Error('upstream exploded'); },
+  view: async () => ({
+    id: 'x', capability: 'skills', title: 'x', preview: '',
+    installSnippet: { id: 'x', type: 'inline', def: { content: '' } },
+  }),
+};`;
+
+describe('registry search CLI command', () => {
+  let tempDir: string;
+  let managedDir: string;
+  let dbPath: string;
+  let getDbPathSpy: ReturnType<typeof spyOn>;
+  let getManagedDirSpy: ReturnType<typeof spyOn>;
+  let exitSpy: ReturnType<typeof spyOn>;
+  let originalProcessExit: typeof process.exit;
+  let server: ReturnType<typeof Bun.serve>;
+  let consoleLogSpy: ReturnType<typeof spyOn>;
+  let stdoutSpy: ReturnType<typeof spyOn>;
+  let logs: string[];
+  let stdoutChunks: string[];
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), 'capa-registry-search-test-'));
+    managedDir = join(tempDir, 'registries-managed');
+    dbPath = join(tempDir, 'test.db');
+    getDbPathSpy = spyOn(config, 'getDatabasePath').mockReturnValue(dbPath);
+    getManagedDirSpy = spyOn(config, 'getManagedRegistriesDir').mockReturnValue(managedDir);
+
+    originalProcessExit = process.exit;
+    exitSpy = spyOn(process, 'exit').mockImplementation((code?: any) => {
+      throw new Error(`process.exit(${code ?? 0})`);
+    });
+
+    const skillsAdapter = join(tempDir, 'skills-adapter.ts');
+    const pluginsAdapter = join(tempDir, 'plugins-adapter.ts');
+    const brokenAdapter = join(tempDir, 'broken-adapter.ts');
+    writeFileSync(skillsAdapter, SEARCH_ADAPTER_SKILLS);
+    writeFileSync(pluginsAdapter, SEARCH_ADAPTER_PLUGINS);
+    writeFileSync(brokenAdapter, SEARCH_ADAPTER_THROWS);
+
+    server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const path = new URL(req.url).pathname;
+        if (path.endsWith('/skills-adapter.ts')) {
+          return new Response(readFileSync(skillsAdapter, 'utf-8'), {
+            headers: { 'content-type': 'application/typescript' },
+          });
+        }
+        if (path.endsWith('/plugins-adapter.ts')) {
+          return new Response(readFileSync(pluginsAdapter, 'utf-8'), {
+            headers: { 'content-type': 'application/typescript' },
+          });
+        }
+        if (path.endsWith('/broken-adapter.ts')) {
+          return new Response(readFileSync(brokenAdapter, 'utf-8'), {
+            headers: { 'content-type': 'application/typescript' },
+          });
+        }
+        return new Response('not found', { status: 404 });
+      },
+    });
+
+    logs = [];
+    consoleLogSpy = spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      logs.push(args.map((a) => (typeof a === 'string' ? a : String(a))).join(' '));
+    });
+    stdoutChunks = [];
+    stdoutSpy = spyOn(process.stdout, 'write').mockImplementation((chunk: any) => {
+      stdoutChunks.push(typeof chunk === 'string' ? chunk : chunk.toString());
+      return true;
+    });
+  });
+
+  afterEach(() => {
+    setFlags({ json: false, quiet: false, verbose: false });
+    server.stop();
+    consoleLogSpy.mockRestore();
+    stdoutSpy.mockRestore();
+    exitSpy.mockRestore();
+    process.exit = originalProcessExit;
+    getDbPathSpy.mockRestore();
+    getManagedDirSpy.mockRestore();
+    try {
+      rmSync(tempDir, { recursive: true, force: true });
+    } catch (error: any) {
+      if (error?.code !== 'EBUSY') throw error;
+    }
+  });
+
+  async function installSearchRegistries(): Promise<{ skills: string; plugins: string; broken: string }> {
+    const skillsUrl = `http://localhost:${server.port}/skills-adapter.ts`;
+    const pluginsUrl = `http://localhost:${server.port}/plugins-adapter.ts`;
+    const brokenUrl = `http://localhost:${server.port}/broken-adapter.ts`;
+    await registryAddCommand(skillsUrl, 'search-one', { type: 'url' });
+    await registryAddCommand(pluginsUrl, 'search-two', { type: 'url' });
+    await registryAddCommand(brokenUrl, 'search-broken', { type: 'url' });
+    return { skills: skillsUrl, plugins: pluginsUrl, broken: brokenUrl };
+  }
+
+  function resetCaptured(): void {
+    logs.length = 0;
+    stdoutChunks.length = 0;
+  }
+
+  function findJsonResults(): any {
+    // The shared logger writes adapter-load messages to stdout, so the search's
+    // JSON payload is one line among many. Pick the line that parses as a
+    // search payload (has a `results` key).
+    const lines = stdoutChunks.join('').split('\n').filter(Boolean);
+    for (const line of lines) {
+      try {
+        const obj = JSON.parse(line);
+        if (obj && typeof obj === 'object' && 'results' in obj) return obj;
+      } catch { /* not JSON */ }
+    }
+    throw new Error(`No search payload in stdout. Got:\n${lines.join('\n')}`);
+  }
+
+  it('searches a single registry by slug and prints a table', async () => {
+    await installSearchRegistries();
+    resetCaptured();
+
+    await registrySearchCommand('foo', { slug: 'search-one' });
+
+    const out = logs.join('\n');
+    expect(out).toContain('Name');
+    expect(out).toContain('Source');
+    expect(out).toContain('Type');
+    expect(out).toContain('Description');
+    expect(out).toContain('foo-skill');
+    expect(out).toContain('search-one');
+    expect(out).toContain('skill');
+    // Did not search the other registry.
+    expect(out).not.toContain('baz-plugin');
+  });
+
+  it('searches all enabled registries when no slug is provided', async () => {
+    await installSearchRegistries();
+    await registrySetEnabledCommand('search-broken', false);
+    resetCaptured();
+
+    await registrySearchCommand('match');
+
+    const out = logs.join('\n');
+    expect(out).toContain('foo-skill');
+    expect(out).toContain('baz-plugin');
+    // search-broken was disabled, so it should not appear as a failure row.
+    expect(out).not.toContain('search-broken');
+  });
+
+  it('emits a single JSON payload with --json', async () => {
+    await installSearchRegistries();
+    await registrySetEnabledCommand('search-broken', false);
+    setFlags({ json: true });
+    resetCaptured();
+
+    await registrySearchCommand('hit', { slug: 'search-one' });
+
+    const payload = findJsonResults();
+    expect(payload.query).toBe('hit');
+    expect(payload.total).toBe(2);
+    expect(payload.results).toHaveLength(2);
+    expect(payload.results[0]).toMatchObject({
+      id: 'foo-skill',
+      source: 'search-one',
+      type: 'skill',
+      capability: 'skills',
+    });
+  });
+
+  it('reports zero results without erroring out', async () => {
+    await installSearchRegistries();
+    await registrySetEnabledCommand('search-broken', false);
+    await registrySetEnabledCommand('search-two', false);
+    setFlags({ json: true });
+    resetCaptured();
+
+    // The skills adapter returns items regardless of query, so use a capability
+    // filter the registry does not declare to produce empty results deterministically.
+    await registrySearchCommand('anything', { slug: 'search-one', capability: 'plugins' });
+
+    const payload = findJsonResults();
+    expect(payload.total).toBe(0);
+    expect(payload.results).toEqual([]);
+  });
+
+  it('errors when the slug is unknown', async () => {
+    await installSearchRegistries();
+    await expect(registrySearchCommand('x', { slug: 'nope' })).rejects.toThrow(/process\.exit\(1\)/);
+  });
+
+  it('errors when the slug is disabled', async () => {
+    await installSearchRegistries();
+    await registrySetEnabledCommand('search-one', false);
+    await expect(registrySearchCommand('x', { slug: 'search-one' })).rejects.toThrow(/process\.exit\(1\)/);
+  });
+
+  it('errors when the query is empty', async () => {
+    await installSearchRegistries();
+    await expect(registrySearchCommand('   ')).rejects.toThrow(/process\.exit\(1\)/);
+  });
+
+  it('reports per-registry failures without dropping the rest of the results', async () => {
+    await installSearchRegistries();
+    setFlags({ json: true });
+    resetCaptured();
+
+    await registrySearchCommand('q');
+
+    const payload = findJsonResults();
+    expect(payload.failures).toBeDefined();
+    expect(payload.failures.some((f: any) => f.slug === 'search-broken')).toBe(true);
+    expect(payload.results.some((r: any) => r.source === 'search-one')).toBe(true);
+    expect(payload.results.some((r: any) => r.source === 'search-two')).toBe(true);
   });
 });
