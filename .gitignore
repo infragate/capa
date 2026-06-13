@@ -91,3 +91,4 @@ web-ui/src/.generated/
 capabilities.yaml
 capabilities.lock
 skills/bootstrap-workspace/
+skills/capabilities-manager-workspace/
