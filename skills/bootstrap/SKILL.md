@@ -235,6 +235,14 @@ If you see that warning, decide with the user: either add `requires:` entries to
 
 ## Wrap-up
 
+**Offer to remove the bootstrap skill itself from `capabilities.yaml`.** Bootstrap is one-shot: once the file exists, future capabilities edits go through `capabilities-manager`, not bootstrap. Leaving `- id: bootstrap` in `skills:` is harmless but installs an unused skill into every provider, adds a line to every diff, and confuses future readers ("why is the on-boarding skill still here?"). Ask the user:
+
+> Bootstrap is finished. Should I remove the `bootstrap` skill entry from `capabilities.yaml` so future runs of `capa install` skip it? (The `capa init` default re-adds it for new projects; this only affects this file.)
+
+If they say yes: delete the entry (and any trailing comment that explained it), re-run `capa install` to confirm the file still parses and to deregister the skill from providers, then commit. If they say no: leave it; some users keep it as a self-documenting marker.
+
+Do not auto-remove without asking. The skill never edits `capabilities.yaml` silently after Phase 5 — every change since gets the user's sign-off, and self-removal is no exception.
+
 End with a one-paragraph summary: which branch you're on, what was migrated, what tools got added (and which servers are pending auth), what to do next (commit, `capa restart`, open PR).
 
 ## What this skill never does
