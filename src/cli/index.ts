@@ -19,8 +19,10 @@ import {
   registryRemoveCommand,
   registryRefreshCommand,
   registrySetEnabledCommand,
+  registrySearchCommand,
 } from './commands/registry';
 import type { RegistrySourceType } from '../types/database';
+import type { RegistryCapability } from '../types/registry';
 import { checkForUpdates } from './utils/version-check';
 import { VERSION } from '../version';
 import { setFlags, ExitCode, error } from './ui';
@@ -228,6 +230,49 @@ if (process.argv[2] === '__server__') {
       .option('--no-cache', 'Bypass the on-disk repo cache when refreshing')
       .action(async (slug: string, opts: { cache?: boolean }) => {
         await registryRefreshCommand(slug, { noCache: opts.cache === false });
+      });
+
+    registryCmd
+      .command('search [slug] [query]')
+      .description('Search registries for skills and plugins (omit slug to search all enabled registries)')
+      .option('-q, --query <query>', 'Search query (alternative to positional)')
+      .option('-c, --capability <capability>', 'Restrict to one capability: skills or plugins')
+      .option('-l, --limit <n>', 'Max results per registry', (v) => Number.parseInt(v, 10))
+      .action(async (
+        slugArg: string | undefined,
+        queryArg: string | undefined,
+        opts: { query?: string; capability?: string; limit?: number },
+      ) => {
+        // Accept either positional form: `search <slug> <query>` or `search <query>`.
+        // The --query flag, if provided, always wins.
+        let slug: string | undefined;
+        let query: string | undefined = opts.query;
+        if (!query) {
+          if (queryArg !== undefined) {
+            slug = slugArg;
+            query = queryArg;
+          } else {
+            query = slugArg;
+          }
+        } else {
+          slug = slugArg ?? queryArg;
+        }
+
+        if (!query) {
+          error('A search query is required. Usage: capa registry search [slug] <query>');
+          process.exit(ExitCode.USER_ERROR);
+        }
+
+        let capability: RegistryCapability | undefined;
+        if (opts.capability) {
+          if (opts.capability !== 'skills' && opts.capability !== 'plugins') {
+            error(`Invalid --capability "${opts.capability}". Expected one of: skills, plugins.`);
+            process.exit(ExitCode.USER_ERROR);
+          }
+          capability = opts.capability;
+        }
+
+        await registrySearchCommand(query, { slug, capability, limit: opts.limit });
       });
 
     registryCmd
