@@ -1,0 +1,55 @@
+{
+  "skill_name": "capabilities-manager",
+  "evals": [
+    {
+      "id": 1,
+      "eval_name": "fresh-setup-with-mcp-server-and-secret",
+      "prompt": "I just installed capa. I want it to manage a Brave Search MCP server for me so my agent can do web research. Set me up from scratch — fresh capabilities.yaml, the server, a `search` tool, and a skill that uses it. I'll be using Cursor. How do I get my Brave API key into it?",
+      "expected_output": "A capabilities.yaml that includes providers (cursor), an MCP server with `${BraveApiKey}` placeholder, a tool referencing the server via @-prefix, and an inline skill that `requires` the tool. Plus a clear explanation of capa install's prompt flow OR the -e flag for .env loading.",
+      "files": [],
+      "assertions": [
+        "capabilities.yaml exists and is valid YAML",
+        "Declares `cursor` in providers (or omits providers with an explicit justification)",
+        "Includes a `servers:` entry with `type: mcp` for Brave Search",
+        "Includes a `tools:` entry with `type: mcp` that references the server via @-prefix",
+        "Includes a `skills:` entry whose `requires:` lists the tool in `@server.tool` form",
+        "Uses `${BraveApiKey}` (or similarly-named) placeholder — no literal API key embedded",
+        "Answer.md explains how secrets get loaded — web UI prompt or `-e` flag",
+        "Answer.md tells the user to run `capa install` after dropping in the file"
+      ]
+    },
+    {
+      "id": 2,
+      "eval_name": "add-github-skill-and-rule-with-pinning",
+      "prompt": "Add the `code-review` skill from `anthropics/skills` to my capabilities file, pinned to `v1.2.0`. Also add a typescript rule from `my-org/standards` — the file is at `rules/typescript.md` in that repo and I want it pinned to the same version.",
+      "expected_output": "A capabilities.yaml snippet adding a github skill with `@code-review:v1.2.0` (search form, no path collision) and a github rule with `::rules/typescript.md:v1.2.0` (exact path because the file location is given). Bonus if the response explains why @ vs :: was chosen.",
+      "files": [],
+      "assertions": [
+        "Skill entry has `type: github` and `def.repo` contains `anthropics/skills`",
+        "Skill entry uses the `@code-review` recursive-search form",
+        "Skill is pinned to `v1.2.0`",
+        "Rule entry has `type: github` and `def.repo` contains `my-org/standards`",
+        "Rule entry uses the `::rules/typescript.md` exact-path form",
+        "Rule is pinned to `v1.2.0`",
+        "Answer.md explicitly justifies the @ vs :: choice (and is correct)",
+        "Answer.md tells the user to run `capa install` after editing"
+      ]
+    },
+    {
+      "id": 3,
+      "eval_name": "hook-with-stdin-gotcha",
+      "prompt": "I want to log every shell command Claude runs to ~/.capa/audit.log, with a timestamp. I'm on Claude Code. Set up a hook for me.",
+      "expected_output": "A hooks entry using canonical event `beforeShell`. The skill should produce a solution that actually captures the command — either a local-source script that reads stdin with jq (correct), or it should at minimum NOT use `${...}` inline expecting it to interpolate the command (the common gotcha). Acknowledges providers pass tool input via stdin JSON, not env vars.",
+      "files": [],
+      "assertions": [
+        "Hook uses canonical event `beforeShell`",
+        "Solution actually captures the command text (not just a timestamp) via stdin/jq or equivalent",
+        "Does NOT use `${command}` / `${tool_input}` / `${...}` inline expecting it to substitute the shell command",
+        "Answer.md correctly explains that providers pass tool input via stdin JSON, not env vars",
+        "Answer.md warns about the `${...}` interpolation pitfall",
+        "If a `source: local` script is used, includes shebang + `jq` to read stdin",
+        "Appends to `~/.capa/audit.log` with timestamp + command"
+      ]
+    }
+  ]
+}
