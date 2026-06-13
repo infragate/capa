@@ -9,7 +9,8 @@ import {
 } from '../../shared/registries/installer';
 import { createAuthenticatedFetch } from '../../shared/authenticated-fetch';
 import type { RegistrySourceType } from '../../types/database';
-import { runTasks, header, footer, success, info, warn, error, type Task } from '../ui';
+import type { RegistryCapability, RegistryItemSummary } from '../../types/registry';
+import { runTasks, header, footer, success, info, warn, error, isJson, isVerbose, c, type Task } from '../ui';
 
 interface RegistryAddOptions {
   type?: RegistrySourceType;
@@ -330,4 +331,186 @@ export async function registrySetEnabledCommand(slug: string, enabled: boolean):
   } finally {
     try { db.close(); } catch {}
   }
+}
+
+const CAPABILITY_LABEL: Record<RegistryCapability, string> = {
+  skills: 'skill',
+  plugins: 'plugin',
+};
+
+export interface RegistrySearchOptions {
+  slug?: string;
+  capability?: RegistryCapability;
+  limit?: number;
+}
+
+interface SearchHit {
+  source: string;
+  type: string;
+  item: RegistryItemSummary;
+}
+
+export async function registrySearchCommand(
+  query: string,
+  options: RegistrySearchOptions = {},
+): Promise<void> {
+  const trimmedQuery = query?.trim();
+  if (!trimmedQuery) {
+    error('A search query is required.');
+    process.exit(1);
+  }
+
+  const settings = await loadSettings();
+  const db = new CapaDatabase(getDatabasePath(settings));
+
+  try {
+    const records = db.listRegistries().filter((r) => r.enabled && r.status === 'installed');
+
+    let targets = records;
+    if (options.slug) {
+      const match = records.find((r) => r.slug === options.slug);
+      if (!match) {
+        const existing = db.getRegistry(options.slug);
+        if (!existing) {
+          error(`Registry "${options.slug}" not found.`);
+        } else if (!existing.enabled) {
+          error(`Registry "${options.slug}" is disabled. Enable it with: capa registry enable ${options.slug}`);
+        } else {
+          error(`Registry "${options.slug}" is not installed (status: ${existing.status}). Try: capa registry refresh ${options.slug}`);
+        }
+        process.exit(1);
+      }
+      targets = [match];
+    }
+
+    if (targets.length === 0) {
+      if (isJson()) {
+        process.stdout.write(JSON.stringify({ query: trimmedQuery, results: [], total: 0 }) + '\n');
+        return;
+      }
+      info('No enabled registries to search. Add one with: capa registry add <source>');
+      return;
+    }
+
+    const manager = new RegistryManager(db);
+    const manifests = await manager.list();
+    const manifestBySlug = new Map(manifests.map((m) => [m.id, m]));
+
+    const hits: SearchHit[] = [];
+    const failures: { slug: string; capability: RegistryCapability; error: string }[] = [];
+
+    const calls: Promise<void>[] = [];
+    for (const r of targets) {
+      const manifest = manifestBySlug.get(r.slug);
+      if (!manifest) {
+        failures.push({ slug: r.slug, capability: 'skills', error: 'adapter not loaded' });
+        continue;
+      }
+      const capsToSearch: RegistryCapability[] = options.capability
+        ? manifest.capabilities.includes(options.capability) ? [options.capability] : []
+        : manifest.capabilities;
+
+      for (const capability of capsToSearch) {
+        calls.push(
+          manager
+            .search(r.slug, { capability, query: trimmedQuery, limit: options.limit })
+            .then((result) => {
+              for (const item of result.items) {
+                hits.push({ source: r.slug, type: CAPABILITY_LABEL[capability], item });
+              }
+            })
+            .catch((err: unknown) => {
+              const message = err instanceof Error ? err.message : String(err);
+              failures.push({ slug: r.slug, capability, error: message });
+            }),
+        );
+      }
+    }
+
+    await Promise.all(calls);
+
+    if (isJson()) {
+      const payload = {
+        query: trimmedQuery,
+        results: hits.map((h) => ({
+          id: h.item.id,
+          title: h.item.title,
+          description: h.item.description,
+          source: h.source,
+          type: h.type,
+          capability: h.item.capability,
+          author: h.item.author,
+          version: h.item.version,
+          tags: h.item.tags,
+          homepage: h.item.homepage,
+          updatedAt: h.item.updatedAt,
+        })),
+        total: hits.length,
+        failures: failures.length > 0 ? failures : undefined,
+      };
+      process.stdout.write(JSON.stringify(payload) + '\n');
+      return;
+    }
+
+    if (failures.length > 0) {
+      for (const f of failures) {
+        warn(`Registry "${f.slug}" (${f.capability}): ${f.error}`);
+      }
+    }
+
+    if (hits.length === 0) {
+      info(`No results for "${trimmedQuery}".`);
+      return;
+    }
+
+    if (isVerbose()) {
+      printVerboseResults(hits);
+    } else {
+      printSearchTable(hits);
+    }
+    info(`${hits.length} result${hits.length === 1 ? '' : 's'} for "${trimmedQuery}".`);
+  } finally {
+    try { db.close(); } catch {}
+  }
+}
+
+function printSearchTable(hits: SearchHit[]): void {
+  const rows: [string, string, string, string][] = hits.map((h) => [
+    h.item.id,
+    h.source,
+    h.type,
+    truncate(h.item.description ?? '', 60),
+  ]);
+  const headers: [string, string, string, string] = ['Name', 'Source', 'Type', 'Description'];
+  const widths = [0, 1, 2, 3].map((i) =>
+    Math.max(headers[i].length, ...rows.map((r) => r[i].length)),
+  );
+
+  const fmt = (cells: readonly string[]) =>
+    cells.map((cell, i) => i === cells.length - 1 ? cell : cell.padEnd(widths[i])).join('  ');
+
+  console.log(c.bold(fmt(headers)));
+  console.log(c.dim(widths.map((w) => '-'.repeat(w)).join('  ')));
+  for (const r of rows) console.log(fmt(r));
+}
+
+function printVerboseResults(hits: SearchHit[]): void {
+  for (const h of hits) {
+    console.log(c.bold(h.item.id) + c.dim(`  (${h.source} · ${h.type})`));
+    if (h.item.title && h.item.title !== h.item.id) console.log(`  ${h.item.title}`);
+    if (h.item.description) console.log(`  ${h.item.description}`);
+    const extras: string[] = [];
+    if (h.item.author) extras.push(`author: ${h.item.author}`);
+    if (h.item.version) extras.push(`version: ${h.item.version}`);
+    if (h.item.updatedAt) extras.push(`updated: ${h.item.updatedAt}`);
+    if (h.item.homepage) extras.push(h.item.homepage);
+    if (extras.length) console.log(c.dim('  ' + extras.join(' · ')));
+    if (h.item.tags && h.item.tags.length) console.log(c.dim(`  tags: ${h.item.tags.join(', ')}`));
+    console.log();
+  }
+}
+
+function truncate(s: string, max: number): string {
+  if (s.length <= max) return s;
+  return s.slice(0, Math.max(0, max - 1)) + '…';
 }
