@@ -1,142 +1,94 @@
 ---
 name: capabilities-manager
-description: Manages capabilities.yaml (or .json), CAPA CLI commands, skills, tools, MCP servers. Use when editing the capabilities file, installing or cleaning capabilities, or running tools via capa sh.
+description: Manage capa CLI configuration — `capabilities.yaml` / `capabilities.json`, skills, MCP servers, tools, hooks, sub-agents, rules, plugins, AGENTS.md / CLAUDE.md, security options, and tool exposure modes. Use whenever the user edits the capabilities file, runs any `capa` command (init, install, add, clean, sh, start/stop/restart/status, auth, upgrade, cache, registry), wires up an MCP server, adds a skill from GitHub / GitLab / a registry / a remote URL / a local path, configures secrets via `${VarName}` placeholders, installs lifecycle hooks, defines sub-agents, or troubleshoots a failed install. Use even when the user only names a fragment ("add a skill", "wire up brave search", "block this phrase in skills") without saying "capa" — if a `capabilities.yaml` or `capabilities.json` lives at the project root, this is almost certainly the right skill. If the project does NOT yet have a capabilities file, point at the `bootstrap` skill instead.
 ---
 
 # Capabilities Manager
 
-Manages agent capabilities with the CAPA CLI: define and install skills, configure MCP servers and tools, and control AGENTS.md/CLAUDE.md via the capabilities file.
+The capa CLI keeps a single source-of-truth file — `capabilities.yaml` (or `.json`) — that describes everything an agent can do in this project: skills, MCP servers, tools, hooks, sub-agents, rules, plugins, and per-provider files (`AGENTS.md`, `CLAUDE.md`). Editing that file and running the right `capa` command is the whole loop.
 
-**Detail** lives in `references/`: full command reference, schema, workflows, examples, and troubleshooting. Read the relevant file when you need step-by-step or YAML examples.
+This skill is the routing layer for that loop. The actual command reference, schema, full YAML examples, and troubleshooting tables live in `references/`. Load the one you need rather than re-deriving its contents — they are kept up to date and are the authoritative source.
 
-## When to Use
+## How capa works (one screen)
 
-Use this skill when:
-- User wants to initialize a new capabilities file
-- User needs to add or manage skills for an agent
-- User wants to configure MCP servers and tools
-- User asks about capabilities file structure or format
-- User needs to install or clean capabilities
-- User wants to find available skills from the skills.sh ecosystem
-- User needs to manage the CAPA server (start/stop/restart/status)
-- User wants to understand tool exposure modes (on-demand vs expose-all)
-- User needs to configure security (blocked phrases, character sanitization)
-- User wants to manage AGENTS.md or CLAUDE.md content (the `agents` section)
-- User wants to run tools from the command line or explore available tools with `capa sh`
-- User needs to define provider-specific rules (Cursor rules, Copilot rules, etc.)
-- User wants to add remote plugins that bundle skills, servers, and tools
-- User needs to configure sub-agents with scoped tools and instructions
-- User wants to install lifecycle hooks (e.g. Claude Code `PreToolUse`, Cursor `beforeShellExecution`)
-- User wants to manage the remote source cache or bypass it
+1. **The file is the source of truth.** `capabilities.yaml` declares what gets installed. Capa never auto-discovers anything from `.claude/`, `.cursor/`, etc. — if it's not in the file, capa won't manage it. (Onboarding an already-configured project is the `bootstrap` skill's job.)
+2. **`capa install` writes everything.** Skill directories under each provider, MCP client config (`.mcp.json`, `.cursor/mcp.json`, etc.), `AGENTS.md` / `CLAUDE.md` blocks, hook entries, rules — all rewritten from the file. Anything labeled `name: capa:<id>` is capa's; entries the user authored by hand are left alone.
+3. **`capa clean` removes only what capa wrote.** Safe to run; doesn't touch user-authored files or settings entries.
+4. **A background server at `localhost:5912`** handles credential prompts, tool execution (`capa sh`), and the MCP endpoints providers connect to. Started by `capa install`; lifecycle is `capa start | stop | restart | status`.
+5. **Secrets are `${VarName}` placeholders** anywhere in the file. Capa prompts for them via web UI on install, or loads from `.env` with `capa install -e`.
 
-## Core Concepts
+## Routing — load the reference that matches the task
 
-### Capabilities File
+| If the user is… | Read first | Then |
+|---|---|---|
+| Running a CLI command (init/install/add/clean/sh/server/auth/cache/registry/upgrade) or asking what flags exist | `references/commands.md` | Run the command and report results |
+| Editing the file — adding a skill, server, tool, hook, sub-agent, rule, plugin, agents block, security setting | `references/capabilities-schema.md` | Edit `capabilities.yaml`; run `capa install` |
+| Asking how to wire up a common pattern (web search, file ops, on-demand mode, plugins, etc.) | `references/workflows-and-examples.md` | Adapt the closest example |
+| Hitting an install error, credential prompt issue, server crash, missing tools, stale cache, TLS error, blocked phrase | `references/troubleshooting.md` | Apply the diagnostic flow listed for that symptom |
 
-The `capabilities.yaml` (or `capabilities.json`) file defines everything an agent can do. It has these main sections:
+The references are sized for selective reads (each ≤ ~600 lines, with table-of-contents at the top of the larger ones). Don't load all four if only one applies.
 
-1. **providers** (optional): MCP clients where skills are installed (e.g. `cursor`, `claude-code`). When omitted, `capa install` resolves providers via `--provider` flag, DB memory, or interactive prompt.
-2. **options**: Tool exposure (`toolExposure`), security (`security`), CLI prerequisites (`requiresCommands`)
-3. **skills**: Modular knowledge packages (when/how to use tools)
-4. **servers**: MCP servers (local subprocess or remote HTTP)
-5. **tools**: Executable capabilities (MCP or shell commands)
-6. **agents**: (Optional) Manages `AGENTS.md` / `CLAUDE.md` content in the project root
-7. **subagents**: (Optional) Named sub-agent configurations with filtered tool access
-8. **rules**: (Optional) Provider rules installed into each provider's rules directory or instructions file
-9. **hooks**: (Optional) Lifecycle hooks installed into each provider's hook config (canonical events translate per provider)
-10. **plugins**: (Optional) Remote plugin packages that bundle skills, servers, and tools
+## Pitfalls worth heading off
 
-### Skills vs Tools
+These are the mistakes an agent makes when it improvises the YAML instead of consulting the schema. Skim them before writing or editing a capabilities file.
 
-- **Skills**: Knowledge and context (non-executable markdown). Teach when and how to use capabilities.
-- **Tools**: Perform operations (API calls, commands, file ops).
+### `@` vs `::` in `def.repo`
 
-### Tool Exposure
+The repo string used by `skills`, `rules`, `plugins`, hook sources, and agent snippets has two grammars with different resolution semantics:
 
-- **expose-all** (default): All tools from all skills are exposed when the MCP client connects.
-- **on-demand**: Tools are exposed only after the agent calls `setup_tools(["skill-id"])`.
+- `owner/repo@<basename>` — capa **searches** the repo recursively for an entry matching `<basename>` (a directory containing `SKILL.md` for skills, a file with that basename for rules / snippets). The right-hand side must have no slashes.
+- `owner/repo::<exact/path>` — **no search**; the path must point exactly at the right thing from the repo root.
 
-### Security Options (`options.security`)
+Use `@` when the name is unique and stable. Use `::` when the file location is part of what the user told you (e.g. "the file is at `rules/typescript.md`") or when collisions are possible. Both forms accept pinning: `:v1.2.0` (tag/branch) or `#abc1234` (commit SHA).
 
-- **blockedPhrases**: Block install if any skill file contains a forbidden phrase. Inline list or `{ file: "./path.txt" }`. Omit to disable.
-- **allowedCharacters**: Extra regex character class beyond the always-preserved baseline (printable ASCII, tab, LF, CR). `""` = baseline only; `"[\\u00A0-\\uFFFF]"` = allow all Unicode. Omit to disable sanitization.
+### `${VarName}` is a **capa** placeholder, not a shell variable
 
-Only properties that are present are applied. If a blocked phrase is detected during `capa install`, installation stops and reports which skill and phrase caused the block.
+`${BraveApiKey}` in `capabilities.yaml` is resolved by capa at install time from its credential store or a `.env` file. It has nothing to do with the runtime environment of any spawned process. In particular: **providers do not export tool input as env vars to hooks** — each fired hook receives a JSON payload on **stdin**. If a hook needs to inspect the command being run, write a local script that reads stdin with `jq` (see the hook example in `references/capabilities-schema.md`), not an inline command with `${...}` placeholders expecting the command text to be interpolated.
 
-## Commands (Summary)
+### Tool naming: `@server.tool` vs plain id
 
-| Command | Purpose |
-|--------|--------|
-| `capa init [--format json\|yaml]` | Create a new capabilities file |
-| `capa install [-e [file]] [-p <id>] [--no-cache]` | Install skills, agents, rules, register servers; prompt for credentials |
-| `capa add <source> [--plugin\|--skill]` | Add a skill or plugin (GitHub, GitLab, registry, remote URL, or local path). `type: installed` / `type: plugin` skills are declared directly in `capabilities.yaml`. |
-| `capa clean` | Remove CAPA-installed skills, rules, and agent blocks |
-| `capa sh [group] [subcommand] [--arg value]` | List or run tools; unknown commands pass through to the OS shell |
-| `capa start \| stop \| restart \| status` | Manage the CAPA server |
-| `capa auth [provider]` | Authenticate with Git providers (github.com, gitlab.com, etc.) |
-| `capa upgrade` | Upgrade capa to the latest version |
-| `capa cache` | Show cache stats; `capa cache clean` to wipe |
+- **MCP tools** are referenced from skills as `@server-id.tool-id` (e.g. `@brave.search`). The `@` distinguishes them from command tools.
+- **Command tools** use the plain tool id (`hello_world`, `deploy_service`).
+- In `capa sh`, both are slugified to kebab-case (`@gitlab.list_merge_requests` → `capa sh gitlab list-merge-requests`).
 
-**Full command reference**: See `references/commands.md`.
+When binding tools to skills via `requires:`, mismatching the `@` prefix is the #1 cause of "tool not found" at install time.
 
-## Capabilities File Structure (Summary)
+### Tool exposure mode shapes everything downstream
 
-- **Providers**: Optional. When omitted, resolved at install time via `--provider` flag → DB memory → interactive prompt.
-- **Skills**: Seven types — `inline`, `github`, `gitlab`, `remote`, `local`, `installed`, `plugin`. Each has `id`, `type`, `def` (and for inline, `content`; for others, `repo`/`url`/`path` plus optional `requires`, `description`). The `plugin` type binds tools to a skill shipped by a configured plugin.
-- **Servers**: `type: mcp` with `def.cmd`/`args`/`env` (local) or `def.url`/`headers` (remote). Optional `tlsSkipVerify: true`, `description`.
-- **Tools**: `type: mcp` (def: `server`, `tool`, optional `defaults`) or `type: command` (def: `run.cmd`/`args`, optional `init`, `group`, `description`).
-- **Agents**: Optional `base` (ref or type+def) and `additional` list (inline, remote, github, gitlab snippets). Managed files: `AGENTS.md` always; `CLAUDE.md` when a Claude provider is present.
-- **Subagents**: Named sub-agent configurations with filtered tool access, per-provider MCP endpoints and agent files.
-- **Rules**: Types `inline`, `remote`, `github`, `gitlab`. Each has `id`, optional `providers`, `appliesTo` (glob), `alwaysApply`, `description`. Installed as files (Cursor `.cursor/rules/`) or folded into instructions files.
-- **Hooks**: A canonical event name (e.g. `beforeShell`, `afterFileEdit`, `sessionStart`) plus a `command` (or `prompt`) and optional `source` (inline / remote / github / gitlab / local). capa translates each hook to the provider-specific event name and edits the provider's hooks config (`.claude/settings.json`, `.cursor/hooks.json`, `.codex/config.toml`, `.gemini/settings.json`) with `name: capa:<id>` tags so it can update or remove its own entries without touching user-authored ones.
-- **Plugins**: Remote packages (`type: github` or `type: gitlab`, with `def.repo` + optional `def.subpath`) that bundle skills, servers, and tools from a provider manifest.
+`options.toolExposure` has three values and they change what `capa install` writes:
 
-**Full schema and YAML examples**: See `references/capabilities-schema.md`.
+- `expose-all` (default): every tool any active skill requires shows up in the MCP `tools/list`. Simplest.
+- `on-demand`: only `setup_tools` and `call_tool` are exposed at startup; the agent activates skills on demand. Keeps the active toolset small for long contexts.
+- `none`: capa writes **no** project-local MCP config files at all. The agent is expected to invoke tools via `capa sh <group> <tool>` instead. Useful when policy forbids per-project `.mcp.json` edits.
 
-## Workflows and Examples
+Pick deliberately — switching modes later cleans up old entries on the next install but the choice colours the install output.
 
-Common flows: starting a new project (`capa init` → edit file → `capa install` → `capa status`), adding a community or local skill (`capa add` or edit YAML then install), creating an inline skill, using `capa sh` to run tools, and managing the server lifecycle.
+## Conventions that prevent surprises
 
-**Step-by-step workflows and full YAML examples** (web research, file ops, mixed tools, on-demand loading, CLI prerequisites): See `references/workflows-and-examples.md`.
+- **Keep secrets out of the file.** Always use `${VarName}` placeholders; never paste literal API keys. Capa stores values per-project in `~/.capa/capa.db`.
+- **Set `requires:` on every skill.** Skills without `requires:` get no tools exposed under `on-demand` and clutter the install warnings under `expose-all`. The `requires:` list is also how capa wires the dependency graph.
+- **Prefer `@` for skill repos, `::` for rule / snippet paths.** Skill basenames are usually unique inside a repo; rule files have known paths and you want the install to fail loudly if the file ever moves.
+- **Don't repeat the server name in tool ids.** A tool under `@gitlab` should be `id: search_projects`, not `id: gitlab_search_projects` — capa already groups by server, so the prefix becomes noise (`capa sh gitlab gitlab-search-projects`).
+- **Test the install loop after every change.** `capa install` is idempotent and surfaces every problem (missing CLI, blocked phrase, unreachable remote, OAuth probe failure). Run it; don't infer.
 
-## Best Practices
+## After making changes
 
-1. **Organize by domain**: Group related skills and tools (e.g. web research + search tools).
-2. **Use descriptive IDs**: Prefer kebab-case like `web-researcher`, `file-manager`.
-3. **Document tool requirements**: Always set `requires` on skills.
-4. **Secure credentials**: Use `${VarName}` placeholders; never commit secrets. CAPA prompts via web UI or `-e` .env.
-5. **Test incrementally**: After changes, run `capa install`, then `capa restart`, and verify in the MCP client.
-6. **Keep skills focused**: One clear purpose per skill.
-7. **Prefer community skills**: Check skills.sh / vercel-labs/agent-skills before writing custom ones.
+Most edits follow the same cycle:
 
-## Troubleshooting
+1. Edit `capabilities.yaml`.
+2. `capa install` — installs/updates everything, prompts for any new credentials.
+3. `capa restart` — only needed if you changed server commands, server env vars, or tool exposure mode. Skill content, rule content, hook bodies, and agents-block content all take effect on the next install without a restart.
+4. Verify in the client (Cursor reloads; Claude Code reloads on next session start) or with `capa sh <group> <tool> --help` to confirm the tool is registered.
 
-If the server won’t start, skills don’t appear, credentials don’t prompt, an MCP server crashes, install is blocked by a forbidden phrase, you see TLS or token-auth errors, or tools are not found — use the diagnostic steps and resolutions in **`references/troubleshooting.md`**.
-
-## Tools
-
-This skill does not require any tools. It provides context and guidance
-for using the `capa` CLI directly from the terminal.
+If an install fails or behaves unexpectedly, jump directly to `references/troubleshooting.md` — the symptoms there are indexed by what the user actually sees in the terminal.
 
 ## References
 
-| Topic | File |
-|-------|------|
-| Commands (init, install, add, clean, sh, server, auth, upgrade, cache) | `references/commands.md` |
-| Capabilities schema (skills, servers, tools, rules, plugins, security, agents, subagents) | `references/capabilities-schema.md` |
-| Workflows and full examples | `references/workflows-and-examples.md` |
-| Troubleshooting | `references/troubleshooting.md` |
+| Need | File | Notes |
+|---|---|---|
+| Every `capa` command and flag, with concrete invocations | `references/commands.md` | Includes `.env` flow, provider resolution rules, registry adapters |
+| Field-by-field schema for skills / servers / tools / hooks / sub-agents / rules / plugins / security / `agents` | `references/capabilities-schema.md` | Includes the `@` vs `::` table and the tool exposure matrix |
+| End-to-end YAML examples for the most common patterns | `references/workflows-and-examples.md` | Web research, file ops, on-demand loading, plugins, optional providers |
+| Symptoms → diagnoses for install / server / credential / tool failures | `references/troubleshooting.md` | Indexed by the error message the user sees |
 
-## Additional Resources
-
-- **CAPA GitHub**: https://github.com/infragate/capa
-- **Skills.sh Ecosystem**: https://skills.sh
-- **MCP Protocol**: https://modelcontextprotocol.io
-- **Community Skills**: https://github.com/vercel-labs/agent-skills
-
-## Notes
-
-- CAPA is compatible with the skills.sh standard. Skills are installed as directories with SKILL.md.
-- Server runs at `http://localhost:5912`. Credentials in `~/.capa/capa.db`. Logs in `~/.capa/logs/`.
-- Tool naming: MCP tools are `server_id.tool_id`; in skills use `@server_id.tool_id`; command tools use plain ID. `capa sh` slugifies to kebab-case.
-- OAuth2 probe is skipped for servers that already have an `Authorization` header. Use `tlsSkipVerify: true` for trusted self-signed servers. `capa sh` is non-interactive (one command per invocation).
+External: [CAPA on GitHub](https://github.com/infragate/capa) · [skills.sh registry](https://skills.sh) · [MCP protocol](https://modelcontextprotocol.io)
