@@ -83,6 +83,15 @@ export function createDefaultCapabilities(): Capabilities {
           description: 'Guide for managing capabilities with capa CLI',
         },
       },
+      {
+        id: 'bootstrap',
+        type: 'github',
+        def: {
+          repo: 'infragate/capa@bootstrap',
+          description:
+            'Capify an existing project: discover skills/rules/hooks/MCP servers across all providers and synthesize capabilities.yaml',
+        },
+      },
     ],
     servers: [],
     tools: [],

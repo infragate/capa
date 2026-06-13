@@ -138,10 +138,19 @@ describe('capabilities', () => {
 
     it('should include default skills', () => {
       const capabilities = createDefaultCapabilities();
-      
+
       expect(capabilities.skills.length).toBeGreaterThan(0);
       const abilityManager = capabilities.skills.find(s => s.id === 'capabilities-manager');
       expect(abilityManager).toBeDefined();
+    });
+
+    it('should include the bootstrap skill so new projects can capify existing setups', () => {
+      const capabilities = createDefaultCapabilities();
+
+      const bootstrap = capabilities.skills.find(s => s.id === 'bootstrap');
+      expect(bootstrap).toBeDefined();
+      expect(bootstrap?.type).toBe('github');
+      expect((bootstrap?.def as { repo?: string })?.repo).toBe('infragate/capa@bootstrap');
     });
 
     it('should start with an empty tools array', () => {
