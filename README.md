@@ -19,7 +19,7 @@
 CAPA is the package manager for AI coding agents. Declare your skills, tools, rules, sub-agents, MCP servers, and plugins once in `capabilities.yaml`, run `capa install`, and CAPA writes them into Cursor, Claude Code, Codex, Windsurf, GitHub Copilot, and 35+ other agents.
 
 
-https://github.com/user-attachments/assets/81ea41ae-96f6-4861-8168-d767130a79a2
+https://github.com/user-attachments/assets/98442d19-44c9-43e6-b2c2-88156b189d5e
 
 
 
