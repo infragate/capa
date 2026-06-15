@@ -45,6 +45,40 @@ export function collectPluginSkillWarnings(capabilities: Capabilities): string[]
   return warnings;
 }
 
+// Warn for each subagent that references a skill or tool id that is not
+// declared in the top-level `skills` / `tools` arrays. Today these typos
+// pass silently: rendered files include junk bullets and the subagent loses
+// access to the tool at runtime with no signal. One line per typo, so a
+// `general-data-analyiss` mistake is obvious in install output.
+export function collectSubagentRefWarnings(capabilities: Capabilities): string[] {
+  const subagents = capabilities.subagents ?? [];
+  if (subagents.length === 0) return [];
+
+  const knownSkillIds = new Set(capabilities.skills.map((s) => s.id));
+  const knownToolIds = new Set(capabilities.tools.map((t) => t.id));
+
+  const warnings: string[] = [];
+  for (const sa of subagents) {
+    for (const skillId of sa.skills ?? []) {
+      if (!knownSkillIds.has(skillId)) {
+        warnings.push(
+          `Subagent "${sa.id}" references unknown skill "${skillId}". ` +
+          `Add it under top-level \`skills\` or remove it from the subagent.`,
+        );
+      }
+    }
+    for (const toolId of sa.tools ?? []) {
+      if (!knownToolIds.has(toolId)) {
+        warnings.push(
+          `Subagent "${sa.id}" references unknown tool "${toolId}". ` +
+          `Add it under top-level \`tools\` or remove it from the subagent.`,
+        );
+      }
+    }
+  }
+  return warnings;
+}
+
 // Warn when a plugin server contributes tools but no user-declared tool
 // references it. An unreferenced plugin server is almost always a misconfig.
 export function collectUnreferencedPluginServerWarnings(capabilities: Capabilities): string[] {
