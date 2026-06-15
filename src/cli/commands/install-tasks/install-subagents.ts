@@ -13,13 +13,28 @@ import type { Capabilities } from '../../../types/capabilities';
 import type { InstallCtx } from './context';
 
 /**
+ * Strip a single pair of matching surrounding quotes (either `"` or `'`).
+ * Conservative on purpose: `He said "hi"` keeps both quotes; only `"foo"` or
+ * `'foo'` are unwrapped.
+ */
+function stripSurroundingQuotes(value: string): string {
+  if (value.length < 2) return value;
+  const first = value[0];
+  if ((first === '"' || first === "'") && value[value.length - 1] === first) {
+    return value.slice(1, -1);
+  }
+  return value;
+}
+
+/**
  * For each skill referenced by the active capabilities, read its installed
- * SKILL.md from the first provider whose `skillsDir` contains it, parse the
- * frontmatter, and return a `skillId → description` map.
+ * SKILL.md from the first provider whose `skillsDir` contains a valid copy,
+ * parse the frontmatter, and return a `skillId → description` map.
  *
  * Skills with no SKILL.md on disk (e.g. `installed` / `plugin` types) or a
  * SKILL.md missing the `description` field are silently absent from the map;
- * the renderer falls back to printing the bare skill id.
+ * the renderer falls back to printing the bare skill id. A malformed SKILL.md
+ * in one provider's dir does NOT block us from trying another provider's copy.
  */
 function buildSkillDescriptions(
   projectPath: string,
@@ -35,14 +50,18 @@ function buildSkillDescriptions(
       if (!existsSync(skillMdPath)) continue;
       try {
         const { metadata } = parseSkillMd(readFileSync(skillMdPath, 'utf-8'));
-        const desc = metadata.description?.replace(/^["']|["']$/g, '').trim();
+        const desc = metadata.description ? stripSurroundingQuotes(metadata.description).trim() : '';
         if (desc) {
           map.set(skill.id, desc);
         }
+        // Successful parse — stop searching providers for this skill, whether
+        // or not a description was present (all providers receive the same
+        // SKILL.md content from install, so the answer is consistent).
+        break;
       } catch {
-        // Malformed SKILL.md — skip silently; the renderer falls back to id-only.
+        // Malformed SKILL.md — try the next provider instead of giving up
+        // (another provider's copy might be intact).
       }
-      break;
     }
   }
   return map;
