@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from 'fs';
+import { join } from 'path';
 import type { Task } from '../../ui';
 import { getProvider } from '../../../shared/providers';
 import {
@@ -6,7 +8,45 @@ import {
   purgeCursorSubAgentMCPEntries,
 } from '../../utils/mcp-client-manager';
 import { installSubAgentInstructions, removeSubAgentInstructions } from '../../utils/agents-file';
+import { parseSkillMd } from '../../../shared/skill-md';
+import type { Capabilities } from '../../../types/capabilities';
 import type { InstallCtx } from './context';
+
+/**
+ * For each skill referenced by the active capabilities, read its installed
+ * SKILL.md from the first provider whose `skillsDir` contains it, parse the
+ * frontmatter, and return a `skillId → description` map.
+ *
+ * Skills with no SKILL.md on disk (e.g. `installed` / `plugin` types) or a
+ * SKILL.md missing the `description` field are silently absent from the map;
+ * the renderer falls back to printing the bare skill id.
+ */
+function buildSkillDescriptions(
+  projectPath: string,
+  capabilities: Capabilities,
+  providers: string[]
+): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const skill of capabilities.skills ?? []) {
+    for (const pid of providers) {
+      const provider = getProvider(pid);
+      if (!provider) continue;
+      const skillMdPath = join(projectPath, provider.skillsDir, skill.id, 'SKILL.md');
+      if (!existsSync(skillMdPath)) continue;
+      try {
+        const { metadata } = parseSkillMd(readFileSync(skillMdPath, 'utf-8'));
+        const desc = metadata.description?.replace(/^["']|["']$/g, '').trim();
+        if (desc) {
+          map.set(skill.id, desc);
+        }
+      } catch {
+        // Malformed SKILL.md — skip silently; the renderer falls back to id-only.
+      }
+      break;
+    }
+  }
+  return map;
+}
 
 export function installSubagentsTask(): Task<InstallCtx> {
   return {
@@ -52,6 +92,15 @@ export function installSubagentsTask(): Task<InstallCtx> {
         );
       });
 
+      // Built once before the loop — by the time we run, installSkillsTask
+      // has already materialised every SKILL.md under each provider's
+      // skillsDir, so we can pull descriptions from frontmatter directly.
+      const skillDescriptions = buildSkillDescriptions(
+        ctx.projectPath,
+        ctx.capabilitiesToUse,
+        providers
+      );
+
       const total = (needsPurge ? 1 : 0) + removedAgents.length + currentSubagents.length;
       let step = 0;
 
@@ -88,7 +137,13 @@ export function installSubagentsTask(): Task<InstallCtx> {
         // describe the agent's purpose. The agent file itself encodes the
         // expected MCP server key, but missing entries simply mean those
         // tools won't be available to that sub-agent (an explicit choice).
-        installSubAgentInstructions(ctx.projectPath, subAgent, ctx.capabilitiesToUse, providers);
+        installSubAgentInstructions(
+          ctx.projectPath,
+          subAgent,
+          ctx.capabilitiesToUse,
+          providers,
+          skillDescriptions
+        );
         ctx.db.upsertSubAgent(ctx.projectId, subAgent.id);
         ctx.added++;
       }

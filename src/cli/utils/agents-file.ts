@@ -11,7 +11,10 @@ import {
   reportBlockedPhraseAndExit,
 } from '../../shared/skill-security';
 import { getProvider, getAllProviders } from '../../shared/providers';
-import { buildSubAgentFile as buildSubAgentFileContent } from '../../shared/providers/handlers';
+import {
+  buildSubAgentFile as buildSubAgentFileContent,
+  renderSubAgentSkillsAndTools,
+} from '../../shared/providers/handlers';
 import type { AuthenticatedFetch } from '../../shared/authenticated-fetch';
 import { fetchRepoFile, fetchTextFile, type RepoSnapshotResolver } from '../../shared/repo-file';
 import { parseGitRawUrl } from '../../shared/git-providers/registry';
@@ -450,7 +453,9 @@ function writesSubAgentInstructionsContext(provider: NonNullable<ReturnType<type
 function upsertSubAgentInstructionsSnippet(
   projectPath: string,
   provider: NonNullable<ReturnType<typeof getProvider>>,
-  subAgent: SubAgent
+  subAgent: SubAgent,
+  capabilities: Capabilities,
+  skillDescriptions: Map<string, string>
 ): void {
   if (!provider.instructions) return;
 
@@ -461,7 +466,8 @@ function upsertSubAgentInstructionsSnippet(
     ...(subAgent.description ? ['', subAgent.description] : []),
     '',
     `**MCP server key:** \`${mcpServerKey}\``,
-    `**Skills:** ${subAgent.skills.length > 0 ? subAgent.skills.join(', ') : '(none)'}`,
+    '',
+    ...renderSubAgentSkillsAndTools(subAgent, capabilities, skillDescriptions),
   ];
   if (subAgent.instructions) {
     bodyLines.push('', subAgent.instructions.trimEnd());
@@ -496,7 +502,8 @@ function writeSubAgentFile(
   projectPath: string,
   providerId: string,
   subAgent: SubAgent,
-  capabilities: Capabilities
+  capabilities: Capabilities,
+  skillDescriptions: Map<string, string>
 ): void {
   const provider = getProvider(providerId);
   if (!provider?.subagents) return;
@@ -506,7 +513,7 @@ function writeSubAgentFile(
   mkdirSync(agentsDir, { recursive: true });
 
   const filePath = join(agentsDir, `${subAgent.id}${sa.extension}`);
-  const content = buildSubAgentFileContent(provider, subAgent, capabilities);
+  const content = buildSubAgentFileContent(provider, subAgent, capabilities, skillDescriptions);
   writeFileSync(filePath, content, 'utf8');
 
   taskLog(`  ✓ ${sa.dir}/${subAgent.id}${sa.extension} written`);
@@ -540,17 +547,24 @@ export function installSubAgentInstructions(
   projectPath: string,
   subAgent: SubAgent,
   capabilities: Capabilities,
-  providers: string[]
+  providers: string[],
+  skillDescriptions: Map<string, string> = new Map()
 ): void {
   for (const pid of providers) {
     const provider = getProvider(pid);
     if (!provider) continue;
 
     if (provider.subagents) {
-      writeSubAgentFile(projectPath, pid, subAgent, capabilities);
+      writeSubAgentFile(projectPath, pid, subAgent, capabilities, skillDescriptions);
     }
     if (writesSubAgentInstructionsContext(provider)) {
-      upsertSubAgentInstructionsSnippet(projectPath, provider, subAgent);
+      upsertSubAgentInstructionsSnippet(
+        projectPath,
+        provider,
+        subAgent,
+        capabilities,
+        skillDescriptions
+      );
     }
   }
 }

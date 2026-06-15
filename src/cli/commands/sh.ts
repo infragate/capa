@@ -3,6 +3,7 @@ import { parseCapabilitiesFile } from '../../shared/capabilities';
 import { getServerStatus } from '../utils/server-manager';
 import type { Capabilities } from '../../types/capabilities';
 import { getQualifiedToolName } from '../../types/capabilities';
+import { slugify } from '../../shared/slug';
 
 interface ShellToolInfo {
   id: string;
@@ -154,15 +155,7 @@ class ShellRegistry {
   }
 }
 
-export function slugify(name: string): string {
-  return name
-    .replace(/([a-z])([A-Z])/g, '$1-$2')
-    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1-$2')
-    .toLowerCase()
-    .replace(/[_\s]+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '');
-}
+export { slugify };
 
 export function parseInlineArgs(tokens: string[]): Record<string, string> {
   const result: Record<string, string> = {};
