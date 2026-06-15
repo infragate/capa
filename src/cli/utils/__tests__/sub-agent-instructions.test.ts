@@ -6,9 +6,10 @@ import { installSubAgentInstructions, removeSubAgentInstructions } from '../agen
 import type { SubAgent, Capabilities, Tool } from '../../../types/capabilities';
 
 // Minimal capabilities fixture with two tools
-const makeTool = (id: string, serverId: string): Tool => ({
+const makeTool = (id: string, serverId: string, description?: string): Tool => ({
   id,
   type: 'mcp',
+  ...(description ? { description } : {}),
   def: { server: `@${serverId}`, tool: id },
 });
 
@@ -17,10 +18,10 @@ const capabilities: Capabilities = {
   skills: [],
   servers: [],
   tools: [
-    makeTool('search_cdk_docs', 'aws-iac'),
-    makeTool('validate_cfn', 'aws-iac'),
+    makeTool('search_cdk_docs', 'aws-iac', 'Search CDK docs'),
+    makeTool('validate_cfn', 'aws-iac', 'Validate a CloudFormation template'),
     makeTool('get_lambda_guidance', 'aws-serverless'),
-    makeTool('sam_logs', 'aws-serverless'),
+    makeTool('sam_logs', 'aws-serverless', 'Tail SAM logs'),
   ],
 };
 
@@ -75,6 +76,67 @@ describe('installSubAgentInstructions', () => {
     expect(agentFile).toContain('aws-iac.search_cdk_docs');
     expect(agentFile).toContain('aws-iac.validate_cfn');
     expect(agentFile).not.toContain('aws-serverless');
+  });
+
+  it('renders tools as dashed bullets with both qualified and capa-sh forms and description', () => {
+    const subAgent: SubAgent = {
+      id: 'infra-agent',
+      description: '',
+      skills: [],
+      tools: ['search_cdk_docs', 'validate_cfn'],
+    };
+
+    installSubAgentInstructions(tempDir, subAgent, capabilities, ['claude-code']);
+
+    const agentFile = readClaudeAgent('infra-agent');
+    // capa sh form kebab-cases each segment (matches the shell registry's slugify).
+    expect(agentFile).toContain(
+      '- `aws-iac.search_cdk_docs` (`capa sh aws-iac search-cdk-docs`) — Search CDK docs'
+    );
+    expect(agentFile).toContain(
+      '- `aws-iac.validate_cfn` (`capa sh aws-iac validate-cfn`) — Validate a CloudFormation template'
+    );
+  });
+
+  it('renders skills as dashed bullets with frontmatter descriptions from the map', () => {
+    const subAgent: SubAgent = {
+      id: 'infra-agent',
+      description: '',
+      skills: ['infragate-iac', 'infragate-extras'],
+      tools: [],
+    };
+    const skillDescriptions = new Map([
+      ['infragate-iac', 'CDK and Terraform helpers'],
+    ]);
+
+    installSubAgentInstructions(
+      tempDir,
+      subAgent,
+      capabilities,
+      ['claude-code'],
+      skillDescriptions
+    );
+
+    const agentFile = readClaudeAgent('infra-agent');
+    expect(agentFile).toContain('- `infragate-iac` — CDK and Terraform helpers');
+    // No description provided → bare id without em-dash.
+    expect(agentFile).toContain('- `infragate-extras`');
+    expect(agentFile).not.toContain('infragate-extras —');
+  });
+
+  it('renders "(none)" placeholders when skills or tools are empty', () => {
+    const subAgent: SubAgent = {
+      id: 'infra-agent',
+      description: '',
+      skills: [],
+      tools: [],
+    };
+
+    installSubAgentInstructions(tempDir, subAgent, capabilities, ['claude-code']);
+
+    const agentFile = readClaudeAgent('infra-agent');
+    expect(agentFile).toContain('**Skills:**\n- (none)');
+    expect(agentFile).toContain('**Tools:**\n- (none)');
   });
 
   it('includes custom instructions in the agent file body', () => {
