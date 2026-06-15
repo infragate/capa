@@ -8,6 +8,7 @@ import type {
 } from '../../types/providers';
 import type { SubAgent, Capabilities } from '../../types/capabilities';
 import { getQualifiedToolName } from '../../types/capabilities';
+import { slugify } from '../slug';
 import type { Rule } from '../../types/rules';
 
 /**
@@ -63,11 +64,16 @@ export function buildRuleFrontmatter(
  * Build the complete file content for a sub-agent definition.
  * Interprets the provider's `subagents` descriptor to produce either
  * markdown-frontmatter or TOML output.
+ *
+ * `skillDescriptions` maps skill id → description (sourced from the skill's
+ * SKILL.md frontmatter at install time). Optional; missing entries render
+ * the bare skill id without an em-dash.
  */
 export function buildSubAgentFile(
   provider: ProviderIntegration,
   subAgent: SubAgent,
-  capabilities: Capabilities
+  capabilities: Capabilities,
+  skillDescriptions: Map<string, string> = new Map()
 ): string {
   const sa = provider.subagents!;
   const mcpServerKey = `capa-${subAgent.id}`;
@@ -78,33 +84,102 @@ export function buildSubAgentFile(
       sa.perAgentToolScope,
       subAgent,
       capabilities,
-      mcpServerKey
+      mcpServerKey,
+      skillDescriptions
     );
   }
-  return buildTomlSubAgent(sa.fields ?? {}, sa.bodyField ?? 'developer_instructions', subAgent, capabilities, mcpServerKey);
+  return buildTomlSubAgent(
+    sa.fields ?? {},
+    sa.bodyField ?? 'developer_instructions',
+    subAgent,
+    capabilities,
+    mcpServerKey,
+    skillDescriptions
+  );
 }
 
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-function resolveToolNames(subAgent: SubAgent, capabilities: Capabilities): string {
-  return subAgent.tools
-    .map((toolId) => {
-      const tool = capabilities.tools.find((t) => t.id === toolId);
-      return tool ? getQualifiedToolName(tool) : toolId;
-    })
-    .join(', ');
+/**
+ * Translate a qualified tool name (e.g. `dbx.sql_read_only` or `getJiraIssue`)
+ * into the equivalent `capa sh` invocation. Each segment is slugified the same
+ * way the shell registry does (`snake_case`/`camelCase` → `kebab-case`), so the
+ * printed form is exactly what the user types — e.g.
+ * `dbx.sql_read_only` → `capa sh dbx sql-read-only`. Ungrouped command tools
+ * collapse to `capa sh <tool>`.
+ */
+function qualifiedToCapaSh(qualified: string): string {
+  return `capa sh ${qualified.split('.').map(slugify).join(' ')}`;
 }
 
-function buildMarkdownBody(subAgent: SubAgent, capabilities: Capabilities, mcpServerKey: string): string {
-  const toolNames = resolveToolNames(subAgent, capabilities);
-  const skillList = subAgent.skills.length > 0 ? subAgent.skills.join(', ') : '(none)';
+interface ResolvedTool {
+  toolId: string;
+  qualified: string;
+  capaSh: string;
+  description?: string;
+}
 
+function resolveTool(toolId: string, capabilities: Capabilities): ResolvedTool {
+  const tool = capabilities.tools.find((t) => t.id === toolId);
+  const qualified = tool ? getQualifiedToolName(tool) : toolId;
+  return {
+    toolId,
+    qualified,
+    capaSh: qualifiedToCapaSh(qualified),
+    description: tool?.description,
+  };
+}
+
+function renderSkillsBlock(
+  subAgent: SubAgent,
+  skillDescriptions: Map<string, string>,
+  opts: { backtick: boolean }
+): string[] {
+  const header = opts.backtick ? '**Skills:**' : 'Skills:';
+  if (subAgent.skills.length === 0) {
+    return [header, '- (none)'];
+  }
+  const bullets = subAgent.skills.map((skillId) => {
+    const desc = skillDescriptions.get(skillId);
+    const name = opts.backtick ? `\`${skillId}\`` : skillId;
+    return desc ? `- ${name} — ${desc}` : `- ${name}`;
+  });
+  return [header, ...bullets];
+}
+
+function renderToolsBlock(
+  subAgent: SubAgent,
+  capabilities: Capabilities,
+  opts: { backtick: boolean }
+): string[] {
+  const header = opts.backtick ? '**Tools:**' : 'Tools:';
+  if (subAgent.tools.length === 0) {
+    return [header, '- (none)'];
+  }
+  const bullets = subAgent.tools.map((toolId) => {
+    const { qualified, capaSh, description } = resolveTool(toolId, capabilities);
+    const name = opts.backtick ? `\`${qualified}\`` : qualified;
+    const cli = opts.backtick ? `\`${capaSh}\`` : capaSh;
+    const prefix = `- ${name} (${cli})`;
+    return description ? `${prefix} — ${description}` : prefix;
+  });
+  return [header, ...bullets];
+}
+
+function buildMarkdownBody(
+  subAgent: SubAgent,
+  capabilities: Capabilities,
+  mcpServerKey: string,
+  skillDescriptions: Map<string, string>
+): string {
   const lines: string[] = [
     `**MCP server key:** \`${mcpServerKey}\``,
-    `**Skills:** ${skillList}`,
-    `**Tools:** ${toolNames || '(none)'}`,
+    '',
+    ...renderSkillsBlock(subAgent, skillDescriptions, { backtick: true }),
+    '',
+    ...renderToolsBlock(subAgent, capabilities, { backtick: true }),
   ];
 
   if (subAgent.instructions) {
@@ -114,14 +189,18 @@ function buildMarkdownBody(subAgent: SubAgent, capabilities: Capabilities, mcpSe
   return lines.join('\n');
 }
 
-function buildPlainBody(subAgent: SubAgent, capabilities: Capabilities, mcpServerKey: string): string {
-  const toolNames = resolveToolNames(subAgent, capabilities);
-  const skillList = subAgent.skills.length > 0 ? subAgent.skills.join(', ') : '(none)';
-
+function buildPlainBody(
+  subAgent: SubAgent,
+  capabilities: Capabilities,
+  mcpServerKey: string,
+  skillDescriptions: Map<string, string>
+): string {
   const lines: string[] = [
     `MCP server key: ${mcpServerKey}`,
-    `Skills: ${skillList}`,
-    `Tools: ${toolNames || '(none)'}`,
+    '',
+    ...renderSkillsBlock(subAgent, skillDescriptions, { backtick: false }),
+    '',
+    ...renderToolsBlock(subAgent, capabilities, { backtick: false }),
   ];
 
   if (subAgent.instructions) {
@@ -136,9 +215,10 @@ function buildMarkdownSubAgent(
   perAgentToolScope: SubagentsIntegration['perAgentToolScope'] | undefined,
   subAgent: SubAgent,
   capabilities: Capabilities,
-  mcpServerKey: string
+  mcpServerKey: string,
+  skillDescriptions: Map<string, string>
 ): string {
-  const body = buildMarkdownBody(subAgent, capabilities, mcpServerKey);
+  const body = buildMarkdownBody(subAgent, capabilities, mcpServerKey, skillDescriptions);
   const description = subAgent.description || subAgent.id;
 
   const fmLines: string[] = [
@@ -167,9 +247,10 @@ function buildTomlSubAgent(
   bodyField: string,
   subAgent: SubAgent,
   capabilities: Capabilities,
-  mcpServerKey: string
+  mcpServerKey: string,
+  skillDescriptions: Map<string, string>
 ): string {
-  const body = buildPlainBody(subAgent, capabilities, mcpServerKey);
+  const body = buildPlainBody(subAgent, capabilities, mcpServerKey, skillDescriptions);
 
   const data: Record<string, any> = {
     name: subAgent.id,
@@ -185,3 +266,20 @@ function buildTomlSubAgent(
 
   return TOML.stringify(data as any);
 }
+
+/**
+ * Exported for use by `agents-file.ts` when rendering the dashed skill/tool
+ * blocks into the universal AGENTS.md/CLAUDE.md sub-agent snippet.
+ */
+export function renderSubAgentSkillsAndTools(
+  subAgent: SubAgent,
+  capabilities: Capabilities,
+  skillDescriptions: Map<string, string>
+): string[] {
+  return [
+    ...renderSkillsBlock(subAgent, skillDescriptions, { backtick: true }),
+    '',
+    ...renderToolsBlock(subAgent, capabilities, { backtick: true }),
+  ];
+}
+
