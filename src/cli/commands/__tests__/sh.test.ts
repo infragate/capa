@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'bun:test';
-import { slugify, parseInlineArgs, resolveArgs, coerceValue } from '../sh';
+import { parseInlineArgs, resolveArgs, coerceValue } from '../sh';
 import type { ShellCommand } from '../sh';
+import { slugify } from '../../../shared/slug';
 
 function makeCommand(overrides: Partial<ShellCommand> = {}): ShellCommand {
   return {

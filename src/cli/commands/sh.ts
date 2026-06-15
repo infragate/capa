@@ -155,7 +155,6 @@ class ShellRegistry {
   }
 }
 
-export { slugify };
 
 export function parseInlineArgs(tokens: string[]): Record<string, string> {
   const result: Record<string, string> = {};
