@@ -320,17 +320,81 @@ describe('Codex pilot integration', () => {
       providers: ['codex'],
       skills: [],
       servers: [],
-      tools: [{ id: 'tool-x', type: 'mcp' as const, def: { server: '@s', tool: 'tool-x' } }],
+      tools: [
+        {
+          id: 'tool-x',
+          type: 'mcp' as const,
+          description: 'Does the X thing',
+          def: { server: '@s', tool: 'tool-x' },
+        },
+      ],
     };
+    const skillDescriptions = new Map([['skill-a', 'Skill A frontmatter description']]);
 
-    const result = buildSubAgentFile(codex, subAgent, capabilities);
+    const result = buildSubAgentFile(codex, subAgent, capabilities, skillDescriptions);
     const parsed = TOML.parse(result) as any;
 
     expect(parsed.name).toBe('test-agent');
     expect(parsed.description).toBe('A test sub-agent');
     expect(parsed.developer_instructions).toBeString();
-    expect(parsed.developer_instructions).toContain('skill-a');
-    expect(parsed.developer_instructions).toContain('s.tool-x');
+    // Dashed list with skill description from the map.
+    expect(parsed.developer_instructions).toContain('- skill-a — Skill A frontmatter description');
+    // Tool bullet has both qualified name and `capa sh` form (kebab-cased) + description.
+    expect(parsed.developer_instructions).toContain(
+      '- s.tool-x (capa sh s tool-x) — Does the X thing'
+    );
+  });
+
+  it('buildSubAgentFile kebab-cases snake_case tool ids in the capa sh form', () => {
+    const codex = getProvider('codex')!;
+    const subAgent = {
+      id: 'test-agent',
+      description: '',
+      skills: [],
+      tools: ['sql_read_only'],
+    };
+    const capabilities = {
+      providers: ['codex'],
+      skills: [],
+      servers: [],
+      tools: [
+        {
+          id: 'sql_read_only',
+          type: 'mcp' as const,
+          def: { server: '@dbx', tool: 'execute_sql_read_only' },
+        },
+      ],
+    };
+
+    const result = buildSubAgentFile(codex, subAgent, capabilities);
+    const parsed = TOML.parse(result) as any;
+
+    // Qualified form preserves underscores; capa sh form kebab-cases them.
+    expect(parsed.developer_instructions).toContain('- dbx.sql_read_only (capa sh dbx sql-read-only)');
+  });
+
+  it('buildSubAgentFile renders skill id only when description is missing', () => {
+    const codex = getProvider('codex')!;
+    const subAgent = {
+      id: 'test-agent',
+      description: 'A test sub-agent',
+      skills: ['skill-no-desc'],
+      tools: [],
+    };
+    const capabilities = {
+      providers: ['codex'],
+      skills: [],
+      servers: [],
+      tools: [],
+    };
+
+    const result = buildSubAgentFile(codex, subAgent, capabilities);
+    const parsed = TOML.parse(result) as any;
+
+    // No em-dash when description is absent.
+    expect(parsed.developer_instructions).toContain('- skill-no-desc');
+    expect(parsed.developer_instructions).not.toContain('skill-no-desc —');
+    expect(parsed.developer_instructions).toContain('- (none)');
   });
 });
 
