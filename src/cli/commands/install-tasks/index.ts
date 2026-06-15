@@ -15,6 +15,7 @@ import { installRulesTask } from './install-rules';
 import { configureToolsTask } from './configure-tools';
 import { registerMcpServerTask } from './register-mcp-server';
 import { installSubagentsTask } from './install-subagents';
+import { validateSubagentRefsTask } from './validate-subagent-refs';
 import { pruneOrphanHooksTask } from './prune-orphan-hooks';
 import { installHooksTask } from './install-hooks';
 import { openCredentialSetupTask } from './open-credential-setup';
@@ -40,6 +41,7 @@ export function buildInstallTasks(reqCmds?: RequiredCommand[]): Task<InstallCtx>
     installRulesTask(),
     configureToolsTask(),
     registerMcpServerTask(),
+    validateSubagentRefsTask(),
     installSubagentsTask(),
     pruneOrphanHooksTask(),
     installHooksTask(),
