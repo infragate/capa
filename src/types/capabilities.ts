@@ -404,3 +404,25 @@ export function normalizeToolName(name: string): string {
 export function normalizeToolReference(ref: string): string {
   return ref.startsWith('@') ? ref.slice(1) : ref;
 }
+
+/**
+ * Resolve a subagent `tools[]` entry to a Tool object. Accepts three forms
+ * for the same tool, so users coming from `requires` syntax don't have to
+ * learn a second dialect:
+ *
+ *   "@dbx.sql_read_only"  — requires-style, leading @
+ *   "dbx.sql_read_only"   — qualified, no @
+ *   "sql_read_only"       — bare local tool id
+ *
+ * Returns `undefined` if no tool matches.
+ */
+export function resolveSubagentToolRef(ref: string, tools: Tool[]): Tool | undefined {
+  const stripped = ref.startsWith('@') ? ref.slice(1) : ref;
+  // Qualified-name match handles "@server.tool", "server.tool", and the
+  // ungrouped command-tool case (where the qualified name equals the id).
+  const byQualified = tools.find((t) => getQualifiedToolName(t) === stripped);
+  if (byQualified) return byQualified;
+  // Fall back to bare-id match for MCP / grouped command tools written
+  // without their server/group prefix.
+  return tools.find((t) => t.id === stripped);
+}

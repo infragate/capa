@@ -63,6 +63,34 @@ describe('collectSubagentRefWarnings', () => {
     expect(warnings[0]).toContain('unknown tool');
   });
 
+  it('accepts @server.tool, server.tool, and bare tool_id forms for the same tool', () => {
+    const cap = baseCapabilities();
+    cap.subagents = [
+      {
+        id: 'data-analyst',
+        description: '',
+        skills: [],
+        tools: ['sql_read_only', 'dbx.sql_read_only', '@dbx.sql_read_only'],
+      },
+    ];
+    expect(collectSubagentRefWarnings(cap)).toEqual([]);
+  });
+
+  it('still flags an @-prefixed reference whose qualified name does not resolve', () => {
+    const cap = baseCapabilities();
+    cap.subagents = [
+      {
+        id: 'data-analyst',
+        description: '',
+        skills: [],
+        tools: ['@dbx.does_not_exist'],
+      },
+    ];
+    const warnings = collectSubagentRefWarnings(cap);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('"@dbx.does_not_exist"');
+  });
+
   it('emits one warning per typo across multiple subagents', () => {
     const cap = baseCapabilities();
     cap.subagents = [
