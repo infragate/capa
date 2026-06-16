@@ -7,7 +7,7 @@ import type {
   SubagentsIntegration,
 } from '../../types/providers';
 import type { SubAgent, Capabilities } from '../../types/capabilities';
-import { getQualifiedToolName } from '../../types/capabilities';
+import { getQualifiedToolName, resolveSubagentToolRef } from '../../types/capabilities';
 import { slugify } from '../slug';
 import type { Rule } from '../../types/rules';
 
@@ -121,11 +121,15 @@ interface ResolvedTool {
   description?: string;
 }
 
-function resolveTool(toolId: string, capabilities: Capabilities): ResolvedTool {
-  const tool = capabilities.tools.find((t) => t.id === toolId);
-  const qualified = tool ? getQualifiedToolName(tool) : toolId;
+function resolveTool(toolRef: string, capabilities: Capabilities): ResolvedTool {
+  // toolRef may be "@server.tool", "server.tool", or a bare local id —
+  // resolveSubagentToolRef handles all three. When nothing matches we fall
+  // back to the raw ref so the bullet still renders (and the new
+  // collectSubagentRefWarnings surfaces the typo separately).
+  const tool = resolveSubagentToolRef(toolRef, capabilities.tools);
+  const qualified = tool ? getQualifiedToolName(tool) : toolRef;
   return {
-    toolId,
+    toolId: toolRef,
     qualified,
     capaSh: qualifiedToCapaSh(qualified),
     description: tool?.description,
