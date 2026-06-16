@@ -9,7 +9,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import type { CapaDatabase } from '../db/database';
 import type { Capabilities, Tool, ToolCommandDefinition, ToolMCPDefinition } from '../types/capabilities';
-import { getQualifiedToolName, normalizeToolName } from '../types/capabilities';
+import { getQualifiedToolName, normalizeToolName, resolveSubagentToolRef } from '../types/capabilities';
 import { SessionManager } from './session-manager';
 import type { SessionInfo } from './session-manager';
 import { CommandToolExecutor } from './tool-executor';
@@ -257,8 +257,8 @@ export class CapaMCPServer {
     const subAgent = capabilities.subagents.find((a) => a.id === this.agentId);
     if (!subAgent) return null;
     const allowed = new Set<string>();
-    for (const toolId of subAgent.tools) {
-      const tool = capabilities.tools.find((t) => t.id === toolId);
+    for (const ref of subAgent.tools) {
+      const tool = resolveSubagentToolRef(ref, capabilities.tools);
       if (tool) allowed.add(getQualifiedToolName(tool));
     }
     return allowed;
