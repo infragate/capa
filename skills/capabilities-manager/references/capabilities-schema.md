@@ -139,8 +139,9 @@ subagents:
     skills:
       - my-iac-skill          # skill IDs from the top-level skills array
     tools:
-      - search_cdk_docs       # tool IDs from the top-level tools array
-      - validate_cfn
+      - search_cdk_docs       # bare local id
+      - aws-iac.validate_cfn  # server.tool form also accepted
+      - '@aws-iac.tag_resources'  # @server.tool form (same dialect as skills.requires)
     instructions: |
       You are the infra-agent. Work exclusively in backend-infra/ and user-infra/.
 
@@ -159,8 +160,10 @@ subagents:
 - `id` (required): Unique identifier. Used as the MCP key (`capa-{id}`) and agent file name.
 - `description` (optional): Role description. For Cursor this drives automatic delegation — be specific.
 - `skills` (required): List of skill IDs from the top-level `skills` array.
-- `tools` (required): List of tool IDs from the top-level `tools` array. Only these are exposed on the filtered MCP endpoint.
+- `tools` (required): List of tools the subagent may call. Each entry references a tool in the top-level `tools` array using any of three equivalent forms — `tool_id` (bare local id), `server.tool` (qualified), or `@server.tool` (same dialect `skills.requires` uses). All three resolve to the same tool; pick whichever reads best. Only the resolved tools are exposed on the filtered MCP endpoint.
 - `instructions` (optional): Markdown text appended to the agent file body.
+
+**Validation:** `capa install` warns once per subagent reference (skill or tool) that doesn't resolve to a top-level entry — typos surface immediately instead of producing a junk-rendered bullet plus a silently-missing tool at runtime.
 
 **Cleanup:** On each `capa install`, sub-agents removed from the config are automatically unregistered and their agent files removed. `capa clean` removes all sub-agent registrations.
 

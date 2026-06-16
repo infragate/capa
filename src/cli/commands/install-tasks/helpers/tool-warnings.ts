@@ -1,5 +1,9 @@
 import type { Capabilities } from '../../../../types/capabilities';
-import { getQualifiedToolName, normalizeToolReference } from '../../../../types/capabilities';
+import {
+  getQualifiedToolName,
+  normalizeToolReference,
+  resolveSubagentToolRef,
+} from '../../../../types/capabilities';
 
 // Tool IDs not exposed to MCP clients because no skill requires them. In
 // both expose-all and on-demand modes only tools required by at least one
@@ -50,12 +54,15 @@ export function collectPluginSkillWarnings(capabilities: Capabilities): string[]
 // pass silently: rendered files include junk bullets and the subagent loses
 // access to the tool at runtime with no signal. One line per typo, so a
 // `general-data-analyiss` mistake is obvious in install output.
+//
+// Tool refs accept three equivalent forms (handled by resolveSubagentToolRef):
+// `@server.tool`, `server.tool`, or the bare local tool id. The warning fires
+// only when none of those resolve.
 export function collectSubagentRefWarnings(capabilities: Capabilities): string[] {
   const subagents = capabilities.subagents ?? [];
   if (subagents.length === 0) return [];
 
   const knownSkillIds = new Set(capabilities.skills.map((s) => s.id));
-  const knownToolIds = new Set(capabilities.tools.map((t) => t.id));
 
   const warnings: string[] = [];
   for (const sa of subagents) {
@@ -67,11 +74,11 @@ export function collectSubagentRefWarnings(capabilities: Capabilities): string[]
         );
       }
     }
-    for (const toolId of sa.tools ?? []) {
-      if (!knownToolIds.has(toolId)) {
+    for (const toolRef of sa.tools ?? []) {
+      if (!resolveSubagentToolRef(toolRef, capabilities.tools)) {
         warnings.push(
-          `Subagent "${sa.id}" references unknown tool "${toolId}". ` +
-          `Add it under top-level \`tools\` or remove it from the subagent.`,
+          `Subagent "${sa.id}" references unknown tool "${toolRef}". ` +
+          `Add it under top-level \`tools\` (accepts \`tool_id\`, \`server.tool\`, or \`@server.tool\`) or remove it from the subagent.`,
         );
       }
     }
