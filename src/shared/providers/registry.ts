@@ -95,7 +95,6 @@ export const providers: Record<string, ProviderIntegration> = {
     },
     pluginManifestPaths: ['.claude-plugin/plugin.json'],
     pluginProviderId: 'claude',
-    foldSubAgentsIntoInstructions: false,
     hooks: {
       // Claude Code reads hooks from the project-local .claude/settings.json.
       // Docs: https://docs.claude.com/en/docs/claude-code/hooks

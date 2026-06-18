@@ -36,13 +36,15 @@ describe('installSubAgentInstructions', () => {
     if (existsSync(tempDir)) rmSync(tempDir, { recursive: true, force: true });
   });
 
-  const readClaude = () => readFileSync(join(tempDir, 'CLAUDE.md'), 'utf-8');
   const readClaudeAgent = (id: string) =>
     readFileSync(join(tempDir, '.claude', 'agents', `${id}.md`), 'utf-8');
   const readCursorAgent = (id: string) =>
     readFileSync(join(tempDir, '.cursor', 'agents', `${id}.md`), 'utf-8');
 
-  it('creates .claude/agents/{id}.md and CLAUDE.md for claude-code provider', () => {
+  it('creates .claude/agents/{id}.md for claude-code provider and leaves CLAUDE.md untouched', () => {
+    // Sub-agent context belongs in the dedicated sub-agent file, NOT folded
+    // back into CLAUDE.md — that would duplicate the content and bloat the
+    // primary agent's context window on every turn.
     const subAgent: SubAgent = {
       id: 'infra-agent',
       description: 'CDK and Terraform specialist',
@@ -53,7 +55,7 @@ describe('installSubAgentInstructions', () => {
     installSubAgentInstructions(tempDir, subAgent, capabilities, ['claude-code']);
 
     expect(existsSync(join(tempDir, '.claude', 'agents', 'infra-agent.md'))).toBe(true);
-    expect(existsSync(join(tempDir, 'CLAUDE.md'))).toBe(true);
+    expect(existsSync(join(tempDir, 'CLAUDE.md'))).toBe(false);
 
     const agentFile = readClaudeAgent('infra-agent');
     expect(agentFile).toContain('name: infra-agent');
@@ -153,7 +155,7 @@ describe('installSubAgentInstructions', () => {
     expect(readClaudeAgent('infra-agent')).toContain('Work only in backend-infra/ and user-infra/.');
   });
 
-  it('upserts CLAUDE.md block — re-running replaces without duplicating', () => {
+  it('re-running install replaces the sub-agent file in place without duplicating', () => {
     const subAgent: SubAgent = {
       id: 'infra-agent',
       description: 'v1',
@@ -169,11 +171,11 @@ describe('installSubAgentInstructions', () => {
       ['claude-code']
     );
 
-    const content = readClaude();
-    const startCount = (content.match(/<!-- capa:start:sub-agent:infra-agent -->/g) || []).length;
-    expect(startCount).toBe(1);
-    expect(content).toContain('v2 updated');
-    expect(content).not.toContain('v1');
+    const agentFile = readClaudeAgent('infra-agent');
+    expect(agentFile).toContain('v2 updated');
+    expect(agentFile).not.toContain('description: v1');
+    // CLAUDE.md must NOT be created as a side effect.
+    expect(existsSync(join(tempDir, 'CLAUDE.md'))).toBe(false);
   });
 
   it('multiple sub-agents produce independent .claude/agents/ files', () => {
@@ -219,7 +221,7 @@ describe('installSubAgentInstructions', () => {
     expect(content).toContain('aws-iac.search_cdk_docs');
   });
 
-  it('writes both .claude/agents/ and .cursor/agents/ when both providers active', () => {
+  it('writes both .claude/agents/ and .cursor/agents/ when both providers active, with no primary instructions file touched', () => {
     const subAgent: SubAgent = {
       id: 'infra-agent',
       description: 'Infra specialist',
@@ -231,7 +233,22 @@ describe('installSubAgentInstructions', () => {
 
     expect(existsSync(join(tempDir, '.claude', 'agents', 'infra-agent.md'))).toBe(true);
     expect(existsSync(join(tempDir, '.cursor', 'agents', 'infra-agent.md'))).toBe(true);
-    expect(existsSync(join(tempDir, 'CLAUDE.md'))).toBe(true);
+    expect(existsSync(join(tempDir, 'CLAUDE.md'))).toBe(false);
+    expect(existsSync(join(tempDir, 'AGENTS.md'))).toBe(false);
+  });
+
+  it('does not create .github/copilot-instructions.md for github-copilot — sub-agent file is enough', () => {
+    const subAgent: SubAgent = {
+      id: 'infra-agent',
+      description: 'Infra specialist',
+      skills: [],
+      tools: ['search_cdk_docs'],
+    };
+
+    installSubAgentInstructions(tempDir, subAgent, capabilities, ['github-copilot']);
+
+    expect(existsSync(join(tempDir, '.github', 'agents', 'infra-agent.md'))).toBe(true);
+    expect(existsSync(join(tempDir, '.github', 'copilot-instructions.md'))).toBe(false);
   });
 });
 
@@ -246,14 +263,14 @@ describe('removeSubAgentInstructions', () => {
     if (existsSync(tempDir)) rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it('removes .claude/agents/{id}.md and CLAUDE.md block for claude-code', () => {
+  it('removes .claude/agents/{id}.md for claude-code', () => {
     const subAgent: SubAgent = { id: 'infra-agent', description: '', skills: [], tools: [] };
     installSubAgentInstructions(tempDir, subAgent, capabilities, ['claude-code']);
     removeSubAgentInstructions(tempDir, 'infra-agent', ['claude-code']);
 
     expect(existsSync(join(tempDir, '.claude', 'agents', 'infra-agent.md'))).toBe(false);
-    const content = readFileSync(join(tempDir, 'CLAUDE.md'), 'utf-8');
-    expect(content).not.toContain('capa:start:sub-agent:infra-agent');
+    // Sub-agent install never seeds CLAUDE.md, so remove is a no-op for it.
+    expect(existsSync(join(tempDir, 'CLAUDE.md'))).toBe(false);
   });
 
   it('leaves other sub-agent files intact', () => {
