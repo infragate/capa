@@ -440,14 +440,14 @@ export function detectRepoCoordsFromRawUrl(
 
 function writesSubAgentInstructionsContext(provider: NonNullable<ReturnType<typeof getProvider>>): boolean {
   if (!provider.instructions) return false;
-  if (provider.foldSubAgentsIntoInstructions === true) return true;
-  if (
-    provider.subagents &&
-    provider.instructions.filename !== UNIVERSAL_AGENTS_FILENAME
-  ) {
-    return true;
-  }
-  return false;
+  // A provider with its own sub-agents integration materialises each sub-agent
+  // as a separate file under `provider.subagents.dir`. Folding the same
+  // context into the primary instructions file (CLAUDE.md, AGENTS.md, …)
+  // would duplicate it and bloat the main agent's context window. Only fold
+  // when the provider has no dedicated sub-agent file format AND explicitly
+  // opts in via `foldSubAgentsIntoInstructions: true`.
+  if (provider.subagents) return false;
+  return provider.foldSubAgentsIntoInstructions === true;
 }
 
 function upsertSubAgentInstructionsSnippet(
@@ -538,10 +538,13 @@ function removeSubAgentFile(projectPath: string, providerId: string, agentId: st
  * Install sub-agent definition files for each active provider.
  *
  * For providers with a `subagents` integration, writes the agent file using
- * the provider-specific format (markdown frontmatter or TOML).
+ * the provider-specific format (markdown frontmatter or TOML). That file is
+ * the sole source of truth — the primary instructions file (CLAUDE.md,
+ * AGENTS.md, …) is intentionally left untouched so we don't bloat the main
+ * agent's context with the same content the sub-agent file already carries.
  *
  * For providers without separate sub-agent files, folds context into the
- * instructions file when `foldSubAgentsIntoInstructions` is set.
+ * instructions file ONLY when `foldSubAgentsIntoInstructions: true` is set.
  */
 export function installSubAgentInstructions(
   projectPath: string,
