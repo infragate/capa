@@ -36,7 +36,7 @@
     "dompurify": "^3.4.3",
     "highlight.js": "^11.11.1",
     "i18next": "^26.0.10",
-    "js-yaml": "^4.1.0",
+    "js-yaml": "^5.0.0",
     "listr2": "^10.2.1",
     "lucide-react": "^1.14.0",
     "marked": "^18.0.3",
