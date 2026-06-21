@@ -11,7 +11,7 @@
 
 Please report security issues **privately** — do not open a public GitHub issue.
 
-**Email:** security@infragate.ai
+**Email:** security@infragate.co
 
 Include a clear description, steps to reproduce, and impact assessment if known.
 
