@@ -724,12 +724,15 @@ class CapaServer {
       );
     } catch (error: any) {
       const detail = error?.message ?? String(error);
-      apiLogger.failure(`Error: ${detail}`);
-      // An OAuth-disconnected server is not "unreachable" — surface the auth
-      // message as-is so the UI can prompt the user to reconnect. Everything
-      // else (connect failure, timeout) is reported as a 502 Bad Gateway.
+      apiLogger.failure(`Error listing tools for ${serverId}: ${detail}`);
+      // Return a controlled, sanitized message — never echo raw exception text
+      // (which CodeQL flags as potential stack-trace exposure) back to the
+      // client. Full detail is logged above. An OAuth-disconnected server is
+      // not "unreachable", so distinguish that case to prompt re-auth.
       const needsAuth = /authentication failed|reconnect oauth2/i.test(detail);
-      const message = needsAuth ? detail : `Server unreachable: ${detail}`;
+      const message = needsAuth
+        ? `Authentication required for "${serverId}". Please reconnect this server's OAuth2 connection.`
+        : `Server unreachable: "${serverId}" could not be contacted.`;
       return new Response(
         JSON.stringify({ error: message }),
         { status: 502, headers: { 'Content-Type': 'application/json' } }
@@ -1291,9 +1294,11 @@ class CapaServer {
         { headers: { 'Content-Type': 'application/json' } }
       );
     } catch (error: any) {
+      // Log full detail server-side, but return a generic message so raw
+      // exception text (stack-trace exposure) never reaches the client.
       apiLogger.failure(`Error getting OAuth2 servers: ${error?.message ?? error}`);
       return new Response(
-        JSON.stringify({ error: error?.message ?? 'Internal server error' }),
+        JSON.stringify({ error: 'Failed to load OAuth2 servers' }),
         { status: 500, headers: { 'Content-Type': 'application/json' } }
       );
     }
