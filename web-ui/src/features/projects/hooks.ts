@@ -65,5 +65,7 @@ export function useServerTools(projectId: string | null, serverId: string | null
     enabled: !!projectId && !!serverId,
     select: (data) => data.tools,
     staleTime: 60_000,
+    // Don't retry an unreachable MCP server — surface the error immediately.
+    retry: false,
   });
 }
