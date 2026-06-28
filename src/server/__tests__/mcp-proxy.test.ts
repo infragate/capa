@@ -78,6 +78,92 @@ describe('mcp-proxy', () => {
     });
   });
 
+  describe('connectWithTimeout', () => {
+    // Capture unhandled rejections during each test so we can assert the
+    // timeout path never leaks one (the bug behind the stray
+    // "MCP connect timed out after 15000ms" the user saw in the UI/logs).
+    let unhandled: unknown[];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+
+    beforeEach(() => {
+      unhandled = [];
+      process.on('unhandledRejection', onUnhandled);
+    });
+
+    afterEach(() => {
+      process.off('unhandledRejection', onUnhandled);
+    });
+
+    function makeProxy(): any {
+      return new MCPProxy(makeMockDb(), 'proj-1', '/tmp/project');
+    }
+
+    it('rejects with a timeout error and tears down a hung connect', async () => {
+      const proxy = makeProxy();
+      let closed = false;
+      const client = {
+        connect: () => new Promise<void>(() => {}), // never resolves
+        close: async () => {
+          closed = true;
+        },
+      };
+      const transport = { close: async () => {} };
+
+      await expect(proxy.connectWithTimeout(client, transport, 30)).rejects.toThrow(/timed out/);
+      expect(closed).toBe(true);
+    });
+
+    it('does not leak an unhandled rejection when the connect rejects after the timeout', async () => {
+      const proxy = makeProxy();
+      let rejectConnect: (e: unknown) => void = () => {};
+      const client = {
+        connect: () =>
+          new Promise<void>((_, reject) => {
+            rejectConnect = reject;
+          }),
+        close: async () => {},
+      };
+      const transport = { close: async () => {} };
+
+      await expect(proxy.connectWithTimeout(client, transport, 20)).rejects.toThrow(/timed out/);
+
+      // Simulate the real socket closing *after* we already gave up.
+      rejectConnect(new Error('The socket connection was closed unexpectedly'));
+      await new Promise((r) => setTimeout(r, 20));
+
+      expect(unhandled).toHaveLength(0);
+    });
+
+    it('resolves on a successful connect and clears the timer (no late rejection)', async () => {
+      const proxy = makeProxy();
+      const client = { connect: async () => {}, close: async () => {} };
+      const transport = { close: async () => {} };
+
+      await expect(proxy.connectWithTimeout(client, transport, 50)).resolves.toBeUndefined();
+
+      // Wait well past the timeout window to prove the timer was cleared.
+      await new Promise((r) => setTimeout(r, 80));
+      expect(unhandled).toHaveLength(0);
+    });
+
+    it('propagates a synchronous connect throw without leaking a timer', async () => {
+      const proxy = makeProxy();
+      const client = {
+        connect: () => {
+          throw new Error('boom');
+        },
+        close: async () => {},
+      };
+      const transport = { close: async () => {} };
+
+      await expect(proxy.connectWithTimeout(client, transport, 30)).rejects.toThrow(/boom/);
+
+      // If the timer had been scheduled before the throw, it would fire here.
+      await new Promise((r) => setTimeout(r, 50));
+      expect(unhandled).toHaveLength(0);
+    });
+  });
+
   describe('OAuth2 disconnected handling', () => {
     function makeOauthServerDef(): MCPServerDefinition {
       return {
