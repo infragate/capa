@@ -713,17 +713,26 @@ class CapaServer {
         );
       }
 
-      const tools = await mcpServer.listServerTools(serverId, capabilities);
+      // throwOnError surfaces connection/auth failures instead of silently
+      // returning an empty list, so the UI can distinguish "server has no tools"
+      // (200 + []) from "server unreachable" (502 + error).
+      const tools = await mcpServer.listServerTools(serverId, capabilities, { throwOnError: true });
       apiLogger.success(`Found ${tools.length} tools for server ${serverId}`);
       return new Response(
         JSON.stringify({ tools }),
         { headers: { 'Content-Type': 'application/json' } }
       );
     } catch (error: any) {
-      apiLogger.failure(`Error: ${error.message}`);
+      const detail = error?.message ?? String(error);
+      apiLogger.failure(`Error: ${detail}`);
+      // An OAuth-disconnected server is not "unreachable" — surface the auth
+      // message as-is so the UI can prompt the user to reconnect. Everything
+      // else (connect failure, timeout) is reported as a 502 Bad Gateway.
+      const needsAuth = /authentication failed|reconnect oauth2/i.test(detail);
+      const message = needsAuth ? detail : `Server unreachable: ${detail}`;
       return new Response(
-        JSON.stringify({ error: error.message }),
-        { status: 500, headers: { 'Content-Type': 'application/json' } }
+        JSON.stringify({ error: message }),
+        { status: 502, headers: { 'Content-Type': 'application/json' } }
       );
     }
   }
@@ -2241,6 +2250,19 @@ class CapaServer {
 
 // Main
 const server = new CapaServer();
+
+// Safety net for stray async failures. The MCP SDK's HTTP/stdio transports keep
+// background sockets open; when a remote server becomes unreachable (e.g. VPN
+// dropped) those can reject after we've already returned a response, which Bun
+// would otherwise print as a raw "The socket connection was closed unexpectedly"
+// error. Log these instead of letting them crash the process or leak to stderr.
+process.on('unhandledRejection', (reason) => {
+  const message = reason instanceof Error ? reason.message : String(reason);
+  logger.warn(`Unhandled promise rejection (ignored): ${message}`);
+});
+process.on('uncaughtException', (error) => {
+  logger.error(`Uncaught exception (ignored): ${error?.message ?? error}`);
+});
 
 // Handle shutdown signals
 process.on('SIGTERM', () => server.stop());
