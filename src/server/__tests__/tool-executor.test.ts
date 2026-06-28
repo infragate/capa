@@ -184,22 +184,17 @@ describe('CommandToolExecutor', () => {
     });
   });
 
-  describe('windows spawn options', () => {
-    it('passes windowsHide: true when spawning command tools', async () => {
+  describe('spawn options', () => {
+    it('spawns the parsed program with argv (no shell), windowsHide:true', async () => {
       const spawnSpy = spyOn(childProcess, 'spawn').mockImplementation(((
         command: string,
         args: string[] | childProcess.SpawnOptions,
         options?: childProcess.SpawnOptions
       ) => {
-        const isWindows = process.platform === 'win32';
-        if (isWindows) {
-          expect(command).toBe('cmd.exe');
-          expect(args).toEqual(['/d', '/s', '/c', 'echo hello']);
-          expect(options?.windowsHide).toBe(true);
-        } else {
-          expect(typeof args).toBe('object');
-          expect((args as childProcess.SpawnOptions).windowsHide).toBe(true);
-        }
+        expect(command).toBe('echo');
+        expect(args).toEqual(['hello']);
+        expect(options?.shell).toBe(false);
+        expect(options?.windowsHide).toBe(true);
         const { EventEmitter } = require('events');
         const proc = new EventEmitter() as any;
         proc.stdout = { on: (_: string, cb: (d: Buffer) => void) => cb(Buffer.from('hello\n')) };
@@ -219,6 +214,109 @@ describe('CommandToolExecutor', () => {
       expect(result.success).toBe(true);
       expect(spawnSpy).toHaveBeenCalled();
       spawnSpy.mockRestore();
+    });
+  });
+
+  // GHSA-rhp4-jmr9-fmc5: caller-supplied argument values must never escape into
+  // shell metacharacters. The fix decides the argv shape from the operator
+  // template alone, then substitutes values as inert argv elements with
+  // shell:false. Each test below replays an exploit pattern from the advisory.
+  describe('command injection prevention (GHSA-rhp4-jmr9-fmc5)', () => {
+    it('treats shell metacharacters in arg values as literal text', async () => {
+      const def: ToolCommandDefinition = {
+        run: {
+          cmd: 'echo {message}',
+          args: [{ name: 'message', type: 'string', required: true }],
+        },
+      };
+
+      const payload = 'benign-looking; echo INJECTED';
+      const result = await executor.execute('injection-semicolon', def, { message: payload });
+      expect(result.success).toBe(true);
+      // Without the fix the shell would run two commands and the output would
+      // contain a second line `INJECTED`. With the fix the whole payload is a
+      // single argv element to echo, printed verbatim.
+      expect(result.result).toBe(payload);
+    });
+
+    it('does not execute a chained command from a backtick payload', async () => {
+      const def: ToolCommandDefinition = {
+        run: {
+          cmd: 'echo {message}',
+          args: [{ name: 'message', type: 'string', required: true }],
+        },
+      };
+
+      const payload = '`echo PWNED`';
+      const result = await executor.execute('injection-backticks', def, { message: payload });
+      expect(result.success).toBe(true);
+      expect(result.result).toBe(payload);
+    });
+
+    it('does not execute a chained command from $(...) command substitution', async () => {
+      const def: ToolCommandDefinition = {
+        run: {
+          cmd: 'echo {message}',
+          args: [{ name: 'message', type: 'string', required: true }],
+        },
+      };
+
+      const payload = '$(echo PWNED)';
+      const result = await executor.execute('injection-cmdsubst', def, { message: payload });
+      expect(result.success).toBe(true);
+      expect(result.result).toBe(payload);
+    });
+
+    it('does not interpret pipes or redirects in arg values', async () => {
+      const def: ToolCommandDefinition = {
+        run: {
+          cmd: 'echo {message}',
+          args: [{ name: 'message', type: 'string', required: true }],
+        },
+      };
+
+      const payload = 'foo | tee /tmp/CAPA_GHSA_RHP4_SHOULD_NOT_EXIST > /dev/null';
+      const result = await executor.execute('injection-pipe', def, { message: payload });
+      expect(result.success).toBe(true);
+      expect(result.result).toBe(payload);
+      // Defensive: make sure the side-effect path didn't get created.
+      const { existsSync } = require('fs');
+      expect(existsSync('/tmp/CAPA_GHSA_RHP4_SHOULD_NOT_EXIST')).toBe(false);
+    });
+
+    it('keeps a multi-word value as a single argv element', async () => {
+      const def: ToolCommandDefinition = {
+        run: {
+          cmd: 'echo {message}',
+          args: [{ name: 'message', type: 'string', required: true }],
+        },
+      };
+
+      const result = await executor.execute('whitespace-arg', def, {
+        message: 'hello   world',
+      });
+      expect(result.success).toBe(true);
+      // shell:true would have collapsed runs of whitespace; shell:false
+      // preserves the value as the single argument it conceptually is.
+      expect(result.result).toBe('hello   world');
+    });
+
+    it('substitutes operator-quoted templates without losing the value', async () => {
+      const def: ToolCommandDefinition = {
+        run: {
+          // Operators were previously expected to manually quote placeholders
+          // for safety. After the fix the quoting is no longer required, but
+          // existing templates that DO quote should still work.
+          cmd: 'echo "{message}"',
+          args: [{ name: 'message', type: 'string', required: true }],
+        },
+      };
+
+      const result = await executor.execute('quoted-template', def, {
+        message: "it's a; test",
+      });
+      expect(result.success).toBe(true);
+      expect(result.result).toBe("it's a; test");
     });
   });
 });

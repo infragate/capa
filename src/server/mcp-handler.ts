@@ -685,10 +685,14 @@ export class CapaMCPServer {
    * List tools available on a specific MCP server by ID.
    * Returns the raw MCP tool list (name, description, inputSchema).
    */
-  async listServerTools(serverId: string, capabilities: Capabilities): Promise<any[]> {
+  async listServerTools(
+    serverId: string,
+    capabilities: Capabilities,
+    options: { throwOnError?: boolean } = {},
+  ): Promise<any[]> {
     const serverDef = capabilities.servers.find((s) => s.id === serverId);
     if (!serverDef) return [];
-    return await this.mcpProxy.listTools(serverId, serverDef.def);
+    return await this.mcpProxy.listTools(serverId, serverDef.def, options);
   }
 
   /**

@@ -63,6 +63,34 @@ describe('OAuth2Manager', () => {
     });
   });
 
+  describe('detectOAuth2Requirement', () => {
+    const originalFetch = globalThis.fetch;
+
+    afterEach(() => {
+      globalThis.fetch = originalFetch;
+    });
+
+    it('returns null (does not throw) when the server is unreachable', async () => {
+      // Simulate a connection-refused / aborted fetch — the same class of error
+      // that an unreachable MCP server produces at the network layer.
+      globalThis.fetch = (async () => {
+        throw new DOMException('The operation was aborted.', 'AbortError');
+      }) as unknown as typeof fetch;
+
+      const manager = new OAuth2Manager(makeMockDb());
+      const result = await manager.detectOAuth2Requirement('http://192.0.2.1:9999/mcp');
+      expect(result).toBeNull();
+    });
+
+    it('returns null when the MCP server returns a non-401 status', async () => {
+      globalThis.fetch = (async () => new Response('', { status: 200 })) as unknown as typeof fetch;
+
+      const manager = new OAuth2Manager(makeMockDb());
+      const result = await manager.detectOAuth2Requirement('http://localhost:9999/mcp');
+      expect(result).toBeNull();
+    });
+  });
+
   describe('tlsSkipVerify wiring', () => {
     it('returns false when env is unset even if config requests skip', () => {
       expect(shouldSkipTlsVerify(true, 'OAuth2 detection (test)')).toBe(false);
