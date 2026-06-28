@@ -11,6 +11,9 @@ import { OAuth2Manager } from './oauth-manager';
 import { logger } from '../shared/logger';
 import { shouldSkipTlsVerify } from '../shared/tls-skip-verify';
 
+/** Timeout for MCP client.connect() — prevents hanging on an unresponsive server (ms). */
+const MCP_CONNECT_TIMEOUT_MS = 15_000;
+
 export interface MCPToolResult {
   success: boolean;
   result?: any;
@@ -303,7 +306,12 @@ export class MCPProxy {
       };
 
       this.logger.debug('Connecting client...');
-      await client.connect(transport);
+      await Promise.race([
+        client.connect(transport),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`MCP connect timed out after ${MCP_CONNECT_TIMEOUT_MS}ms`)), MCP_CONNECT_TIMEOUT_MS)
+        ),
+      ]);
 
       this.clients.set(serverId, client);
       this.logger.success('Client connected');
@@ -345,7 +353,12 @@ export class MCPProxy {
       };
 
       this.logger.debug('Connecting client...');
-      await client.connect(transport);
+      await Promise.race([
+        client.connect(transport),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`MCP connect timed out after ${MCP_CONNECT_TIMEOUT_MS}ms`)), MCP_CONNECT_TIMEOUT_MS)
+        ),
+      ]);
 
       this.clients.set(serverId, client);
       this.logger.success('Client connected');

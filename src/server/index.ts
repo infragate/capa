@@ -211,6 +211,18 @@ class CapaServer {
 
 
   private async handleRequest(request: Request, server: any): Promise<Response> {
+    try {
+      return await this._handleRequest(request, server);
+    } catch (error: any) {
+      this.logger.failure(`Unhandled error in request handler: ${error?.message ?? error}`);
+      return new Response(
+        JSON.stringify({ error: 'Internal server error' }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+  }
+
+  private async _handleRequest(request: Request, server: any): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname;
 
@@ -1213,57 +1225,69 @@ class CapaServer {
   private async handleGetOAuth2Servers(projectId: string): Promise<Response> {
     const apiLogger = this.logger.child('API');
     apiLogger.info(`Get OAuth2 servers for project: ${projectId}`);
-    const capabilities = this.sessionManager.getProjectCapabilities(projectId);
-    if (!capabilities) {
-      return new Response(
-        JSON.stringify({ error: 'Project not configured' }),
-        { status: 404, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
+    try {
+      const capabilities = this.sessionManager.getProjectCapabilities(projectId);
+      if (!capabilities) {
+        return new Response(
+          JSON.stringify({ error: 'Project not configured' }),
+          { status: 404, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
 
-    // Ensure URL-based servers that require OAuth have def.oauth2 set (on-demand detection)
-    let capabilitiesUpdated = false;
-    for (const server of capabilities.servers) {
-      const hasExplicitAuthOnDemand = server.def.headers &&
-        Object.keys(server.def.headers).some(k => k.toLowerCase() === 'authorization');
-      if (server.def.url && !server.def.oauth2 && !hasExplicitAuthOnDemand) {
-        const oauth2Config = await this.oauth2Manager.detectOAuth2Requirement(server.def.url, { tlsSkipVerify: server.def.tlsSkipVerify });
-        if (oauth2Config) {
-          apiLogger.debug(`OAuth2 detected for ${server.id} (on-demand)`);
-          server.def.oauth2 = oauth2Config;
-          capabilitiesUpdated = true;
+      // Ensure URL-based servers that require OAuth have def.oauth2 set (on-demand detection)
+      let capabilitiesUpdated = false;
+      for (const server of capabilities.servers) {
+        const hasExplicitAuthOnDemand = server.def.headers &&
+          Object.keys(server.def.headers).some(k => k.toLowerCase() === 'authorization');
+        if (server.def.url && !server.def.oauth2 && !hasExplicitAuthOnDemand) {
+          try {
+            const oauth2Config = await this.oauth2Manager.detectOAuth2Requirement(server.def.url, { tlsSkipVerify: server.def.tlsSkipVerify });
+            if (oauth2Config) {
+              apiLogger.debug(`OAuth2 detected for ${server.id} (on-demand)`);
+              server.def.oauth2 = oauth2Config;
+              capabilitiesUpdated = true;
+            }
+          } catch (detectionError: any) {
+            apiLogger.warn(`OAuth2 detection failed for ${server.id}: ${detectionError?.message ?? detectionError}`);
+          }
         }
       }
-    }
-    if (capabilitiesUpdated) {
-      this.sessionManager.setProjectCapabilities(projectId, capabilities);
-    }
+      if (capabilitiesUpdated) {
+        this.sessionManager.setProjectCapabilities(projectId, capabilities);
+      }
 
-    const oauth2Servers = capabilities.servers
-      .filter((s: any) => s.def.oauth2)
-      .map((s: MCPServer) => {
-        const isConnected = this.oauth2Manager.isServerConnected(projectId, s.id);
-        let expiresAt: number | undefined;
-        
-        if (isConnected) {
-          const tokenData = this.db.getOAuthToken(projectId, s.id);
-          expiresAt = tokenData?.expires_at ?? undefined;
-        }
-        
-        return {
-          serverId: s.id,
-          serverUrl: s.def.url,
-          displayName: s.displayName ?? s.id,
-          isConnected: isConnected,
-          expiresAt: expiresAt,
-          oauth2Config: s.def.oauth2,
-        };
-      });
+      const oauth2Servers = capabilities.servers
+        .filter((s: any) => s.def.oauth2)
+        .map((s: MCPServer) => {
+          const isConnected = this.oauth2Manager.isServerConnected(projectId, s.id);
+          let expiresAt: number | undefined;
 
-    return new Response(
-      JSON.stringify({ servers: oauth2Servers }),
-      { headers: { 'Content-Type': 'application/json' } }
-    );
+          if (isConnected) {
+            const tokenData = this.db.getOAuthToken(projectId, s.id);
+            expiresAt = tokenData?.expires_at ?? undefined;
+          }
+
+          return {
+            serverId: s.id,
+            serverUrl: s.def.url,
+            displayName: s.displayName ?? s.id,
+            isConnected: isConnected,
+            expiresAt: expiresAt,
+            oauth2Config: s.def.oauth2,
+          };
+        });
+
+      return new Response(
+        JSON.stringify({ servers: oauth2Servers }),
+        { headers: { 'Content-Type': 'application/json' } }
+      );
+    } catch (error: any) {
+      apiLogger.failure(`Error getting OAuth2 servers: ${error?.message ?? error}`);
+      return new Response(
+        JSON.stringify({ error: error?.message ?? 'Internal server error' }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
   }
 
   private uiOrigin(): string {
