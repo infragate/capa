@@ -1,4 +1,4 @@
-import yaml from 'js-yaml';
+import * as yaml from 'js-yaml';
 import { parseDocument, isSeq } from 'yaml';
 import { z } from 'zod';
 import type { Capabilities, CapabilitiesFormat } from '../types/capabilities';
@@ -65,6 +65,11 @@ export async function parseCapabilitiesFile(
   if (format === 'json') {
     return normalizeCapabilities(JSON.parse(content));
   } else {
+    // js-yaml v5 throws on empty input instead of returning undefined, so guard
+    // here to keep emitting our own clearer "empty or not an object" error.
+    if (content.trim() === '') {
+      return normalizeCapabilities(undefined);
+    }
     return normalizeCapabilities(yaml.load(content));
   }
 }
