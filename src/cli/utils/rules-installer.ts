@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, unlinkSync } from 'fs';
 import { join, dirname, basename, sep } from 'path';
-import yaml from 'js-yaml';
+import * as yaml from 'js-yaml';
 import type { Rule } from '../../types/rules';
 import { getAllProviders, getProvider } from '../../shared/providers';
 import { buildRuleFrontmatter } from '../../shared/providers/handlers';
