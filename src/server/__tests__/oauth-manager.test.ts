@@ -75,7 +75,7 @@ describe('OAuth2Manager', () => {
       // that an unreachable MCP server produces at the network layer.
       globalThis.fetch = (async () => {
         throw new DOMException('The operation was aborted.', 'AbortError');
-      }) as typeof fetch;
+      }) as unknown as typeof fetch;
 
       const manager = new OAuth2Manager(makeMockDb());
       const result = await manager.detectOAuth2Requirement('http://192.0.2.1:9999/mcp');
@@ -83,7 +83,7 @@ describe('OAuth2Manager', () => {
     });
 
     it('returns null when the MCP server returns a non-401 status', async () => {
-      globalThis.fetch = (async () => new Response('', { status: 200 })) as typeof fetch;
+      globalThis.fetch = (async () => new Response('', { status: 200 })) as unknown as typeof fetch;
 
       const manager = new OAuth2Manager(makeMockDb());
       const result = await manager.detectOAuth2Requirement('http://localhost:9999/mcp');
