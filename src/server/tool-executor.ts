@@ -11,6 +11,92 @@ export interface CommandExecutionResult {
   error?: string;
 }
 
+const PLACEHOLDER_RE = /\{([a-zA-Z_][a-zA-Z0-9_]*)\}/g;
+
+/**
+ * POSIX-style tokenizer for the operator's `cmd` template. Honors single and
+ * double quotes and backslash escapes so operators can group multi-word
+ * defaults (e.g. `git commit -m "default message"`). The result is a fixed
+ * argv shape that is decided BEFORE any caller-supplied value is substituted,
+ * which is what prevents caller values from spawning new argv elements or
+ * shell metacharacters.
+ */
+export function tokenizeCommandTemplate(input: string): string[] {
+  const tokens: string[] = [];
+  let current = '';
+  let hasToken = false;
+  let inSingle = false;
+  let inDouble = false;
+
+  const flush = () => {
+    if (hasToken) {
+      tokens.push(current);
+      current = '';
+      hasToken = false;
+    }
+  };
+
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i];
+
+    if (inSingle) {
+      if (ch === "'") {
+        inSingle = false;
+      } else {
+        current += ch;
+      }
+      continue;
+    }
+
+    if (inDouble) {
+      if (ch === '"') {
+        inDouble = false;
+      } else if (ch === '\\' && i + 1 < input.length) {
+        const next = input[i + 1];
+        if (next === '"' || next === '\\' || next === '$' || next === '`') {
+          current += next;
+          i++;
+        } else {
+          current += ch;
+        }
+      } else {
+        current += ch;
+      }
+      hasToken = true;
+      continue;
+    }
+
+    if (ch === "'") {
+      inSingle = true;
+      hasToken = true;
+    } else if (ch === '"') {
+      inDouble = true;
+      hasToken = true;
+    } else if (ch === '\\' && i + 1 < input.length) {
+      current += input[i + 1];
+      i++;
+      hasToken = true;
+    } else if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r') {
+      flush();
+    } else {
+      current += ch;
+      hasToken = true;
+    }
+  }
+
+  if (inSingle || inDouble) {
+    throw new Error('Unterminated quote in command template');
+  }
+  flush();
+  return tokens;
+}
+
+function substitutePlaceholders(token: string, values: Record<string, string>): string {
+  return token.replace(PLACEHOLDER_RE, (match, name) =>
+    Object.prototype.hasOwnProperty.call(values, name) ? values[name] : match
+  );
+}
+
 export class CommandToolExecutor {
   private db: CapaDatabase;
   private projectId: string;
@@ -33,14 +119,14 @@ export class CommandToolExecutor {
   ): Promise<CommandExecutionResult> {
     this.logger.info(`Executing tool: ${toolId}`);
     this.logger.debug(`Args: ${JSON.stringify(args)}`);
-    
+
     // Check if tool needs initialization
     const initState = this.db.getToolInitState(this.projectId, toolId);
-    
+
     if (definition.init && (!initState || !initState.initialized)) {
       this.logger.info(`Initializing tool ${toolId}...`);
       const initResult = await this.runCommand(definition.init, {});
-      
+
       if (!initResult.success) {
         this.logger.failure(`Init failed: ${initResult.error}`);
         // Store error
@@ -50,7 +136,7 @@ export class CommandToolExecutor {
           error: `Tool initialization failed: ${initResult.error}`,
         };
       }
-      
+
       this.logger.success('Tool initialized');
       this.db.setToolInitialized(this.projectId, toolId, null);
     } else if (initState && initState.last_error) {
@@ -77,11 +163,24 @@ export class CommandToolExecutor {
   ): Promise<CommandExecutionResult> {
     // Resolve variables in the command spec
     const resolvedSpec = resolveVariablesInObject(spec, this.projectId, this.db);
-    
-    // Build command with arguments
-    let cmd = resolvedSpec.cmd;
-    
-    // Replace argument placeholders
+
+    // Tokenize the OPERATOR template first. The argv shape is fixed here,
+    // before any caller-supplied value is touched — caller values are
+    // substituted into existing tokens, never able to create new ones.
+    let templateTokens: string[];
+    try {
+      templateTokens = tokenizeCommandTemplate(resolvedSpec.cmd);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { success: false, error: `Invalid command template: ${message}` };
+    }
+    if (templateTokens.length === 0) {
+      return { success: false, error: 'Command template is empty' };
+    }
+
+    // Collect substitution values: caller-supplied first, falling back to
+    // declared defaults; reject calls that omit a required value.
+    const values: Record<string, string> = {};
     if (spec.args) {
       for (const argDef of spec.args) {
         let value = args[argDef.name];
@@ -94,39 +193,34 @@ export class CommandToolExecutor {
             error: `Missing required argument: ${argDef.name}`,
           };
         }
-        
-        const placeholder = `{${argDef.name}}`;
-        if (cmd.includes(placeholder)) {
-          cmd = cmd.replace(placeholder, String(value));
+        if (value !== undefined) {
+          values[argDef.name] = String(value);
         }
       }
     }
 
+    const substituted = templateTokens.map((t) => substitutePlaceholders(t, values));
+    const [program, ...programArgs] = substituted;
+
     // Determine working directory
     const cwd = spec.dir ? resolve(this.projectPath, spec.dir) : this.projectPath;
 
-    this.logger.info(`          Running command: ${cmd}`);
+    this.logger.info(`          Running command: ${program} ${programArgs.join(' ')}`);
     this.logger.info(`          Working directory: ${cwd}`);
 
-    // Execute command
+    // Execute command. shell:false is the security guarantee — values become
+    // argv elements, never re-parsed by a shell, so metacharacters in values
+    // are inert.
     const env = { ...process.env, ...spec.env };
-    const isWindows = process.platform === 'win32';
 
     return new Promise((resolve) => {
-      const proc = isWindows
-        ? spawn('cmd.exe', ['/d', '/s', '/c', cmd], {
-            cwd,
-            env,
-            windowsHide: true,
-            timeout: 60000,
-          })
-        : spawn(cmd, {
-            cwd,
-            env,
-            shell: true,
-            windowsHide: true,
-            timeout: 60000,
-          });
+      const proc = spawn(program, programArgs, {
+        cwd,
+        env,
+        shell: false,
+        windowsHide: true,
+        timeout: 60000,
+      });
 
       let stdout = '';
       let stderr = '';

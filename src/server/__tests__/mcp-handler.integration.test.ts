@@ -610,3 +610,55 @@ describe('getAllShellTools / getShellToolSchema (lazy MCP schema)', () => {
     expect(schema.inputSchema.properties.pattern).toBeDefined();
   });
 });
+
+// ─── listServerTools: surface unreachable servers (issue #126) ───────────────
+//
+// The /tools API handler relies on `listServerTools` forwarding
+// `throwOnError` so an unreachable MCP server produces an HTTP error the UI can
+// render ("Server unreachable") instead of a silent empty list that looks like
+// "this server has no tools".
+
+describe('listServerTools (throwOnError pass-through)', () => {
+  let h: Harness;
+
+  const caps: Capabilities = {
+    providers: ['claude-code'],
+    options: {},
+    skills: [],
+    servers: [{ id: 'brave', def: { url: 'http://127.0.0.1:1/mcp' } } as any],
+    tools: [],
+  };
+
+  beforeEach(() => {
+    h = makeHarness(caps);
+  });
+
+  afterEach(() => destroyHarness(h));
+
+  it('forwards throwOnError to the proxy', async () => {
+    let seenOptions: any;
+    (h.mcp as any).mcpProxy.listTools = async (_id: string, _def: unknown, options: unknown) => {
+      seenOptions = options;
+      return [];
+    };
+
+    await h.mcp.listServerTools('brave', caps, { throwOnError: true });
+    expect(seenOptions).toEqual({ throwOnError: true });
+  });
+
+  it('propagates connection failures instead of swallowing them', async () => {
+    (h.mcp as any).mcpProxy.listTools = async () => {
+      throw new Error('Could not connect to MCP server "brave"');
+    };
+
+    await expect(
+      h.mcp.listServerTools('brave', caps, { throwOnError: true }),
+    ).rejects.toThrow(/Could not connect/);
+  });
+
+  it('returns an empty list for a reachable server with no tools', async () => {
+    (h.mcp as any).mcpProxy.listTools = async () => [];
+    const tools = await h.mcp.listServerTools('brave', caps, { throwOnError: true });
+    expect(tools).toEqual([]);
+  });
+});
