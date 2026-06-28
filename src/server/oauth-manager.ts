@@ -17,6 +17,9 @@ import { isPermanentRefreshFailure } from '../shared/oauth-refresh';
 // Re-exported for backwards compatibility with existing import sites.
 export { isPermanentRefreshFailure };
 
+/** Timeout for outbound HTTP requests made during OAuth2 detection (ms). */
+const OAUTH_DETECT_TIMEOUT_MS = 10_000;
+
 export class OAuth2Manager {
   private db: CapaDatabase;
   private oauth2ConfigCache = new Map<string, OAuth2Config>();
@@ -66,6 +69,7 @@ export class OAuth2Manager {
             clientInfo: { name: 'capa-oauth-detection', version: '1.0.0' },
           },
         }),
+        signal: AbortSignal.timeout(OAUTH_DETECT_TIMEOUT_MS),
         ...this.tlsFetchOptions(tlsSkipVerify),
       } as RequestInit);
 
@@ -160,7 +164,10 @@ export class OAuth2Manager {
    */
   private async fetchProtectedResourceMetadata(url: string, tlsSkipVerify?: boolean): Promise<ProtectedResourceMetadata | null> {
     try {
-      const response = await fetch(url, { ...this.tlsFetchOptions(tlsSkipVerify) } as RequestInit);
+      const response = await fetch(url, {
+        signal: AbortSignal.timeout(OAUTH_DETECT_TIMEOUT_MS),
+        ...this.tlsFetchOptions(tlsSkipVerify),
+      } as RequestInit);
       if (!response.ok) {
         return null;
       }
@@ -180,7 +187,10 @@ export class OAuth2Manager {
       const wellKnownUrl = new URL('/.well-known/oauth-authorization-server', authServerUrl).toString();
       
       this.logger.debug(`Fetching OAuth metadata from: ${wellKnownUrl}`);
-      const response = await fetch(wellKnownUrl, { ...this.tlsFetchOptions(tlsSkipVerify) } as RequestInit);
+      const response = await fetch(wellKnownUrl, {
+        signal: AbortSignal.timeout(OAUTH_DETECT_TIMEOUT_MS),
+        ...this.tlsFetchOptions(tlsSkipVerify),
+      } as RequestInit);
       if (!response.ok) {
         this.logger.warn(`OAuth metadata fetch failed: ${response.status}`);
         return null;
