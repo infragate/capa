@@ -32,7 +32,7 @@ export function ServerToolsPanel({ projectId, serverId, search = '', prefetchedT
   if (!prefetchedTools && error) {
     return (
       <div className="mt-3 border-t border-border-tertiary pt-3 text-xs text-error-text">
-        Failed to load tools: {(error as Error).message}
+        {(error as Error).message || t('tool.serverUnreachable')}
       </div>
     );
   }
