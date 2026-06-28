@@ -9,7 +9,7 @@
 import { existsSync } from 'fs';
 import { logger } from './logger';
 import { join } from 'path';
-import yaml from 'js-yaml';
+import * as yaml from 'js-yaml';
 import type {
   Lockfile,
   LockfileFormat,
