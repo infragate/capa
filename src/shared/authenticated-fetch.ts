@@ -13,7 +13,9 @@ import { isPermanentRefreshFailure } from './oauth-refresh';
 
 const CLOUD_OAUTH_ENDPOINT = 'https://capa.infragate.ai/auth';
 
-const TOKEN_EXPIRED_MESSAGE =
+// Kept for reference in tests; no longer thrown by ensureFreshIntegration so that
+// public URLs on known git hosts still work when the stored token is expired.
+export const TOKEN_EXPIRED_MESSAGE =
   'Git integration token has expired. Run `capa auth` again to re-authenticate.';
 
 function getExpiresAt(integration: GitIntegration): number | null {
@@ -134,12 +136,16 @@ export class AuthenticatedFetch {
 
   /**
    * Ensure the integration has a non-expired token, refreshing when possible.
+   * Returns null when the token is expired and cannot be refreshed — callers
+   * should fall back to an unauthenticated request rather than aborting, so
+   * that public URLs on known git hosts (e.g. raw.githubusercontent.com) still
+   * work even when the user's stored token has expired.
    */
   private async ensureFreshIntegration(
     platform: GitPlatform,
     host: string | undefined,
     integration: GitIntegration
-  ): Promise<GitIntegration> {
+  ): Promise<GitIntegration | null> {
     if (!isTokenExpired(integration)) {
       return integration;
     }
@@ -152,7 +158,10 @@ export class AuthenticatedFetch {
       }
     }
 
-    throw new Error(TOKEN_EXPIRED_MESSAGE);
+    // Token is expired and refresh failed. Return null so the caller can fall
+    // back to an unauthenticated request. Private repos will still get a 401/403
+    // which the install flow already converts into a friendly re-auth prompt.
+    return null;
   }
 
   /**
@@ -172,6 +181,10 @@ export class AuthenticatedFetch {
     }
 
     const fresh = await this.ensureFreshIntegration(platform, host, integration);
+    if (!fresh) {
+      // Token expired and could not be refreshed; proceed without auth headers.
+      return null;
+    }
 
     const gp = getGitProvider(platform);
     if (gp) {

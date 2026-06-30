@@ -81,7 +81,8 @@
     "from": "from",
     "cmd": "cmd",
     "requiredBy": "required by",
-    "noToolsOnServer": "No tools found on this server"
+    "noToolsOnServer": "No tools found on this server",
+    "serverUnreachable": "Server unreachable"
   },
   "stat": {
     "skill": "skill",
