@@ -73,7 +73,7 @@ describe('AuthenticatedFetch', () => {
     globalThis.fetch = originalFetch;
   });
 
-  it('throws a clear error when the token is expired and refresh is unavailable', async () => {
+  it('falls back to unauthenticated fetch when the token is expired and refresh is unavailable', async () => {
     const db = makeDb(
       makeIntegration({
         expires_at: Date.now() - 60_000,
@@ -82,9 +82,14 @@ describe('AuthenticatedFetch', () => {
     );
     const authFetch = new AuthenticatedFetch(db);
 
-    await expect(authFetch.fetch(GITHUB_RAW_URL)).rejects.toThrow(/expired/i);
-    await expect(authFetch.fetch(GITHUB_RAW_URL)).rejects.toThrow(/capa auth/i);
-    expect(fetchCalls).toHaveLength(0);
+    // Should not throw — the request proceeds without auth so public URLs still work.
+    const response = await authFetch.fetch(GITHUB_RAW_URL);
+    expect(response.status).toBe(200);
+
+    // Fetch must have been called once (unauthenticated — no Authorization header).
+    expect(fetchCalls).toHaveLength(1);
+    const headers = fetchCalls[0]!.init?.headers as Headers | undefined;
+    expect(headers?.get?.('Authorization') ?? null).toBeNull();
   });
 
   it('includes the auth header when the token is valid and not expired', async () => {
@@ -143,12 +148,14 @@ describe('AuthenticatedFetch', () => {
   });
 
   describe('refresh failure classification', () => {
-    it('keeps the stored token when the cloud refresh endpoint returns a transient 5xx', async () => {
+    it('keeps the stored token and falls back to unauthenticated fetch when the cloud refresh endpoint returns a transient 5xx', async () => {
+      let targetFetchCalled = false;
       globalThis.fetch = (async (input: RequestInfo | URL) => {
         const url = typeof input === 'string' ? input : input.toString();
         if (url.includes('/auth/refresh')) {
           return new Response('bad gateway', { status: 502 });
         }
+        targetFetchCalled = true;
         return new Response('ok', { status: 200 });
       }) as typeof fetch;
 
@@ -160,19 +167,25 @@ describe('AuthenticatedFetch', () => {
       );
       const authFetch = new AuthenticatedFetch(harness.db);
 
-      await expect(authFetch.fetch(GITHUB_RAW_URL)).rejects.toThrow(/expired/i);
+      // Falls back to unauthenticated — does not throw.
+      const response = await authFetch.fetch(GITHUB_RAW_URL);
+      expect(response.status).toBe(200);
+      expect(targetFetchCalled).toBe(true);
 
+      // Stored token must NOT be deleted on a transient failure.
       expect(harness.deletes).toHaveLength(0);
       expect(harness.current).not.toBeNull();
       expect(harness.current?.refresh_token).toBe('still-valid-refresh');
     });
 
-    it('keeps the stored token when the refresh request throws a network error', async () => {
+    it('keeps the stored token and falls back to unauthenticated fetch when the refresh request throws a network error', async () => {
+      let targetFetchCalled = false;
       globalThis.fetch = (async (input: RequestInfo | URL) => {
         const url = typeof input === 'string' ? input : input.toString();
         if (url.includes('/auth/refresh')) {
           throw new Error('ENOTFOUND capa.infragate.ai');
         }
+        targetFetchCalled = true;
         return new Response('ok', { status: 200 });
       }) as typeof fetch;
 
@@ -184,13 +197,16 @@ describe('AuthenticatedFetch', () => {
       );
       const authFetch = new AuthenticatedFetch(harness.db);
 
-      await expect(authFetch.fetch(GITHUB_RAW_URL)).rejects.toThrow(/expired/i);
+      const response = await authFetch.fetch(GITHUB_RAW_URL);
+      expect(response.status).toBe(200);
+      expect(targetFetchCalled).toBe(true);
 
       expect(harness.deletes).toHaveLength(0);
       expect(harness.current).not.toBeNull();
     });
 
-    it('deletes the stored token when the refresh_token is rejected as invalid_grant', async () => {
+    it('deletes the stored token and falls back to unauthenticated fetch when the refresh_token is rejected as invalid_grant', async () => {
+      let targetFetchCalled = false;
       globalThis.fetch = (async (input: RequestInfo | URL) => {
         const url = typeof input === 'string' ? input : input.toString();
         if (url.includes('/auth/refresh')) {
@@ -199,6 +215,7 @@ describe('AuthenticatedFetch', () => {
             headers: { 'Content-Type': 'application/json' },
           });
         }
+        targetFetchCalled = true;
         return new Response('ok', { status: 200 });
       }) as typeof fetch;
 
@@ -210,7 +227,10 @@ describe('AuthenticatedFetch', () => {
       );
       const authFetch = new AuthenticatedFetch(harness.db);
 
-      await expect(authFetch.fetch(GITHUB_RAW_URL)).rejects.toThrow(/expired/i);
+      // Falls back to unauthenticated after clearing the bad token.
+      const response = await authFetch.fetch(GITHUB_RAW_URL);
+      expect(response.status).toBe(200);
+      expect(targetFetchCalled).toBe(true);
 
       expect(harness.deletes).toHaveLength(1);
       expect(harness.deletes[0]).toEqual({ platform: 'github', host: null });

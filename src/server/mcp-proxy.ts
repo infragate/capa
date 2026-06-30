@@ -11,6 +11,9 @@ import { OAuth2Manager } from './oauth-manager';
 import { logger } from '../shared/logger';
 import { shouldSkipTlsVerify } from '../shared/tls-skip-verify';
 
+/** Timeout for MCP client.connect() — prevents hanging on an unresponsive server (ms). */
+const MCP_CONNECT_TIMEOUT_MS = 15_000;
+
 export interface MCPToolResult {
   success: boolean;
   result?: any;
@@ -303,7 +306,7 @@ export class MCPProxy {
       };
 
       this.logger.debug('Connecting client...');
-      await client.connect(transport);
+      await this.connectWithTimeout(client, transport);
 
       this.clients.set(serverId, client);
       this.logger.success('Client connected');
@@ -345,7 +348,7 @@ export class MCPProxy {
       };
 
       this.logger.debug('Connecting client...');
-      await client.connect(transport);
+      await this.connectWithTimeout(client, transport);
 
       this.clients.set(serverId, client);
       this.logger.success('Client connected');
@@ -353,6 +356,63 @@ export class MCPProxy {
     } catch (error) {
       this.logger.failure(`Failed to create MCP client for ${serverId}:`, error);
       return null;
+    }
+  }
+
+  /**
+   * Connect a client with a bounded timeout.
+   *
+   * `client.connect()` can hang indefinitely against an unreachable or
+   * half-open server (one that accepts the TCP connection but never completes
+   * the MCP handshake, e.g. it returns an empty response). We race the connect
+   * against a timer. Several subtleties matter so that a timeout never leaks a
+   * stray "MCP connect timed out" / "socket connection was closed unexpectedly"
+   * unhandled rejection out of the request and into the process/UI:
+   *
+   *  1. Attach a no-op `.catch` to the connect promise so that if it rejects
+   *     *after* we've already timed out (the socket closing late), that
+   *     rejection is considered handled.
+   *  2. Always clear the timer in `finally` — including when `client.connect()`
+   *     throws synchronously — so the timeout promise can't reject into the void
+   *     and trip the global unhandledRejection handler ~`timeoutMs` later.
+   *  3. On timeout, best-effort tear down the half-open client/transport so its
+   *     underlying socket doesn't linger and emit further errors.
+   *
+   * Rejections from this method are expected to be caught by the caller
+   * (`createHttpClient` / `createStdioClient`), which log and return `null`.
+   */
+  private async connectWithTimeout(
+    client: Client,
+    transport: Transport,
+    timeoutMs: number = MCP_CONNECT_TIMEOUT_MS,
+  ): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let timedOut = false;
+
+    try {
+      const connectPromise = client.connect(transport);
+      // Swallow a late rejection (socket closed after we already timed out) so
+      // it doesn't surface as an unhandled rejection on the process.
+      connectPromise.catch(() => {});
+
+      const timeout = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          timedOut = true;
+          reject(new Error(`MCP connect timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+      });
+
+      await Promise.race([connectPromise, timeout]);
+    } catch (error) {
+      if (timedOut) {
+        // Best-effort cleanup of the half-open connection so the dangling
+        // socket doesn't keep the process busy or emit late errors.
+        try { await client.close(); } catch { /* ignore */ }
+        try { await transport.close?.(); } catch { /* ignore */ }
+      }
+      throw error;
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   }
 

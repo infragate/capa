@@ -211,6 +211,18 @@ class CapaServer {
 
 
   private async handleRequest(request: Request, server: any): Promise<Response> {
+    try {
+      return await this._handleRequest(request, server);
+    } catch (error: any) {
+      this.logger.failure(`Unhandled error in request handler: ${error?.message ?? error}`);
+      return new Response(
+        JSON.stringify({ error: 'Internal server error' }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+  }
+
+  private async _handleRequest(request: Request, server: any): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname;
 
@@ -701,17 +713,29 @@ class CapaServer {
         );
       }
 
-      const tools = await mcpServer.listServerTools(serverId, capabilities);
+      // throwOnError surfaces connection/auth failures instead of silently
+      // returning an empty list, so the UI can distinguish "server has no tools"
+      // (200 + []) from "server unreachable" (502 + error).
+      const tools = await mcpServer.listServerTools(serverId, capabilities, { throwOnError: true });
       apiLogger.success(`Found ${tools.length} tools for server ${serverId}`);
       return new Response(
         JSON.stringify({ tools }),
         { headers: { 'Content-Type': 'application/json' } }
       );
     } catch (error: any) {
-      apiLogger.failure(`Error: ${error.message}`);
+      const detail = error?.message ?? String(error);
+      apiLogger.failure(`Error listing tools for ${serverId}: ${detail}`);
+      // Return a controlled, sanitized message — never echo raw exception text
+      // (which CodeQL flags as potential stack-trace exposure) back to the
+      // client. Full detail is logged above. An OAuth-disconnected server is
+      // not "unreachable", so distinguish that case to prompt re-auth.
+      const needsAuth = /authentication failed|reconnect oauth2/i.test(detail);
+      const message = needsAuth
+        ? `Authentication required for "${serverId}". Please reconnect this server's OAuth2 connection.`
+        : `Server unreachable: "${serverId}" could not be contacted.`;
       return new Response(
-        JSON.stringify({ error: error.message }),
-        { status: 500, headers: { 'Content-Type': 'application/json' } }
+        JSON.stringify({ error: message }),
+        { status: 502, headers: { 'Content-Type': 'application/json' } }
       );
     }
   }
@@ -1213,57 +1237,71 @@ class CapaServer {
   private async handleGetOAuth2Servers(projectId: string): Promise<Response> {
     const apiLogger = this.logger.child('API');
     apiLogger.info(`Get OAuth2 servers for project: ${projectId}`);
-    const capabilities = this.sessionManager.getProjectCapabilities(projectId);
-    if (!capabilities) {
-      return new Response(
-        JSON.stringify({ error: 'Project not configured' }),
-        { status: 404, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
+    try {
+      const capabilities = this.sessionManager.getProjectCapabilities(projectId);
+      if (!capabilities) {
+        return new Response(
+          JSON.stringify({ error: 'Project not configured' }),
+          { status: 404, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
 
-    // Ensure URL-based servers that require OAuth have def.oauth2 set (on-demand detection)
-    let capabilitiesUpdated = false;
-    for (const server of capabilities.servers) {
-      const hasExplicitAuthOnDemand = server.def.headers &&
-        Object.keys(server.def.headers).some(k => k.toLowerCase() === 'authorization');
-      if (server.def.url && !server.def.oauth2 && !hasExplicitAuthOnDemand) {
-        const oauth2Config = await this.oauth2Manager.detectOAuth2Requirement(server.def.url, { tlsSkipVerify: server.def.tlsSkipVerify });
-        if (oauth2Config) {
-          apiLogger.debug(`OAuth2 detected for ${server.id} (on-demand)`);
-          server.def.oauth2 = oauth2Config;
-          capabilitiesUpdated = true;
+      // Ensure URL-based servers that require OAuth have def.oauth2 set (on-demand detection)
+      let capabilitiesUpdated = false;
+      for (const server of capabilities.servers) {
+        const hasExplicitAuthOnDemand = server.def.headers &&
+          Object.keys(server.def.headers).some(k => k.toLowerCase() === 'authorization');
+        if (server.def.url && !server.def.oauth2 && !hasExplicitAuthOnDemand) {
+          try {
+            const oauth2Config = await this.oauth2Manager.detectOAuth2Requirement(server.def.url, { tlsSkipVerify: server.def.tlsSkipVerify });
+            if (oauth2Config) {
+              apiLogger.debug(`OAuth2 detected for ${server.id} (on-demand)`);
+              server.def.oauth2 = oauth2Config;
+              capabilitiesUpdated = true;
+            }
+          } catch (detectionError: any) {
+            apiLogger.warn(`OAuth2 detection failed for ${server.id}: ${detectionError?.message ?? detectionError}`);
+          }
         }
       }
-    }
-    if (capabilitiesUpdated) {
-      this.sessionManager.setProjectCapabilities(projectId, capabilities);
-    }
+      if (capabilitiesUpdated) {
+        this.sessionManager.setProjectCapabilities(projectId, capabilities);
+      }
 
-    const oauth2Servers = capabilities.servers
-      .filter((s: any) => s.def.oauth2)
-      .map((s: MCPServer) => {
-        const isConnected = this.oauth2Manager.isServerConnected(projectId, s.id);
-        let expiresAt: number | undefined;
-        
-        if (isConnected) {
-          const tokenData = this.db.getOAuthToken(projectId, s.id);
-          expiresAt = tokenData?.expires_at ?? undefined;
-        }
-        
-        return {
-          serverId: s.id,
-          serverUrl: s.def.url,
-          displayName: s.displayName ?? s.id,
-          isConnected: isConnected,
-          expiresAt: expiresAt,
-          oauth2Config: s.def.oauth2,
-        };
-      });
+      const oauth2Servers = capabilities.servers
+        .filter((s: any) => s.def.oauth2)
+        .map((s: MCPServer) => {
+          const isConnected = this.oauth2Manager.isServerConnected(projectId, s.id);
+          let expiresAt: number | undefined;
 
-    return new Response(
-      JSON.stringify({ servers: oauth2Servers }),
-      { headers: { 'Content-Type': 'application/json' } }
-    );
+          if (isConnected) {
+            const tokenData = this.db.getOAuthToken(projectId, s.id);
+            expiresAt = tokenData?.expires_at ?? undefined;
+          }
+
+          return {
+            serverId: s.id,
+            serverUrl: s.def.url,
+            displayName: s.displayName ?? s.id,
+            isConnected: isConnected,
+            expiresAt: expiresAt,
+            oauth2Config: s.def.oauth2,
+          };
+        });
+
+      return new Response(
+        JSON.stringify({ servers: oauth2Servers }),
+        { headers: { 'Content-Type': 'application/json' } }
+      );
+    } catch (error: any) {
+      // Log full detail server-side, but return a generic message so raw
+      // exception text (stack-trace exposure) never reaches the client.
+      apiLogger.failure(`Error getting OAuth2 servers: ${error?.message ?? error}`);
+      return new Response(
+        JSON.stringify({ error: 'Failed to load OAuth2 servers' }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
   }
 
   private uiOrigin(): string {
@@ -2217,6 +2255,19 @@ class CapaServer {
 
 // Main
 const server = new CapaServer();
+
+// Safety net for stray async failures. The MCP SDK's HTTP/stdio transports keep
+// background sockets open; when a remote server becomes unreachable (e.g. VPN
+// dropped) those can reject after we've already returned a response, which Bun
+// would otherwise print as a raw "The socket connection was closed unexpectedly"
+// error. Log these instead of letting them crash the process or leak to stderr.
+process.on('unhandledRejection', (reason) => {
+  const message = reason instanceof Error ? reason.message : String(reason);
+  logger.warn(`Unhandled promise rejection (ignored): ${message}`);
+});
+process.on('uncaughtException', (error) => {
+  logger.error(`Uncaught exception (ignored): ${error?.message ?? error}`);
+});
 
 // Handle shutdown signals
 process.on('SIGTERM', () => server.stop());
