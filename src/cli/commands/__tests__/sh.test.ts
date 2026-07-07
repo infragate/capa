@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test';
-import { parseInlineArgs, resolveArgs, coerceValue } from '../sh';
+import { parseInlineArgs, resolveArgs, coerceValue, parseShellGlobalFlags } from '../sh';
 import type { ShellCommand } from '../sh';
 import { slugify } from '../../../shared/slug';
 
@@ -19,6 +19,22 @@ function makeCommand(overrides: Partial<ShellCommand> = {}): ShellCommand {
     ...overrides,
   };
 }
+
+describe('parseShellGlobalFlags', () => {
+  it('detects and removes --json', () => {
+    expect(parseShellGlobalFlags(['--json', 'my-tool', '--x', '1'])).toEqual({
+      jsonMode: true,
+      tokens: ['my-tool', '--x', '1'],
+    });
+  });
+
+  it('defaults jsonMode to false', () => {
+    expect(parseShellGlobalFlags(['my-tool'])).toEqual({
+      jsonMode: false,
+      tokens: ['my-tool'],
+    });
+  });
+});
 
 describe('parseInlineArgs', () => {
   it('should parse key-value pairs', () => {

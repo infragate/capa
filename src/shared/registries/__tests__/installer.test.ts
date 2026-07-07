@@ -130,13 +130,21 @@ describe('installer — url installs', () => {
   });
 
   it('cleans up the managed dir when fetch fails', async () => {
-    await expect(
-      installRegistry(
-        { slug: 'unit', type: 'url', source: 'https://example.invalid-host-name.test/a.ts' },
-        authFetch,
-      ),
-    ).rejects.toThrow();
-    expect(existsSync(join(managedDir, 'unit'))).toBe(false);
+    const server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response('unavailable', { status: 503 });
+      },
+    });
+    try {
+      const url = `http://127.0.0.1:${server.port}/adapter.ts`;
+      await expect(
+        installRegistry({ slug: 'unit', type: 'url', source: url }, authFetch),
+      ).rejects.toThrow(/Failed to fetch/);
+      expect(existsSync(join(managedDir, 'unit'))).toBe(false);
+    } finally {
+      server.stop();
+    }
   });
 
   it('rejects an adapter file whose default export has the wrong shape', async () => {
