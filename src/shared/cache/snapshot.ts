@@ -5,10 +5,12 @@ import { validateRepoPath } from './validate';
 import {
   type CachePlatform,
   getRepoCacheDir,
+  getRepoMirrorDir,
   getSnapshotDir,
 } from './paths';
 import {
   ensureMirrorClone,
+  fetchMirror,
   resolveRef,
   type ResolveOptions,
 } from './mirror';
@@ -132,7 +134,27 @@ export async function getOrCreateSnapshot(
     }
   }
 
+  // Remember whether a mirror was already on disk *before* ensureMirrorClone
+  // runs — a freshly cloned mirror is already current and never needs a refresh.
+  const mirrorPreexisted = existsSync(getRepoMirrorDir(platform, repoPath));
   const mirrorDir = await ensureMirrorClone(platform, repoPath, authFetch, opts.repoUrl);
+
+  // Unpinned reference ("track latest"): nothing in resolveRef's unpinned path
+  // fetches, so a pre-existing mirror can resolve a stale latest tag / HEAD
+  // forever. A skill or tag published upstream *after* the initial clone would
+  // never be found until `--no-cache` wiped the cache. Refresh once so "latest"
+  // means latest. Only needed when the mirror pre-existed (a fresh clone is
+  // already current) and best-effort so offline installs still resolve from the
+  // cached mirror.
+  const isUnpinned = !opts.pinnedSha && !opts.ref && !opts.version;
+  if (isUnpinned && mirrorPreexisted) {
+    try {
+      await fetchMirror(mirrorDir);
+    } catch {
+      // Offline or transient network failure — fall back to the cached mirror.
+    }
+  }
+
   const { sha, version } = await resolveRef(mirrorDir, {
     version: opts.version,
     ref: opts.ref,

@@ -242,6 +242,94 @@ describe('cache', () => {
     });
   });
 
+  describe('getOrCreateSnapshot refreshes stale mirrors for unpinned refs', () => {
+    /**
+     * Build an isolated fixture repo (its own source dir) with a single commit
+     * and NO semver tag, so unpinned resolution falls through to HEAD. Returns
+     * the file:// URL and a helper to append a new commit later.
+     */
+    async function makeMutableFixture(name: string): Promise<{
+      url: string;
+      repoDir: string;
+      addCommit: (file: string, contents: string) => Promise<string>;
+    }> {
+      const repoDir = join(testRoot, name);
+      mkdirSync(repoDir, { recursive: true });
+      await execAsync(`git init -b main`, { cwd: repoDir });
+      await execAsync(`git config user.email "capa-test@example.com"`, { cwd: repoDir });
+      await execAsync(`git config user.name "capa-test"`, { cwd: repoDir });
+      writeFileSync(join(repoDir, 'first.md'), 'first\n');
+      await execAsync(`git add -A`, { cwd: repoDir });
+      await execAsync(`git commit -m "first"`, { cwd: repoDir });
+
+      const addCommit = async (file: string, contents: string): Promise<string> => {
+        writeFileSync(join(repoDir, file), contents);
+        await execAsync(`git add -A`, { cwd: repoDir });
+        await execAsync(`git commit -m "add ${file}"`, { cwd: repoDir });
+        const { stdout } = await execAsync(`git rev-parse HEAD`, { cwd: repoDir });
+        return stdout.trim();
+      };
+
+      const url = `file://${repoDir.replace(/\\/g, '/')}`;
+      return { url, repoDir, addCommit };
+    }
+
+    it('picks up a commit pushed after the mirror was first cloned', async () => {
+      const fx = await makeMutableFixture('stale-fixture.git-src');
+
+      // First install: clones the mirror and materializes HEAD.
+      const first = await getOrCreateSnapshot({
+        platform: 'github',
+        repoPath: 'owner/stale',
+        authFetch: noAuthFetch,
+        repoUrl: fx.url,
+      });
+      expect(existsSync(join(first.snapshotDir, 'first.md'))).toBe(true);
+      expect(existsSync(join(first.snapshotDir, 'late.md'))).toBe(false);
+
+      // Upstream gains a new commit *after* the initial clone.
+      const latestSha = await fx.addCommit('late.md', 'late\n');
+
+      // Second install (still unpinned): must refresh the stale mirror and see
+      // the new commit rather than resolving the cached HEAD forever.
+      const second = await getOrCreateSnapshot({
+        platform: 'github',
+        repoPath: 'owner/stale',
+        authFetch: noAuthFetch,
+        repoUrl: fx.url,
+      });
+      expect(second.resolvedSha).toBe(latestSha);
+      expect(existsSync(join(second.snapshotDir, 'late.md'))).toBe(true);
+    });
+
+    it('picks up a semver tag published after the mirror was first cloned', async () => {
+      const fx = await makeMutableFixture('stale-tag-fixture.git-src');
+      await execAsync(`git tag v1.0.0`, { cwd: fx.repoDir });
+
+      const first = await getOrCreateSnapshot({
+        platform: 'github',
+        repoPath: 'owner/stale-tag',
+        authFetch: noAuthFetch,
+        repoUrl: fx.url,
+      });
+      expect(first.resolvedVersion).toBe('v1.0.0');
+
+      // Publish a newer release upstream.
+      const taggedSha = await fx.addCommit('v2.md', 'v2\n');
+      await execAsync(`git tag v2.0.0`, { cwd: fx.repoDir });
+
+      const second = await getOrCreateSnapshot({
+        platform: 'github',
+        repoPath: 'owner/stale-tag',
+        authFetch: noAuthFetch,
+        repoUrl: fx.url,
+      });
+      expect(second.resolvedVersion).toBe('v2.0.0');
+      expect(second.resolvedSha).toBe(taggedSha);
+      expect(existsSync(join(second.snapshotDir, 'v2.md'))).toBe(true);
+    });
+  });
+
   describe('getCacheStats / cleanCache', () => {
     it('reports an empty cache when nothing exists', () => {
       // Use a brand-new dir for this test so the seeded mirrors elsewhere don't leak in.
