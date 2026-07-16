@@ -35,7 +35,7 @@ export function SubagentsList({ subagents, search = '' }: SubagentsListProps) {
           {search ? t('detail.noSubagentsMatch') : t('detail.noSubagents')}
         </div>
       ) : (
-        <div className="space-y-1">
+        <div className="max-h-[520px] space-y-1 overflow-y-auto pr-1">
           {visible.map((agent) => (
             <SubagentItem key={agent.id} agent={agent} search={search} />
           ))}

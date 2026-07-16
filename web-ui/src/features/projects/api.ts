@@ -5,6 +5,7 @@ import type {
   VariablesResponse,
   OAuth2ServersResponse,
   ServerToolsResponse,
+  SkillContentResponse,
   OAuthStartResponse,
   ActionResponse,
 } from '../../types/api';
@@ -35,5 +36,10 @@ export const projectsApi = {
   getServerTools: (projectId: string, serverId: string) =>
     api.get<ServerToolsResponse>(
       `/api/projects/${encodeURIComponent(projectId)}/servers/${encodeURIComponent(serverId)}/tools`,
+    ),
+
+  getSkillContent: (projectId: string, skillId: string) =>
+    api.get<SkillContentResponse>(
+      `/api/projects/${encodeURIComponent(projectId)}/skills/${encodeURIComponent(skillId)}/content`,
     ),
 };

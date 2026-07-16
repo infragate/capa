@@ -69,3 +69,13 @@ export function useServerTools(projectId: string | null, serverId: string | null
     retry: false,
   });
 }
+
+export function useSkillContent(projectId: string | null, skillId: string | null) {
+  return useQuery({
+    queryKey: ['skill-content', projectId, skillId],
+    queryFn: () => projectsApi.getSkillContent(projectId!, skillId!),
+    enabled: !!projectId && !!skillId,
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+}
