@@ -146,7 +146,20 @@ export async function applyToolFormatter(
       finish(input);
     });
 
-    proc.stdin?.write(input);
-    proc.stdin?.end();
+    // Formatters that exit before reading stdin (e.g. `exit 1`) can raise EPIPE
+    // on write; swallow that so it does not become an unhandled rejection.
+    proc.stdin?.on('error', (error) => {
+      formatterLogger.warn(`Formatter stdin error: ${error.message}`);
+      finish(input);
+    });
+
+    try {
+      proc.stdin?.write(input);
+      proc.stdin?.end();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      formatterLogger.warn(`Formatter stdin write failed: ${message}`);
+      finish(input);
+    }
   });
 }
