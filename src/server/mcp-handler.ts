@@ -14,6 +14,7 @@ import { SessionManager } from './session-manager';
 import type { SessionInfo } from './session-manager';
 import { CommandToolExecutor } from './tool-executor';
 import { MCPProxy } from './mcp-proxy';
+import { buildToolCallText, extractCapaShellMeta } from './tool-formatter';
 import { VERSION } from '../version';
 import { logger } from '../shared/logger';
 
@@ -341,17 +342,20 @@ export class CapaMCPServer {
     // Call tool handler
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: args } = request.params;
+      const { cleanArgs, skipFormatter } = extractCapaShellMeta(
+        (args ?? {}) as Record<string, any>
+      );
       const capabilities = this.sessionManager.getProjectCapabilities(this.projectId);
       const toolExposureMode = capabilities?.options?.toolExposure || 'expose-all';
 
       // Handle setup_tools
       if (name === 'setup_tools' && toolExposureMode === 'on-demand') {
-        return await this.handleSetupTools(args as { skills: string[] });
+        return await this.handleSetupTools(cleanArgs as { skills: string[] });
       }
 
       // Handle call_tool in on-demand mode
       if (name === 'call_tool' && toolExposureMode === 'on-demand') {
-        return await this.handleCallTool(args as { name: string; data: object });
+        return await this.handleCallTool(cleanArgs as { name: string; data: object });
       }
 
       // Prevent meta-tools from being called in expose-all mode
@@ -421,7 +425,7 @@ export class CapaMCPServer {
         result = await executor.execute(
           name,
           toolDef.def as ToolCommandDefinition,
-          args as Record<string, any>
+          cleanArgs
         );
       } else if (toolDef.type === 'mcp') {
         const mcpDef = toolDef.def as ToolMCPDefinition;
@@ -451,17 +455,15 @@ export class CapaMCPServer {
           };
         }
 
-        result = await this.mcpProxy.executeTool(name, mcpDef, serverDef.def, mergeDefaults(mcpDef.defaults, args as Record<string, any>));
+        result = await this.mcpProxy.executeTool(
+          name,
+          mcpDef,
+          serverDef.def,
+          mergeDefaults(mcpDef.defaults, cleanArgs)
+        );
       }
 
-      return {
-        content: [
-          {
-            type: 'text',
-            text: this.serializeToolResult(result),
-          },
-        ],
-      };
+      return await this.buildToolCallContent(result, toolDef, { skipFormatter });
     });
   }
 
@@ -584,7 +586,9 @@ export class CapaMCPServer {
 
   private async handleCallTool(args: { name: string; data: object }): Promise<any> {
     const toolName = args.name;
-    const toolData = args.data || {};
+    const { cleanArgs: toolData, skipFormatter } = extractCapaShellMeta(
+      (args.data ?? {}) as Record<string, any>
+    );
     try {
       const session = this.ensureSession();
       this.logger.info(`Calling tool via call_tool: ${toolName}`);
@@ -664,13 +668,16 @@ export class CapaMCPServer {
         }
 
         this.logger.debug(`Using MCP server: ${serverId}`);
-        result = await this.mcpProxy.executeTool(toolName, mcpDef, serverDef.def, mergeDefaults(mcpDef.defaults, toolData as Record<string, any>));
+        result = await this.mcpProxy.executeTool(
+          toolName,
+          mcpDef,
+          serverDef.def,
+          mergeDefaults(mcpDef.defaults, toolData)
+        );
         this.logger.debug('MCP tool executed');
       }
 
-      return {
-        content: [{ type: 'text', text: this.serializeToolResult(result) }],
-      };
+      return await this.buildToolCallContent(result, toolDef, { skipFormatter });
     } catch (error: any) {
       this.logger.failure(`call_tool execution error: ${error.message}`);
       // Likely an arg/schema problem — attach the schema so the agent can retry.
@@ -1048,50 +1055,16 @@ export class CapaMCPServer {
   }
 
   /**
-   * Serialize a tool execution result into a text string suitable for an MCP content item.
-   *
-   * For MCP proxy results — where result.result is an array of upstream content items
-   * (each with { type, text }) — this unwraps the array, tries to JSON-parse each item's
-   * text, and returns:
-   *   - a single item directly (not wrapped in an array) when there is only one entry
-   *   - a JSON array of all items when there are multiple entries
-   *
-   * For command tool results ({success, result/error}) the inner result/error string
-   * is returned directly without the wrapper envelope.
+   * Build the MCP content payload for a successful tool execution, applying an
+   * optional formatter for MCP tools unless bypassed via `capa sh --json`.
    */
-  private serializeToolResult(result: any): string {
-    const items: any[] = result?.result;
-
-    // Detect MCP proxy result: result.result is a non-empty array of {type, text} objects
-    if (
-      Array.isArray(items) &&
-      items.length > 0 &&
-      items.every((i) => i !== null && typeof i === 'object' && 'type' in i && 'text' in i)
-    ) {
-      const processed = items.map((item) => {
-        const raw = typeof item.text === 'string' ? item.text : JSON.stringify(item);
-        try {
-          return JSON.parse(raw);   // unescape nested JSON strings
-        } catch {
-          return raw;               // not JSON — return as plain string
-        }
-      });
-
-      const value = processed.length === 1 ? processed[0] : processed;
-      return typeof value === 'string' ? value : JSON.stringify(value, null, 2);
-    }
-
-    // Command tool result: unwrap the {success, result/error} envelope
-    if (result && typeof result === 'object' && 'success' in result) {
-      if (result.success && typeof result.result === 'string') {
-        return result.result;
-      }
-      if (!result.success && typeof result.error === 'string') {
-        return result.error;
-      }
-    }
-
-    return JSON.stringify(result);
+  private async buildToolCallContent(
+    result: unknown,
+    toolDef: Tool,
+    options?: { skipFormatter?: boolean }
+  ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
+    const text = await buildToolCallText(result, toolDef, options);
+    return { content: [{ type: 'text', text }] };
   }
 
   getServer(): Server {
@@ -1224,6 +1197,9 @@ export class CapaMCPServer {
     // Handle tools/call
     if (message.method === 'tools/call') {
       const { name, arguments: args } = message.params;
+      const { cleanArgs, skipFormatter } = extractCapaShellMeta(
+        (args ?? {}) as Record<string, any>
+      );
       this.logger.info(`Call tool: ${name}`);
       this.logger.debug(`Arguments: ${JSON.stringify(args)}`);
 
@@ -1290,7 +1266,9 @@ export class CapaMCPServer {
         }
 
         const toolName = args?.name;
-        const toolData = args?.data || {};
+        const { cleanArgs: toolData, skipFormatter } = extractCapaShellMeta(
+          (args?.data ?? {}) as Record<string, any>
+        );
 
         try {
           const session = this.ensureSession();
@@ -1337,7 +1315,7 @@ export class CapaMCPServer {
             result = await executor.execute(
               toolName,
               toolDef.def as ToolCommandDefinition,
-              toolData as Record<string, any>
+              toolData
             );
             this.logger.debug(`Command executed, success: ${result.success}`);
             // Command-tool failures land here as `{success: false, error}`
@@ -1387,21 +1365,20 @@ export class CapaMCPServer {
             }
 
             this.logger.debug(`Using MCP server: ${serverId}`);
-            result = await this.mcpProxy.executeTool(toolName, mcpDef, serverDef.def, mergeDefaults(mcpDef.defaults, toolData as Record<string, any>));
+            result = await this.mcpProxy.executeTool(
+              toolName,
+              mcpDef,
+              serverDef.def,
+              mergeDefaults(mcpDef.defaults, toolData)
+            );
             this.logger.debug('MCP tool executed');
           }
 
+          const content = await this.buildToolCallContent(result, toolDef, { skipFormatter });
           return {
             jsonrpc: '2.0',
             id: message.id,
-            result: {
-              content: [
-                {
-                  type: 'text',
-                  text: this.serializeToolResult(result),
-                },
-              ],
-            },
+            result: content,
           };
         } catch (error: any) {
           this.logger.failure(`call_tool execution error: ${error.message}`);
@@ -1497,7 +1474,7 @@ export class CapaMCPServer {
           result = await executor.execute(
             name,
             toolDef.def as ToolCommandDefinition,
-            args as Record<string, any>
+            cleanArgs
           );
           this.logger.debug(`Command executed, success: ${result.success}`);
         } else if (toolDef.type === 'mcp') {
@@ -1532,21 +1509,20 @@ export class CapaMCPServer {
           }
 
           this.logger.debug(`Using MCP server: ${serverId}`);
-          result = await this.mcpProxy.executeTool(name, mcpDef, serverDef.def, mergeDefaults(mcpDef.defaults, args as Record<string, any>));
+          result = await this.mcpProxy.executeTool(
+            name,
+            mcpDef,
+            serverDef.def,
+            mergeDefaults(mcpDef.defaults, cleanArgs)
+          );
           this.logger.debug('MCP tool executed');
         }
 
+        const content = await this.buildToolCallContent(result, toolDef, { skipFormatter });
         return {
           jsonrpc: '2.0',
           id: message.id,
-          result: {
-            content: [
-              {
-                type: 'text',
-                text: this.serializeToolResult(result),
-              },
-            ],
-          },
+          result: content,
         };
       } catch (error: any) {
         this.logger.failure(`Tool execution error: ${error.message}`);

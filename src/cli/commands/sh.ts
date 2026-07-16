@@ -4,6 +4,7 @@ import { getServerStatus } from '../utils/server-manager';
 import type { Capabilities } from '../../types/capabilities';
 import { getQualifiedToolName } from '../../types/capabilities';
 import { slugify } from '../../shared/slug';
+import { CAPA_JSON_ARG } from '../../server/tool-formatter';
 
 interface ShellToolInfo {
   id: string;
@@ -156,6 +157,16 @@ class ShellRegistry {
 }
 
 
+export function parseShellGlobalFlags(args: string[]): { jsonMode: boolean; tokens: string[] } {
+  const tokens = [...args];
+  let jsonMode = false;
+  while (tokens.length > 0 && tokens[0] === '--json') {
+    jsonMode = true;
+    tokens.shift();
+  }
+  return { jsonMode, tokens };
+}
+
 export function parseInlineArgs(tokens: string[]): Record<string, string> {
   const result: Record<string, string> = {};
   let i = 0;
@@ -301,8 +312,10 @@ async function executeToolViaMCP(
   serverUrl: string,
   projectId: string,
   toolId: string,
-  args: Record<string, any>
+  args: Record<string, any>,
+  jsonMode = false
 ): Promise<string> {
+  const callArgs = jsonMode ? { ...args, [CAPA_JSON_ARG]: true } : args;
   // Send initialize first to establish a session (needed for on-demand mode)
   await fetch(`${serverUrl}/${projectId}/mcp`, {
     method: 'POST',
@@ -327,7 +340,7 @@ async function executeToolViaMCP(
       jsonrpc: '2.0',
       id: 2,
       method: 'tools/call',
-      params: { name: toolId, arguments: args },
+      params: { name: toolId, arguments: callArgs },
     }),
     signal: AbortSignal.timeout(60000),
   });
@@ -406,6 +419,7 @@ function printAvailableCommands(registry: ShellRegistry): void {
   console.log('  capa sh <group>                      List tools in a group');
   console.log('  capa sh <group> <tool> [--arg val]   Run a tool');
   console.log('  capa sh <command> [--arg val]        Run a top-level command');
+  console.log('  capa sh --json <command> [--arg val] Return raw JSON (skip formatter)');
   console.log('  capa sh <other>                      Pass through to OS shell\n');
 }
 
@@ -462,7 +476,8 @@ async function execCommand(
   cmd: ShellCommand,
   rawArgTokens: string[],
   serverUrl: string,
-  projectId: string
+  projectId: string,
+  jsonMode = false
 ): Promise<void> {
   const rawArgs = parseInlineArgs(rawArgTokens);
   const resolved = resolveArgs(cmd, rawArgs);
@@ -497,7 +512,7 @@ async function execCommand(
     process.exit(1);
   }
 
-  const result = await executeToolViaMCP(serverUrl, projectId, cmd.id, resolved);
+  const result = await executeToolViaMCP(serverUrl, projectId, cmd.id, resolved, jsonMode);
   try {
     const parsed = JSON.parse(result);
     console.log(JSON.stringify(parsed, null, 2));
@@ -532,7 +547,8 @@ async function dispatch(
   tokens: string[],
   registry: ShellRegistry,
   serverUrl: string,
-  projectId: string
+  projectId: string,
+  jsonMode = false
 ): Promise<void> {
   if (tokens.length === 0) {
     printAvailableCommands(registry);
@@ -579,7 +595,7 @@ async function dispatch(
       return;
     }
 
-    await execCommand(cmd, subRest, serverUrl, projectId);
+    await execCommand(cmd, subRest, serverUrl, projectId, jsonMode);
     return;
   }
 
@@ -596,7 +612,7 @@ async function dispatch(
       return;
     }
 
-    await execCommand(cmd, rest, serverUrl, projectId);
+    await execCommand(cmd, rest, serverUrl, projectId, jsonMode);
     return;
   }
 
@@ -672,5 +688,7 @@ export async function shellCommand(args: string[]): Promise<void> {
   const registry = new ShellRegistry();
   registry.build(tools);
 
-  await dispatch(args, registry, serverUrl, projectId);
+  const { jsonMode, tokens } = parseShellGlobalFlags(args);
+
+  await dispatch(tokens, registry, serverUrl, projectId, jsonMode);
 }
