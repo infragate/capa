@@ -4,13 +4,14 @@ import { logger } from '../shared/logger';
 
 const formatterLogger = logger.child('ToolFormatter');
 
-export const CAPA_JSON_ARG = '_capa_json';
+export const CAPA_RAW_ARG = '_capa_raw';
 
 const DEFAULT_FORMATTER_TIMEOUT_MS = 3000;
 
 /**
- * Strip the reserved `capa sh --json` meta-argument before forwarding tool args
- * to upstream servers. When present, the gateway skips the formatter.
+ * Strip the reserved `capa sh --raw` meta-argument before forwarding tool args
+ * to upstream servers. When present, the gateway skips the formatter and returns
+ * the raw tool output.
  */
 export function extractCapaShellMeta(args: Record<string, any>): {
   cleanArgs: Record<string, any>;
@@ -19,11 +20,11 @@ export function extractCapaShellMeta(args: Record<string, any>): {
   if (!args || typeof args !== 'object' || Array.isArray(args)) {
     return { cleanArgs: {}, skipFormatter: false };
   }
-  if (!(CAPA_JSON_ARG in args)) {
+  if (!(CAPA_RAW_ARG in args)) {
     return { cleanArgs: { ...args }, skipFormatter: false };
   }
-  const { [CAPA_JSON_ARG]: capaJson, ...cleanArgs } = args;
-  const skipFormatter = capaJson === true || capaJson === 'true';
+  const { [CAPA_RAW_ARG]: capaRaw, ...cleanArgs } = args;
+  const skipFormatter = capaRaw === true || capaRaw === 'true';
   return { cleanArgs, skipFormatter };
 }
 

@@ -4,7 +4,7 @@ import {
   buildToolCallText,
   extractCapaShellMeta,
   serializeToolResult,
-  CAPA_JSON_ARG,
+  CAPA_RAW_ARG,
 } from '../tool-formatter';
 import type { Tool } from '../../types/capabilities';
 
@@ -28,15 +28,15 @@ describe('extractCapaShellMeta', () => {
     });
   });
 
-  it('strips _capa_json and sets skipFormatter', () => {
-    expect(extractCapaShellMeta({ query: 'x', [CAPA_JSON_ARG]: true })).toEqual({
+  it('strips _capa_raw and sets skipFormatter', () => {
+    expect(extractCapaShellMeta({ query: 'x', [CAPA_RAW_ARG]: true })).toEqual({
       cleanArgs: { query: 'x' },
       skipFormatter: true,
     });
   });
 
   it('treats string "true" as skipFormatter', () => {
-    expect(extractCapaShellMeta({ [CAPA_JSON_ARG]: 'true' }).skipFormatter).toBe(true);
+    expect(extractCapaShellMeta({ [CAPA_RAW_ARG]: 'true' }).skipFormatter).toBe(true);
   });
 });
 

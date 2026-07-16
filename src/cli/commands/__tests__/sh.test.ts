@@ -21,16 +21,16 @@ function makeCommand(overrides: Partial<ShellCommand> = {}): ShellCommand {
 }
 
 describe('parseShellGlobalFlags', () => {
-  it('detects and removes --json', () => {
-    expect(parseShellGlobalFlags(['--json', 'my-tool', '--x', '1'])).toEqual({
-      jsonMode: true,
+  it('detects and removes --raw', () => {
+    expect(parseShellGlobalFlags(['--raw', 'my-tool', '--x', '1'])).toEqual({
+      rawMode: true,
       tokens: ['my-tool', '--x', '1'],
     });
   });
 
-  it('defaults jsonMode to false', () => {
+  it('defaults rawMode to false', () => {
     expect(parseShellGlobalFlags(['my-tool'])).toEqual({
-      jsonMode: false,
+      rawMode: false,
       tokens: ['my-tool'],
     });
   });

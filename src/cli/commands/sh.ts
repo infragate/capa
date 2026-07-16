@@ -4,7 +4,7 @@ import { getServerStatus } from '../utils/server-manager';
 import type { Capabilities } from '../../types/capabilities';
 import { getQualifiedToolName } from '../../types/capabilities';
 import { slugify } from '../../shared/slug';
-import { CAPA_JSON_ARG } from '../../server/tool-formatter';
+import { CAPA_RAW_ARG } from '../../server/tool-formatter';
 
 interface ShellToolInfo {
   id: string;
@@ -157,14 +157,14 @@ class ShellRegistry {
 }
 
 
-export function parseShellGlobalFlags(args: string[]): { jsonMode: boolean; tokens: string[] } {
+export function parseShellGlobalFlags(args: string[]): { rawMode: boolean; tokens: string[] } {
   const tokens = [...args];
-  let jsonMode = false;
-  while (tokens.length > 0 && tokens[0] === '--json') {
-    jsonMode = true;
+  let rawMode = false;
+  while (tokens.length > 0 && tokens[0] === '--raw') {
+    rawMode = true;
     tokens.shift();
   }
-  return { jsonMode, tokens };
+  return { rawMode, tokens };
 }
 
 export function parseInlineArgs(tokens: string[]): Record<string, string> {
@@ -313,9 +313,9 @@ async function executeToolViaMCP(
   projectId: string,
   toolId: string,
   args: Record<string, any>,
-  jsonMode = false
+  rawMode = false
 ): Promise<string> {
-  const callArgs = jsonMode ? { ...args, [CAPA_JSON_ARG]: true } : args;
+  const callArgs = rawMode ? { ...args, [CAPA_RAW_ARG]: true } : args;
   // Send initialize first to establish a session (needed for on-demand mode)
   await fetch(`${serverUrl}/${projectId}/mcp`, {
     method: 'POST',
@@ -419,7 +419,7 @@ function printAvailableCommands(registry: ShellRegistry): void {
   console.log('  capa sh <group>                      List tools in a group');
   console.log('  capa sh <group> <tool> [--arg val]   Run a tool');
   console.log('  capa sh <command> [--arg val]        Run a top-level command');
-  console.log('  capa sh --json <command> [--arg val] Return raw JSON (skip formatter)');
+  console.log('  capa sh --raw <command> [--arg val]  Return raw tool output (skip formatter)');
   console.log('  capa sh <other>                      Pass through to OS shell\n');
 }
 
@@ -477,7 +477,7 @@ async function execCommand(
   rawArgTokens: string[],
   serverUrl: string,
   projectId: string,
-  jsonMode = false
+  rawMode = false
 ): Promise<void> {
   const rawArgs = parseInlineArgs(rawArgTokens);
   const resolved = resolveArgs(cmd, rawArgs);
@@ -512,7 +512,7 @@ async function execCommand(
     process.exit(1);
   }
 
-  const result = await executeToolViaMCP(serverUrl, projectId, cmd.id, resolved, jsonMode);
+  const result = await executeToolViaMCP(serverUrl, projectId, cmd.id, resolved, rawMode);
   try {
     const parsed = JSON.parse(result);
     console.log(JSON.stringify(parsed, null, 2));
@@ -548,7 +548,7 @@ async function dispatch(
   registry: ShellRegistry,
   serverUrl: string,
   projectId: string,
-  jsonMode = false
+  rawMode = false
 ): Promise<void> {
   if (tokens.length === 0) {
     printAvailableCommands(registry);
@@ -595,7 +595,7 @@ async function dispatch(
       return;
     }
 
-    await execCommand(cmd, subRest, serverUrl, projectId, jsonMode);
+    await execCommand(cmd, subRest, serverUrl, projectId, rawMode);
     return;
   }
 
@@ -612,7 +612,7 @@ async function dispatch(
       return;
     }
 
-    await execCommand(cmd, rest, serverUrl, projectId, jsonMode);
+    await execCommand(cmd, rest, serverUrl, projectId, rawMode);
     return;
   }
 
@@ -688,7 +688,7 @@ export async function shellCommand(args: string[]): Promise<void> {
   const registry = new ShellRegistry();
   registry.build(tools);
 
-  const { jsonMode, tokens } = parseShellGlobalFlags(args);
+  const { rawMode, tokens } = parseShellGlobalFlags(args);
 
-  await dispatch(tokens, registry, serverUrl, projectId, jsonMode);
+  await dispatch(tokens, registry, serverUrl, projectId, rawMode);
 }

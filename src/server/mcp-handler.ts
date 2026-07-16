@@ -1056,7 +1056,7 @@ export class CapaMCPServer {
 
   /**
    * Build the MCP content payload for a successful tool execution, applying an
-   * optional formatter for MCP tools unless bypassed via `capa sh --json`.
+   * optional formatter for MCP tools unless bypassed via `capa sh --raw`.
    */
   private async buildToolCallContent(
     result: unknown,
