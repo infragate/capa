@@ -8,6 +8,18 @@ import {
 } from '../tool-formatter';
 import type { Tool } from '../../types/capabilities';
 
+/**
+ * Portable formatter commands using a fixture script so tests pass on Windows
+ * (cmd.exe), macOS, and Linux without depending on jq/sed/cat/sleep or nested quotes.
+ * Use a repo-relative path (no spaces) so cmd.exe /C does not mangle quoting.
+ */
+const helper = 'src/server/__tests__/fixtures/formatter-helper.ts';
+const REPLACE_OLD_WITH_NEW = `bun ${helper} replace`;
+const EXTRACT_JSON_NAME = `bun ${helper} name`;
+const PASSTHROUGH = `bun ${helper} passthrough`;
+const EXIT_ONE = `bun ${helper} fail`;
+const SLEEP_FIVE = `bun ${helper} sleep`;
+
 describe('extractCapaShellMeta', () => {
   it('returns args unchanged when meta key is absent', () => {
     expect(extractCapaShellMeta({ query: 'select 1' })).toEqual({
@@ -49,7 +61,7 @@ describe('buildToolCallText', () => {
     def: {
       server: '@db',
       tool: 'run_query',
-      formatter: { cmd: "sed 's/OLD/NEW/'" },
+      formatter: { cmd: REPLACE_OLD_WITH_NEW },
     },
   };
 
@@ -81,14 +93,14 @@ describe('buildToolCallText', () => {
 describe('applyToolFormatter', () => {
   it('returns transformed stdout on success', async () => {
     const out = await applyToolFormatter('{"name":"alice"}', {
-      cmd: "jq -r '.name'",
+      cmd: EXTRACT_JSON_NAME,
     });
     expect(out).toBe('alice');
   });
 
   it('preserves tab and newline characters in output', async () => {
     const out = await applyToolFormatter('a\tb\nc', {
-      cmd: 'cat',
+      cmd: PASSTHROUGH,
     });
     expect(out).toBe('a\tb\nc');
   });
@@ -96,7 +108,7 @@ describe('applyToolFormatter', () => {
   it('returns original input when command fails', async () => {
     const input = '{"keep":true}';
     const out = await applyToolFormatter(input, {
-      cmd: 'exit 1',
+      cmd: EXIT_ONE,
     });
     expect(out).toBe(input);
   });
@@ -104,7 +116,7 @@ describe('applyToolFormatter', () => {
   it('returns original input on timeout', async () => {
     const input = 'slow';
     const out = await applyToolFormatter(input, {
-      cmd: 'sleep 5',
+      cmd: SLEEP_FIVE,
       timeout: 50,
     });
     expect(out).toBe(input);
