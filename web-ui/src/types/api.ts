@@ -23,8 +23,11 @@ export interface Skill {
   id: string;
   type: string;
   description: string | null;
+  descriptionSource?: 'capabilities' | 'frontmatter' | null;
   requires: string[];
   sourcePlugin: SourcePlugin | null;
+  /** External origin URL for github / gitlab / remote / plugin skills. */
+  sourceUrl?: string | null;
 }
 
 export interface Tool {
@@ -35,6 +38,19 @@ export interface Tool {
   mcpTool?: string;
   command?: string;
   commandArgs?: CommandArg[];
+  /** Optional group name for command-type tools. */
+  group?: string;
+}
+
+export interface SkillContentResponse {
+  id: string;
+  content: string;
+  metadata: {
+    name: string;
+    description?: string;
+    [key: string]: unknown;
+  };
+  files: string[];
 }
 
 export interface CommandArg {

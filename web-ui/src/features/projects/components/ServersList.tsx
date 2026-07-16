@@ -58,7 +58,7 @@ export function ServersList({ servers, search, projectId, serverToolsMap }: Serv
           {search ? t('detail.noServersMatch') : t('detail.noServers')}
         </div>
       ) : (
-        <div className="space-y-1">
+        <div className="max-h-[520px] space-y-1 overflow-y-auto pr-1">
           {visible.map((server) => (
             <ServerItem
               key={server.id}

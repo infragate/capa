@@ -33,7 +33,7 @@ export function HooksList({ hooks, search = '' }: HooksListProps) {
           {search ? t('detail.noHooksMatch') : t('detail.noHooks')}
         </div>
       ) : (
-        <div className="space-y-1">
+        <div className="max-h-[520px] space-y-1 overflow-y-auto pr-1">
           {visible.map((hook) => (
             <HookItem key={hook.id} hook={hook} search={search} />
           ))}

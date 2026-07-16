@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronRight } from 'lucide-react';
 import type { EnrichedTool, ToolSchema } from '../../../types/api';
@@ -6,6 +6,7 @@ import { highlightText, matchesSearch } from '../../../lib/utils';
 import { SourceBadge } from '../../../components/common/ServerBadge';
 
 const DESC_PREVIEW_LENGTH = 80;
+const COMMANDS_GROUP_KEY = '__commands__';
 
 interface ToolsListProps {
   tools: EnrichedTool[];
@@ -30,6 +31,23 @@ function enrichTool(
   };
 }
 
+function getToolGroupKey(tool: EnrichedTool): string {
+  if (tool.type === 'mcp' && tool.mcpServer) {
+    return tool.mcpServer.replace(/^@/, '');
+  }
+  if (tool.type === 'command' && tool.group) {
+    return tool.group;
+  }
+  return COMMANDS_GROUP_KEY;
+}
+
+interface ToolGroup {
+  key: string;
+  label: string;
+  kind: 'server' | 'command';
+  tools: EnrichedTool[];
+}
+
 export function ToolsList({ tools, search, toolRequiredByMap, serverToolSchemaCache }: ToolsListProps) {
   const { t } = useTranslation('projects');
   const enriched = tools.map((tool) => enrichTool(tool, serverToolSchemaCache));
@@ -45,8 +63,39 @@ export function ToolsList({ tools, search, toolRequiredByMap, serverToolSchemaCa
         ? [tool.command || '', ...(tool.commandArgs || []).flatMap((a) => [a.name, a.description || ''])]
         : [];
     const requiredBy = toolRequiredByMap[tool.id] || [];
-    return matchesSearch([tool.id, desc, ...paramTexts, ...cmdTexts, ...requiredBy], search);
+    const groupKey = getToolGroupKey(tool);
+    return matchesSearch(
+      [tool.id, desc, groupKey === COMMANDS_GROUP_KEY ? '' : groupKey, ...paramTexts, ...cmdTexts, ...requiredBy],
+      search,
+    );
   });
+
+  const groups = useMemo((): ToolGroup[] => {
+    const map = new Map<string, ToolGroup>();
+    for (const tool of visible) {
+      const key = getToolGroupKey(tool);
+      let group = map.get(key);
+      if (!group) {
+        if (key === COMMANDS_GROUP_KEY) {
+          group = { key, label: t('tool.commandsGroup'), kind: 'command', tools: [] };
+        } else if (tool.type === 'mcp') {
+          group = { key, label: key, kind: 'server', tools: [] };
+        } else {
+          group = { key, label: key, kind: 'command', tools: [] };
+        }
+        map.set(key, group);
+      }
+      group.tools.push(tool);
+    }
+
+    // Stable order: MCP server groups first (alpha), then named command groups, then ungrouped Commands last
+    return Array.from(map.values()).sort((a, b) => {
+      if (a.key === COMMANDS_GROUP_KEY) return 1;
+      if (b.key === COMMANDS_GROUP_KEY) return -1;
+      if (a.kind !== b.kind) return a.kind === 'server' ? -1 : 1;
+      return a.label.localeCompare(b.label);
+    });
+  }, [visible, t]);
 
   return (
     <div>
@@ -64,14 +113,32 @@ export function ToolsList({ tools, search, toolRequiredByMap, serverToolSchemaCa
           {search ? t('detail.noToolsMatch') : t('detail.noTools')}
         </div>
       ) : (
-        <div className="space-y-1">
-          {visible.map((tool) => (
-            <ToolItem
-              key={tool.id}
-              tool={tool}
-              search={search}
-              requiredBy={toolRequiredByMap[tool.id] || []}
-            />
+        <div className="max-h-[520px] space-y-3 overflow-y-auto pr-1">
+          {groups.map((group) => (
+            <div key={group.key}>
+              <div className="mb-1.5 flex items-center gap-2">
+                {group.kind === 'server' ? (
+                  <SourceBadge name={group.label} kind="server" search={search} />
+                ) : (
+                  <span className="text-[11px] font-medium uppercase tracking-wide text-text-tertiary">
+                    {group.label}
+                  </span>
+                )}
+                <span className="rounded-sm bg-bg-tertiary px-1.5 py-0.5 text-[10px] text-text-tertiary">
+                  {group.tools.length}
+                </span>
+              </div>
+              <div className="space-y-1">
+                {group.tools.map((tool) => (
+                  <ToolItem
+                    key={tool.id}
+                    tool={tool}
+                    search={search}
+                    requiredBy={toolRequiredByMap[tool.id] || []}
+                  />
+                ))}
+              </div>
+            </div>
           ))}
         </div>
       )}

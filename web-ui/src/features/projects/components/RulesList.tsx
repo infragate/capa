@@ -34,7 +34,7 @@ export function RulesList({ rules, search = '' }: RulesListProps) {
           {search ? t('detail.noRulesMatch') : t('detail.noRules')}
         </div>
       ) : (
-        <div className="space-y-1">
+        <div className="max-h-[520px] space-y-1 overflow-y-auto pr-1">
           {visible.map((rule) => (
             <RuleItem key={rule.id} rule={rule} search={search} />
           ))}
