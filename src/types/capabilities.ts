@@ -342,11 +342,20 @@ export interface Tool {
   group?: string;
 }
 
+export interface ToolFormatterDefinition {
+  /** Shell command that reads the serialized tool output on stdin and writes transformed output to stdout. */
+  cmd: string;
+  /** Max time in ms before the original output is returned unchanged. @default 3000 */
+  timeout?: number;
+}
+
 export interface ToolMCPDefinition {
   server: string; // Reference to server ID with @ prefix
   tool: string;   // Tool name on the remote MCP server
   /** Default argument values merged at call time; defaulted params become optional in the schema. */
   defaults?: Record<string, any>;
+  /** Optional post-processor for MCP tool output (MCP tools only). */
+  formatter?: ToolFormatterDefinition;
 }
 
 export interface ToolCommandDefinition {

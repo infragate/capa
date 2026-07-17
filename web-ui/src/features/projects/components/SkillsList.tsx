@@ -1,16 +1,20 @@
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { Skill } from '../../../types/api';
 import { highlightText, matchesSearch } from '../../../lib/utils';
 import { SourceBadge } from '../../../components/common/ServerBadge';
 import { sourceTypeBadgeClasses } from './sourceTypeColors';
+import { SkillDetailDialog } from './SkillDetailDialog';
 
 interface SkillsListProps {
   skills: Skill[];
   search: string;
+  projectId: string;
 }
 
-export function SkillsList({ skills, search }: SkillsListProps) {
+export function SkillsList({ skills, search, projectId }: SkillsListProps) {
   const { t } = useTranslation('projects');
+  const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null);
   const visible = skills.filter((s) => matchesSearch([s.id, s.description], search));
 
   return (
@@ -30,9 +34,14 @@ export function SkillsList({ skills, search }: SkillsListProps) {
           {search ? t('detail.noSkillsMatch') : t('detail.noSkills')}
         </div>
       ) : (
-        <div className="space-y-1">
+        <div className="max-h-[520px] space-y-1 overflow-y-auto pr-1">
           {visible.map((skill) => (
-            <div key={skill.id} className="rounded-sm border border-border-tertiary bg-bg-tertiary p-3">
+            <button
+              key={skill.id}
+              type="button"
+              onClick={() => setSelectedSkill(skill)}
+              className="w-full rounded-sm border border-border-tertiary bg-bg-tertiary p-3 text-left transition-colors hover:bg-hover-bg cursor-pointer"
+            >
               <div className="mb-1 flex items-center gap-2 min-w-0">
                 <span
                   className="truncate font-mono text-[13px] font-medium text-text-primary"
@@ -57,10 +66,19 @@ export function SkillsList({ skills, search }: SkillsListProps) {
                   <SourceBadge name={skill.sourcePlugin.name} kind="plugin" />
                 </div>
               )}
-            </div>
+            </button>
           ))}
         </div>
       )}
+
+      <SkillDetailDialog
+        skill={selectedSkill}
+        projectId={projectId}
+        open={!!selectedSkill}
+        onOpenChange={(open) => {
+          if (!open) setSelectedSkill(null);
+        }}
+      />
     </div>
   );
 }

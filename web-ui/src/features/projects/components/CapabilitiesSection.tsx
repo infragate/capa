@@ -107,7 +107,7 @@ export function CapabilitiesSection({ skills, tools, servers, subagents, rules, 
       {tokenSavings && <TokenSavingsBar stats={tokenSavings} />}
 
       <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
-        <SkillsList skills={skills} search={search} />
+        <SkillsList skills={skills} search={search} projectId={projectId} />
         <ToolsList
           tools={tools as EnrichedTool[]}
           search={search}

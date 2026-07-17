@@ -82,7 +82,16 @@
     "cmd": "cmd",
     "requiredBy": "required by",
     "noToolsOnServer": "No tools found on this server",
-    "serverUnreachable": "Server unreachable"
+    "serverUnreachable": "Server unreachable",
+    "commandsGroup": "Commands"
+  },
+  "skillDetail": {
+    "title": "Skill details",
+    "description": "Rendered SKILL.md content for this skill",
+    "loading": "Loading skill…",
+    "unavailable": "Skill content is not available. Run capa install to install this skill.",
+    "files": "Files",
+    "viewSource": "View source"
   },
   "stat": {
     "skill": "skill",

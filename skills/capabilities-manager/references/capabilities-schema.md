@@ -108,6 +108,7 @@ List of `{ cli: "executable", description?: "hint" }`. Install fails if any comm
 ## Tools Section
 
 - **MCP tool**: `def.server: "@server-id"`, `def.tool: tool_name`. Optional `def.defaults` for pre-filled args. Reference in skills as `@server_id.tool_id`.
+- **MCP formatter** (optional): `def.formatter.cmd` pipes the serialized tool output through a shell command on the CAPA server before returning it to MCP clients and `capa sh`. Use for human-oriented output (e.g. `jq` to turn JSON rows into TSV). On failure or timeout (default 3000ms, override with `def.formatter.timeout`) the original output is returned unchanged. Command-type tools do not use `formatter` — pipe inside `def.run.cmd` instead. Use `capa sh --raw <tool>` to skip formatting and get the raw tool output. **Security:** the formatter runs as an operator shell command at the gateway and receives tool output (which may be attacker-influenced) on stdin as data — do not use formatters that re-execute stdin content (e.g. `eval`, `xargs sh -c`).
 - **Command tool**: `def.run.cmd` with `{arg}` placeholders, `def.run.args` (name, type, description, required, optional `default`). Optional `def.init.cmd` for one-time setup. Optional `group` for nesting in `capa sh`.
 
 Optional top-level `description` for MCP schema and `capa sh`.

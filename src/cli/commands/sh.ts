@@ -4,6 +4,7 @@ import { getServerStatus } from '../utils/server-manager';
 import type { Capabilities } from '../../types/capabilities';
 import { getQualifiedToolName } from '../../types/capabilities';
 import { slugify } from '../../shared/slug';
+import { CAPA_RAW_ARG } from '../../server/tool-formatter';
 
 interface ShellToolInfo {
   id: string;
@@ -156,6 +157,25 @@ class ShellRegistry {
 }
 
 
+/**
+ * Extract the reserved `--raw` bypass flag from anywhere in the arg list so it
+ * works regardless of position (e.g. `capa sh --raw db query` or
+ * `capa sh db query --raw`). All occurrences are removed; remaining tokens are
+ * dispatched as the command/args.
+ */
+export function parseShellGlobalFlags(args: string[]): { rawMode: boolean; tokens: string[] } {
+  let rawMode = false;
+  const tokens: string[] = [];
+  for (const arg of args) {
+    if (arg === '--raw') {
+      rawMode = true;
+      continue;
+    }
+    tokens.push(arg);
+  }
+  return { rawMode, tokens };
+}
+
 export function parseInlineArgs(tokens: string[]): Record<string, string> {
   const result: Record<string, string> = {};
   let i = 0;
@@ -301,8 +321,10 @@ async function executeToolViaMCP(
   serverUrl: string,
   projectId: string,
   toolId: string,
-  args: Record<string, any>
+  args: Record<string, any>,
+  rawMode = false
 ): Promise<string> {
+  const callArgs = rawMode ? { ...args, [CAPA_RAW_ARG]: true } : args;
   // Send initialize first to establish a session (needed for on-demand mode)
   await fetch(`${serverUrl}/${projectId}/mcp`, {
     method: 'POST',
@@ -327,7 +349,7 @@ async function executeToolViaMCP(
       jsonrpc: '2.0',
       id: 2,
       method: 'tools/call',
-      params: { name: toolId, arguments: args },
+      params: { name: toolId, arguments: callArgs },
     }),
     signal: AbortSignal.timeout(60000),
   });
@@ -406,6 +428,7 @@ function printAvailableCommands(registry: ShellRegistry): void {
   console.log('  capa sh <group>                      List tools in a group');
   console.log('  capa sh <group> <tool> [--arg val]   Run a tool');
   console.log('  capa sh <command> [--arg val]        Run a top-level command');
+  console.log('  capa sh --raw <command> [--arg val]  Return raw tool output (skip formatter)');
   console.log('  capa sh <other>                      Pass through to OS shell\n');
 }
 
@@ -462,7 +485,8 @@ async function execCommand(
   cmd: ShellCommand,
   rawArgTokens: string[],
   serverUrl: string,
-  projectId: string
+  projectId: string,
+  rawMode = false
 ): Promise<void> {
   const rawArgs = parseInlineArgs(rawArgTokens);
   const resolved = resolveArgs(cmd, rawArgs);
@@ -497,7 +521,7 @@ async function execCommand(
     process.exit(1);
   }
 
-  const result = await executeToolViaMCP(serverUrl, projectId, cmd.id, resolved);
+  const result = await executeToolViaMCP(serverUrl, projectId, cmd.id, resolved, rawMode);
   try {
     const parsed = JSON.parse(result);
     console.log(JSON.stringify(parsed, null, 2));
@@ -532,7 +556,8 @@ async function dispatch(
   tokens: string[],
   registry: ShellRegistry,
   serverUrl: string,
-  projectId: string
+  projectId: string,
+  rawMode = false
 ): Promise<void> {
   if (tokens.length === 0) {
     printAvailableCommands(registry);
@@ -579,7 +604,7 @@ async function dispatch(
       return;
     }
 
-    await execCommand(cmd, subRest, serverUrl, projectId);
+    await execCommand(cmd, subRest, serverUrl, projectId, rawMode);
     return;
   }
 
@@ -596,7 +621,7 @@ async function dispatch(
       return;
     }
 
-    await execCommand(cmd, rest, serverUrl, projectId);
+    await execCommand(cmd, rest, serverUrl, projectId, rawMode);
     return;
   }
 
@@ -672,5 +697,7 @@ export async function shellCommand(args: string[]): Promise<void> {
   const registry = new ShellRegistry();
   registry.build(tools);
 
-  await dispatch(args, registry, serverUrl, projectId);
+  const { rawMode, tokens } = parseShellGlobalFlags(args);
+
+  await dispatch(tokens, registry, serverUrl, projectId, rawMode);
 }

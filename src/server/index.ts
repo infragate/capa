@@ -28,6 +28,7 @@ import { logger } from '../shared/logger';
 import { projectUiUrl } from '../shared/ui-urls';
 import { initAuth, requireAuth, isLoopbackHost } from './auth-middleware';
 import { oauthBridgeResponse } from './oauth-bridge';
+import { resolveSkillContentById, resolveSkillDescription, resolveSkillSourceUrl } from './skill-content';
 
 // Import the React SPA bundle as text at compile time - this bundles it into the binary
 import spaHtml from '../../web-ui/dist/index.html' with { type: 'text' };
@@ -359,6 +360,14 @@ class CapaServer {
       return this.handleGetServerTools(projectId, serverId);
     }
 
+    // Skill SKILL.md content for the project-detail UI
+    const skillContentMatch = path.match(/^\/api\/projects\/([^/]+)\/skills\/([^/]+)\/content$/);
+    if (skillContentMatch && request.method === 'GET') {
+      const projectId = skillContentMatch[1];
+      const skillId = decodeURIComponent(skillContentMatch[2]);
+      return this.handleGetSkillContent(projectId, skillId);
+    }
+
     // Shell tools endpoint — tool metadata for the capa shell, regardless of exposure mode
     const shellToolsMatch = path.match(/^\/api\/projects\/([^/]+)\/shell-tools$/);
     if (shellToolsMatch && request.method === 'GET') {
@@ -565,13 +574,22 @@ class CapaServer {
         created_at: project.created_at,
         updated_at: project.updated_at,
         capabilities: capabilities ? {
-          skills: capabilities.skills.map(s => ({
-            id: s.id,
-            type: s.type,
-            description: s.def?.description || null,
-            requires: s.def?.requires || [],
-            sourcePlugin: s.sourcePlugin || null,
-          })),
+          skills: capabilities.skills.map(s => {
+            const { description, descriptionSource } = resolveSkillDescription(
+              project.path,
+              s,
+              capabilities.providers || [],
+            );
+            return {
+              id: s.id,
+              type: s.type,
+              description,
+              descriptionSource,
+              requires: s.def?.requires || [],
+              sourcePlugin: s.sourcePlugin || null,
+              sourceUrl: resolveSkillSourceUrl(s, capabilities.resolvedPlugins),
+            };
+          }),
           tools: capabilities.tools.map(t => {
             const base: Record<string, any> = {
               id: t.id,
@@ -586,6 +604,7 @@ class CapaServer {
               const cmdDef = t.def as ToolCommandDefinition;
               base.command = cmdDef.run.cmd;
               base.commandArgs = cmdDef.run.args || [];
+              if (t.group) base.group = t.group;
             }
             return base;
           }),
@@ -736,6 +755,60 @@ class CapaServer {
       return new Response(
         JSON.stringify({ error: message }),
         { status: 502, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+  }
+
+  private async handleGetSkillContent(projectId: string, skillId: string): Promise<Response> {
+    const apiLogger = this.logger.child('API');
+    apiLogger.info(`Get skill content: ${skillId} in project: ${projectId}`);
+    try {
+      const project = this.db.getProject(projectId);
+      if (!project) {
+        return new Response(
+          JSON.stringify({ error: 'Project not found' }),
+          { status: 404, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      const capabilities = this.sessionManager.getProjectCapabilities(projectId);
+      if (!capabilities) {
+        return new Response(
+          JSON.stringify({ error: 'Project not configured' }),
+          { status: 404, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      const skill = (capabilities.skills ?? []).find((s) => s.id === skillId);
+      if (!skill) {
+        return new Response(
+          JSON.stringify({ error: 'Skill not found' }),
+          { status: 404, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      const resolved = resolveSkillContentById(project.path, capabilities, skillId);
+      if (!resolved) {
+        return new Response(
+          JSON.stringify({ error: 'Skill content not available' }),
+          { status: 404, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      return new Response(
+        JSON.stringify({
+          id: skillId,
+          content: resolved.content,
+          metadata: resolved.metadata,
+          files: resolved.files,
+        }),
+        { headers: { 'Content-Type': 'application/json' } }
+      );
+    } catch (error: any) {
+      apiLogger.failure(`Error: ${error.message}`);
+      return new Response(
+        JSON.stringify({ error: error.message }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } }
       );
     }
   }
