@@ -157,12 +157,21 @@ class ShellRegistry {
 }
 
 
+/**
+ * Extract the reserved `--raw` bypass flag from anywhere in the arg list so it
+ * works regardless of position (e.g. `capa sh --raw db query` or
+ * `capa sh db query --raw`). All occurrences are removed; remaining tokens are
+ * dispatched as the command/args.
+ */
 export function parseShellGlobalFlags(args: string[]): { rawMode: boolean; tokens: string[] } {
-  const tokens = [...args];
   let rawMode = false;
-  while (tokens.length > 0 && tokens[0] === '--raw') {
-    rawMode = true;
-    tokens.shift();
+  const tokens: string[] = [];
+  for (const arg of args) {
+    if (arg === '--raw') {
+      rawMode = true;
+      continue;
+    }
+    tokens.push(arg);
   }
   return { rawMode, tokens };
 }

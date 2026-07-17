@@ -21,10 +21,24 @@ function makeCommand(overrides: Partial<ShellCommand> = {}): ShellCommand {
 }
 
 describe('parseShellGlobalFlags', () => {
-  it('detects and removes --raw', () => {
+  it('detects and removes a leading --raw', () => {
     expect(parseShellGlobalFlags(['--raw', 'my-tool', '--x', '1'])).toEqual({
       rawMode: true,
       tokens: ['my-tool', '--x', '1'],
+    });
+  });
+
+  it('detects and removes a trailing --raw', () => {
+    expect(parseShellGlobalFlags(['group', 'my-tool', '--x', '1', '--raw'])).toEqual({
+      rawMode: true,
+      tokens: ['group', 'my-tool', '--x', '1'],
+    });
+  });
+
+  it('detects --raw anywhere in the middle', () => {
+    expect(parseShellGlobalFlags(['group', '--raw', 'my-tool'])).toEqual({
+      rawMode: true,
+      tokens: ['group', 'my-tool'],
     });
   });
 
