@@ -40,7 +40,7 @@
     "listr2": "^10.2.1",
     "lucide-react": "^1.14.0",
     "marked": "^18.0.3",
-    "nanoid": "^5.0.8",
+    "nanoid": "^6.0.0",
     "picocolors": "^1.1.1",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
