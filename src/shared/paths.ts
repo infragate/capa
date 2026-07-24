@@ -26,6 +26,14 @@ export function generateProjectId(projectPath: string): string {
 }
 
 /**
+ * Strip the trailing 4-char path hash from a project ID.
+ * `ontology-builder-a6a5` → `ontology-builder`
+ */
+export function projectNameFromId(projectId: string): string {
+  return projectId.replace(/-[a-f0-9]{4}$/i, '');
+}
+
+/**
  * Get the capabilities file path for a project
  */
 export function getCapabilitiesPath(projectPath: string, format: 'json' | 'yaml'): string {

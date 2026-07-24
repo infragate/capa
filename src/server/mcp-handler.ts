@@ -16,6 +16,8 @@ import { CommandToolExecutor } from './tool-executor';
 import { MCPProxy } from './mcp-proxy';
 import { buildToolCallText, extractCapaShellMeta } from './tool-formatter';
 import { VERSION } from '../version';
+import { CAPA_SERVER_ICONS } from '../shared/mcp-icons';
+import { projectNameFromId } from '../shared/paths';
 import { logger } from '../shared/logger';
 
 export interface ShellToolInfo {
@@ -217,8 +219,12 @@ export class CapaMCPServer {
 
     this.server = new Server(
       {
-        name: `capa-${projectId}`,
+        name: `capa-${projectNameFromId(projectId)}`,
         version: VERSION,
+        title: 'capa',
+        description: 'An agentic skills and tools package manager',
+        websiteUrl: 'https://capa.infragate.ai',
+        icons: CAPA_SERVER_ICONS,
       },
       {
         capabilities: {
@@ -1085,13 +1091,17 @@ export class CapaMCPServer {
         jsonrpc: '2.0',
         id: message.id,
         result: {
-          protocolVersion: '2024-11-05',
+          protocolVersion: '2025-11-25',
           capabilities: {
             tools: {},
           },
           serverInfo: {
-            name: `capa-${this.projectId}`,
+            name: `capa-${projectNameFromId(this.projectId)}`,
+            title: 'capa',
             version: VERSION,
+            description: 'An agentic skills and tools package manager',
+            websiteUrl: 'https://capa.infragate.ai',
+            icons: CAPA_SERVER_ICONS,
           },
         },
       };
@@ -1102,6 +1112,16 @@ export class CapaMCPServer {
       this.logger.debug('Initialized notification');
       return {
         jsonrpc: '2.0',
+        result: {},
+      };
+    }
+
+    // Handle ping (liveness check — https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/ping)
+    if (message.method === 'ping') {
+      this.logger.debug('Ping request');
+      return {
+        jsonrpc: '2.0',
+        id: message.id,
         result: {},
       };
     }
