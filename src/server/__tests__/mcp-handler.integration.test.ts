@@ -662,3 +662,75 @@ describe('listServerTools (throwOnError pass-through)', () => {
     expect(tools).toEqual([]);
   });
 });
+
+// ─── initialize exposes server icons ─────────────────────────────────────────
+
+describe('handleMessage > initialize (server icons)', () => {
+  let h: Harness;
+
+  beforeEach(() => {
+    h = makeHarness({
+      providers: ['claude-code'],
+      options: {},
+      skills: [],
+      servers: [],
+      tools: [],
+    });
+  });
+
+  afterEach(() => destroyHarness(h));
+
+  it('returns capa favicon as SVG data-URI icons in serverInfo', async () => {
+    const resp = await h.mcp.handleMessage({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+    });
+
+    expect(resp.result.protocolVersion).toBe('2025-11-25');
+    expect(resp.result.serverInfo.name).toBe('capa-test-proj');
+    expect(resp.result.serverInfo.title).toBe('capa');
+    expect(resp.result.serverInfo.description).toBe(
+      'An agentic skills and tools package manager',
+    );
+    expect(resp.result.serverInfo.websiteUrl).toBe('https://capa.infragate.ai');
+
+    const icons = resp.result.serverInfo.icons;
+    expect(icons).toHaveLength(1);
+    expect(icons[0].mimeType).toBe('image/svg+xml');
+    expect(icons[0].sizes).toEqual(['any']);
+    expect(icons[0].src).toMatch(/^data:image\/svg\+xml;base64,/);
+  });
+});
+
+// ─── ping ────────────────────────────────────────────────────────────────────
+
+describe('handleMessage > ping', () => {
+  let h: Harness;
+
+  beforeEach(() => {
+    h = makeHarness({
+      providers: ['claude-code'],
+      options: {},
+      skills: [],
+      servers: [],
+      tools: [],
+    });
+  });
+
+  afterEach(() => destroyHarness(h));
+
+  it('returns an empty result', async () => {
+    const resp = await h.mcp.handleMessage({
+      jsonrpc: '2.0',
+      id: 42,
+      method: 'ping',
+    });
+
+    expect(resp).toEqual({
+      jsonrpc: '2.0',
+      id: 42,
+      result: {},
+    });
+  });
+});

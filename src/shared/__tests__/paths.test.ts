@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test';
-import { generateProjectId, getCapabilitiesPath, detectCapabilitiesFile } from '../paths';
+import { generateProjectId, getCapabilitiesPath, detectCapabilitiesFile, projectNameFromId } from '../paths';
 import { resolve } from 'path';
 
 describe('paths', () => {
@@ -38,6 +38,16 @@ describe('paths', () => {
       const id2 = generateProjectId('/path/to/project2');
       
       expect(id1).not.toBe(id2);
+    });
+  });
+
+  describe('projectNameFromId', () => {
+    it('strips the trailing 4-char hash', () => {
+      expect(projectNameFromId('ontology-builder-a6a5')).toBe('ontology-builder');
+    });
+
+    it('leaves ids without a hash suffix unchanged', () => {
+      expect(projectNameFromId('test-proj')).toBe('test-proj');
     });
   });
 
