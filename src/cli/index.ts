@@ -35,6 +35,13 @@ if (process.argv[2] === '__server__') {
     console.error('Failed to start server:', error);
     process.exit(1);
   });
+} else if (process.argv[2] === '__wrap_watch__') {
+  import('./utils/wrap/watch-worker')
+    .then(({ runWrapWatchWorker }) => runWrapWatchWorker(process.argv.slice(3)))
+    .catch((err) => {
+      console.error('Failed to start wrap watcher:', err);
+      process.exit(1);
+    });
 } else {
   (async () => {
     try {

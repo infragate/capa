@@ -41,7 +41,7 @@ export async function findWrapPids(): Promise<number[]> {
           '-NoProfile',
           '-Command',
           `Get-CimInstance Win32_Process -Filter "Name = 'capa.exe'" | ` +
-            `Where-Object { $_.CommandLine -match '\\swrap(\\s|$)' -and $_.ProcessId -ne ${self} } | ` +
+            `Where-Object { ($_.CommandLine -match '\\swrap(\\s|$)' -or $_.CommandLine -match '__wrap_watch__') -and $_.ProcessId -ne ${self} } | ` +
             `Select-Object -ExpandProperty ProcessId`,
         ],
         { stdout: 'pipe', stderr: 'ignore' },
@@ -72,7 +72,7 @@ export async function findWrapPids(): Promise<number[]> {
       const cmd = m[2]!;
       if (pid === self) continue;
       // e.g. `capa wrap cursor`, `./dist/capa wrap …`, `bun src/cli/index.ts wrap …`
-      if (!/\bwrap\b/.test(cmd)) continue;
+      if (!/\bwrap\b/.test(cmd) && !/__wrap_watch__/.test(cmd)) continue;
       if (!/\bcapa(?:\.exe)?\b/i.test(cmd) && !/src\/cli\/index\.ts\b/.test(cmd)) continue;
       pids.push(pid);
     }

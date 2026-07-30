@@ -15,6 +15,50 @@ export interface WrapOptions {
   prune?: boolean;
 }
 
+function startDetachedWatchWorker(opts: {
+  realProjectPath: string;
+  workspacePath: string;
+  providerId: string;
+  capabilitiesPath: string;
+  exclusionProviderIds: string[];
+}): { pid?: number; stop: () => void } {
+  const proc = Bun.spawn(
+    [
+      process.execPath,
+      '__wrap_watch__',
+      opts.realProjectPath,
+      opts.workspacePath,
+      opts.providerId,
+      opts.capabilitiesPath,
+      JSON.stringify(opts.exclusionProviderIds),
+    ],
+    {
+      stdin: 'ignore',
+      stdout: 'ignore',
+      stderr: 'ignore',
+      detached: true,
+      windowsHide: true,
+    },
+  );
+  proc.unref();
+
+  return {
+    pid: proc.pid,
+    stop: () => {
+      if (proc.pid == null) return;
+      try {
+        process.kill(proc.pid, 'SIGTERM');
+      } catch {
+        try {
+          process.kill(proc.pid, 'SIGKILL');
+        } catch {
+          // already gone
+        }
+      }
+    },
+  };
+}
+
 export async function wrapCommand(
   providerArg: string | undefined,
   args: string[],
@@ -69,34 +113,34 @@ export async function wrapCommand(
   );
   info(prepared.workspacePath);
 
-  const watchers = startWrapWatchers({
-    realProjectPath: prepared.realProjectPath,
-    workspacePath: prepared.workspacePath,
-    providerId: provider.id,
-    capabilitiesPath: prepared.capabilitiesPath,
-    exclusionProviderIds: prepared.exclusionProviderIds,
-  });
-
-  let cleaned = false;
-  const cleanup = () => {
-    if (cleaned) return;
-    cleaned = true;
-    watchers.exitSweep();
-    watchers.stop();
-  };
-
-  const onStopSignal = () => {
-    cleanup();
-    process.exit(0);
-  };
-  process.once('SIGTERM', onStopSignal);
-  try {
-    process.once('SIGHUP', onStopSignal);
-  } catch {
-    // Windows
-  }
-
   if (provider.wrap.kind === 'gui') {
+    const watchers = startWrapWatchers({
+      realProjectPath: prepared.realProjectPath,
+      workspacePath: prepared.workspacePath,
+      providerId: provider.id,
+      capabilitiesPath: prepared.capabilitiesPath,
+      exclusionProviderIds: prepared.exclusionProviderIds,
+    });
+
+    let cleaned = false;
+    const cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
+      watchers.exitSweep();
+      watchers.stop();
+    };
+
+    const onStopSignal = () => {
+      cleanup();
+      process.exit(0);
+    };
+    process.once('SIGTERM', onStopSignal);
+    try {
+      process.once('SIGHUP', onStopSignal);
+    } catch {
+      // Windows
+    }
+
     info(
       `Launching ${provider.wrap.binary} (wrap stops when the window closes, or Ctrl+C / q)`,
     );
@@ -129,15 +173,35 @@ export async function wrapCommand(
     process.exit(0);
   }
 
-  // CLI: blocking
+  // CLI: watchers run in a detached process so this process can spawnSync the
+  // TUI without Bun's event-loop stdin reader stealing keystrokes.
+  const watchWorker = startDetachedWatchWorker({
+    realProjectPath: prepared.realProjectPath,
+    workspacePath: prepared.workspacePath,
+    providerId: provider.id,
+    capabilitiesPath: prepared.capabilitiesPath,
+    exclusionProviderIds: prepared.exclusionProviderIds,
+  });
+
+  const onStopSignal = () => {
+    watchWorker.stop();
+    process.exit(0);
+  };
+  process.once('SIGTERM', onStopSignal);
+  try {
+    process.once('SIGHUP', onStopSignal);
+  } catch {
+    // Windows
+  }
+
   try {
     const result = await launchProvider(provider, prepared.workspacePath, args);
-    cleanup();
+    watchWorker.stop();
     if (result.exitCode != null && result.exitCode !== 0) {
       process.exit(result.exitCode);
     }
   } catch (err) {
-    cleanup();
+    watchWorker.stop();
     error(
       `Failed to launch ${provider.wrap.binary}: ${
         err instanceof Error ? err.message : String(err)

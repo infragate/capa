@@ -1,20 +1,14 @@
 import { describe, expect, mock, test, beforeEach, afterEach } from 'bun:test';
-import { EventEmitter } from 'node:events';
 
-const spawnCalls: Array<{ cmd: string; args: string[]; opts: Record<string, unknown> }> = [];
-
-class FakeChild extends EventEmitter {
-  kill() {
-    this.emit('close', 0, null);
-  }
-}
+const spawnSyncCalls: Array<{ cmd: string; args: string[]; opts: Record<string, unknown> }> = [];
 
 mock.module('node:child_process', () => ({
-  spawn: (cmd: string, args: string[], opts: Record<string, unknown>) => {
-    spawnCalls.push({ cmd, args, opts });
-    const child = new FakeChild();
-    queueMicrotask(() => child.emit('close', 0, null));
-    return child;
+  spawnSync: (cmd: string, args: string[], opts: Record<string, unknown>) => {
+    spawnSyncCalls.push({ cmd, args, opts });
+    return { status: 0, signal: null, error: undefined };
+  },
+  spawn: () => {
+    throw new Error('async spawn should not be used for CLI wrap launch');
   },
 }));
 
@@ -29,22 +23,22 @@ const claude: ProviderIntegration = {
 
 describe('launchProvider CLI', () => {
   beforeEach(() => {
-    spawnCalls.length = 0;
+    spawnSyncCalls.length = 0;
   });
 
   afterEach(() => {
     mock.restore();
   });
 
-  test('spawns with inherited stdio and visible Windows console', async () => {
+  test('uses spawnSync with inherited stdio for a real TTY', async () => {
     const result = await launchProvider(claude, 'C:\\ws\\proj', ['--help']);
     expect(result.exitCode).toBe(0);
-    expect(spawnCalls).toHaveLength(1);
-    expect(spawnCalls[0]?.cmd).toBe('claude');
-    expect(spawnCalls[0]?.args).toEqual(['--help']);
-    expect(spawnCalls[0]?.opts.stdio).toBe('inherit');
-    expect(spawnCalls[0]?.opts.cwd).toBe('C:\\ws\\proj');
-    expect(spawnCalls[0]?.opts.windowsHide).toBe(false);
-    expect(spawnCalls[0]?.opts.shell).toBe(false);
+    expect(spawnSyncCalls).toHaveLength(1);
+    expect(spawnSyncCalls[0]?.cmd).toBe('claude');
+    expect(spawnSyncCalls[0]?.args).toEqual(['--help']);
+    expect(spawnSyncCalls[0]?.opts.stdio).toBe('inherit');
+    expect(spawnSyncCalls[0]?.opts.cwd).toBe('C:\\ws\\proj');
+    expect(spawnSyncCalls[0]?.opts.windowsHide).toBe(false);
+    expect(spawnSyncCalls[0]?.opts.shell).toBe(false);
   });
 });

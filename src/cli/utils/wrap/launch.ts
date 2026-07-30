@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import type { ProviderIntegration } from '../../../types/providers';
 
 export interface LaunchResult {
@@ -14,11 +14,10 @@ export interface LaunchResult {
 }
 
 /**
- * Stop capa from competing with the child for console input.
+ * Quiesce parent stdin so Bun races the child less for console keystrokes.
  *
- * Bun keeps polling fd 0 after anything touches `process.stdin` (e.g. clack
- * spinners during cold install). A child spawned with stdio inherit then races
- * the parent for keystrokes — Claude's TUI looks "broken". Pause/unref first.
+ * Do NOT destroy/close fd 0 — that breaks `stdio: 'inherit'` and makes Claude
+ * see a non-TTY (it then demands `--print` + a prompt).
  */
 function releaseStdinForChild(): void {
   const stdin = process.stdin;
@@ -47,7 +46,6 @@ function releaseStdinForChild(): void {
     // ignore
   }
 
-  // Spinner may have hidden the cursor; restore before handing off the TTY.
   if (process.stdout.isTTY) {
     try {
       process.stdout.write('\x1b[?25h');
@@ -59,7 +57,7 @@ function releaseStdinForChild(): void {
 
 /**
  * Headroom's wrap pattern: parent ignores SIGINT so Ctrl+C is for the child
- * CLI, not the wrap process (watchers stay alive until the child exits).
+ * CLI, not the wrap process.
  */
 function ignoreParentSigint(): () => void {
   const noop = () => {
@@ -73,7 +71,7 @@ function ignoreParentSigint(): () => void {
 
 /**
  * Launch the provider binary according to wrap.kind.
- * CLI: blocking, cwd = workspace.
+ * CLI: blocking spawnSync with inherited console (real TTY for Claude).
  * GUI: returns immediately with `closed`/`kill` so wrap can race window-close vs interrupt.
  */
 export async function launchProvider(
@@ -89,8 +87,6 @@ export async function launchProvider(
   const wrapArgs = wrap.args ?? [];
 
   if (wrap.kind === 'gui') {
-    // Prefer awaiting the GUI launcher (Cursor/VS Code `--wait`) so closing the
-    // window ends wrap. Not detached — we need the process lifetime.
     const proc = Bun.spawn([wrap.binary, ...wrapArgs, workspacePath, ...args], {
       cwd: workspacePath,
       stdin: 'ignore',
@@ -111,36 +107,27 @@ export async function launchProvider(
     };
   }
 
-  // CLI: mirror Headroom (`subprocess.run(..., inherit stdio)`), not Bun.spawn.
-  // node:child_process + released stdin is far more reliable for interactive TUIs
-  // under a Bun-compiled parent (Claude Code, Codex, etc.).
+  // CLI interactive TUI: inherit the real console so isTTY stays true.
+  // spawnSync blocks this thread; watchers run in a detached __wrap_watch__
+  // process so we are not also polling stdin from an in-process event loop.
   releaseStdinForChild();
   const restoreSigint = ignoreParentSigint();
 
   try {
-    const exitCode = await new Promise<number>((resolve, reject) => {
-      const child = spawn(wrap.binary, [...wrapArgs, ...args], {
-        cwd: workspacePath,
-        env: process.env,
-        stdio: 'inherit',
-        windowsHide: false,
-        shell: false,
-      });
-
-      child.on('error', (err) => {
-        reject(err);
-      });
-
-      child.on('close', (code, signal) => {
-        if (code != null) {
-          resolve(code);
-          return;
-        }
-        // Signal exit without a code (POSIX); map roughly like a shell would.
-        resolve(signal ? 128 : 1);
-      });
+    const result = spawnSync(wrap.binary, [...wrapArgs, ...args], {
+      cwd: workspacePath,
+      env: process.env,
+      stdio: 'inherit',
+      windowsHide: false,
+      shell: false,
     });
 
+    if (result.error) {
+      throw result.error;
+    }
+
+    const exitCode =
+      result.status != null ? result.status : result.signal != null ? 128 : 1;
     return { exitCode };
   } finally {
     restoreSigint();
