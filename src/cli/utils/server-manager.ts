@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, unlinkSync } from 'fs';
 import { getPidFilePath, loadSettings } from '../../shared/config';
 import { stopAllWrapSessions } from './wrap/sessions';
+import { isQuiet } from '../ui';
 
 export interface ServerStatus {
   running: boolean;
@@ -89,12 +90,15 @@ export async function startServer(background: boolean = true): Promise<void> {
   const status = await getServerStatus();
   
   if (status.running) {
-    console.log(`Server already running (PID: ${status.pid})`);
+    if (!isQuiet()) {
+      console.log(`Server already running (PID: ${status.pid})`);
+    }
     return;
   }
-  
-  console.log('Starting capa server...');
-  
+
+  if (!isQuiet()) {
+    console.log('Starting capa server...');
+  } 
   // Get the path to the current executable
   const exePath = process.execPath;
   
@@ -114,7 +118,9 @@ export async function startServer(background: boolean = true): Promise<void> {
     
     const newStatus = await getServerStatus();
     if (newStatus.running) {
-      console.log(`✓ Server started at ${newStatus.url}`);
+      if (!isQuiet()) {
+        console.log(`✓ Server started at ${newStatus.url}`);
+      }
     } else {
       console.error('✗ Failed to start server');
       process.exit(1);

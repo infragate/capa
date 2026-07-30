@@ -18,7 +18,8 @@ import { isVerbose } from '../../ui';
 const PROMOTE_COALESCE_MS = 16;
 /** Backup poll for platforms where fs.watch drops events (notably Windows). */
 const POLL_MS = 200;
-const CAPABILITIES_DEBOUNCE_MS = 400;
+/** Wait after the last capabilities edit before re-installing. */
+const CAPABILITIES_DEBOUNCE_MS = 2000;
 
 export interface WrapWatchers {
   stop: () => void;
@@ -42,6 +43,19 @@ function entryExists(root: string, name: string): boolean {
   } catch {
     return false;
   }
+}
+
+/** Single in-place status line for capabilities re-apply (avoids log spam). */
+function writeReapplyStatus(message: string | null): void {
+  if (!process.stderr.isTTY) {
+    if (message) process.stderr.write(`[wrap] ${message}\n`);
+    return;
+  }
+  if (message == null) {
+    process.stderr.write('\r\x1b[K');
+    return;
+  }
+  process.stderr.write(`\r\x1b[K[wrap] ${message}`);
 }
 
 /**
@@ -222,6 +236,7 @@ export function startWrapWatchers(opts: WatchOpts): WrapWatchers {
       return;
     }
     reapplyRunning = true;
+    writeReapplyStatus('Re-applying capabilities…');
     try {
       await refreshExclusionProviders();
       await installCommand({
@@ -229,6 +244,7 @@ export function startWrapWatchers(opts: WatchOpts): WrapWatchers {
         identityPath: realRoot,
         provider: opts.providerId,
         exitProcess: false,
+        quiet: true,
       });
       try {
         const linked = syncTopLevelSymlinks(realRoot, wsRoot, providerIds);
@@ -236,19 +252,25 @@ export function startWrapWatchers(opts: WatchOpts): WrapWatchers {
       } catch {
         // ignore
       }
+      writeReapplyStatus('Capabilities re-applied');
     } catch (err) {
-      if (isVerbose()) {
-        console.warn(
-          `[wrap] capabilities re-apply failed (keeping last good): ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        );
-      }
+      writeReapplyStatus(
+        `Capabilities re-apply failed (keeping last good)${
+          isVerbose()
+            ? `: ${err instanceof Error ? err.message : String(err)}`
+            : ''
+        }`,
+      );
     } finally {
       reapplyRunning = false;
       if (reapplyQueued) {
         reapplyQueued = false;
         void reapplyCapabilities();
+      } else {
+        // Clear the status line after a short beat so it doesn't linger forever.
+        setTimeout(() => {
+          if (!reapplyRunning) writeReapplyStatus(null);
+        }, 1500);
       }
     }
   }
@@ -347,6 +369,7 @@ export function startWrapWatchers(opts: WatchOpts): WrapWatchers {
   return {
     stop() {
       stopped = true;
+      writeReapplyStatus(null);
       if (capsTimer) clearTimeout(capsTimer);
       if (pollTimer) clearInterval(pollTimer);
       for (const t of promoteTimers.values()) clearTimeout(t);

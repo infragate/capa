@@ -51,6 +51,11 @@ export interface InstallOptions {
    * Default true.
    */
   exitProcess?: boolean;
+  /**
+   * Suppress install UI output (for wrap capabilities live re-apply).
+   * Default false.
+   */
+  quiet?: boolean;
 }
 
 export type GetRepoSnapshotFn = (

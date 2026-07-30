@@ -7,7 +7,7 @@ import { CapaDatabase } from '../../db/database';
 import { VERSION } from '../../version';
 import { resolveProvidersForInstall } from '../../shared/providers/resolve';
 import { LockfileBuilder, loadLockfile } from '../../shared/lockfile';
-import { runTasks, summary, info, warn, error } from '../ui';
+import { runTasks, summary, info, warn, error, setFlags, getFlags } from '../ui';
 import { buildInstallTasks } from './install-tasks';
 import type { InstallCtx, InstallOptions } from './install-tasks';
 import { refuseIfWrapWorkspace } from '../utils/wrap/marker';
@@ -31,6 +31,7 @@ export async function installCommand(
   let projectPath = process.cwd();
   let identityPath: string | undefined;
   let exitProcess = true;
+  let quiet = false;
   if (typeof envFileOrOptions === 'object' && envFileOrOptions !== null) {
     envFile = envFileOrOptions.envFile;
     flagProvider = envFileOrOptions.provider;
@@ -40,15 +41,48 @@ export async function installCommand(
       ? resolve(envFileOrOptions.identityPath)
       : undefined;
     if (envFileOrOptions.exitProcess === false) exitProcess = false;
+    quiet = !!envFileOrOptions.quiet;
   } else {
     envFile = envFileOrOptions;
   }
 
+  const prevQuiet = getFlags().quiet;
+  if (quiet) setFlags({ quiet: true });
+  try {
+    await installCommandBody({
+      envFile,
+      flagProvider,
+      noCache,
+      projectPath,
+      identityPath,
+      exitProcess,
+      // Only refuse wrap cwd when the caller did not pass an explicit projectPath
+      // (wrap itself always passes one).
+      refuseWrapCwd:
+        typeof envFileOrOptions !== 'object' ||
+        envFileOrOptions === null ||
+        !envFileOrOptions.projectPath,
+    });
+  } finally {
+    if (quiet) setFlags({ quiet: prevQuiet });
+  }
+}
+
+async function installCommandBody(opts: {
+  envFile: string | boolean | undefined;
+  flagProvider: string | undefined;
+  noCache: boolean;
+  projectPath: string;
+  identityPath: string | undefined;
+  exitProcess: boolean;
+  refuseWrapCwd: boolean;
+}): Promise<void> {
+  const { envFile, flagProvider, noCache, exitProcess, refuseWrapCwd } = opts;
+  const projectPath = opts.projectPath;
+  const identityPath = opts.identityPath;
   const idPath = identityPath ?? projectPath;
 
-  // Only refuse when installing into the current cwd wrap workspace (not when
-  // wrap itself installs into a workspace via explicit projectPath).
-  if (!envFileOrOptions || typeof envFileOrOptions !== 'object' || !envFileOrOptions.projectPath) {
+  if (refuseWrapCwd) {
     if (await refuseIfWrapWorkspace('install')) {
       failExit('Refusing to install inside a wrap workspace.', exitProcess);
     }

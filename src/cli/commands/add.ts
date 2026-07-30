@@ -396,10 +396,7 @@ export async function addCommand(
       return;
     }
     console.log(
-      '\nCapabilities file updated. Materialize with:\n' +
-        '  capa install              # write provider configs into this project\n' +
-        '  capa wrap <provider>      # shadow workspace (no in-repo .cursor/.claude writes)\n' +
-        '  capa add --install …      # one-shot add + install (legacy)\n',
+      '\nCapabilities file updated. Run capa install.\n',
     );
   }
 
