@@ -11,8 +11,13 @@ import { getLockfilePath } from '../../shared/lockfile';
 import { resolveProvidersForClean } from '../../shared/providers/resolve';
 import { header, footer, info, warn, error, runTasks } from '../ui';
 import type { Task } from '../ui';
+import { refuseIfWrapWorkspace } from '../utils/wrap/marker';
 
 export async function cleanCommand(): Promise<void> {
+  if (await refuseIfWrapWorkspace('clean')) {
+    process.exit(1);
+  }
+
   const projectPath = process.cwd();
 
   header('Clean project');

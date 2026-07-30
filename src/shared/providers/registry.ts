@@ -95,6 +95,7 @@ export const providers: Record<string, ProviderIntegration> = {
     },
     pluginManifestPaths: ['.claude-plugin/plugin.json'],
     pluginProviderId: 'claude',
+    wrap: { binary: 'claude', kind: 'cli' },
     hooks: {
       // Claude Code reads hooks from the project-local .claude/settings.json.
       // Docs: https://docs.claude.com/en/docs/claude-code/hooks
@@ -240,6 +241,7 @@ export const providers: Record<string, ProviderIntegration> = {
         stop: { event: 'Stop' },
       },
     },
+    wrap: { binary: 'codex', kind: 'cli' },
   },
   'command-code': {
     id: 'command-code',
@@ -341,6 +343,7 @@ export const providers: Record<string, ProviderIntegration> = {
         stop: { event: 'stop' },
       },
     },
+    wrap: { binary: 'cursor', kind: 'gui', args: ['--new-window', '--wait'] },
   },
   droid: {
     id: 'droid',

@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, unlinkSync } from 'fs';
 import { getPidFilePath, loadSettings } from '../../shared/config';
+import { stopAllWrapSessions } from './wrap/sessions';
 
 export interface ServerStatus {
   running: boolean;
@@ -131,41 +132,48 @@ export async function startServer(background: boolean = true): Promise<void> {
 }
 
 /**
- * Stop the capa server
+ * Stop the capa server and any active `capa wrap` sessions.
  */
 export async function stopServer(): Promise<void> {
+  const wrapCount = await stopAllWrapSessions();
+  if (wrapCount > 0) {
+    console.log(`✓ Stopped ${wrapCount} wrap session(s)`);
+  }
+
   const status = await getServerStatus();
-  
+
   if (!status.running || !status.pid) {
-    console.log('Server is not running');
+    if (wrapCount === 0) {
+      console.log('Server is not running');
+    }
     return;
   }
-  
+
   console.log(`Stopping server (PID: ${status.pid})...`);
-  
+
   try {
     process.kill(status.pid, 'SIGTERM');
-    
+
     // Wait for process to exit
     for (let i = 0; i < 50; i++) {
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 100));
       if (!isProcessRunning(status.pid)) {
         break;
       }
     }
-    
+
     // Force kill if still running
     if (isProcessRunning(status.pid)) {
       console.log('Force stopping server...');
       process.kill(status.pid, 'SIGKILL');
     }
-    
+
     // Clean up PID file
     const pidFile = getPidFilePath();
     if (existsSync(pidFile)) {
       unlinkSync(pidFile);
     }
-    
+
     console.log('✓ Server stopped');
   } catch (error) {
     console.error('Failed to stop server:', error);

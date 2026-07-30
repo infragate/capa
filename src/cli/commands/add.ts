@@ -10,6 +10,7 @@ import { getAllGitProviders } from '../../shared/git-providers/registry';
 import { resolve, basename, join, relative } from 'path';
 import { access } from 'fs/promises';
 import { constants } from 'fs';
+import { refuseIfWrapWorkspace } from '../utils/wrap/marker';
 
 interface ParsedSkillSource {
   id: string;
@@ -373,13 +374,35 @@ export async function addCommand(
     provider?: string;
     envFile?: string | boolean;
     noCache?: boolean;
+    /** When true, run install after updating the capabilities file (legacy one-shot). */
+    install?: boolean;
   }
 ): Promise<void> {
+  if (await refuseIfWrapWorkspace('add')) {
+    process.exit(1);
+  }
+
   const installOpts = {
     envFile: options.envFile,
     provider: options.provider,
     noCache: options.noCache,
   };
+  const shouldInstall = options.install === true;
+
+  async function maybeInstall(): Promise<void> {
+    if (shouldInstall) {
+      console.log('\n📦 Running installation...\n');
+      await installCommand(installOpts);
+      return;
+    }
+    console.log(
+      '\nCapabilities file updated. Materialize with:\n' +
+        '  capa install              # write provider configs into this project\n' +
+        '  capa wrap <provider>      # shadow workspace (no in-repo .cursor/.claude writes)\n' +
+        '  capa add --install …      # one-shot add + install (legacy)\n',
+    );
+  }
+
   if (options.plugin && options.skill) {
     console.error('✗ Cannot pass both --skill and --plugin.');
     process.exit(1);
@@ -485,8 +508,7 @@ export async function addCommand(
       }
 
       console.log(`\u2713 Added ${resolvedCapability.slice(0, -1)} "${itemName}" from registry "${registryId}" to ${capabilitiesFile.path}`);
-      console.log('\n\u{1F4E6} Running installation...\n');
-      await installCommand(installOpts);
+      await maybeInstall();
       return;
     }
     // If no adapter matched, fall through to normal parsing
@@ -528,8 +550,7 @@ export async function addCommand(
     if (parsed.def.version) console.log(`  Version: ${parsed.def.version}`);
     if (parsed.def.ref) console.log(`  Ref: ${parsed.def.ref}`);
 
-    console.log('\n📦 Running installation...\n');
-    await installCommand(installOpts);
+    await maybeInstall();
     return;
   }
 
@@ -572,6 +593,5 @@ export async function addCommand(
     console.log(`  Path: ${skillDef.def.path}`);
   }
 
-  console.log('\n📦 Running installation...\n');
-  await installCommand(installOpts);
+  await maybeInstall();
 }

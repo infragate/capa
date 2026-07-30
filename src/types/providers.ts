@@ -49,6 +49,23 @@ export interface McpIntegration {
 }
 
 /**
+ * How `capa wrap <provider>` launches this provider from a shadow workspace.
+ * Undefined when the provider is not wrappable.
+ */
+export interface WrapIntegration {
+  /** Executable to spawn (must be on PATH). */
+  binary: string;
+  /** CLI = blocking foreground; GUI = wait for app window (or interrupt). */
+  kind: 'cli' | 'gui';
+  /**
+   * Extra args always passed to the binary.
+   * GUI: inserted before the workspace path (e.g. Cursor `--new-window --wait`).
+   * CLI: inserted before user passthrough args.
+   */
+  args?: string[];
+}
+
+/**
  * Where the provider reads its agent-instructions file (AGENTS.md, CLAUDE.md, etc.).
  */
 export interface InstructionsIntegration {
@@ -233,4 +250,6 @@ export interface ProviderIntegration {
   purgeStaleSubAgentMcp?: boolean;
   /** When true, sub-agent text is folded into the `instructions.filename` file instead of separate sub-agent files. */
   foldSubAgentsIntoInstructions?: boolean;
+  /** When set, `capa wrap <id>` can launch this provider from a shadow workspace. */
+  wrap?: WrapIntegration;
 }

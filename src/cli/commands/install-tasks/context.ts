@@ -39,6 +39,18 @@ export interface InstallOptions {
   provider?: string;
   /** When true, ignore lockfile + on-disk cache and re-resolve every remote source. */
   noCache?: boolean;
+  /** Write root for provider configs (default: process.cwd()). */
+  projectPath?: string;
+  /**
+   * Path used for generateProjectId + db.upsertProject path (default: projectPath).
+   * Wrap uses the real project here while writing into a shadow workspace.
+   */
+  identityPath?: string;
+  /**
+   * When false, throw on failure instead of process.exit (for wrap live re-apply).
+   * Default true.
+   */
+  exitProcess?: boolean;
 }
 
 export type GetRepoSnapshotFn = (

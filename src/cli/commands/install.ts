@@ -1,3 +1,4 @@
+import { resolve } from 'path';
 import { detectCapabilitiesFile, generateProjectId } from '../../shared/paths';
 import { parseCapabilitiesFile } from '../../shared/capabilities';
 import { ensureServer } from '../utils/server-manager';
@@ -9,8 +10,15 @@ import { LockfileBuilder, loadLockfile } from '../../shared/lockfile';
 import { runTasks, summary, info, warn, error } from '../ui';
 import { buildInstallTasks } from './install-tasks';
 import type { InstallCtx, InstallOptions } from './install-tasks';
+import { refuseIfWrapWorkspace } from '../utils/wrap/marker';
 
 export type { InstallOptions, GetRepoSnapshotFn } from './install-tasks';
+
+function failExit(message: string, exitProcess: boolean): never {
+  console.error(`✗ ${message}`);
+  if (exitProcess) process.exit(1);
+  throw new Error(message);
+}
 
 export async function installCommand(
   envFileOrOptions?: string | boolean | InstallOptions,
@@ -20,20 +28,35 @@ export async function installCommand(
   let envFile: string | boolean | undefined;
   let flagProvider: string | undefined;
   let noCache = false;
+  let projectPath = process.cwd();
+  let identityPath: string | undefined;
+  let exitProcess = true;
   if (typeof envFileOrOptions === 'object' && envFileOrOptions !== null) {
     envFile = envFileOrOptions.envFile;
     flagProvider = envFileOrOptions.provider;
     noCache = !!envFileOrOptions.noCache;
+    if (envFileOrOptions.projectPath) projectPath = resolve(envFileOrOptions.projectPath);
+    identityPath = envFileOrOptions.identityPath
+      ? resolve(envFileOrOptions.identityPath)
+      : undefined;
+    if (envFileOrOptions.exitProcess === false) exitProcess = false;
   } else {
     envFile = envFileOrOptions;
   }
 
-  const projectPath = process.cwd();
+  const idPath = identityPath ?? projectPath;
+
+  // Only refuse when installing into the current cwd wrap workspace (not when
+  // wrap itself installs into a workspace via explicit projectPath).
+  if (!envFileOrOptions || typeof envFileOrOptions !== 'object' || !envFileOrOptions.projectPath) {
+    if (await refuseIfWrapWorkspace('install')) {
+      failExit('Refusing to install inside a wrap workspace.', exitProcess);
+    }
+  }
 
   const capabilitiesFile = await detectCapabilitiesFile(projectPath);
   if (!capabilitiesFile) {
-    console.error('✗ No capabilities file found. Run "capa init" first.');
-    process.exit(1);
+    failExit('No capabilities file found. Run "capa init" first.', exitProcess);
   }
 
   const capabilities = await parseCapabilitiesFile(
@@ -42,12 +65,11 @@ export async function installCommand(
   );
 
   const reqCmds = capabilities.options?.requiresCommands;
-  const projectId = generateProjectId(projectPath);
+  const projectId = generateProjectId(idPath);
   const serverStatus = await ensureServer(VERSION);
 
   if (!serverStatus.running || !serverStatus.url) {
-    console.error('✗ Failed to start server');
-    process.exit(1);
+    failExit('Failed to start server', exitProcess);
   }
 
   const startedAt = Date.now();
@@ -60,7 +82,8 @@ export async function installCommand(
 
   let resolvedProviders: string[];
   try {
-    db.upsertProject({ id: projectId, path: projectPath });
+    // Always store the real project path for MCP tool cwd / identity.
+    db.upsertProject({ id: projectId, path: idPath });
     resolvedProviders = await resolveProvidersForInstall({
       flagProvider,
       capabilitiesProviders: capabilities.providers,
@@ -75,7 +98,7 @@ export async function installCommand(
     try {
       db.close();
     } catch {}
-    process.exit(1);
+    failExit(message, exitProcess);
   }
 
   // Hoisted so the catch block can surface ctx.errors accumulated before the throw.
@@ -116,7 +139,7 @@ export async function installCommand(
     });
     // Exit non-zero on accumulated per-task failures (continue-on-error mode).
     if (initialCtx.failed > 0) {
-      process.exit(1);
+      failExit(`Install completed with ${initialCtx.failed} failure(s).`, exitProcess);
     }
   } catch (err: unknown) {
     for (const e of initialCtx.errors) error(e);
@@ -128,8 +151,11 @@ export async function installCommand(
       elapsedMs: Date.now() - startedAt,
     });
     if (err instanceof Error) {
-      console.error(`✗ ${err.message}`);
-      process.exit(1);
+      if (exitProcess) {
+        console.error(`✗ ${err.message}`);
+        process.exit(1);
+      }
+      throw err;
     }
     throw err;
   } finally {

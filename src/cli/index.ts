@@ -8,6 +8,7 @@ import { statusCommand } from './commands/status';
 import { installCommand } from './commands/install';
 import { cleanCommand } from './commands/clean';
 import { addCommand } from './commands/add';
+import { wrapCommand } from './commands/wrap';
 import { authCommand } from './commands/auth';
 import { upgradeCommand } from './commands/upgrade';
 import { shellCommand } from './commands/sh';
@@ -90,6 +91,7 @@ if (process.argv[2] === '__server__') {
       .description('Add a skill or plugin from various sources (GitHub, GitLab, registry, local path, or remote URL)')
       .option('--plugin', 'Treat <source> as a plugin (default is skill)')
       .option('--skill', 'Treat <source> as a skill (default; flag exists for explicitness)')
+      .option('--install', 'Also run capa install after updating the capabilities file')
       .option('-e, --env [file]', 'Load variables from .env file (defaults to .env if no file specified)')
       .option('-p, --provider <id>', 'Install for a single provider (e.g. "cursor", "claude-code")')
       .option('--no-cache', 'Bypass the on-disk cache and lockfile; re-resolve every remote source')
@@ -100,6 +102,22 @@ if (process.argv[2] === '__server__') {
           envFile: options.env,
           provider: options.provider,
           noCache: options.cache === false,
+          install: options.install === true,
+        });
+      });
+
+    program
+      .command('wrap [provider] [args...]')
+      .description('Run a provider from a CAPA shadow workspace without modifying in-repo provider configs')
+      .option('--project <dir>', 'Source project directory (default: cwd)')
+      .option('--print-dir', 'Print the workspace path before launching')
+      .option('--prune', 'Remove wrap workspaces under ~/.capa/workspaces and exit')
+      .allowUnknownOption()
+      .action(async (provider: string | undefined, args: string[], options) => {
+        await wrapCommand(provider, args ?? [], {
+          project: options.project,
+          printDir: options.printDir === true,
+          prune: options.prune === true,
         });
       });
 
@@ -120,7 +138,7 @@ if (process.argv[2] === '__server__') {
 
     program
       .command('stop')
-      .description('Stop the capa server')
+      .description('Stop the capa server and any active wrap sessions')
       .action(async () => {
         await stopCommand();
       });
