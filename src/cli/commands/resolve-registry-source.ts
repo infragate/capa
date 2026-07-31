@@ -9,6 +9,10 @@ import { loadSettings, getDatabasePath } from '../../shared/config';
 import type { RegistryCapability } from '../../types/registry';
 import type { Skill } from '../../types/capabilities';
 import type { Plugin } from '../../types/plugin';
+import {
+  claudePluginsNativeInstall,
+  type NativePluginInstall,
+} from '../utils/passthrough/native-plugin-install';
 
 const RESERVED_PREFIXES = /^(github|gitlab|bitbucket|npm|file|http|https):/i;
 
@@ -28,6 +32,11 @@ export interface ResolvedRegistryItem {
   itemName: string;
   skill?: Skill;
   plugin?: Plugin;
+  /**
+   * When set, passthrough can invoke the provider's own plugin installer
+   * for matching provider ids instead of unpacking the plugin tree.
+   */
+  nativeInstall?: NativePluginInstall;
 }
 
 /**
@@ -97,6 +106,10 @@ export async function tryResolveRegistryItem(source: string): Promise<ResolvedRe
     result.skill = { ...(snippet as Skill), id: itemName };
   } else if (resolvedCapability === 'plugins') {
     result.plugin = { ...(snippet as Plugin), id: itemName };
+    // Claude marketplace plugins can be installed natively into Claude Code.
+    if (registryId === 'claude-plugins') {
+      result.nativeInstall = claudePluginsNativeInstall(itemName, result.plugin.def);
+    }
   }
 
   return result;

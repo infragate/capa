@@ -26,11 +26,18 @@ import {
 } from '../../commands/add-builders';
 import { tryResolveRegistryItem } from '../../commands/resolve-registry-source';
 import { upsertNativeMcpServer } from './native-mcp';
+import {
+  runNativePluginInstall,
+  type NativePluginInstall,
+} from './native-plugin-install';
 import type { Capabilities, Skill, MCPServer, Plugin } from '../../../types/capabilities';
 import type { Rule } from '../../../types/rules';
 import type { Hook } from '../../../types/hooks';
 import type { GetSnapshotResult } from '../../../shared/cache';
 import { getProvider } from '../../../shared/providers';
+
+/** Project-local unpack root for plugins wired to providers without a native installer. */
+const PASSTHROUGH_PLUGINS_DIR = join('.capa', 'plugins');
 
 function expandEnvInRecord(
   record: Record<string, string> | undefined,
@@ -130,13 +137,48 @@ async function passthroughInstallPlugin(opts: {
   noCache: boolean;
   written: string[];
   warnings: string[];
+  /** When set, matching providers get the native CLI install instead of unpack. */
+  nativeInstall?: NativePluginInstall;
 }): Promise<void> {
-  const { plugin, projectPath, projectId, providers, db, noCache, written, warnings } = opts;
-  const caps = emptyCapabilities(providers);
+  const {
+    plugin,
+    projectPath,
+    projectId,
+    providers,
+    db,
+    noCache,
+    written,
+    warnings,
+    nativeInstall,
+  } = opts;
+
+  const nativeProviderIds = nativeInstall
+    ? providers.filter((p) => nativeInstall.providerIds.includes(p))
+    : [];
+  const unpackProviders = providers.filter((p) => !nativeProviderIds.includes(p));
+
+  for (const pid of nativeProviderIds) {
+    console.log(`Installing plugin "${plugin.id}" via ${pid} native CLI...`);
+    runNativePluginInstall(nativeInstall!.command);
+    written.push(`native:${pid}:${nativeInstall!.command}`);
+  }
+
+  if (unpackProviders.length === 0) {
+    console.log(`✓ Passthrough: installed plugin "${plugin.id}" (native)`);
+    return;
+  }
+
+  if (nativeProviderIds.length > 0) {
+    console.log(
+      `Unpacking plugin "${plugin.id}" for provider(s) without a native installer: ${unpackProviders.join(', ')}`,
+    );
+  }
+
+  const caps = emptyCapabilities(unpackProviders);
   caps.plugins = [plugin];
   const authFetch = createAuthenticatedFetch(db);
   const lockBuilder = new LockfileBuilder(null);
-  const pluginsBaseDir = join(projectPath, '.capa-passthrough', 'plugins');
+  const pluginsBaseDir = join(projectPath, PASSTHROUGH_PLUGINS_DIR);
   const result = await resolvePlugins(
     caps,
     projectPath,
@@ -151,7 +193,7 @@ async function passthroughInstallPlugin(opts: {
   warnings.push(...result.warnings);
   for (const skill of result.mergedCapabilities.skills ?? []) {
     if (skill.type !== 'plugin' && skill.type !== 'installed') continue;
-    for (const pid of providers) {
+    for (const pid of unpackProviders) {
       const prov = getProvider(pid);
       if (prov) written.push(join(projectPath, prov.skillsDir, skill.id));
     }
@@ -163,7 +205,7 @@ async function passthroughInstallPlugin(opts: {
       env: expandEnvInRecord(server.def.env),
       headers: expandEnvInRecord(server.def.headers),
     };
-    const mcpResult = await upsertNativeMcpServer(projectPath, server.id, def, providers);
+    const mcpResult = await upsertNativeMcpServer(projectPath, server.id, def, unpackProviders);
     warnings.push(...mcpResult.warnings);
     for (const w of mcpResult.written) written.push(`${w.configPath}#${w.serverKey}`);
     if (server.def.url) {
@@ -235,6 +277,7 @@ export async function passthroughAdd(
             noCache: !!options.noCache,
             written,
             warnings,
+            nativeInstall: resolved.nativeInstall,
           });
         }
         // fall through to summary
@@ -454,7 +497,7 @@ export async function passthroughInstall(opts: {
   let failed = 0;
 
   try {
-    const pluginsBaseDir = join(projectPath, '.capa-passthrough', 'plugins');
+    const pluginsBaseDir = join(projectPath, PASSTHROUGH_PLUGINS_DIR);
     const pluginResult = await resolvePlugins(
       capabilities,
       projectPath,
