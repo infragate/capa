@@ -260,3 +260,35 @@ export async function pruneWorkspaces(): Promise<number> {
   }
   return removed;
 }
+
+/**
+ * Remove wrap cache dirs whose marker realProjectPath matches `realProjectPath`.
+ */
+export async function pruneWorkspacesForProject(realProjectPath: string): Promise<number> {
+  await ensureCapaDir();
+  const dir = getWorkspacesDir();
+  if (!existsSync(dir)) return 0;
+
+  const real = resolve(realProjectPath);
+  let removed = 0;
+  for (const name of readdirSync(dir)) {
+    const full = join(dir, name);
+    try {
+      if (!statSync(full).isDirectory()) continue;
+      const markerPath = join(full, WORKSPACE_MARKER);
+      if (!existsSync(markerPath)) continue;
+      const data = (await Bun.file(markerPath).json()) as WorkspaceMarker;
+      if (!data?.realProjectPath) continue;
+      const same =
+        process.platform === 'win32'
+          ? resolve(data.realProjectPath).toLowerCase() === real.toLowerCase()
+          : resolve(data.realProjectPath) === real;
+      if (!same) continue;
+      rmSync(full, { recursive: true, force: true });
+      removed++;
+    } catch {
+      // skip
+    }
+  }
+  return removed;
+}

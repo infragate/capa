@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'bun:test';
-import { findWrapPids, isPidRunning, stopAllWrapSessions } from '../sessions';
+import {
+  findWrapPids,
+  isPidRunning,
+  stopAllWrapSessions,
+  commandLineMatchesProject,
+  normalizePathForMatch,
+} from '../sessions';
 
 describe('wrap process discovery', () => {
   it('isPidRunning reports the current process', () => {
@@ -17,5 +23,32 @@ describe('wrap process discovery', () => {
     const n = await stopAllWrapSessions();
     expect(typeof n).toBe('number');
     expect(n).toBeGreaterThanOrEqual(0);
+  });
+
+  it('commandLineMatchesProject matches real path and workspace paths', () => {
+    const real =
+      process.platform === 'win32' ? 'C:\\Users\\me\\proj' : '/Users/me/proj';
+    const workspace =
+      process.platform === 'win32'
+        ? 'C:\\Users\\me\\.capa\\workspaces\\proj-cursor-abc\\proj'
+        : '/Users/me/.capa/workspaces/proj-cursor-abc/proj';
+
+    const watchCmd = `capa __wrap_watch__ ${real} ${workspace} cursor ${real}\\capabilities.yaml []`;
+    expect(commandLineMatchesProject(watchCmd, real, [workspace])).toBe(true);
+
+    const otherCmd = 'capa wrap cursor --project /other/path';
+    expect(commandLineMatchesProject(otherCmd, real, [workspace])).toBe(false);
+
+    const projectFlag = `capa wrap cursor --project ${real}`;
+    expect(commandLineMatchesProject(projectFlag, real)).toBe(true);
+  });
+
+  it('normalizePathForMatch produces absolute paths', () => {
+    const n = normalizePathForMatch('.');
+    expect(n.length).toBeGreaterThan(1);
+    if (process.platform === 'win32') {
+      expect(n).toBe(n.toLowerCase());
+      expect(n.includes('/')).toBe(false);
+    }
   });
 });

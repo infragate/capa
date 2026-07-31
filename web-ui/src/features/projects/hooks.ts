@@ -38,6 +38,18 @@ export function useProjects() {
   });
 }
 
+export function useDeleteProject() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (projectId: string) => projectsApi.delete(projectId),
+    onSuccess: (_data, projectId) => {
+      qc.invalidateQueries({ queryKey: ['projects'] });
+      qc.removeQueries({ queryKey: ['project', projectId] });
+      invalidateProjectQueries(qc, projectId);
+    },
+  });
+}
+
 export function useProject(projectId: string | null) {
   return useQuery({
     queryKey: ['project', projectId],

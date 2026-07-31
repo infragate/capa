@@ -5,11 +5,21 @@ import { tmpdir } from 'os';
 import {
   createDefaultCapabilities,
   parseCapabilitiesFile,
+  writeCapabilitiesFile,
 } from '../../../shared/capabilities';
+import { generateProjectId } from '../../../shared/paths';
+import { getDatabasePath, loadSettings } from '../../../shared/config';
+import { CapaDatabase } from '../../../db/database';
 
 const ensureServerMock = mock(async () => ({
   running: true,
   url: 'http://127.0.0.1:5912',
+}));
+
+const fetchMock = mock(async () => ({
+  ok: true,
+  statusText: 'OK',
+  text: async () => '{}',
 }));
 
 mock.module('../../utils/server-manager', () => ({
@@ -19,6 +29,9 @@ mock.module('../../utils/server-manager', () => ({
   getServerStatus: mock(async () => ({ running: false, url: undefined, pid: undefined })),
   restartServer: mock(async () => {}),
 }));
+
+const originalFetch = globalThis.fetch;
+globalThis.fetch = fetchMock as unknown as typeof fetch;
 
 const { initCommand } = await import('../init');
 
@@ -50,6 +63,7 @@ describe('initCommand', () => {
     originalCwd = process.cwd();
     process.chdir(projectDir);
     ensureServerMock.mockClear();
+    fetchMock.mockClear();
   });
 
   afterEach(() => {
@@ -62,7 +76,7 @@ describe('initCommand', () => {
     expect(typeof initCommand).toBe('function');
   });
 
-  it('writes a default capabilities.yaml with the expected shape', async () => {
+  it('writes a default capabilities.yaml and registers the project', async () => {
     const capabilitiesPath = join(projectDir, 'capabilities.yaml');
     expect(existsSync(capabilitiesPath)).toBe(false);
 
@@ -77,9 +91,47 @@ describe('initCommand', () => {
     expect(parsed.servers).toEqual([]);
     expect(parsed.tools).toEqual([]);
     expect(ensureServerMock).toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalled();
+
+    const projectId = generateProjectId(projectDir);
+    const settings = await loadSettings();
+    const db = new CapaDatabase(getDatabasePath(settings));
+    try {
+      const project = db.getProject(projectId);
+      expect(project).not.toBeNull();
+      expect(project!.path).toBe(projectDir);
+    } finally {
+      db.close();
+    }
+  });
+
+  it('registers an existing capabilities file without recreating it', async () => {
+    const capabilitiesPath = join(projectDir, 'capabilities.yaml');
+    const custom = createDefaultCapabilities();
+    custom.skills = [
+      { id: 'custom-skill', type: 'inline', def: { content: '# Custom\n', description: 'test' } },
+    ];
+    await writeCapabilitiesFile(capabilitiesPath, 'yaml', custom);
+    const before = await Bun.file(capabilitiesPath).text();
+
+    await initCommand('yaml');
+
+    const after = await Bun.file(capabilitiesPath).text();
+    expect(after).toBe(before);
+    expect(ensureServerMock).toHaveBeenCalled();
+
+    const projectId = generateProjectId(projectDir);
+    const settings = await loadSettings();
+    const db = new CapaDatabase(getDatabasePath(settings));
+    try {
+      expect(db.getProject(projectId)).not.toBeNull();
+    } finally {
+      db.close();
+    }
   });
 
   afterAll(() => {
+    globalThis.fetch = originalFetch;
     mock.restore();
   });
 });

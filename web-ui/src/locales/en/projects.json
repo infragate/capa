@@ -7,11 +7,12 @@
     "skills": "Skills",
     "tools": "Tools",
     "servers": "Servers",
-    "lastUpdated": "Last Updated"
+    "lastUpdated": "Last Updated",
+    "actions": "Actions"
   },
   "empty": {
     "title": "No projects configured",
-    "description": "Projects are automatically registered when you run capa install in a directory containing a capabilities.json or capabilities.yaml file."
+    "description": "Projects appear here after you run capa init, capa install, or capa wrap in a directory with a capabilities file."
   },
   "noResults": {
     "title": "No projects found",
@@ -73,6 +74,8 @@
     "edit": "Edit",
     "cancel": "Cancel",
     "delete": "Delete",
+    "deleteProject": "Delete project",
+    "confirmDeleteProject": "Remove \"{{name}}\" from capa? This stops any wrap sessions for the project and clears capa-managed data. The capabilities file is kept.",
     "dragToReorder": "Drag to reorder",
     "editSkill": "Edit skill",
     "editServer": "Edit server",

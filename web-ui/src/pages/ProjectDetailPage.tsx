@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { AlertTriangle, ArrowDown } from 'lucide-react';
+import { AlertTriangle, ArrowDown, Trash2 } from 'lucide-react';
 import { TopBar } from '../components/layout/TopBar';
 import { Page } from '../components/layout/Page';
 import { Alert } from '../components/common/Alert';
@@ -11,11 +11,18 @@ import { CapabilitiesSection } from '../features/projects/components/Capabilitie
 import { ProvidersSection } from '../features/projects/components/ProvidersSection';
 import { OptionsSection } from '../features/projects/components/OptionsSection';
 import { VariablesForm } from '../features/projects/components/VariablesForm';
-import { useProject, useProjectCapabilitiesLiveSync, useVariables, useOAuth2Servers } from '../features/projects/hooks';
+import {
+  useProject,
+  useProjectCapabilitiesLiveSync,
+  useVariables,
+  useOAuth2Servers,
+  useDeleteProject,
+} from '../features/projects/hooks';
 import { projectDisplayName, safeDecode } from '../lib/utils';
 
 export function ProjectDetailPage() {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const projectId = searchParams.get('id') || searchParams.get('project');
   const returnUrl = searchParams.get('return');
@@ -28,6 +35,7 @@ export function ProjectDetailPage() {
   const { data: project, isLoading, error } = useProject(projectId);
   const { data: variables } = useVariables(projectId);
   const { data: oauth2Servers } = useOAuth2Servers(projectId);
+  const deleteProject = useDeleteProject();
   useProjectCapabilitiesLiveSync(projectId);
 
   useEffect(() => {
@@ -48,6 +56,20 @@ export function ProjectDetailPage() {
   const caps = project?.capabilities;
   const hasProviders = (caps?.providers?.length ?? 0) > 0;
   const showNoConfig = !isLoading && !caps && !error;
+
+  const handleDeleteProject = () => {
+    if (!projectId) return;
+    if (!confirm(t('projects:actions.confirmDeleteProject', { name: displayName }))) return;
+    deleteProject.mutate(projectId, {
+      onSuccess: () => navigate('/'),
+      onError: (err) => {
+        setMessage({
+          text: err instanceof Error ? err.message : String(err),
+          type: 'error',
+        });
+      },
+    });
+  };
 
   const missingVarCount = variables?.required
     ? variables.required.filter((v) => !variables.values?.[v]).length
@@ -126,6 +148,18 @@ export function ProjectDetailPage() {
           <Alert type="error">{(error as Error).message}</Alert>
         ) : (
           <>
+            <div className="mb-6 flex justify-end">
+              <button
+                type="button"
+                onClick={handleDeleteProject}
+                disabled={deleteProject.isPending}
+                className="inline-flex items-center gap-1.5 rounded-sm border border-border-primary bg-bg-secondary px-3 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:bg-error-bg hover:text-error-text hover:border-transparent cursor-pointer disabled:opacity-50"
+              >
+                <Trash2 size={14} />
+                {t('projects:actions.deleteProject')}
+              </button>
+            </div>
+
             {hasProviders && <ProvidersSection providers={caps!.providers} />}
 
             <div id="capabilities-section">

@@ -7,6 +7,7 @@ import { prepareWorkspace, pruneWorkspaces } from '../utils/wrap/workspace';
 import { startWrapWatchers } from '../utils/wrap/watch-project';
 import { launchProvider } from '../utils/wrap/launch';
 import { waitForInterrupt } from '../utils/wrap/wait-for-interrupt';
+import { clearWrapSession, writeWrapSession } from '../utils/wrap/session-file';
 import { info, error } from '../ui';
 
 export interface WrapOptions {
@@ -113,6 +114,12 @@ export async function wrapCommand(
   );
   info(prepared.workspacePath);
 
+  writeWrapSession(prepared.cachePath, {
+    pid: process.pid,
+    realProjectPath: prepared.realProjectPath,
+    workspacePath: prepared.workspacePath,
+  });
+
   if (provider.wrap.kind === 'gui') {
     const watchers = startWrapWatchers({
       realProjectPath: prepared.realProjectPath,
@@ -128,6 +135,7 @@ export async function wrapCommand(
       cleaned = true;
       watchers.exitSweep();
       watchers.stop();
+      clearWrapSession(prepared.cachePath);
     };
 
     const onStopSignal = () => {
@@ -183,8 +191,20 @@ export async function wrapCommand(
     exclusionProviderIds: prepared.exclusionProviderIds,
   });
 
-  const onStopSignal = () => {
+  writeWrapSession(prepared.cachePath, {
+    pid: process.pid,
+    watchPid: watchWorker.pid,
+    realProjectPath: prepared.realProjectPath,
+    workspacePath: prepared.workspacePath,
+  });
+
+  const cleanupCli = () => {
     watchWorker.stop();
+    clearWrapSession(prepared.cachePath);
+  };
+
+  const onStopSignal = () => {
+    cleanupCli();
     process.exit(0);
   };
   process.once('SIGTERM', onStopSignal);
@@ -196,12 +216,12 @@ export async function wrapCommand(
 
   try {
     const result = await launchProvider(provider, prepared.workspacePath, args);
-    watchWorker.stop();
+    cleanupCli();
     if (result.exitCode != null && result.exitCode !== 0) {
       process.exit(result.exitCode);
     }
   } catch (err) {
-    watchWorker.stop();
+    cleanupCli();
     error(
       `Failed to launch ${provider.wrap.binary}: ${
         err instanceof Error ? err.message : String(err)
