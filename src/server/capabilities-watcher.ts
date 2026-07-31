@@ -153,6 +153,8 @@ export class CapabilitiesFileWatcher {
       this.schedule(projectId);
       return;
     }
+
+    const filePath = this.filePaths.get(projectId);
     const until = this.selfWriteUntil.get(projectId) ?? 0;
     if (Date.now() < until) {
       // Swallow our own write; adopt the new mtime so we don't re-fire later.
@@ -162,7 +164,6 @@ export class CapabilitiesFileWatcher {
       return;
     }
 
-    const filePath = this.filePaths.get(projectId);
     if (!filePath || !existsSync(filePath)) return;
 
     const mtime = safeMtime(filePath);

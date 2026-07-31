@@ -16,6 +16,7 @@ import {
   findSkillsInDirectory,
   readSkillFromDirectory,
 } from '../cli/commands/install-tasks/helpers/skill-discovery';
+import { fetchPublicHttpsText } from '../shared/safe-remote-url';
 
 export interface SkillContentResult {
   content: string;
@@ -212,9 +213,9 @@ export async function fetchUninstalledSkillContent(
 ): Promise<SkillContentResult | null> {
   try {
     if (skill.type === 'remote' && skill.def?.url) {
-      const response = await authFetch.fetch(skill.def.url);
-      if (!response.ok) return null;
-      const text = await response.text();
+      // Do not use AuthenticatedFetch here — arbitrary remote URLs must not
+      // inherit git-host credentials (SSRF / credential leak).
+      const text = await fetchPublicHttpsText(skill.def.url);
       // Reject HTML login pages
       const trimmed = text.trimStart().slice(0, 200).toLowerCase();
       if (trimmed.startsWith('<!doctype') || trimmed.startsWith('<html')) {
