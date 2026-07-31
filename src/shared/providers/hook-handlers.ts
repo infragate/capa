@@ -30,6 +30,11 @@ export interface HookEntryInput {
   runReference: string;
   /** The mapping picked from `HooksIntegration.eventMap`. */
   mapping: ProviderEventMapping;
+  /**
+   * Prefix for the entry `name` tag. Default `'capa:'` (managed installs).
+   * Pass `''` for passthrough so `capa clean` does not claim the entry.
+   */
+  nameTagPrefix?: string;
 }
 
 /**
@@ -53,8 +58,8 @@ export interface HookEntryOutput {
 
 const NAME_TAG_PREFIX = "capa:";
 
-export function buildNameTag(hookId: string): string {
-  return `${NAME_TAG_PREFIX}${hookId}`;
+export function buildNameTag(hookId: string, prefix: string = NAME_TAG_PREFIX): string {
+  return `${prefix}${hookId}`;
 }
 
 export function isCapaNameTag(value: unknown, hookId?: string): boolean {
@@ -62,12 +67,6 @@ export function isCapaNameTag(value: unknown, hookId?: string): boolean {
   if (!value.startsWith(NAME_TAG_PREFIX)) return false;
   if (hookId && value !== buildNameTag(hookId)) return false;
   return true;
-}
-
-function idFromNameTag(tag: string): string {
-  return tag.startsWith(NAME_TAG_PREFIX)
-    ? tag.slice(NAME_TAG_PREFIX.length)
-    : tag;
 }
 
 /**
@@ -125,7 +124,8 @@ function buildClaudeLikeEntry(
     [isPrompt ? "prompt" : "command"]: runReference,
   };
   if (hook.timeout !== undefined) entry.timeout = hook.timeout;
-  const nameTag = supportsName ? buildNameTag(hook.id) : null;
+  const prefix = input.nameTagPrefix ?? NAME_TAG_PREFIX;
+  const nameTag = supportsName ? buildNameTag(hook.id, prefix) : null;
   if (nameTag) entry.name = nameTag;
   return {
     eventName: mapping.event,
@@ -150,7 +150,8 @@ function buildCursorEntry(input: HookEntryInput): HookEntryOutput {
   if (matcher) entry.pattern = matcher;
   if (hook.timeout !== undefined) entry.timeout = hook.timeout;
   if (hook.failClosed) entry.failClosed = true;
-  const nameTag = buildNameTag(hook.id);
+  const prefix = input.nameTagPrefix ?? NAME_TAG_PREFIX;
+  const nameTag = buildNameTag(hook.id, prefix);
   entry.name = nameTag;
   return {
     eventName: mapping.event,
@@ -244,8 +245,7 @@ export function upsertHookEntry(
       // for sibling hooks must coexist in the same matcher group.
       const existingIdx = nameTag
         ? group.hooks.findIndex(
-            (e) =>
-              isPlainObject(e) && isCapaNameTag(e.name, idFromNameTag(nameTag)),
+            (e) => isPlainObject(e) && e.name === nameTag,
           )
         : -1;
       if (existingIdx >= 0) {
@@ -259,10 +259,7 @@ export function upsertHookEntry(
       const { eventName, entry, nameTag } = output;
       const events = ensureArray(hooksRoot, eventName);
       const existingIdx = nameTag
-        ? events.findIndex(
-            (e) =>
-              isPlainObject(e) && isCapaNameTag(e.name, idFromNameTag(nameTag)),
-          )
+        ? events.findIndex((e) => isPlainObject(e) && e.name === nameTag)
         : -1;
       if (existingIdx >= 0) {
         events[existingIdx] = entry;

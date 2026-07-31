@@ -35,6 +35,7 @@ export async function installCommand(
   let quiet = false;
   let skipPrerequisites = false;
   let skipCredentialOpen = false;
+  let passthrough = false;
   if (typeof envFileOrOptions === 'object' && envFileOrOptions !== null) {
     envFile = envFileOrOptions.envFile;
     flagProvider = envFileOrOptions.provider;
@@ -47,8 +48,21 @@ export async function installCommand(
     quiet = !!envFileOrOptions.quiet;
     skipPrerequisites = !!envFileOrOptions.skipPrerequisites;
     skipCredentialOpen = !!envFileOrOptions.skipCredentialOpen;
+    passthrough = !!envFileOrOptions.passthrough;
   } else {
     envFile = envFileOrOptions;
+  }
+
+  if (passthrough) {
+    const { passthroughInstall } = await import('../utils/passthrough');
+    await passthroughInstall({
+      envFile,
+      provider: flagProvider,
+      noCache,
+      projectPath,
+      exitProcess,
+    });
+    return;
   }
 
   const prevQuiet = getFlags().quiet;

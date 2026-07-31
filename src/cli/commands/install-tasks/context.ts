@@ -66,6 +66,11 @@ export interface InstallOptions {
    * Warnings about missing credentials are still recorded.
    */
   skipCredentialOpen?: boolean;
+  /**
+   * Write provider-native files from the capabilities file without starting
+   * the capa server or registering a capa MCP proxy entry.
+   */
+  passthrough?: boolean;
 }
 
 export type GetRepoSnapshotFn = (

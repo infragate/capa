@@ -71,6 +71,16 @@ export interface InstallHooksOptions {
   noCache?: boolean;
   /** When set, hook lockfile entries are recorded for `github`/`gitlab`/`remote` sources. */
   lockBuilder?: LockfileBuilder;
+  /**
+   * When false, skip writing `managed_hooks` rows (passthrough mode).
+   * @default true
+   */
+  trackManaged?: boolean;
+  /**
+   * Prefix for provider entry `name` tags. Default `'capa:'`.
+   * Pass `''` for passthrough so `capa clean` will not remove these entries.
+   */
+  nameTagPrefix?: string;
 }
 
 export interface InstallHooksResult {
@@ -85,6 +95,8 @@ export interface InstallHooksResult {
  */
 export async function installHooks(opts: InstallHooksOptions): Promise<InstallHooksResult> {
   const { projectPath, projectId, hooks, providers, db } = opts;
+  const trackManaged = opts.trackManaged !== false;
+  const nameTagPrefix = opts.nameTagPrefix;
   const warnings: string[] = [];
   let installed = 0;
 
@@ -190,6 +202,7 @@ export async function installHooks(opts: InstallHooksOptions): Promise<InstallHo
           hook,
           mapping,
           runReference,
+          ...(nameTagPrefix !== undefined ? { nameTagPrefix } : {}),
         });
 
         const { configPath, locator } = applyHookEntryToConfig({
@@ -201,17 +214,19 @@ export async function installHooks(opts: InstallHooksOptions): Promise<InstallHo
         // Only track scriptPath for files capa wrote under ~/.capa, so
         // prune/clean delete what they own and never touch user-authored
         // local scripts referenced via `source.type=local`.
-        const scriptPath = body.needsMaterialisation
-          ? hookScriptPaths.get(hook.id) ?? null
-          : null;
-        db.upsertManagedHook({
-          projectId,
-          providerId,
-          hookId: hook.id,
-          configPath,
-          locator: JSON.stringify(locator),
-          scriptPath,
-        });
+        if (trackManaged) {
+          const scriptPath = body.needsMaterialisation
+            ? hookScriptPaths.get(hook.id) ?? null
+            : null;
+          db.upsertManagedHook({
+            projectId,
+            providerId,
+            hookId: hook.id,
+            configPath,
+            locator: JSON.stringify(locator),
+            scriptPath,
+          });
+        }
         installed++;
         taskLog(`  ✓ Installed hook "${hook.id}" → ${provider.displayName} (${eventName})`);
       } catch (err: unknown) {

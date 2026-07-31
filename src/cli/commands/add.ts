@@ -1,16 +1,24 @@
 import { detectCapabilitiesFile } from '../../shared/paths';
 import { parseCapabilitiesFile, appendCapabilityEntry } from '../../shared/capabilities';
 import { installCommand } from './install';
-import { RegistryManager } from '../../shared/registries/manager';
-import type { Skill } from '../../types/capabilities';
+import type { Skill, Capabilities } from '../../types/capabilities';
 import type { Plugin, PluginDefinition } from '../../types/plugin';
-import type { RegistryCapability } from '../../types/registry';
+import type { CapabilitiesFormat } from '../../types/capabilities';
 import { validatePluginDef } from '../../shared/plugin-source';
 import { getAllGitProviders } from '../../shared/git-providers/registry';
 import { resolve, basename, join, relative } from 'path';
 import { access } from 'fs/promises';
 import { constants } from 'fs';
 import { refuseIfWrapWorkspace } from '../utils/wrap/marker';
+import {
+  buildServerEntry,
+  buildToolEntry,
+  buildRuleEntry,
+  buildHookEntry,
+  resolveAddKind,
+  type AddKind,
+} from './add-builders';
+import { tryResolveRegistryItem } from './resolve-registry-source';
 
 interface ParsedSkillSource {
   id: string;
@@ -366,20 +374,74 @@ export function parsePluginSource(source: string): ParsedPluginSource {
   );
 }
 
+export interface AddCommandOptions {
+  plugin?: boolean;
+  skill?: boolean;
+  server?: boolean;
+  tool?: boolean;
+  rule?: boolean;
+  hook?: boolean;
+  provider?: string;
+  envFile?: string | boolean;
+  noCache?: boolean;
+  /** When true, run install after updating the capabilities file (legacy one-shot). */
+  install?: boolean;
+  /** Write provider-native files; skip capabilities file / capa server / DB tracking. */
+  passthrough?: boolean;
+  // Server flags
+  id?: string;
+  type?: string;
+  cmd?: string;
+  arg?: string[];
+  env?: string[];
+  url?: string;
+  header?: string[];
+  cwd?: string;
+  description?: string;
+  // Tool flags
+  mcpServer?: string;
+  mcpTool?: string;
+  default?: string[];
+  command?: string;
+  group?: string;
+  // Rule flags
+  inline?: string;
+  appliesTo?: string[];
+  alwaysApply?: boolean;
+  // Hook flags
+  on?: string;
+  prompt?: string;
+  source?: string;
+  matcher?: string;
+  timeout?: string;
+  failClosed?: boolean;
+  sequential?: boolean;
+}
+
 export async function addCommand(
-  source: string,
-  options: {
-    plugin?: boolean;
-    skill?: boolean;
-    provider?: string;
-    envFile?: string | boolean;
-    noCache?: boolean;
-    /** When true, run install after updating the capabilities file (legacy one-shot). */
-    install?: boolean;
-  }
+  source: string | undefined,
+  options: AddCommandOptions
 ): Promise<void> {
   if (await refuseIfWrapWorkspace('add')) {
     process.exit(1);
+  }
+
+  let kind: AddKind;
+  try {
+    kind = resolveAddKind(options);
+  } catch (err) {
+    console.error(`✗ ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  }
+
+  if (options.passthrough && options.install) {
+    console.log('Note: --install is ignored with --passthrough (files are written immediately).\n');
+  }
+
+  if (options.passthrough) {
+    const { passthroughAdd } = await import('../utils/passthrough');
+    await passthroughAdd(source, kind, options);
+    return;
   }
 
   const installOpts = {
@@ -400,11 +462,6 @@ export async function addCommand(
     );
   }
 
-  if (options.plugin && options.skill) {
-    console.error('✗ Cannot pass both --skill and --plugin.');
-    process.exit(1);
-  }
-
   const projectPath = process.cwd();
 
   const capabilitiesFile = await detectCapabilitiesFile(projectPath);
@@ -420,79 +477,70 @@ export async function addCommand(
     capabilitiesFile.format
   );
 
-  // --- Registry route (runs before --plugin / --skill branches) ---
-  const RESERVED_PREFIXES = /^(github|gitlab|bitbucket|npm|file|http|https):/i;
-  const registryMatch = source.match(/^([a-zA-Z][\w-]*):([\s\S]+)$/);
-  if (registryMatch && !RESERVED_PREFIXES.test(source) && !source.startsWith('.') && !source.startsWith('/') && !/^[A-Za-z]:[\\/]/.test(source)) {
-    const [, registryId, itemId] = registryMatch;
-    const { CapaDatabase } = await import('../../db/database');
-    const { loadSettings, getDatabasePath } = await import('../../shared/config');
-    const settings = await loadSettings();
-    const dbForRegistry = new CapaDatabase(getDatabasePath(settings));
-    const manager = new RegistryManager(dbForRegistry);
-    let adapter;
-    let detail: Awaited<ReturnType<typeof manager.view>> | undefined;
-    let resolvedCapability: RegistryCapability | undefined;
+  // --- Server / tool / rule / hook (no registry route) ---
+  if (kind === 'server' || kind === 'tool' || kind === 'rule' || kind === 'hook') {
     try {
-      adapter = await manager.getAdapter(registryId);
-      if (adapter) {
-        for (const cap of adapter.manifest.capabilities) {
-          try {
-            detail = await manager.view(registryId, { capability: cap, id: itemId });
-            resolvedCapability = cap;
-            break;
-          } catch {
-            // item not found under this capability, try next
-          }
-        }
-      }
-    } finally {
-      try { dbForRegistry.close(); } catch {}
+      await appendTypedEntry(kind, source, options, capabilities, capabilitiesFile, maybeInstall);
+    } catch (err) {
+      console.error(`✗ ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
     }
-    if (adapter) {
-      console.log(`Resolving from registry "${adapter.manifest.name}"...`);
-      if (!detail || !resolvedCapability) {
-        throw new Error(
-          `Item "${itemId}" not found in registry "${registryId}" under any capability ` +
-          `(tried: ${adapter.manifest.capabilities.join(', ')}).`
+    return;
+  }
+
+  if (!source) {
+    console.error('✗ Missing <source>. Example: capa add owner/repo@skill-name');
+    process.exit(1);
+  }
+
+  // --- Registry route (runs before --plugin / --skill branches) ---
+  {
+    let resolved;
+    try {
+      resolved = source ? await tryResolveRegistryItem(source) : null;
+    } catch (err) {
+      console.error(`✗ ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    }
+    if (resolved) {
+      console.log(`Resolving from registry "${resolved.registryName}"...`);
+
+      if (options.plugin && resolved.capability !== 'plugins') {
+        console.warn(
+          `  ⚠ --plugin ignored: registry "${resolved.registryId}" resolved "${resolved.itemId}" as a ${resolved.capability.slice(0, -1)}.`,
+        );
+      }
+      if (options.skill && resolved.capability !== 'skills') {
+        console.warn(
+          `  ⚠ --skill ignored: registry "${resolved.registryId}" resolved "${resolved.itemId}" as a ${resolved.capability.slice(0, -1)}.`,
         );
       }
 
-      // Warn when a manual --plugin/--skill flag disagrees with the registry's verdict
-      if (options.plugin && resolvedCapability !== 'plugins') {
-        console.warn(`  ⚠ --plugin ignored: registry "${registryId}" resolved "${itemId}" as a ${resolvedCapability.slice(0, -1)}.`);
-      }
-      if (options.skill && resolvedCapability !== 'skills') {
-        console.warn(`  ⚠ --skill ignored: registry "${registryId}" resolved "${itemId}" as a ${resolvedCapability.slice(0, -1)}.`);
-      }
-
-      const snippet = detail.installSnippet;
-      const itemName = (snippet as any).id ?? itemId.split('/').pop() ?? 'registry-item';
-
-      if (resolvedCapability === 'skills') {
-        const existing = capabilities.skills.find(s => s.id === itemName);
+      if (resolved.capability === 'skills' && resolved.skill) {
+        const existing = capabilities.skills.find((s) => s.id === resolved.itemName);
         if (existing) {
-          console.error(`\u2717 Skill with id "${itemName}" already exists in capabilities file.`);
+          console.error(`\u2717 Skill with id "${resolved.itemName}" already exists in capabilities file.`);
           console.error(`  Rename or remove the existing entry in ${capabilitiesFile.path} and try again.`);
           process.exit(1);
         }
-        const newSkill: Skill = { ...(snippet as Skill), id: itemName };
         await appendCapabilityEntry(
           capabilitiesFile.path,
           capabilitiesFile.format,
           'skills',
-          newSkill as unknown as Record<string, unknown>
+          resolved.skill as unknown as Record<string, unknown>,
         );
-      } else if (resolvedCapability === 'plugins') {
+      } else if (resolved.capability === 'plugins' && resolved.plugin) {
         if (!capabilities.plugins) capabilities.plugins = [];
-        const newPlugin = snippet as Plugin;
-        const existing = capabilities.plugins.find(p =>
-          (p as any).id === itemName ||
-          (p.type === newPlugin.type
-            && p.def.repo === newPlugin.def.repo
-            && (p.def.subpath ?? '') === (newPlugin.def.subpath ?? '')));
+        const newPlugin = resolved.plugin;
+        const existing = capabilities.plugins.find(
+          (p) =>
+            (p as { id?: string }).id === resolved.itemName ||
+            (p.type === newPlugin.type &&
+              p.def.repo === newPlugin.def.repo &&
+              (p.def.subpath ?? '') === (newPlugin.def.subpath ?? '')),
+        );
         if (existing) {
-          console.error(`\u2717 Plugin "${itemName}" already exists in capabilities file.`);
+          console.error(`\u2717 Plugin "${resolved.itemName}" already exists in capabilities file.`);
           console.error(`  Rename or remove the existing entry in ${capabilitiesFile.path} and try again.`);
           process.exit(1);
         }
@@ -500,19 +548,20 @@ export async function addCommand(
           capabilitiesFile.path,
           capabilitiesFile.format,
           'plugins',
-          { ...newPlugin, id: itemName } as unknown as Record<string, unknown>
+          { ...newPlugin, id: resolved.itemName } as unknown as Record<string, unknown>,
         );
       }
 
-      console.log(`\u2713 Added ${resolvedCapability.slice(0, -1)} "${itemName}" from registry "${registryId}" to ${capabilitiesFile.path}`);
+      console.log(
+        `\u2713 Added ${resolved.capability.slice(0, -1)} "${resolved.itemName}" from registry "${resolved.registryId}" to ${capabilitiesFile.path}`,
+      );
       await maybeInstall();
       return;
     }
-    // If no adapter matched, fall through to normal parsing
   }
 
   // --- Plugin mode (--plugin flag) ---
-  if (options.plugin) {
+  if (kind === 'plugin') {
     let parsed: ParsedPluginSource;
     try {
       parsed = parsePluginSource(source);
@@ -592,3 +641,107 @@ export async function addCommand(
 
   await maybeInstall();
 }
+
+async function appendTypedEntry(
+  kind: 'server' | 'tool' | 'rule' | 'hook',
+  source: string | undefined,
+  options: AddCommandOptions,
+  capabilities: Capabilities,
+  capabilitiesFile: { path: string; format: CapabilitiesFormat },
+  maybeInstall: () => Promise<void>,
+): Promise<void> {
+  let entry: Record<string, unknown>;
+  let section: 'servers' | 'tools' | 'rules' | 'hooks';
+  let label: string;
+
+  if (kind === 'server') {
+    if (source) {
+      throw new Error('Server mode does not take a positional <source>; use --id/--cmd/--url flags.');
+    }
+    entry = buildServerEntry({
+      id: options.id,
+      type: options.type,
+      cmd: options.cmd,
+      arg: options.arg,
+      env: options.env,
+      url: options.url,
+      header: options.header,
+      cwd: options.cwd,
+      description: options.description,
+    });
+    section = 'servers';
+    label = 'server';
+    const existing = (capabilities.servers ?? []).find((s) => s.id === entry.id);
+    if (existing) {
+      throw new Error(`Server with id "${entry.id}" already exists in capabilities file.`);
+    }
+  } else if (kind === 'tool') {
+    if (source) {
+      throw new Error('Tool mode does not take a positional <source>; use --id and MCP/command flags.');
+    }
+    entry = buildToolEntry({
+      id: options.id,
+      mcpServer: options.mcpServer,
+      mcpTool: options.mcpTool,
+      default: options.default,
+      command: options.command,
+      description: options.description,
+      group: options.group,
+    });
+    section = 'tools';
+    label = 'tool';
+    const existing = (capabilities.tools ?? []).find((t) => t.id === entry.id);
+    if (existing) {
+      throw new Error(`Tool with id "${entry.id}" already exists in capabilities file.`);
+    }
+  } else if (kind === 'rule') {
+    entry = await buildRuleEntry({
+      id: options.id,
+      source,
+      inline: options.inline,
+      appliesTo: options.appliesTo,
+      alwaysApply: options.alwaysApply,
+      description: options.description,
+    });
+    section = 'rules';
+    label = 'rule';
+    const existing = (capabilities.rules ?? []).find((r) => r.id === entry.id);
+    if (existing) {
+      throw new Error(`Rule with id "${entry.id}" already exists in capabilities file.`);
+    }
+  } else {
+    if (source) {
+      throw new Error('Hook mode does not take a positional <source>; use --id/--on/--command flags.');
+    }
+    entry = buildHookEntry({
+      id: options.id,
+      on: options.on,
+      type: options.type,
+      command: options.command,
+      prompt: options.prompt,
+      source: options.source,
+      matcher: options.matcher,
+      timeout: options.timeout,
+      failClosed: options.failClosed,
+      sequential: options.sequential,
+      description: options.description,
+    });
+    section = 'hooks';
+    label = 'hook';
+    const existing = (capabilities.hooks ?? []).find((h) => h.id === entry.id);
+    if (existing) {
+      throw new Error(`Hook with id "${entry.id}" already exists in capabilities file.`);
+    }
+  }
+
+  await appendCapabilityEntry(
+    capabilitiesFile.path,
+    capabilitiesFile.format,
+    section,
+    entry,
+  );
+
+  console.log(`✓ Added ${label} "${entry.id}" to ${capabilitiesFile.path}`);
+  await maybeInstall();
+}
+
