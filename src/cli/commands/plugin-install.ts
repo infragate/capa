@@ -128,9 +128,10 @@ export async function resolvePlugins(
   getRepoSnapshot: GetRepoSnapshotFn,
   capabilitiesFilePath: string,
   lockBuilder: LockfileBuilder,
-  options: { noCache?: boolean } = {}
+  options: { noCache?: boolean; trackManaged?: boolean; pluginsBaseDir?: string } = {}
 ): Promise<ResolvePluginsResult> {
   const noCache = !!options.noCache;
+  const trackManaged = options.trackManaged !== false;
   const plugins = capabilities.plugins ?? [];
   const mergedSkills: Skill[] = Array.isArray(capabilities.skills) ? [...capabilities.skills] : [];
   // Preserve all explicitly defined servers from the capabilities file; never drop them when merging plugin servers
@@ -143,7 +144,7 @@ export async function resolvePlugins(
     throw new Error('No providers configured. Resolve providers before calling resolvePlugins.');
   }
 
-  const pluginsBase = getPluginsTempBase(projectId);
+  const pluginsBase = options.pluginsBaseDir ?? getPluginsTempBase(projectId);
   const currentPluginIds = new Set<string>();
   const warnings: string[] = [];
 
@@ -332,7 +333,9 @@ export async function resolvePlugins(
               copySkillTree({ src: srcSkillDir, dst: destSkillDir });
             }
           }
-          db.addManagedFile(projectId, destSkillDir);
+          if (trackManaged) {
+            db.addManagedFile(projectId, destSkillDir);
+          }
         } catch (err: any) {
           if (err instanceof BlockedPhraseError) {
             throw err;

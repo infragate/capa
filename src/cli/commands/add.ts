@@ -2,15 +2,24 @@ import { detectCapabilitiesFile } from '../../shared/paths';
 import { parseCapabilitiesFile, appendCapabilityEntry } from '../../shared/capabilities';
 import { installCommand } from './install';
 import { RegistryManager } from '../../shared/registries/manager';
-import type { Skill } from '../../types/capabilities';
+import type { Skill, Capabilities } from '../../types/capabilities';
 import type { Plugin, PluginDefinition } from '../../types/plugin';
 import type { RegistryCapability } from '../../types/registry';
+import type { CapabilitiesFormat } from '../../types/capabilities';
 import { validatePluginDef } from '../../shared/plugin-source';
 import { getAllGitProviders } from '../../shared/git-providers/registry';
 import { resolve, basename, join, relative } from 'path';
 import { access } from 'fs/promises';
 import { constants } from 'fs';
 import { refuseIfWrapWorkspace } from '../utils/wrap/marker';
+import {
+  buildServerEntry,
+  buildToolEntry,
+  buildRuleEntry,
+  buildHookEntry,
+  resolveAddKind,
+  type AddKind,
+} from './add-builders';
 
 interface ParsedSkillSource {
   id: string;
@@ -366,20 +375,74 @@ export function parsePluginSource(source: string): ParsedPluginSource {
   );
 }
 
+export interface AddCommandOptions {
+  plugin?: boolean;
+  skill?: boolean;
+  server?: boolean;
+  tool?: boolean;
+  rule?: boolean;
+  hook?: boolean;
+  provider?: string;
+  envFile?: string | boolean;
+  noCache?: boolean;
+  /** When true, run install after updating the capabilities file (legacy one-shot). */
+  install?: boolean;
+  /** Write provider-native files; skip capabilities file / capa server / DB tracking. */
+  passthrough?: boolean;
+  // Server flags
+  id?: string;
+  type?: string;
+  cmd?: string;
+  arg?: string[];
+  env?: string[];
+  url?: string;
+  header?: string[];
+  cwd?: string;
+  description?: string;
+  // Tool flags
+  mcpServer?: string;
+  mcpTool?: string;
+  default?: string[];
+  command?: string;
+  group?: string;
+  // Rule flags
+  inline?: string;
+  appliesTo?: string[];
+  alwaysApply?: boolean;
+  // Hook flags
+  on?: string;
+  prompt?: string;
+  source?: string;
+  matcher?: string;
+  timeout?: string;
+  failClosed?: boolean;
+  sequential?: boolean;
+}
+
 export async function addCommand(
-  source: string,
-  options: {
-    plugin?: boolean;
-    skill?: boolean;
-    provider?: string;
-    envFile?: string | boolean;
-    noCache?: boolean;
-    /** When true, run install after updating the capabilities file (legacy one-shot). */
-    install?: boolean;
-  }
+  source: string | undefined,
+  options: AddCommandOptions
 ): Promise<void> {
   if (await refuseIfWrapWorkspace('add')) {
     process.exit(1);
+  }
+
+  let kind: AddKind;
+  try {
+    kind = resolveAddKind(options);
+  } catch (err) {
+    console.error(`✗ ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  }
+
+  if (options.passthrough && options.install) {
+    console.log('Note: --install is ignored with --passthrough (files are written immediately).\n');
+  }
+
+  if (options.passthrough) {
+    const { passthroughAdd } = await import('../utils/passthrough');
+    await passthroughAdd(source, kind, options);
+    return;
   }
 
   const installOpts = {
@@ -400,11 +463,6 @@ export async function addCommand(
     );
   }
 
-  if (options.plugin && options.skill) {
-    console.error('✗ Cannot pass both --skill and --plugin.');
-    process.exit(1);
-  }
-
   const projectPath = process.cwd();
 
   const capabilitiesFile = await detectCapabilitiesFile(projectPath);
@@ -419,6 +477,22 @@ export async function addCommand(
     capabilitiesFile.path,
     capabilitiesFile.format
   );
+
+  // --- Server / tool / rule / hook (no registry route) ---
+  if (kind === 'server' || kind === 'tool' || kind === 'rule' || kind === 'hook') {
+    try {
+      await appendTypedEntry(kind, source, options, capabilities, capabilitiesFile, maybeInstall);
+    } catch (err) {
+      console.error(`✗ ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    }
+    return;
+  }
+
+  if (!source) {
+    console.error('✗ Missing <source>. Example: capa add owner/repo@skill-name');
+    process.exit(1);
+  }
 
   // --- Registry route (runs before --plugin / --skill branches) ---
   const RESERVED_PREFIXES = /^(github|gitlab|bitbucket|npm|file|http|https):/i;
@@ -512,7 +586,7 @@ export async function addCommand(
   }
 
   // --- Plugin mode (--plugin flag) ---
-  if (options.plugin) {
+  if (kind === 'plugin') {
     let parsed: ParsedPluginSource;
     try {
       parsed = parsePluginSource(source);
@@ -592,3 +666,107 @@ export async function addCommand(
 
   await maybeInstall();
 }
+
+async function appendTypedEntry(
+  kind: 'server' | 'tool' | 'rule' | 'hook',
+  source: string | undefined,
+  options: AddCommandOptions,
+  capabilities: Capabilities,
+  capabilitiesFile: { path: string; format: CapabilitiesFormat },
+  maybeInstall: () => Promise<void>,
+): Promise<void> {
+  let entry: Record<string, unknown>;
+  let section: 'servers' | 'tools' | 'rules' | 'hooks';
+  let label: string;
+
+  if (kind === 'server') {
+    if (source) {
+      throw new Error('Server mode does not take a positional <source>; use --id/--cmd/--url flags.');
+    }
+    entry = buildServerEntry({
+      id: options.id,
+      type: options.type,
+      cmd: options.cmd,
+      arg: options.arg,
+      env: options.env,
+      url: options.url,
+      header: options.header,
+      cwd: options.cwd,
+      description: options.description,
+    });
+    section = 'servers';
+    label = 'server';
+    const existing = (capabilities.servers ?? []).find((s) => s.id === entry.id);
+    if (existing) {
+      throw new Error(`Server with id "${entry.id}" already exists in capabilities file.`);
+    }
+  } else if (kind === 'tool') {
+    if (source) {
+      throw new Error('Tool mode does not take a positional <source>; use --id and MCP/command flags.');
+    }
+    entry = buildToolEntry({
+      id: options.id,
+      mcpServer: options.mcpServer,
+      mcpTool: options.mcpTool,
+      default: options.default,
+      command: options.command,
+      description: options.description,
+      group: options.group,
+    });
+    section = 'tools';
+    label = 'tool';
+    const existing = (capabilities.tools ?? []).find((t) => t.id === entry.id);
+    if (existing) {
+      throw new Error(`Tool with id "${entry.id}" already exists in capabilities file.`);
+    }
+  } else if (kind === 'rule') {
+    entry = await buildRuleEntry({
+      id: options.id,
+      source,
+      inline: options.inline,
+      appliesTo: options.appliesTo,
+      alwaysApply: options.alwaysApply,
+      description: options.description,
+    });
+    section = 'rules';
+    label = 'rule';
+    const existing = (capabilities.rules ?? []).find((r) => r.id === entry.id);
+    if (existing) {
+      throw new Error(`Rule with id "${entry.id}" already exists in capabilities file.`);
+    }
+  } else {
+    if (source) {
+      throw new Error('Hook mode does not take a positional <source>; use --id/--on/--command flags.');
+    }
+    entry = buildHookEntry({
+      id: options.id,
+      on: options.on,
+      type: options.type,
+      command: options.command,
+      prompt: options.prompt,
+      source: options.source,
+      matcher: options.matcher,
+      timeout: options.timeout,
+      failClosed: options.failClosed,
+      sequential: options.sequential,
+      description: options.description,
+    });
+    section = 'hooks';
+    label = 'hook';
+    const existing = (capabilities.hooks ?? []).find((h) => h.id === entry.id);
+    if (existing) {
+      throw new Error(`Hook with id "${entry.id}" already exists in capabilities file.`);
+    }
+  }
+
+  await appendCapabilityEntry(
+    capabilitiesFile.path,
+    capabilitiesFile.format,
+    section,
+    entry,
+  );
+
+  console.log(`✓ Added ${label} "${entry.id}" to ${capabilitiesFile.path}`);
+  await maybeInstall();
+}
+

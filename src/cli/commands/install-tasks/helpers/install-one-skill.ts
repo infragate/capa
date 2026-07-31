@@ -60,7 +60,9 @@ export async function installOneSkill(
   lockBuilder: LockfileBuilder,
   noCache: boolean,
   resolvedRepos: Map<string, GetSnapshotResult>,
+  opts?: { trackManaged?: boolean },
 ): Promise<SkillInstallOutcome> {
+  const trackManaged = opts?.trackManaged !== false;
   const authFetch = createAuthenticatedFetch(db);
 
   let skillMarkdown: string;
@@ -304,14 +306,16 @@ export async function installOneSkill(
     const skillMdPath = join(skillDir, 'SKILL.md');
 
     if (existsSync(skillDir)) {
-      const managedFiles = db.getManagedFiles(projectId);
-      if (!managedFiles.includes(skillDir)) {
-        console.error(
-          `  ✗ Directory already exists and is not managed by capa: ${skillDir}`
-        );
-        console.error('    Please delete it manually and run "capa install" again.');
-        try { db.close(); } catch {}
-        process.exit(1);
+      if (trackManaged) {
+        const managedFiles = db.getManagedFiles(projectId);
+        if (!managedFiles.includes(skillDir)) {
+          console.error(
+            `  ✗ Directory already exists and is not managed by capa: ${skillDir}`
+          );
+          console.error('    Please delete it manually and run "capa install" again.');
+          try { db.close(); } catch {}
+          process.exit(1);
+        }
       }
       rmSync(skillDir, { recursive: true, force: true });
     }
@@ -338,7 +342,9 @@ export async function installOneSkill(
       }
     }
 
-    db.addManagedFile(projectId, skillDir);
+    if (trackManaged) {
+      db.addManagedFile(projectId, skillDir);
+    }
   }
 
   return 'installed';
