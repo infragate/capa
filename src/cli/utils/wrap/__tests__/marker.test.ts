@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'fs';
-import { join } from 'path';
+import { join, resolve } from 'path';
 import { tmpdir } from 'os';
-import { readWorkspaceMarker, refuseIfWrapWorkspace } from '../marker';
+import { readWorkspaceMarker, refuseIfWrapWorkspace, resolveProjectIdentityPath } from '../marker';
 import { WORKSPACE_MARKER } from '../../../../shared/workspaces/paths';
 
 describe('readWorkspaceMarker', () => {
@@ -68,6 +68,35 @@ describe('readWorkspaceMarker', () => {
       expect(await refuseIfWrapWorkspace('install')).toBe(true);
     } finally {
       process.chdir(prev);
+    }
+  });
+
+  it('resolveProjectIdentityPath returns the real project inside a wrap workspace', async () => {
+    expect(await resolveProjectIdentityPath(workingDir)).toBe(resolve('/real/proj'));
+    expect(await resolveProjectIdentityPath(join(workingDir, 'src'))).toBe(resolve('/real/proj'));
+  });
+
+  it('resolveProjectIdentityPath returns the dir outside a wrap workspace', async () => {
+    const outside = mkdtempSync(join(tmpdir(), 'capa-outside-'));
+    try {
+      const resolved = await resolveProjectIdentityPath(outside);
+      expect(resolved).toBe(resolve(outside));
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('refuseIfWrapWorkspace returns true under workspaces dir even without a marker', async () => {
+    const { getWorkspacesDir } = await import('../../../../shared/workspaces/paths');
+    const orphan = join(getWorkspacesDir(), `orphan-test-${Date.now()}`);
+    mkdirSync(orphan, { recursive: true });
+    const prev = process.cwd();
+    try {
+      process.chdir(orphan);
+      expect(await refuseIfWrapWorkspace('install')).toBe(true);
+    } finally {
+      process.chdir(prev);
+      rmSync(orphan, { recursive: true, force: true });
     }
   });
 });

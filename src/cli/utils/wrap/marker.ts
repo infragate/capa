@@ -1,6 +1,11 @@
 import { existsSync } from 'fs';
 import { dirname, join, relative, resolve, sep } from 'path';
-import { WORKSPACE_MARKER, type WorkspaceMarker } from '../../../shared/workspaces/paths';
+import {
+  WORKSPACE_MARKER,
+  getWorkspacesDir,
+  isUnderWrapWorkspacesDir,
+  type WorkspaceMarker,
+} from '../../../shared/workspaces/paths';
 
 async function tryReadMarker(markerPath: string): Promise<WorkspaceMarker | null> {
   if (!existsSync(markerPath)) return null;
@@ -63,11 +68,50 @@ export async function readWorkspaceMarker(
  */
 export async function refuseIfWrapWorkspace(command: string): Promise<boolean> {
   const marker = await readWorkspaceMarker();
-  if (!marker) return false;
-  console.error(
-    `✗ Cannot run "capa ${command}" inside a wrap workspace.\n` +
-      `  Run it from the real project instead:\n` +
-      `  ${marker.realProjectPath}`,
-  );
-  return true;
+  if (marker) {
+    console.error(
+      `✗ Cannot run "capa ${command}" inside a wrap workspace.\n` +
+        `  Run it from the real project instead:\n` +
+        `  ${marker.realProjectPath}`,
+    );
+    return true;
+  }
+  if (isUnderWrapWorkspacesDir(process.cwd())) {
+    console.error(
+      `✗ Cannot run "capa ${command}" inside a wrap workspace under:\n` +
+        `  ${getWorkspacesDir()}\n` +
+        `  Run it from the real project instead.`,
+    );
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Path used for project identity (DB id / MCP endpoint).
+ * Inside a wrap workspace this is the real project path; otherwise `dir`.
+ * Never returns a path under `~/.capa/workspaces`.
+ */
+export async function resolveProjectIdentityPath(
+  dir: string = process.cwd(),
+): Promise<string> {
+  const marker = await readWorkspaceMarker(dir);
+  if (marker?.realProjectPath) {
+    const real = resolve(marker.realProjectPath);
+    if (isUnderWrapWorkspacesDir(real)) {
+      throw new Error(
+        `Wrap workspace marker has an invalid realProjectPath under ${getWorkspacesDir()}: ${real}`,
+      );
+    }
+    return real;
+  }
+
+  const abs = resolve(dir);
+  if (isUnderWrapWorkspacesDir(abs)) {
+    throw new Error(
+      `Inside a wrap workspace (${abs}) but ${WORKSPACE_MARKER} was not found. ` +
+        `Re-run "capa wrap <provider>" or run capa from the real project.`,
+    );
+  }
+  return abs;
 }

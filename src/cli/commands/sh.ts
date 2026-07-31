@@ -1,10 +1,15 @@
+import { resolve } from 'path';
 import { detectCapabilitiesFile, generateProjectId } from '../../shared/paths';
 import { parseCapabilitiesFile } from '../../shared/capabilities';
+import { getDatabasePath, loadSettings } from '../../shared/config';
+import { CapaDatabase } from '../../db/database';
 import { getServerStatus } from '../utils/server-manager';
 import type { Capabilities } from '../../types/capabilities';
 import { getQualifiedToolName } from '../../types/capabilities';
 import { slugify } from '../../shared/slug';
 import { CAPA_RAW_ARG } from '../../server/tool-formatter';
+import { resolveProjectIdentityPath } from '../utils/wrap/marker';
+import { isUnderWrapWorkspacesDir } from '../../shared/workspaces/paths';
 
 interface ShellToolInfo {
   id: string;
@@ -274,8 +279,88 @@ async function fetchShellTools(serverUrl: string, projectId: string): Promise<Sh
     const body = await response.text().catch(() => '');
     throw new Error(`Failed to fetch shell tools (${response.status}): ${body}`);
   }
-  const data = await response.json() as { tools: ShellToolInfo[] };
+  const data = (await response.json()) as { tools: ShellToolInfo[] };
   return data.tools;
+}
+
+function isProjectNotReadyError(message: string): boolean {
+  return /Project not configured|Project not found/i.test(message);
+}
+
+/**
+ * Ensure the project exists in the DB and has capabilities loaded on the server.
+ * Needed when `capa sh` runs from a wrap workspace after a partial install, or
+ * before any successful configure for this identity path.
+ */
+async function ensureProjectConfigured(
+  serverUrl: string,
+  projectId: string,
+  identityPath: string,
+  capabilities: Capabilities,
+): Promise<void> {
+  if (isUnderWrapWorkspacesDir(identityPath)) {
+    throw new Error(
+      `Refusing to register wrap workspace path as a project: ${identityPath}`,
+    );
+  }
+
+  const settings = await loadSettings();
+  const db = new CapaDatabase(getDatabasePath(settings));
+  try {
+    const existing = db.getProject(projectId);
+    if (existing) {
+      const existingPath = resolve(existing.path);
+      const wantPath = resolve(identityPath);
+      const samePath =
+        process.platform === 'win32'
+          ? existingPath.toLowerCase() === wantPath.toLowerCase()
+          : existingPath === wantPath;
+      if (!samePath) {
+        throw new Error(
+          `Project id "${projectId}" is already registered at a different path:\n` +
+            `  existing: ${existing.path}\n` +
+            `  this:     ${identityPath}\n` +
+            `Remove the conflicting project or reinstall from the correct directory.`,
+        );
+      }
+    } else {
+      db.upsertProject({ id: projectId, path: identityPath });
+    }
+  } finally {
+    db.close();
+  }
+
+  const response = await fetch(`${serverUrl}/api/projects/${encodeURIComponent(projectId)}/configure`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify(capabilities),
+    signal: AbortSignal.timeout(120000),
+  });
+  if (!response.ok) {
+    const text = await response.text().catch(() => response.statusText);
+    throw new Error(`Failed to configure project: ${text}`);
+  }
+  // Drain body (JSON or NDJSON) so the connection can close cleanly.
+  await response.text().catch(() => '');
+}
+
+async function fetchShellToolsWithConfigure(
+  serverUrl: string,
+  projectId: string,
+  identityPath: string,
+  capabilities: Capabilities,
+): Promise<ShellToolInfo[]> {
+  try {
+    return await fetchShellTools(serverUrl, projectId);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (!isProjectNotReadyError(message)) throw err;
+    await ensureProjectConfigured(serverUrl, projectId, identityPath, capabilities);
+    return await fetchShellTools(serverUrl, projectId);
+  }
 }
 
 /**
@@ -678,12 +763,28 @@ export async function shellCommand(args: string[]): Promise<void> {
   }
 
   const serverUrl = status.url;
-  const capabilities = await parseCapabilitiesFile(capFile.path, capFile.format);
-  const projectId = generateProjectId(cwd);
+  let capabilities;
+  try {
+    capabilities = await parseCapabilitiesFile(capFile.path, capFile.format);
+  } catch (err: any) {
+    console.error(`Failed to parse capabilities: ${err.message}`);
+    process.exit(1);
+  }
+
+  // Wrap installs register the real project path; resolve identity so `capa sh`
+  // from the shadow workspace hits the same project id / MCP tools.
+  let identityPath: string;
+  try {
+    identityPath = await resolveProjectIdentityPath(cwd);
+  } catch (err: any) {
+    console.error(err.message || String(err));
+    process.exit(1);
+  }
+  const projectId = generateProjectId(identityPath);
 
   let tools: ShellToolInfo[];
   try {
-    tools = await fetchShellTools(serverUrl, projectId);
+    tools = await fetchShellToolsWithConfigure(serverUrl, projectId, identityPath, capabilities);
   } catch (err: any) {
     console.error(`Failed to load tools: ${err.message}`);
     console.error('Make sure the project has been installed ("capa install").');

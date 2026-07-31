@@ -13,6 +13,7 @@ import type { Capabilities, MCPServer, ToolMCPDefinition, ToolCommandDefinition 
 import type { OAuth2Config } from '../types/oauth';
 import { extractAllVariables } from '../shared/variable-resolver';
 import { detectCapabilitiesFile } from '../shared/paths';
+import { isUnderWrapWorkspacesDir } from '../shared/workspaces/paths';
 import { parseCapabilitiesFile } from '../shared/capabilities';
 import { RegistryManager } from '../shared/registries/manager';
 import { seedDefaultRegistries } from '../shared/registries/seed';
@@ -199,6 +200,14 @@ class CapaServer {
     const projects = this.db.getAllProjects();
     let removed = 0;
     for (const project of projects) {
+      if (isUnderWrapWorkspacesDir(project.path)) {
+        this.logger.warn(
+          `Removing shadow wrap workspace project "${project.id}" at path: ${project.path}`,
+        );
+        this.db.deleteProject(project.id);
+        removed++;
+        continue;
+      }
       if (!existsSync(project.path)) {
         this.logger.warn(`Project directory not found, removing project "${project.id}" at path: ${project.path}`);
         this.db.deleteProject(project.id);
@@ -206,7 +215,7 @@ class CapaServer {
       }
     }
     if (removed > 0) {
-      this.logger.info(`Removed ${removed} project(s) with missing directories`);
+      this.logger.info(`Removed ${removed} invalid project(s) (missing dirs or wrap shadows)`);
     } else {
       this.logger.debug('All configured projects have valid directories');
     }
@@ -593,7 +602,9 @@ class CapaServer {
     const apiLogger = this.logger.child('API');
     apiLogger.info('Get all projects');
     try {
-      const projects = this.db.getAllProjects();
+      const projects = this.db
+        .getAllProjects()
+        .filter((project) => !isUnderWrapWorkspacesDir(project.path));
       
       // Enrich projects with additional data
       const enrichedProjects = projects.map((project) => {
