@@ -85,4 +85,18 @@ describe('readWorkspaceMarker', () => {
       rmSync(outside, { recursive: true, force: true });
     }
   });
+
+  it('refuseIfWrapWorkspace returns true under workspaces dir even without a marker', async () => {
+    const { getWorkspacesDir } = await import('../../../../shared/workspaces/paths');
+    const orphan = join(getWorkspacesDir(), `orphan-test-${Date.now()}`);
+    mkdirSync(orphan, { recursive: true });
+    const prev = process.cwd();
+    try {
+      process.chdir(orphan);
+      expect(await refuseIfWrapWorkspace('install')).toBe(true);
+    } finally {
+      process.chdir(prev);
+      rmSync(orphan, { recursive: true, force: true });
+    }
+  });
 });

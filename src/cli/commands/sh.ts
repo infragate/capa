@@ -8,6 +8,7 @@ import { getQualifiedToolName } from '../../types/capabilities';
 import { slugify } from '../../shared/slug';
 import { CAPA_RAW_ARG } from '../../server/tool-formatter';
 import { resolveProjectIdentityPath } from '../utils/wrap/marker';
+import { isUnderWrapWorkspacesDir } from '../../shared/workspaces/paths';
 
 interface ShellToolInfo {
   id: string;
@@ -296,6 +297,12 @@ async function ensureProjectConfigured(
   identityPath: string,
   capabilities: Capabilities,
 ): Promise<void> {
+  if (isUnderWrapWorkspacesDir(identityPath)) {
+    throw new Error(
+      `Refusing to register wrap workspace path as a project: ${identityPath}`,
+    );
+  }
+
   const settings = await loadSettings();
   const db = new CapaDatabase(getDatabasePath(settings));
   try {
@@ -737,10 +744,23 @@ export async function shellCommand(args: string[]): Promise<void> {
   }
 
   const serverUrl = status.url;
-  const capabilities = await parseCapabilitiesFile(capFile.path, capFile.format);
+  let capabilities;
+  try {
+    capabilities = await parseCapabilitiesFile(capFile.path, capFile.format);
+  } catch (err: any) {
+    console.error(`Failed to parse capabilities: ${err.message}`);
+    process.exit(1);
+  }
+
   // Wrap installs register the real project path; resolve identity so `capa sh`
   // from the shadow workspace hits the same project id / MCP tools.
-  const identityPath = await resolveProjectIdentityPath(cwd);
+  let identityPath: string;
+  try {
+    identityPath = await resolveProjectIdentityPath(cwd);
+  } catch (err: any) {
+    console.error(err.message || String(err));
+    process.exit(1);
+  }
   const projectId = generateProjectId(identityPath);
 
   let tools: ShellToolInfo[];

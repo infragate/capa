@@ -11,6 +11,7 @@ import { runTasks, summary, info, warn, error, setFlags, getFlags } from '../ui'
 import { buildInstallTasks } from './install-tasks';
 import type { InstallCtx, InstallOptions } from './install-tasks';
 import { refuseIfWrapWorkspace } from '../utils/wrap/marker';
+import { isUnderWrapWorkspacesDir } from '../../shared/workspaces/paths';
 
 export type { InstallOptions, GetRepoSnapshotFn } from './install-tasks';
 
@@ -102,6 +103,15 @@ async function installCommandBody(opts: {
     if (await refuseIfWrapWorkspace('install')) {
       failExit('Refusing to install inside a wrap workspace.', exitProcess);
     }
+  }
+
+  // Never register a shadow workspace path as the project identity (even when
+  // wrap itself installs into the workspace with identityPath = real project).
+  if (isUnderWrapWorkspacesDir(idPath)) {
+    failExit(
+      'Refusing to register a wrap workspace path as a project. Use the real project path.',
+      exitProcess,
+    );
   }
 
   const capabilitiesFile = await detectCapabilitiesFile(projectPath);
