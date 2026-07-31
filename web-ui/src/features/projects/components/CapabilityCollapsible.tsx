@@ -1,10 +1,11 @@
 import { useState, type ReactNode } from 'react';
 import * as Collapsible from '@radix-ui/react-collapsible';
-import { ChevronDown, Plus } from 'lucide-react';
+import { ChevronDown, Plus, type LucideIcon } from 'lucide-react';
 
 interface CapabilityCollapsibleProps {
   title: string;
   count: number;
+  icon?: LucideIcon;
   defaultOpen?: boolean;
   /** When set, section is forced open (e.g. while searching). */
   forceOpen?: boolean;
@@ -26,6 +27,7 @@ interface CapabilityCollapsibleProps {
 export function CapabilityCollapsible({
   title,
   count,
+  icon: Icon,
   defaultOpen = false,
   forceOpen,
   keepMounted = false,
@@ -60,6 +62,7 @@ export function CapabilityCollapsible({
               size={16}
               className={`shrink-0 text-text-tertiary transition-transform ${effectiveOpen ? '' : '-rotate-90'}`}
             />
+            {Icon && <Icon size={16} className="shrink-0 text-text-secondary" aria-hidden />}
             <span>{title}</span>
             <span className="rounded-sm bg-bg-tertiary px-1.5 py-0.5 text-xs font-normal text-text-secondary tabular-nums">
               {count}

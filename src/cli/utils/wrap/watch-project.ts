@@ -250,6 +250,11 @@ export function startWrapWatchers(opts: WatchOpts): WrapWatchers {
         provider: opts.providerId,
         exitProcess: false,
         quiet: true,
+        // Live re-apply already ran PATH checks at wrap start; re-running
+        // `where`/`which` flashes console windows on Windows. Don't steal
+        // focus with a credentials browser either.
+        skipPrerequisites: true,
+        skipCredentialOpen: true,
       });
       try {
         const linked = syncTopLevelSymlinks(realRoot, wsRoot, providerIds);

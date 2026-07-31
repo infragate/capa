@@ -512,9 +512,8 @@ function SnippetDialog({
               ID
               <input
                 value={id}
-                disabled={mode === 'edit'}
                 onChange={(e) => setId(sanitizeCapaIdInput(e.target.value))}
-                className="mt-1 w-full rounded-sm border border-border-tertiary bg-bg-tertiary px-2.5 py-2 font-mono text-sm text-text-primary disabled:opacity-60"
+                className="mt-1 w-full rounded-sm border border-border-tertiary bg-bg-tertiary px-2.5 py-2 font-mono text-sm text-text-primary"
               />
             </label>
             {sourceMode === 'local' ? (

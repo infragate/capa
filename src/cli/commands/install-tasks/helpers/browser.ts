@@ -14,7 +14,9 @@ export async function openBrowser(url: string): Promise<boolean> {
     } else {
       command = `xdg-open "${url}"`;
     }
-    await execAsync(command);
+    // windowsHide: prevent a brief cmd.exe flash when opening URLs on Windows
+    // (e.g. credential setup during install / wrap re-apply).
+    await execAsync(command, { windowsHide: true });
     return true;
   } catch {
     return false;

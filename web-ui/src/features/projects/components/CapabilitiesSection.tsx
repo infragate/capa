@@ -1,6 +1,15 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Plus } from 'lucide-react';
+import {
+  Bot,
+  FileText,
+  Plus,
+  Puzzle,
+  ScrollText,
+  Sparkles,
+  Webhook,
+  Wrench,
+} from 'lucide-react';
 import type {
   AgentFileConfig,
   AuthoredPlugin,
@@ -188,6 +197,7 @@ export function CapabilitiesSection({
 
       <CapabilityCollapsible
         title={t('detail.plugins')}
+        icon={Puzzle}
         count={plugins.length}
         forceOpen={forceOpen.plugins}
         onAdd={() => setAddPluginOpen(true)}
@@ -207,6 +217,7 @@ export function CapabilitiesSection({
 
       <CapabilityCollapsible
         title={t('detail.skills')}
+        icon={Sparkles}
         count={skills.length}
         forceOpen={forceOpen.skills}
         onAdd={() => setAddSkillOpen(true)}
@@ -228,6 +239,7 @@ export function CapabilitiesSection({
 
       <CapabilityCollapsible
         title={t('detail.toolsSection')}
+        icon={Wrench}
         count={servers.length + tools.length}
         forceOpen={forceOpen.tools}
         keepMounted={addServerOpen || editServerOpen || addCommandToolOpen}
@@ -263,6 +275,7 @@ export function CapabilitiesSection({
 
       <CapabilityCollapsible
         title={t('detail.rules')}
+        icon={ScrollText}
         count={rules.length}
         forceOpen={forceOpen.rules}
         keepMounted={addRuleOpen}
@@ -280,6 +293,7 @@ export function CapabilitiesSection({
 
       <CapabilityCollapsible
         title={t('detail.hooks')}
+        icon={Webhook}
         count={hooks.length}
         forceOpen={forceOpen.hooks}
         keepMounted={addHookOpen}
@@ -297,6 +311,7 @@ export function CapabilitiesSection({
 
       <CapabilityCollapsible
         title={t('detail.agents')}
+        icon={FileText}
         count={agentsCount}
         forceOpen={forceOpen.agents}
       >
@@ -305,6 +320,7 @@ export function CapabilitiesSection({
 
       <CapabilityCollapsible
         title={t('detail.subagents')}
+        icon={Bot}
         count={subagents.length}
         forceOpen={forceOpen.subagents}
         keepMounted={addSubagentOpen}

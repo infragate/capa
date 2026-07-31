@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { Trash2, X, Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -148,6 +148,24 @@ function RuleDialog({
   const [path, setPath] = useState(initial?.path || '');
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (!open) return;
+    if (initial) {
+      setSourceMode(initial.type === 'local' ? 'local' : 'inline');
+      setId(initial.id);
+      setDescription(initial.description || '');
+      setContent(initial.content || '');
+      setPath(initial.path || '');
+    } else {
+      setSourceMode('inline');
+      setId('');
+      setDescription('');
+      setContent('');
+      setPath('');
+    }
+    setError(null);
+  }, [open, initial]);
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
@@ -197,27 +215,7 @@ function RuleDialog({
   const pending = busy || appendMutation.isPending;
 
   return (
-    <Dialog.Root
-      open={open}
-      onOpenChange={(next) => {
-        if (next && !isEdit) {
-          setSourceMode('inline');
-          setId('');
-          setDescription('');
-          setContent('');
-          setPath('');
-          setError(null);
-        } else if (next && initial) {
-          setSourceMode(initial.type === 'local' ? 'local' : 'inline');
-          setId(initial.id);
-          setDescription(initial.description || '');
-          setContent(initial.content || '');
-          setPath(initial.path || '');
-          setError(null);
-        }
-        onOpenChange(next);
-      }}
-    >
+    <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="ui-overlay fixed inset-0 z-40 bg-black/40" />
         <Dialog.Content className="ui-dialog fixed z-50 w-[min(520px,92vw)] rounded-lg border border-border-primary bg-bg-secondary p-5 shadow-lg">

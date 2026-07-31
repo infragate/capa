@@ -32,6 +32,8 @@ export async function installCommand(
   let identityPath: string | undefined;
   let exitProcess = true;
   let quiet = false;
+  let skipPrerequisites = false;
+  let skipCredentialOpen = false;
   if (typeof envFileOrOptions === 'object' && envFileOrOptions !== null) {
     envFile = envFileOrOptions.envFile;
     flagProvider = envFileOrOptions.provider;
@@ -42,6 +44,8 @@ export async function installCommand(
       : undefined;
     if (envFileOrOptions.exitProcess === false) exitProcess = false;
     quiet = !!envFileOrOptions.quiet;
+    skipPrerequisites = !!envFileOrOptions.skipPrerequisites;
+    skipCredentialOpen = !!envFileOrOptions.skipCredentialOpen;
   } else {
     envFile = envFileOrOptions;
   }
@@ -56,6 +60,8 @@ export async function installCommand(
       projectPath,
       identityPath,
       exitProcess,
+      skipPrerequisites,
+      skipCredentialOpen,
       // Only refuse wrap cwd when the caller did not pass an explicit projectPath
       // (wrap itself always passes one).
       refuseWrapCwd:
@@ -75,9 +81,19 @@ async function installCommandBody(opts: {
   projectPath: string;
   identityPath: string | undefined;
   exitProcess: boolean;
+  skipPrerequisites: boolean;
+  skipCredentialOpen: boolean;
   refuseWrapCwd: boolean;
 }): Promise<void> {
-  const { envFile, flagProvider, noCache, exitProcess, refuseWrapCwd } = opts;
+  const {
+    envFile,
+    flagProvider,
+    noCache,
+    exitProcess,
+    skipPrerequisites,
+    skipCredentialOpen,
+    refuseWrapCwd,
+  } = opts;
   const projectPath = opts.projectPath;
   const identityPath = opts.identityPath;
   const idPath = identityPath ?? projectPath;
@@ -160,7 +176,11 @@ async function installCommandBody(opts: {
   };
 
   try {
-    const ctx = await runTasks(buildInstallTasks(reqCmds), { exitOnError: true }, initialCtx);
+    const ctx = await runTasks(
+      buildInstallTasks(reqCmds, { skipPrerequisites, skipCredentialOpen }),
+      { exitOnError: true },
+      initialCtx,
+    );
 
     for (const e of ctx.errors) error(e);
     for (const w of ctx.warnings) warn(w);
