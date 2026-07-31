@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import {
@@ -421,5 +421,45 @@ describe('installAgentsFile + cleanAgentsFile end-to-end', () => {
     // Exactly one __base__ block — the upsert must not duplicate it.
     const starts = written.match(/<!-- capa:start:__base__ -->/g) ?? [];
     expect(starts).toHaveLength(1);
+  });
+
+  it('resolves local additional snippets relative to the capabilities file', async () => {
+    const snippetPath = join(projectDir, 'docs', 'team.md');
+    mkdirSync(join(projectDir, 'docs'), { recursive: true });
+    writeFileSync(snippetPath, '## Local team notes\n', 'utf8');
+
+    const capabilitiesPath = join(projectDir, 'capabilities.yaml');
+    writeFileSync(capabilitiesPath, '# placeholder\n', 'utf8');
+
+    await installAgentsFile(
+      projectDir,
+      {
+        additional: [{ id: 'team-local', type: 'local', path: './docs/team.md' }],
+      },
+      ['codex'],
+      undefined,
+      capabilitiesPath,
+    );
+
+    const written = readFileSync(join(projectDir, 'AGENTS.md'), 'utf8');
+    expect(written).toContain('<!-- capa:start:team-local -->');
+    expect(written).toContain('## Local team notes');
+  });
+
+  it('rejects local additional snippets that escape the capabilities directory', async () => {
+    const capabilitiesPath = join(projectDir, 'capabilities.yaml');
+    writeFileSync(capabilitiesPath, '# placeholder\n', 'utf8');
+
+    await expect(
+      installAgentsFile(
+        projectDir,
+        {
+          additional: [{ id: 'evil', type: 'local', path: '../outside.md' }],
+        },
+        ['codex'],
+        undefined,
+        capabilitiesPath,
+      ),
+    ).rejects.toThrow(/parent-directory|outside/i);
   });
 });

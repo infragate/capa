@@ -23,6 +23,10 @@ import {
   type EffectiveCapsCacheEntry,
 } from './resolve-effective-capabilities';
 import {
+  listProjectFs,
+  writeProjectImport,
+} from './project-fs';
+import {
   listRegistriesHandler,
   createRegistryHandler,
   deleteRegistryHandler,
@@ -399,6 +403,15 @@ class CapaServer {
       if (mutation) return mutation;
     }
 
+    // Project filesystem browse (for local path pickers)
+    const fsListMatch = path.match(/^\/api\/projects\/([^/]+)\/fs$/);
+    if (fsListMatch && request.method === 'GET') {
+      return this.handleProjectFsList(fsListMatch[1], request);
+    }
+    if (fsListMatch && request.method === 'POST') {
+      return this.handleProjectFsUpload(fsListMatch[1], request);
+    }
+
     // Get OAuth2 servers
     const oauth2ServersMatch = path.match(/^\/api\/projects\/([^/]+)\/oauth-servers$/);
     if (oauth2ServersMatch && request.method === 'GET') {
@@ -678,6 +691,7 @@ class CapaServer {
               descriptionSource,
               requires: s.def?.requires || [],
               content: s.type === 'inline' ? (s.def?.content || null) : null,
+              path: s.type === 'local' ? (s.def?.path || null) : null,
               sourcePlugin: s.sourcePlugin || null,
               sourceUrl: resolveSkillSourceUrl(s, capabilities.resolvedPlugins),
             };
@@ -794,6 +808,26 @@ class CapaServer {
             type: p.type,
             def: p.def,
           })),
+          agents: capabilities.agents
+            ? {
+                base: capabilities.agents.base
+                  ? {
+                      type: capabilities.agents.base.type || null,
+                      ref: capabilities.agents.base.ref || null,
+                      path: capabilities.agents.base.path || null,
+                      def: capabilities.agents.base.def || null,
+                    }
+                  : null,
+                additional: (capabilities.agents.additional || []).map((snip) => ({
+                  id: snip.id || null,
+                  type: snip.type,
+                  content: snip.type === 'inline' ? (snip.content || null) : null,
+                  url: snip.url || null,
+                  path: snip.path || null,
+                  def: snip.def || null,
+                })),
+              }
+            : null,
           options: capabilities.options ? {
             toolExposure: capabilities.options.toolExposure || null,
             security: capabilities.options.security ? {
@@ -819,6 +853,80 @@ class CapaServer {
         JSON.stringify({ error: error.message }),
         { status: 500, headers: { 'Content-Type': 'application/json' } }
       );
+    }
+  }
+
+  private async handleProjectFsList(projectId: string, request: Request): Promise<Response> {
+    const project = this.db.getProject(projectId);
+    if (!project) {
+      return new Response(JSON.stringify({ error: 'Project not found' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    const url = new URL(request.url);
+    const rel = url.searchParams.get('path') || '';
+    const ext = url.searchParams.get('ext') || undefined;
+    const dirsOnly = url.searchParams.get('dirsOnly') === 'true';
+    try {
+      const result = listProjectFs(project.path, rel, { ext, dirsOnly });
+      return new Response(JSON.stringify(result), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    } catch (err: any) {
+      return new Response(JSON.stringify({ error: err?.message ?? String(err) }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+  }
+
+  private async handleProjectFsUpload(projectId: string, request: Request): Promise<Response> {
+    const project = this.db.getProject(projectId);
+    if (!project) {
+      return new Response(JSON.stringify({ error: 'Project not found' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    try {
+      const form = await request.formData();
+      const file = form.get('file');
+      if (!(file instanceof File)) {
+        return new Response(JSON.stringify({ error: 'Missing file field' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (file.size === 0) {
+        return new Response(JSON.stringify({ error: 'Empty file' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (file.size > 2 * 1024 * 1024) {
+        return new Response(JSON.stringify({ error: 'File too large (max 2 MiB)' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      const asSkillDir = String(form.get('asSkillDir') || '') === 'true';
+      const subdir = form.get('subdir');
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const written = writeProjectImport(project.path, {
+        filename: file.name || 'upload.md',
+        bytes,
+        subdir: typeof subdir === 'string' && subdir ? subdir : undefined,
+        asSkillDir,
+      });
+      return new Response(JSON.stringify(written), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    } catch (err: any) {
+      return new Response(JSON.stringify({ error: err?.message ?? String(err) }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
     }
   }
 

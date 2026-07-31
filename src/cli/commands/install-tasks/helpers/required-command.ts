@@ -1,8 +1,6 @@
-import { exec } from 'child_process';
+import * as childProcess from 'child_process';
 import { promisify } from 'util';
 import type { RequiredCommand } from '../../../../types/capabilities';
-
-const execAsync = promisify(exec);
 
 const VALID_REQUIRES_COMMAND_CLI = /^[a-zA-Z0-9_.+-]+$/;
 
@@ -17,9 +15,12 @@ function assertValidRequiresCommandCli(cli: string): void {
 export async function checkRequiredCommand(cmd: RequiredCommand): Promise<void> {
   assertValidRequiresCommandCli(cmd.cli);
   const isWindows = process.platform === 'win32';
-  const checkCmd = isWindows ? `where ${cmd.cli}` : `which ${cmd.cli}`;
+  const checker = isWindows ? 'where' : 'which';
   try {
-    await execAsync(checkCmd);
+    // windowsHide: avoid flashing a console window during wrap live re-apply.
+    // Promisify per call so test spies on childProcess.execFile are observed.
+    const execFileAsync = promisify(childProcess.execFile);
+    await execFileAsync(checker, [cmd.cli], { windowsHide: true });
   } catch {
     const desc = cmd.description ? ` — ${cmd.description}` : '';
     throw new Error(`${cmd.cli} not found${desc}`);

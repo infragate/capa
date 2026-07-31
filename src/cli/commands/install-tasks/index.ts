@@ -22,10 +22,13 @@ import { openCredentialSetupTask } from './open-credential-setup';
 
 export type { InstallCtx, InstallOptions, GetRepoSnapshotFn, SkillInstallOutcome } from './context';
 
-export function buildInstallTasks(reqCmds?: RequiredCommand[]): Task<InstallCtx>[] {
+export function buildInstallTasks(
+  reqCmds?: RequiredCommand[],
+  opts?: { skipPrerequisites?: boolean; skipCredentialOpen?: boolean },
+): Task<InstallCtx>[] {
   const tasks: Task<InstallCtx>[] = [];
 
-  if (reqCmds && reqCmds.length > 0) {
+  if (!opts?.skipPrerequisites && reqCmds && reqCmds.length > 0) {
     tasks.push(verifyPrerequisitesTask(reqCmds));
   }
 
@@ -45,7 +48,7 @@ export function buildInstallTasks(reqCmds?: RequiredCommand[]): Task<InstallCtx>
     installSubagentsTask(),
     pruneOrphanHooksTask(),
     installHooksTask(),
-    openCredentialSetupTask(),
+    openCredentialSetupTask({ skipOpen: !!opts?.skipCredentialOpen }),
   );
 
   return tasks;

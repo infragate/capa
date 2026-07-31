@@ -2,7 +2,7 @@ import type { Task } from '../../ui';
 import type { InstallCtx } from './context';
 import { openBrowser } from './helpers/browser';
 
-export function openCredentialSetupTask(): Task<InstallCtx> {
+export function openCredentialSetupTask(opts?: { skipOpen?: boolean }): Task<InstallCtx> {
   return {
     title: 'Opening credential setup',
     enabled: (ctx) => {
@@ -26,6 +26,14 @@ export function openCredentialSetupTask(): Task<InstallCtx> {
             .map((s: any) => s.serverId)
             .join(', ')}`,
         );
+      }
+
+      if (opts?.skipOpen) {
+        ctx.warnings.push(
+          `Credentials needed — open: ${result.credentialsUrl}`,
+        );
+        task.output = 'skipped browser open';
+        return;
       }
 
       task.output = 'opening browser';

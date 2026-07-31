@@ -266,6 +266,15 @@ export function usePatchOptions(projectId: string) {
   });
 }
 
+export function usePutAgents(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (agents: import('../../types/api').AgentFileConfig | Record<string, unknown> | null) =>
+      projectsApi.putAgents(projectId, agents),
+    onSuccess: () => invalidateProjectQueries(qc, projectId),
+  });
+}
+
 export function useAddFromRegistry(projectId: string) {
   const qc = useQueryClient();
   return useMutation({

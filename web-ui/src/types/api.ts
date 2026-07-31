@@ -26,6 +26,8 @@ export interface Skill {
   descriptionSource?: 'capabilities' | 'frontmatter' | null;
   requires: string[];
   content?: string | null;
+  /** Project-relative path for type: local skills (directory containing SKILL.md). */
+  path?: string | null;
   sourcePlugin: SourcePlugin | null;
   /** External origin URL for github / gitlab / remote / plugin skills. */
   sourceUrl?: string | null;
@@ -182,6 +184,46 @@ export interface CapabilitiesOptions {
   requiresCommands: RequiredCommand[];
 }
 
+export interface AgentSnippetDef {
+  repo: string;
+}
+
+export interface AgentFileBase {
+  type: string | null;
+  ref: string | null;
+  path: string | null;
+  def: AgentSnippetDef | null;
+}
+
+export interface AgentSnippet {
+  id: string | null;
+  type: 'inline' | 'remote' | 'github' | 'gitlab' | 'local' | string;
+  content: string | null;
+  url: string | null;
+  path: string | null;
+  def: AgentSnippetDef | null;
+}
+
+export interface AgentFileConfig {
+  base: AgentFileBase | null;
+  additional: AgentSnippet[];
+}
+
+export interface ProjectFsEntry {
+  name: string;
+  type: 'file' | 'dir';
+  path: string;
+}
+
+export interface ProjectFsListResponse {
+  path: string;
+  entries: ProjectFsEntry[];
+}
+
+export interface ProjectFsUploadResponse {
+  path: string;
+}
+
 export interface ProjectCapabilities {
   skills: Skill[];
   tools: Tool[];
@@ -192,6 +234,7 @@ export interface ProjectCapabilities {
   subagents: SubAgent[];
   rules: Rule[];
   hooks: Hook[];
+  agents: AgentFileConfig | null;
   options: CapabilitiesOptions | null;
 }
 

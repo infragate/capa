@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from 'fs';
-import { join, resolve, dirname } from 'path';
+import { join, dirname } from 'path';
 import type { AgentFileConfig, SecurityOptions, SubAgent, Capabilities } from '../../types/capabilities';
 import {
   loadBlockedPhrases,
@@ -16,7 +16,7 @@ import {
   renderSubAgentSkillsAndTools,
 } from '../../shared/providers/handlers';
 import type { AuthenticatedFetch } from '../../shared/authenticated-fetch';
-import { fetchRepoFile, fetchTextFile, type RepoSnapshotResolver } from '../../shared/repo-file';
+import { fetchRepoFile, fetchTextFile, assertSafeRepoPath, type RepoSnapshotResolver } from '../../shared/repo-file';
 import { parseGitRawUrl } from '../../shared/git-providers/registry';
 import { refSuffix } from '../../shared/git-providers/parsers';
 import { taskLog } from '../ui';
@@ -280,7 +280,7 @@ export async function installAgentsFile(
         );
       }
       const capabilitiesDir = dirname(capabilitiesFilePath);
-      const resolvedPath = resolve(capabilitiesDir, config.base.path);
+      const resolvedPath = assertSafeRepoPath(capabilitiesDir, config.base.path);
       if (!existsSync(resolvedPath)) {
         throw new Error(
           `agents.base local file not found: ${resolvedPath} (resolved from path "${config.base.path}")`
@@ -379,6 +379,30 @@ export async function installAgentsFile(
           sourceLabel: `agents snippet "${resolvedId}"`,
         });
       }
+    } else if (snippet.type === 'local') {
+      if (!snippet.id) throw new Error(`Agent local snippet is missing an "id" field.`);
+      if (!snippet.path) {
+        throw new Error(
+          `Agent snippet "${snippet.id}" is type 'local' but has no "path" field ` +
+            `(e.g. "path: ./docs/team.md").`,
+        );
+      }
+      if (!capabilitiesFilePath) {
+        throw new Error(
+          `Agent snippet "${snippet.id}" type 'local' requires the capabilities file path to resolve relative paths.`,
+        );
+      }
+      resolvedId = snippet.id;
+      const capabilitiesDir = dirname(capabilitiesFilePath);
+      const resolvedPath = assertSafeRepoPath(capabilitiesDir, snippet.path);
+      if (!existsSync(resolvedPath)) {
+        throw new Error(
+          `Agent snippet "${snippet.id}" local file not found: ${resolvedPath} ` +
+            `(resolved from path "${snippet.path}")`,
+        );
+      }
+      taskLog(`  Reading local snippet "${resolvedId}" from ${resolvedPath}`);
+      body = readFileSync(resolvedPath, 'utf8');
     } else if (snippet.type === 'github' || snippet.type === 'gitlab') {
       const resolved = await resolveRepoSnippet(snippet.type, snippet, ctx);
       resolvedId = resolved.id;

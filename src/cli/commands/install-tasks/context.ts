@@ -56,6 +56,16 @@ export interface InstallOptions {
    * Default false.
    */
   quiet?: boolean;
+  /**
+   * Skip `requiresCommands` PATH checks (wrap live re-apply — already verified
+   * at session start; re-running `where`/`which` flashes console windows on Windows).
+   */
+  skipPrerequisites?: boolean;
+  /**
+   * Skip auto-opening the credential setup browser (wrap live re-apply).
+   * Warnings about missing credentials are still recorded.
+   */
+  skipCredentialOpen?: boolean;
 }
 
 export type GetRepoSnapshotFn = (

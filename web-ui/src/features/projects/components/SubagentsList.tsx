@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { Trash2, X, Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -153,6 +153,16 @@ function SubagentDialog({
   const [selectedTools, setSelectedTools] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (!open) return;
+    setId(initial?.id || '');
+    setDescription(initial?.description || '');
+    setInstructions(initial?.instructions || '');
+    setSelectedSkills(initial?.skills || []);
+    setSelectedTools(initial?.tools || []);
+    setError(null);
+  }, [open, initial]);
+
   function toggleTool(tool: Tool) {
     const ref = skillRequiresRef(tool);
     setSelectedTools((list) => {
@@ -198,20 +208,7 @@ function SubagentDialog({
   const pending = busy || appendMutation.isPending;
 
   return (
-    <Dialog.Root
-      open={open}
-      onOpenChange={(next) => {
-        if (next) {
-          setId(initial?.id || '');
-          setDescription(initial?.description || '');
-          setInstructions(initial?.instructions || '');
-          setSelectedSkills(initial?.skills || []);
-          setSelectedTools(initial?.tools || []);
-          setError(null);
-        }
-        onOpenChange(next);
-      }}
-    >
+    <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="ui-overlay fixed inset-0 z-40 bg-black/40" />
         <Dialog.Content className="ui-dialog fixed z-50 max-h-[90vh] w-[min(560px,92vw)] overflow-y-auto rounded-lg border border-border-primary bg-bg-secondary p-5 shadow-lg">

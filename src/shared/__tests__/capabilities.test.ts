@@ -9,6 +9,7 @@ import {
   updateCapabilityEntry,
   reorderCapabilityEntries,
   upsertOptions,
+  upsertAgents,
 } from '../capabilities';
 import { logger } from '../logger';
 import { mkdtempSync, rmSync } from 'fs';
@@ -603,6 +604,51 @@ describe('capabilities', () => {
       expect(
         reorderCapabilityEntries(filePath, 'json', 'skills', ['a', 'missing']),
       ).rejects.toThrow(/not found/);
+    });
+  });
+
+  describe('upsertAgents', () => {
+    it('writes agents and preserves YAML comments', async () => {
+      const filePath = join(tempDir, 'capabilities.yaml');
+      await Bun.write(
+        filePath,
+        [
+          '# project capabilities',
+          'skills: []',
+          'servers: []',
+          'tools: []',
+          '',
+        ].join('\n'),
+      );
+
+      await upsertAgents(filePath, 'yaml', {
+        base: { type: 'local', path: './docs/AGENTS-base.md' },
+        additional: [{ id: 'team', type: 'inline', content: '## Team' }],
+      });
+
+      const content = await Bun.file(filePath).text();
+      expect(content).toContain('# project capabilities');
+      const parsed = await parseCapabilitiesFile(filePath, 'yaml');
+      expect(parsed.agents?.base?.type).toBe('local');
+      expect(parsed.agents?.base?.path).toBe('./docs/AGENTS-base.md');
+      expect(parsed.agents?.additional).toEqual([
+        { id: 'team', type: 'inline', content: '## Team' },
+      ]);
+    });
+
+    it('removes agents when null', async () => {
+      const filePath = join(tempDir, 'capabilities.json');
+      await Bun.write(
+        filePath,
+        JSON.stringify({
+          skills: [],
+          agents: { additional: [{ id: 'x', type: 'inline', content: 'hi' }] },
+        }),
+      );
+
+      await upsertAgents(filePath, 'json', null);
+      const parsed = await parseCapabilitiesFile(filePath, 'json');
+      expect(parsed.agents).toBeUndefined();
     });
   });
 });

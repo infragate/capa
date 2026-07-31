@@ -115,13 +115,18 @@ export function SkillDetailDialog({ skill, projectId, open, onOpenChange }: Skil
               <Dialog.Title className="truncate font-mono text-lg font-medium text-text-primary">
                 {skill?.id ?? t('skillDetail.title')}
               </Dialog.Title>
-              {skill && (
+                  {skill && (
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <span
                     className={`shrink-0 rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase ${sourceTypeBadgeClasses(skill.type)}`}
                   >
                     {skill.type}
                   </span>
+                  {skill.path && (
+                    <span className="truncate font-mono text-[11px] text-text-tertiary" title={skill.path}>
+                      {skill.path}
+                    </span>
+                  )}
                   {skill.sourcePlugin?.name && (
                     <SourceBadge name={skill.sourcePlugin.name} kind="plugin" />
                   )}
