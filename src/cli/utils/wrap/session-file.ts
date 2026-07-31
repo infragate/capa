@@ -19,15 +19,21 @@ export function wrapSessionPath(cachePath: string): string {
 export function writeWrapSession(
   cachePath: string,
   session: Omit<WrapSessionFile, 'startedAt'> & { startedAt?: string },
-): void {
-  const data: WrapSessionFile = {
-    pid: session.pid,
-    watchPid: session.watchPid,
-    realProjectPath: resolve(session.realProjectPath),
-    workspacePath: resolve(session.workspacePath),
-    startedAt: session.startedAt ?? new Date().toISOString(),
-  };
-  writeFileSync(wrapSessionPath(cachePath), JSON.stringify(data, null, 2) + '\n');
+): boolean {
+  try {
+    const data: WrapSessionFile = {
+      pid: session.pid,
+      watchPid: session.watchPid,
+      realProjectPath: resolve(session.realProjectPath),
+      workspacePath: resolve(session.workspacePath),
+      startedAt: session.startedAt ?? new Date().toISOString(),
+    };
+    writeFileSync(wrapSessionPath(cachePath), JSON.stringify(data, null, 2) + '\n');
+    return true;
+  } catch {
+    // Session file is auxiliary for clean/stop discovery; never fail wrap startup.
+    return false;
+  }
 }
 
 export function clearWrapSession(cachePath: string): void {

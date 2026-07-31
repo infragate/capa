@@ -33,6 +33,8 @@ async function registerProject(
   const projectId = generateProjectId(identityPath);
   const settings = await loadSettings();
   const db = new CapaDatabase(getDatabasePath(settings));
+  let newlyInserted = false;
+
   try {
     const existing = db.getProject(projectId);
     if (existing) {
@@ -51,29 +53,44 @@ async function registerProject(
       }
     } else {
       db.upsertProject({ id: projectId, path: identityPath });
+      newlyInserted = true;
     }
+
+    try {
+      const response = await fetch(
+        `${serverUrl}/api/projects/${encodeURIComponent(projectId)}/configure`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          body: JSON.stringify(capabilities),
+          signal: AbortSignal.timeout(120000),
+        },
+      );
+      if (!response.ok) {
+        const text = await response.text().catch(() => response.statusText);
+        throw new Error(`Failed to configure project: ${text}`);
+      }
+      await response.text().catch(() => '');
+    } catch (err) {
+      // Roll back only newly created rows so a failed configure does not leave
+      // a stale empty project in the UI. Pre-existing projects are left alone.
+      if (newlyInserted) {
+        try {
+          db.deleteProject(projectId);
+        } catch {
+          // ignore rollback errors
+        }
+      }
+      throw err;
+    }
+
+    return projectId;
   } finally {
     db.close();
   }
-
-  const response = await fetch(
-    `${serverUrl}/api/projects/${encodeURIComponent(projectId)}/configure`,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
-      body: JSON.stringify(capabilities),
-      signal: AbortSignal.timeout(120000),
-    },
-  );
-  if (!response.ok) {
-    const text = await response.text().catch(() => response.statusText);
-    throw new Error(`Failed to configure project: ${text}`);
-  }
-  await response.text().catch(() => '');
-  return projectId;
 }
 
 export async function initCommand(format: CapabilitiesFormat): Promise<void> {

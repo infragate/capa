@@ -38,7 +38,7 @@ export interface WrapProcess {
 }
 
 /**
- * Normalize a path for substring matching inside process command lines.
+ * Normalize a path for display / tests (absolute; lowercase + backslashes on Windows).
  */
 export function normalizePathForMatch(p: string): string {
   const abs = resolve(p);
@@ -48,19 +48,60 @@ export function normalizePathForMatch(p: string): string {
   return abs;
 }
 
+/** Split a process command line into argv-like tokens (handles simple quotes). */
+export function tokenizeCommandLine(commandLine: string): string[] {
+  const tokens: string[] = [];
+  const re = /"([^"]*)"|'([^']*)'|(\S+)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(commandLine)) !== null) {
+    tokens.push(m[1] ?? m[2] ?? m[3] ?? '');
+  }
+  return tokens;
+}
+
+function tokenMatchesAnyPath(token: string, paths: string[]): boolean {
+  if (!token || token.length < 2) return false;
+  // Skip flags / bare words that aren't path-like.
+  if (!/[\\/]/.test(token) && !/^[A-Za-z]:/.test(token)) return false;
+  try {
+    return paths.some((p) => pathsEqual(token, p));
+  } catch {
+    return false;
+  }
+}
+
 /**
  * True when a process command line belongs to a wrap session for `realProjectPath`
  * (or one of its wrap workspace/cache paths).
+ *
+ * Uses argv-shaped matching (not substring includes) so `/proj` does not match `/proj2`.
  */
 export function commandLineMatchesProject(
   commandLine: string,
   realProjectPath: string,
   extraPaths: string[] = [],
 ): boolean {
-  const haystack =
-    process.platform === 'win32' ? commandLine.replace(/\//g, '\\').toLowerCase() : commandLine;
-  const needles = [realProjectPath, ...extraPaths].map(normalizePathForMatch).filter(Boolean);
-  return needles.some((needle) => needle.length > 1 && haystack.includes(needle));
+  const targets = [realProjectPath, ...extraPaths].map((p) => resolve(p));
+  const tokens = tokenizeCommandLine(commandLine);
+
+  const watchIdx = tokens.findIndex(
+    (t) => t === '__wrap_watch__' || t.endsWith('/__wrap_watch__') || t.endsWith('\\__wrap_watch__'),
+  );
+  if (watchIdx >= 0) {
+    const realArg = tokens[watchIdx + 1];
+    const wsArg = tokens[watchIdx + 2];
+    if (realArg && tokenMatchesAnyPath(realArg, targets)) return true;
+    if (wsArg && tokenMatchesAnyPath(wsArg, targets)) return true;
+  }
+
+  const projectFlagIdx = tokens.findIndex((t) => t === '--project');
+  if (projectFlagIdx >= 0) {
+    const arg = tokens[projectFlagIdx + 1];
+    if (arg && tokenMatchesAnyPath(arg, targets)) return true;
+  }
+
+  // Exact argv token equality only (boundary-safe).
+  return tokens.some((token) => tokenMatchesAnyPath(token, targets));
 }
 
 /**
@@ -143,7 +184,11 @@ async function listWorkspacePathsForProject(realProjectPath: string): Promise<st
       if (!statSync(cachePath).isDirectory()) continue;
       const markerPath = join(cachePath, WORKSPACE_MARKER);
       if (!existsSync(markerPath)) continue;
-      const marker = (await Bun.file(markerPath).json()) as { realProjectPath?: string; workingDir?: string; cachePath?: string };
+      const marker = (await Bun.file(markerPath).json()) as {
+        realProjectPath?: string;
+        workingDir?: string;
+        cachePath?: string;
+      };
       if (!marker?.realProjectPath || !pathsEqual(marker.realProjectPath, real)) continue;
       paths.push(cachePath);
       if (marker.workingDir) {
@@ -183,11 +228,12 @@ async function pidsFromSessionFiles(realProjectPath: string): Promise<number[]> 
 
 /**
  * Find wrap / __wrap_watch__ PIDs belonging to a specific real project path.
+ * Session files are authoritative; argv matching is a fallback.
  */
 export async function findWrapPidsForProject(realProjectPath: string): Promise<number[]> {
   const real = resolve(realProjectPath);
-  const workspacePaths = await listWorkspacePathsForProject(real);
   const fromSessions = await pidsFromSessionFiles(real);
+  const workspacePaths = await listWorkspacePathsForProject(real);
   const procs = await listWrapProcesses();
   const fromArgv = procs
     .filter((p) => commandLineMatchesProject(p.commandLine, real, workspacePaths))

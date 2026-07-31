@@ -1,4 +1,5 @@
-import { existsSync, rmSync, statSync } from 'fs';
+import { existsSync } from 'fs';
+import { rm } from 'fs/promises';
 import { resolve } from 'path';
 import { detectCapabilitiesFile } from '../../shared/paths';
 import { parseCapabilitiesFile } from '../../shared/capabilities';
@@ -68,12 +69,7 @@ export async function cleanProject(opts: CleanProjectOptions): Promise<CleanProj
   for (const filePath of managedFiles) {
     if (existsSync(filePath)) {
       try {
-        const stats = statSync(filePath);
-        if (stats.isDirectory()) {
-          rmSync(filePath, { recursive: true, force: true });
-        } else {
-          rmSync(filePath);
-        }
+        await rm(filePath, { recursive: true, force: true });
         managedFilesRemoved++;
       } catch (err) {
         warnings.push(`Failed to remove ${filePath}: ${err}`);
@@ -109,7 +105,7 @@ export async function cleanProject(opts: CleanProjectOptions): Promise<CleanProj
   const lockfilePath = getLockfilePath(projectPath);
   if (existsSync(lockfilePath)) {
     try {
-      rmSync(lockfilePath, { force: true });
+      await rm(lockfilePath, { force: true });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       warnings.push(`Failed to remove lockfile ${lockfilePath}: ${message}`);

@@ -1,6 +1,7 @@
 import { createHash } from 'crypto';
 import { basename, join, resolve } from 'path';
 import { existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'fs';
+import { rm } from 'fs/promises';
 import { detectCapabilitiesFile, generateProjectId } from '../../../shared/paths';
 import { LOCKFILE_NAME } from '../../../shared/lockfile';
 import { loadSettings, getDatabasePath, ensureCapaDir } from '../../../shared/config';
@@ -284,7 +285,7 @@ export async function pruneWorkspacesForProject(realProjectPath: string): Promis
           ? resolve(data.realProjectPath).toLowerCase() === real.toLowerCase()
           : resolve(data.realProjectPath) === real;
       if (!same) continue;
-      rmSync(full, { recursive: true, force: true });
+      await rm(full, { recursive: true, force: true });
       removed++;
     } catch {
       // skip

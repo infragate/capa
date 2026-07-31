@@ -114,11 +114,13 @@ export async function wrapCommand(
   );
   info(prepared.workspacePath);
 
-  writeWrapSession(prepared.cachePath, {
+  if (!writeWrapSession(prepared.cachePath, {
     pid: process.pid,
     realProjectPath: prepared.realProjectPath,
     workspacePath: prepared.workspacePath,
-  });
+  })) {
+    console.warn('⚠ Could not write wrap session file; clean/delete may not stop this session.');
+  }
 
   if (provider.wrap.kind === 'gui') {
     const watchers = startWrapWatchers({
@@ -191,12 +193,14 @@ export async function wrapCommand(
     exclusionProviderIds: prepared.exclusionProviderIds,
   });
 
-  writeWrapSession(prepared.cachePath, {
+  if (!writeWrapSession(prepared.cachePath, {
     pid: process.pid,
     watchPid: watchWorker.pid,
     realProjectPath: prepared.realProjectPath,
     workspacePath: prepared.workspacePath,
-  });
+  })) {
+    console.warn('⚠ Could not write wrap session file; clean/delete may not stop this session.');
+  }
 
   const cleanupCli = () => {
     watchWorker.stop();

@@ -47,7 +47,11 @@ function isolateHome(): { restore: () => void } {
       else process.env.HOME = prevHome;
       if (prevUserProfile === undefined) delete process.env.USERPROFILE;
       else process.env.USERPROFILE = prevUserProfile;
-      rmSync(home, { recursive: true, force: true });
+      try {
+        rmSync(home, { recursive: true, force: true });
+      } catch {
+        // Windows can briefly lock capa.db after close
+      }
     },
   };
 }
@@ -127,6 +131,34 @@ describe('initCommand', () => {
       expect(db.getProject(projectId)).not.toBeNull();
     } finally {
       db.close();
+    }
+  });
+
+  it('rolls back a newly inserted project when configure fails', async () => {
+    fetchMock.mockImplementationOnce(async () => ({
+      ok: false,
+      statusText: 'Internal Server Error',
+      text: async () => 'configure failed',
+    }));
+
+    const originalExit = process.exit;
+    process.exit = ((code?: number) => {
+      throw new Error(`process.exit(${code})`);
+    }) as typeof process.exit;
+
+    try {
+      await expect(initCommand('yaml')).rejects.toThrow(/process\.exit\(1\)/);
+
+      const projectId = generateProjectId(projectDir);
+      const settings = await loadSettings();
+      const db = new CapaDatabase(getDatabasePath(settings));
+      try {
+        expect(db.getProject(projectId)).toBeNull();
+      } finally {
+        db.close();
+      }
+    } finally {
+      process.exit = originalExit;
     }
   });
 

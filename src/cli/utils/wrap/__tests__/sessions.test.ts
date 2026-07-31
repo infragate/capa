@@ -43,6 +43,23 @@ describe('wrap process discovery', () => {
     expect(commandLineMatchesProject(projectFlag, real)).toBe(true);
   });
 
+  it('commandLineMatchesProject does not match path prefixes (proj vs proj2)', () => {
+    const real =
+      process.platform === 'win32' ? 'C:\\Users\\me\\proj' : '/Users/me/proj';
+    const other =
+      process.platform === 'win32' ? 'C:\\Users\\me\\proj2' : '/Users/me/proj2';
+
+    const otherWatch = `capa __wrap_watch__ ${other} ${other}\\ws cursor caps.yaml []`;
+    expect(commandLineMatchesProject(otherWatch, real)).toBe(false);
+
+    const otherProject = `capa wrap cursor --project ${other}`;
+    expect(commandLineMatchesProject(otherProject, real)).toBe(false);
+
+    // Substring would match; token equality must not.
+    const substrish = `capa wrap cursor --project ${real}2`;
+    expect(commandLineMatchesProject(substrish, real)).toBe(false);
+  });
+
   it('normalizePathForMatch produces absolute paths', () => {
     const n = normalizePathForMatch('.');
     expect(n.length).toBeGreaterThan(1);
