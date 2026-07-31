@@ -35,6 +35,9 @@ export async function runWrapWatchWorker(argv: string[]): Promise<void> {
     providerId,
     capabilitiesPath,
     exclusionProviderIds,
+    // Detached worker must keep a referenced handle or it can exit when
+    // fs.watch fails and the forever-await alone does not pin the event loop.
+    unrefPoll: false,
   });
 
   const shutdown = () => {

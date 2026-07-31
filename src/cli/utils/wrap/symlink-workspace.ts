@@ -170,17 +170,49 @@ export function isLinkedToReal(
 
 /**
  * Try to replace a workspace path with a symlink/junction/hardlink to `realEntry`.
- * Returns true on success. On failure the workspace entry is left as-is (caller may mirror).
+ * Returns true on success. On failure the workspace entry is left as-is.
  */
 function tryRelink(realEntry: string, wsEntry: string): boolean {
   try {
-    if (existsSync(wsEntry)) {
-      // Only remove if not already the link we want
-      if (isAlreadyLinked(wsEntry, realEntry)) return true;
-      rmSync(wsEntry, { recursive: true, force: true });
+    if (existsSync(wsEntry) && isAlreadyLinked(wsEntry, realEntry)) {
+      return true;
     }
-    createWorkspaceSymlink(realEntry, wsEntry);
-    return true;
+
+    // Move the existing entry aside first so a failed link can restore it.
+    const backup = `${wsEntry}.capa-relink-bak`;
+    try {
+      rmSync(backup, { recursive: true, force: true });
+    } catch {
+      // ignore
+    }
+
+    let hadOriginal = false;
+    if (existsSync(wsEntry)) {
+      renameSync(wsEntry, backup);
+      hadOriginal = true;
+    }
+
+    try {
+      createWorkspaceSymlink(realEntry, wsEntry);
+      if (hadOriginal) {
+        rmSync(backup, { recursive: true, force: true });
+      }
+      return true;
+    } catch {
+      try {
+        rmSync(wsEntry, { recursive: true, force: true });
+      } catch {
+        // ignore
+      }
+      if (hadOriginal) {
+        try {
+          renameSync(backup, wsEntry);
+        } catch {
+          // ignore
+        }
+      }
+      return false;
+    }
   } catch {
     return false;
   }

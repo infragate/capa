@@ -1,5 +1,5 @@
 import { existsSync } from 'fs';
-import { basename, join, resolve } from 'path';
+import { dirname, join, relative, resolve, sep } from 'path';
 import { WORKSPACE_MARKER, type WorkspaceMarker } from '../../../shared/workspaces/paths';
 
 async function tryReadMarker(markerPath: string): Promise<WorkspaceMarker | null> {
@@ -13,29 +13,48 @@ async function tryReadMarker(markerPath: string): Promise<WorkspaceMarker | null
   }
 }
 
+function isPathInside(child: string, parent: string): boolean {
+  const rel = relative(resolve(parent), resolve(child));
+  return rel === '' || (!rel.startsWith('..') && !rel.startsWith(`..${sep}`));
+}
+
 /**
  * If cwd (or `dir`) is inside a capa wrap shadow workspace, return its marker.
  *
  * The marker lives on the **cache root** (parent of the nested project-named
  * working dir), so IDE users never see `.capa-workspace.json` in the tree.
+ * Walks ancestors so `capa install/add/clean` from a subdirectory still refuse.
  */
 export async function readWorkspaceMarker(
   dir: string = process.cwd(),
 ): Promise<WorkspaceMarker | null> {
-  const abs = resolve(dir);
+  let abs = resolve(dir);
+  const seen = new Set<string>();
 
-  // Primary: parent cache root (marker is one level above the working dir).
-  const parentMarker = await tryReadMarker(join(abs, '..', WORKSPACE_MARKER));
-  if (parentMarker) {
-    const expected =
-      parentMarker.workingDir ?? basename(resolve(parentMarker.realProjectPath));
-    if (basename(abs) === expected || !parentMarker.workingDir) {
-      return parentMarker;
+  while (!seen.has(abs)) {
+    seen.add(abs);
+
+    const marker = await tryReadMarker(join(abs, WORKSPACE_MARKER));
+    if (marker) {
+      const workingDir = marker.workingDir;
+      if (!workingDir) {
+        // Legacy flat layout: marker dir is the workspace root.
+        if (isPathInside(resolve(dir), abs)) return marker;
+      } else {
+        const nestedRoot = join(abs, workingDir);
+        // Current dir is the cache root, the nested working dir, or inside it.
+        if (abs === resolve(dir) || isPathInside(resolve(dir), nestedRoot)) {
+          return marker;
+        }
+      }
     }
+
+    const parent = dirname(abs);
+    if (parent === abs) break;
+    abs = parent;
   }
 
-  // Legacy / direct open of the cache root itself.
-  return tryReadMarker(join(abs, WORKSPACE_MARKER));
+  return null;
 }
 
 /**

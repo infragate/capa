@@ -34,6 +34,11 @@ interface WatchOpts {
   capabilitiesPath: string;
   /** Wrap target + capabilities.providers — drives symlink exclusions. */
   exclusionProviderIds: string[];
+  /**
+   * When false, keep the poll timer referenced so a detached watch worker
+   * cannot exit if fs.watch() failed to register. Default true (GUI in-process).
+   */
+  unrefPoll?: boolean;
 }
 
 function entryExists(root: string, name: string): boolean {
@@ -362,7 +367,12 @@ export function startWrapWatchers(opts: WatchOpts): WrapWatchers {
   }
 
   pollTimer = setInterval(reconcile, POLL_MS);
-  if (typeof pollTimer === 'object' && pollTimer && 'unref' in pollTimer) {
+  if (
+    opts.unrefPoll !== false &&
+    typeof pollTimer === 'object' &&
+    pollTimer &&
+    'unref' in pollTimer
+  ) {
     (pollTimer as NodeJS.Timeout).unref?.();
   }
 
