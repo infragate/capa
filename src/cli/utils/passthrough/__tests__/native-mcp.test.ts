@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, rmSync, readFileSync, existsSync } from 'fs';
+import { mkdtempSync, rmSync, readFileSync, existsSync, mkdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { buildNativeMcpEntry, upsertNativeMcpServer } from '../native-mcp';
@@ -103,5 +103,22 @@ describe('upsertNativeMcpServer', () => {
     await expect(
       upsertNativeMcpServer(tempDir, 'capa', { url: 'https://x' }, ['cursor']),
     ).rejects.toThrow(/reserved key/);
+  });
+
+  it('refuses to overwrite malformed MCP JSON', async () => {
+    const configDir = join(tempDir, '.cursor');
+    mkdirSync(configDir, { recursive: true });
+    const configPath = join(configDir, 'mcp.json');
+    writeFileSync(configPath, '{ not valid json', 'utf-8');
+
+    const result = await upsertNativeMcpServer(
+      tempDir,
+      'owl',
+      { cmd: 'npx', args: ['-y', 'owl-mcp'] },
+      ['cursor'],
+    );
+    expect(result.written.length).toBe(0);
+    expect(result.warnings.some((w) => /Failed to parse existing MCP config/.test(w))).toBe(true);
+    expect(readFileSync(configPath, 'utf-8')).toBe('{ not valid json');
   });
 });

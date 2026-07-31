@@ -126,7 +126,14 @@ export async function upsertNativeMcpServer(
         let config: McpJsonConfig = {};
         const existing = tryReadFile(configPath);
         if (existing !== null) {
-          config = parseJsonConfig(existing) ?? {};
+          const parsed = parseJsonConfig(existing);
+          if (parsed === null) {
+            throw new Error(
+              `Failed to parse existing MCP config at ${configPath}. ` +
+                `Fix the JSON (or remove the file) and retry — refusing to overwrite invalid config.`,
+            );
+          }
+          config = parsed;
         }
         const servers = getServerMap(config, mcp.serversKey);
         servers[serverKey] = entry;

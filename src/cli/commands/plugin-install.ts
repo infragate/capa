@@ -315,7 +315,16 @@ export async function resolvePlugins(
         const skillsBaseDir = join(projectPath, providerEntry.skillsDir);
         const destSkillDir = join(skillsBaseDir, entry.id);
         try {
-          if (existsSync(destSkillDir)) rmSync(destSkillDir, { recursive: true, force: true });
+          if (existsSync(destSkillDir)) {
+            if (!trackManaged) {
+              warnings.push(
+                `Skill "${entry.id}" for ${client}: directory already exists at ${destSkillDir}; ` +
+                  `passthrough will not overwrite it. Delete it manually and retry.`,
+              );
+              continue;
+            }
+            rmSync(destSkillDir, { recursive: true, force: true });
+          }
           mkdirSync(resolve(destSkillDir, '..'), { recursive: true });
           if (hasSecurity) {
             copySkillDirWithSecurity(

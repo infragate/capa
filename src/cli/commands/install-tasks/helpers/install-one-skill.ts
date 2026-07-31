@@ -316,8 +316,18 @@ export async function installOneSkill(
           try { db.close(); } catch {}
           process.exit(1);
         }
+        rmSync(skillDir, { recursive: true, force: true });
+      } else {
+        // Passthrough must not delete directories capa does not own.
+        console.error(
+          `  ✗ Directory already exists: ${skillDir}`
+        );
+        console.error(
+          '    Passthrough will not overwrite existing skill directories. Delete it manually and retry.',
+        );
+        try { db.close(); } catch {}
+        process.exit(1);
       }
-      rmSync(skillDir, { recursive: true, force: true });
     }
 
     if (skillSourceDir) {
