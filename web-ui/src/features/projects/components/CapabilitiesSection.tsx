@@ -1,17 +1,88 @@
-import { useState, useMemo, useEffect } from 'react';
-import { useQueries } from '@tanstack/react-query';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { Skill, Tool, Server, ToolSchema, EnrichedTool, SubAgent, Rule, Hook } from '../../../types/api';
+import { Plus } from 'lucide-react';
+import type {
+  AuthoredPlugin,
+  Hook,
+  ResolvedPlugin,
+  Rule,
+  Server,
+  Skill,
+  SubAgent,
+  Tool,
+} from '../../../types/api';
 import { SearchInput } from '../../../components/common/SearchInput';
+import { matchesSearch } from '../../../lib/utils';
+import { CapabilityCollapsible } from './CapabilityCollapsible';
 import { SkillsList } from './SkillsList';
-import { ToolsList } from './ToolsList';
-import { ServersList } from './ServersList';
-import { SubagentsList } from './SubagentsList';
+import { ToolsSection } from './ToolsSection';
 import { RulesList } from './RulesList';
 import { HooksList } from './HooksList';
-import { TokenSavingsBar } from './TokenSavingsBar';
-import { computeTokenSavings } from './tokenStats';
-import { projectsApi } from '../api';
+import { SubagentsList } from './SubagentsList';
+import { PluginsEditor } from './PluginsEditor';
+import { RegistryBrowseDialog } from './RegistryBrowseDialog';
+
+function ToolsAddMenu({
+  onAddServer,
+  onAddCommandTool,
+}: {
+  onAddServer: () => void;
+  onAddCommandTool: () => void;
+}) {
+  const { t } = useTranslation('projects');
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDoc(e: MouseEvent) {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        title={t('actions.add')}
+        aria-label={t('actions.add')}
+        aria-expanded={open}
+        className="inline-flex h-7 w-7 items-center justify-center rounded-sm text-text-secondary transition-colors hover:bg-hover-bg hover:text-text-primary cursor-pointer"
+      >
+        <Plus size={16} />
+      </button>
+      {open && (
+        <div className="ui-dropdown absolute right-0 top-full z-30 mt-1 min-w-[180px] overflow-hidden rounded-sm border border-border-primary bg-bg-secondary py-1 shadow-lg">
+          <button
+            type="button"
+            className="flex w-full px-3 py-2 text-left text-xs text-text-primary hover:bg-hover-bg cursor-pointer"
+            onClick={() => {
+              setOpen(false);
+              onAddServer();
+            }}
+          >
+            {t('actions.addServer')}
+          </button>
+          <button
+            type="button"
+            className="flex w-full px-3 py-2 text-left text-xs text-text-primary hover:bg-hover-bg cursor-pointer"
+            onClick={() => {
+              setOpen(false);
+              onAddCommandTool();
+            }}
+          >
+            {t('actions.addCommandTool')}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
 
 interface CapabilitiesSectionProps {
   skills: Skill[];
@@ -20,76 +91,71 @@ interface CapabilitiesSectionProps {
   subagents: SubAgent[];
   rules: Rule[];
   hooks: Hook[];
+  plugins: AuthoredPlugin[];
+  resolvedPlugins: ResolvedPlugin[];
   projectId: string;
 }
 
-export function CapabilitiesSection({ skills, tools, servers, subagents, rules, hooks, projectId }: CapabilitiesSectionProps) {
+export function CapabilitiesSection({
+  skills,
+  tools,
+  servers,
+  subagents,
+  rules,
+  hooks,
+  plugins,
+  resolvedPlugins,
+  projectId,
+}: CapabilitiesSectionProps) {
   const { t } = useTranslation('projects');
   const [search, setSearch] = useState('');
+  const [addSkillOpen, setAddSkillOpen] = useState(false);
+  const [addServerOpen, setAddServerOpen] = useState(false);
+  const [addCommandToolOpen, setAddCommandToolOpen] = useState(false);
+  const [editServerOpen, setEditServerOpen] = useState(false);
+  const [addRuleOpen, setAddRuleOpen] = useState(false);
+  const [addHookOpen, setAddHookOpen] = useState(false);
+  const [addSubagentOpen, setAddSubagentOpen] = useState(false);
+  const [addPluginOpen, setAddPluginOpen] = useState(false);
 
-  const toolRequiredByMap = useMemo(() => {
-    const map: Record<string, string[]> = {};
-    for (const skill of skills) {
-      for (const toolId of skill.requires || []) {
-        if (!map[toolId]) map[toolId] = [];
-        map[toolId].push(skill.id);
-      }
+  const q = search.trim();
+  const searching = q.length > 0;
+
+  const forceOpen = useMemo(() => {
+    if (!searching) {
+      return {
+        plugins: false,
+        skills: false,
+        tools: false,
+        rules: false,
+        hooks: false,
+        subagents: false,
+      };
     }
-    return map;
-  }, [skills]);
 
-  const serverToolQueries = useQueries({
-    queries: servers.map((server) => ({
-      queryKey: ['server-tools', projectId, server.id] as const,
-      queryFn: () => projectsApi.getServerTools(projectId, server.id),
-      staleTime: 60_000,
-      retry: false,
-    })),
-  });
+    return {
+      plugins: plugins.some((p) => matchesSearch([p.id, p.def?.repo], q)),
+      skills: skills.some((s) => matchesSearch([s.id, s.description], q)),
+      tools:
+        servers.some((s) => {
+          const cmdStr = s.cmd ? [s.cmd, ...(s.args || [])].join(' ') : '';
+          return matchesSearch([s.id, s.displayName, s.url, cmdStr, s.description], q);
+        }) ||
+        tools.some((tool) =>
+          matchesSearch([tool.id, tool.description, tool.mcpTool, tool.mcpServer, tool.command], q),
+        ),
+      rules: rules.some((r) => matchesSearch([r.id, r.description, r.content], q)),
+      hooks: hooks.some((h) => matchesSearch([h.id, h.description, h.on, h.command, h.prompt], q)),
+      subagents: subagents.some((s) =>
+        matchesSearch([s.id, s.description, s.instructions, ...s.skills, ...s.tools], q),
+      ),
+    };
+  }, [searching, q, plugins, skills, servers, tools, rules, hooks, subagents]);
 
-  const serverToolSchemaCache = useMemo(() => {
-    const cache: Record<string, Record<string, ToolSchema>> = {};
-    servers.forEach((server, i) => {
-      const query = serverToolQueries[i];
-      if (query.data?.tools) {
-        const map: Record<string, ToolSchema> = {};
-        for (const tool of query.data.tools) {
-          map[tool.name] = tool;
-        }
-        cache[server.id] = map;
-      }
-    });
-    return cache;
-  }, [servers, serverToolQueries]);
-
-  const serverToolsMap = useMemo(() => {
-    const map: Record<string, ToolSchema[]> = {};
-    servers.forEach((server, i) => {
-      const query = serverToolQueries[i];
-      if (query.data?.tools) {
-        map[server.id] = query.data.tools;
-      }
-    });
-    return map;
-  }, [servers, serverToolQueries]);
-
-  const tokenSavings = useMemo(() => {
-    if (servers.length === 0) return null;
-    const allLoaded = serverToolQueries.every((q) => !q.isLoading);
-    if (!allLoaded) return null;
-    return computeTokenSavings(tools as EnrichedTool[], serverToolsMap, servers.length);
-  }, [tools, servers, serverToolsMap, serverToolQueries]);
-
-  if (
-    skills.length === 0 &&
-    tools.length === 0 &&
-    servers.length === 0 &&
-    subagents.length === 0 &&
-    rules.length === 0 &&
-    hooks.length === 0
-  ) {
-    return null;
-  }
+  const needsOAuthCount = useMemo(
+    () => servers.filter((s) => s.requiresOAuth && !s.isConnected).length,
+    [servers],
+  );
 
   return (
     <div className="mb-6 rounded-lg border border-border-primary bg-bg-secondary p-6">
@@ -104,21 +170,132 @@ export function CapabilitiesSection({ skills, tools, servers, subagents, rules, 
         </div>
       </div>
 
-      {tokenSavings && <TokenSavingsBar stats={tokenSavings} />}
+      <CapabilityCollapsible
+        title={t('detail.plugins')}
+        count={plugins.length}
+        forceOpen={forceOpen.plugins}
+        onAdd={() => setAddPluginOpen(true)}
+        addLabel={t('actions.addPlugin')}
+        dialog={
+          <RegistryBrowseDialog
+            open={addPluginOpen}
+            onOpenChange={setAddPluginOpen}
+            projectId={projectId}
+            capability="plugins"
+            title={t('actions.addPlugin')}
+          />
+        }
+      >
+        <PluginsEditor authored={plugins} resolved={resolvedPlugins} projectId={projectId} />
+      </CapabilityCollapsible>
 
-      <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
+      <CapabilityCollapsible
+        title={t('detail.skills')}
+        count={skills.length}
+        forceOpen={forceOpen.skills}
+        onAdd={() => setAddSkillOpen(true)}
+        addLabel={t('actions.addSkill')}
+        dialog={
+          <RegistryBrowseDialog
+            open={addSkillOpen}
+            onOpenChange={setAddSkillOpen}
+            projectId={projectId}
+            capability="skills"
+            title={t('actions.addSkill')}
+            allowInline
+          />
+        }
+      >
         <SkillsList skills={skills} search={search} projectId={projectId} />
-        <ToolsList
-          tools={tools as EnrichedTool[]}
+      </CapabilityCollapsible>
+
+      <CapabilityCollapsible
+        title={t('detail.toolsSection')}
+        count={servers.length + tools.length}
+        forceOpen={forceOpen.tools}
+        keepMounted={addServerOpen || editServerOpen || addCommandToolOpen}
+        badges={
+          needsOAuthCount > 0 ? (
+            <span className="rounded-sm bg-[hsl(40_80%_50%/0.15)] px-1.5 py-0.5 text-[10px] font-medium text-[hsl(40_80%_45%)]">
+              {needsOAuthCount === 1
+                ? t('actions.needsOAuth')
+                : t('actions.needsOAuthCount', { count: needsOAuthCount })}
+            </span>
+          ) : null
+        }
+        actions={
+          <ToolsAddMenu
+            onAddServer={() => setAddServerOpen(true)}
+            onAddCommandTool={() => setAddCommandToolOpen(true)}
+          />
+        }
+      >
+        <ToolsSection
+          projectId={projectId}
+          skills={skills}
+          tools={tools}
+          servers={servers}
           search={search}
-          toolRequiredByMap={toolRequiredByMap}
-          serverToolSchemaCache={serverToolSchemaCache}
+          addServerOpen={addServerOpen}
+          addCommandToolOpen={addCommandToolOpen}
+          onAddServerOpenChange={setAddServerOpen}
+          onAddCommandToolOpenChange={setAddCommandToolOpen}
+          onEditServerOpenChange={setEditServerOpen}
         />
-        <ServersList servers={servers} search={search} projectId={projectId} serverToolsMap={serverToolsMap} />
-        {subagents.length > 0 && <SubagentsList subagents={subagents} search={search} />}
-        {rules.length > 0 && <RulesList rules={rules} search={search} />}
-        {hooks.length > 0 && <HooksList hooks={hooks} search={search} />}
-      </div>
+      </CapabilityCollapsible>
+
+      <CapabilityCollapsible
+        title={t('detail.rules')}
+        count={rules.length}
+        forceOpen={forceOpen.rules}
+        keepMounted={addRuleOpen}
+        onAdd={() => setAddRuleOpen(true)}
+        addLabel={t('actions.addRule')}
+      >
+        <RulesList
+          rules={rules}
+          search={search}
+          projectId={projectId}
+          addOpen={addRuleOpen}
+          onAddOpenChange={setAddRuleOpen}
+        />
+      </CapabilityCollapsible>
+
+      <CapabilityCollapsible
+        title={t('detail.hooks')}
+        count={hooks.length}
+        forceOpen={forceOpen.hooks}
+        keepMounted={addHookOpen}
+        onAdd={() => setAddHookOpen(true)}
+        addLabel={t('actions.addHook')}
+      >
+        <HooksList
+          hooks={hooks}
+          search={search}
+          projectId={projectId}
+          addOpen={addHookOpen}
+          onAddOpenChange={setAddHookOpen}
+        />
+      </CapabilityCollapsible>
+
+      <CapabilityCollapsible
+        title={t('detail.subagents')}
+        count={subagents.length}
+        forceOpen={forceOpen.subagents}
+        keepMounted={addSubagentOpen}
+        onAdd={() => setAddSubagentOpen(true)}
+        addLabel={t('actions.addSubagent')}
+      >
+        <SubagentsList
+          subagents={subagents}
+          skills={skills}
+          tools={tools}
+          search={search}
+          projectId={projectId}
+          addOpen={addSubagentOpen}
+          onAddOpenChange={setAddSubagentOpen}
+        />
+      </CapabilityCollapsible>
     </div>
   );
 }

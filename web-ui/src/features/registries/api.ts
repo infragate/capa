@@ -99,7 +99,8 @@ export const registriesApi = {
     cursor?: string,
   ) => {
     const params = new URLSearchParams({ capability });
-    if (query) params.set('q', query);
+    // Always send q (including "") so adapters return initial browse results.
+    params.set('q', query ?? '');
     if (limit != null) params.set('limit', String(limit));
     if (cursor) params.set('cursor', cursor);
     return api.get<RegistrySearchResult>(

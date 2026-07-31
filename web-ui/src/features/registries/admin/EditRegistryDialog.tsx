@@ -115,8 +115,8 @@ export function EditRegistryDialog({
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/50 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:fade-in data-[state=closed]:fade-out" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 flex max-h-[90vh] w-[min(90vw,720px)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg border border-border-primary bg-bg-secondary shadow-lg">
+        <Dialog.Overlay className="ui-overlay fixed inset-0 z-50 bg-black/50" />
+        <Dialog.Content className="ui-dialog fixed z-50 flex max-h-[90vh] w-[min(90vw,720px)] flex-col overflow-hidden rounded-lg border border-border-primary bg-bg-secondary shadow-lg">
           <div className="flex items-start justify-between border-b border-border-secondary px-6 py-4">
             <div>
               <Dialog.Title className="text-lg font-medium text-text-primary">

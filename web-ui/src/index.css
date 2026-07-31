@@ -384,3 +384,176 @@
 .hljs-emphasis { font-style: italic; }
 .hljs-strong { font-weight: 600; }
 
+/* ── UI motion (ui-animation skill) ─────────────────────────────
+ * Prefer CSS transitions/keyframes on transform + opacity only.
+ * Curves: enter 0.22,1,0.36,1 · move 0.25,1,0.5,1
+ */
+:root {
+  --ease-enter: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-move: cubic-bezier(0.25, 1, 0.5, 1);
+  --dur-press: 160ms;
+  --dur-hover: 120ms;
+  --dur-dropdown-open: 200ms;
+  --dur-dropdown-close: 140ms;
+  --dur-modal-open: 250ms;
+  --dur-modal-close: 150ms;
+  --dur-overlay: 200ms;
+  --dur-panel: 180ms;
+  --modal-scale: 0.96;
+  --dropdown-scale: 0.96;
+}
+
+@keyframes ui-overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes ui-overlay-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+@keyframes ui-dialog-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(var(--modal-scale));
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+@keyframes ui-dialog-out {
+  from {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(var(--modal-scale));
+  }
+}
+@keyframes ui-dropdown-in {
+  from {
+    opacity: 0;
+    transform: scale(var(--dropdown-scale));
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes ui-fade-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Radix Dialog overlay — fade; Presence waits on animationend */
+.ui-overlay[data-state="open"] {
+  animation: ui-overlay-in var(--dur-overlay) var(--ease-enter) both;
+}
+.ui-overlay[data-state="closed"] {
+  animation: ui-overlay-out var(--dur-modal-close) var(--ease-enter) both;
+}
+
+/* Radix Dialog content — centre origin scale (includes -50% centering) */
+.ui-dialog {
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  transform-origin: center center;
+}
+.ui-dialog[data-state="open"] {
+  animation: ui-dialog-in var(--dur-modal-open) var(--ease-enter) both;
+}
+.ui-dialog[data-state="closed"] {
+  animation: ui-dialog-out var(--dur-modal-close) var(--ease-enter) both;
+}
+
+/* Anchored menus / select panels */
+.ui-dropdown {
+  transform-origin: top left;
+  animation: ui-dropdown-in var(--dur-dropdown-open) var(--ease-enter) both;
+}
+
+/* Collapsible body / tree branch enter */
+.ui-panel-enter {
+  animation: ui-fade-rise var(--dur-panel) var(--ease-enter) both;
+}
+
+/* Primary CTA press feedback (felt, not seen) */
+button.bg-accent-primary:not(:disabled) {
+  transition:
+    transform var(--dur-press) var(--ease-enter),
+    background-color 200ms ease,
+    opacity 200ms ease;
+}
+button.bg-accent-primary:not(:disabled):active {
+  transform: scale(0.97);
+}
+
+/* Chevron expand affordance */
+.ui-chevron {
+  transition: transform var(--dur-hover) var(--ease-enter);
+}
+.ui-chevron[data-open="true"] {
+  transform: rotate(90deg);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .ui-row-hover {
+    transition: background-color 200ms ease;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-overlay[data-state="open"],
+  .ui-overlay[data-state="closed"],
+  .ui-dialog[data-state="open"],
+  .ui-dialog[data-state="closed"],
+  .ui-dropdown,
+  .ui-panel-enter {
+    animation: none !important;
+  }
+  .ui-dialog {
+    transform: translate(-50%, -50%);
+  }
+  button.bg-accent-primary:not(:disabled) {
+    transition: none;
+  }
+  button.bg-accent-primary:not(:disabled):active {
+    transform: none;
+  }
+  .ui-chevron {
+    transition: none;
+  }
+}
+
+/* Thin scrollbars that blend with the theme — all scrollable surfaces */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-secondary) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--border-secondary);
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--text-tertiary);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
