@@ -445,4 +445,21 @@ describe('installAgentsFile + cleanAgentsFile end-to-end', () => {
     expect(written).toContain('<!-- capa:start:team-local -->');
     expect(written).toContain('## Local team notes');
   });
+
+  it('rejects local additional snippets that escape the capabilities directory', async () => {
+    const capabilitiesPath = join(projectDir, 'capabilities.yaml');
+    writeFileSync(capabilitiesPath, '# placeholder\n', 'utf8');
+
+    await expect(
+      installAgentsFile(
+        projectDir,
+        {
+          additional: [{ id: 'evil', type: 'local', path: '../outside.md' }],
+        },
+        ['codex'],
+        undefined,
+        capabilitiesPath,
+      ),
+    ).rejects.toThrow(/parent-directory|outside/i);
+  });
 });

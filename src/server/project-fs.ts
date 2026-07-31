@@ -1,5 +1,13 @@
-import { existsSync, mkdirSync, readdirSync, writeFileSync, type Dirent } from 'fs';
-import { basename, dirname, join, relative, resolve } from 'path';
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  realpathSync,
+  writeFileSync,
+  type Dirent,
+} from 'fs';
+import { basename, dirname, join, relative, resolve, sep } from 'path';
 import { assertSafeRepoPath } from '../shared/repo-file';
 
 export interface ProjectFsEntry {
@@ -33,6 +41,46 @@ export function toProjectRelative(projectRoot: string, absolutePath: string): st
     throw new Error('Path escapes project root');
   }
   return normalizeRel(rel);
+}
+
+function assertRealPathInside(projectRoot: string, absPath: string): string {
+  const rootReal = realpathSync(resolve(projectRoot));
+  const real = realpathSync(absPath);
+  const rootWithSep = rootReal.endsWith(sep) ? rootReal : rootReal + sep;
+  if (real !== rootReal && !real.startsWith(rootWithSep)) {
+    throw new Error('Path escapes project root via symlink');
+  }
+  return real;
+}
+
+/**
+ * Create directories under the project root without following symlinks that escape.
+ * Each existing path component must be a real directory (not a symlink).
+ */
+export function mkdirInsideProject(projectRoot: string, relDir: string): string {
+  const rootReal = realpathSync(resolve(projectRoot));
+  const segments = normalizeRel(relDir).split('/').filter(Boolean);
+  let abs = rootReal;
+  for (const seg of segments) {
+    if (seg === '.' || seg === '..') {
+      throw new Error(`Invalid path segment: ${seg}`);
+    }
+    const next = join(abs, seg);
+    if (existsSync(next)) {
+      const st = lstatSync(next);
+      if (st.isSymbolicLink()) {
+        throw new Error(`Refusing to follow symlink at "${seg}"`);
+      }
+      if (!st.isDirectory()) {
+        throw new Error(`Not a directory: ${seg}`);
+      }
+      abs = next;
+    } else {
+      mkdirSync(next);
+      abs = next;
+    }
+  }
+  return assertRealPathInside(projectRoot, abs);
 }
 
 /**
@@ -104,23 +152,31 @@ export function writeProjectImport(
   if (!safeName || safeName === '.' || safeName === '..') {
     throw new Error('Invalid filename');
   }
-
-  const importsRoot = resolveInsideProject(projectRoot, '.capa/imports');
-  mkdirSync(importsRoot, { recursive: true });
+  if (opts.subdir) {
+    const subSegments = normalizeRel(opts.subdir).split('/');
+    if (subSegments.some((s) => s === '..' || s === '.')) {
+      throw new Error('Invalid subdirectory');
+    }
+  }
 
   if (opts.asSkillDir) {
     const id = safeName.replace(/\.md$/i, '') || 'skill';
     const skillDirRel = normalizeRel(join('.capa/imports', opts.subdir ?? '', id));
-    const skillDirAbs = resolveInsideProject(projectRoot, skillDirRel);
-    mkdirSync(skillDirAbs, { recursive: true });
+    const skillDirAbs = mkdirInsideProject(projectRoot, skillDirRel);
     const skillMd = join(skillDirAbs, 'SKILL.md');
+    if (existsSync(skillMd) && lstatSync(skillMd).isSymbolicLink()) {
+      throw new Error('Refusing to write through symlink');
+    }
     writeFileSync(skillMd, opts.bytes);
     return { path: toProjectRelative(projectRoot, skillDirAbs) };
   }
 
   const targetRel = normalizeRel(join('.capa/imports', opts.subdir ?? '', safeName));
-  const targetAbs = resolveInsideProject(projectRoot, targetRel);
-  mkdirSync(dirname(targetAbs), { recursive: true });
+  const parentAbs = mkdirInsideProject(projectRoot, dirname(targetRel));
+  const targetAbs = join(parentAbs, basename(targetRel));
+  if (existsSync(targetAbs) && lstatSync(targetAbs).isSymbolicLink()) {
+    throw new Error('Refusing to write through symlink');
+  }
   writeFileSync(targetAbs, opts.bytes);
   return { path: toProjectRelative(projectRoot, targetAbs) };
 }

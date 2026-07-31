@@ -55,7 +55,7 @@ export function RulesList({ rules, search, projectId, addOpen, onAddOpenChange }
               <button
                 type="button"
                 className="min-w-0 flex-1 text-left cursor-pointer"
-                onClick={() => rule.type === 'inline' && setEditing(rule)}
+                onClick={() => (rule.type === 'inline' || rule.type === 'local') && setEditing(rule)}
               >
                 <div className="flex items-center gap-2">
                   <span className="font-mono text-[13px] font-medium text-text-primary">{rule.id}</span>
@@ -175,7 +175,7 @@ function RuleDialog({
       return;
     }
 
-    const useLocal = !isEdit && sourceMode === 'local';
+    const useLocal = sourceMode === 'local';
     if (useLocal) {
       if (!id.trim() || !path.trim()) {
         setError(t('actions.ruleLocalRequired'));
@@ -274,7 +274,7 @@ function RuleDialog({
                 className="mt-1 w-full rounded-sm border border-border-tertiary bg-bg-tertiary px-2.5 py-2 text-sm text-text-primary"
               />
             </label>
-            {!isEdit && sourceMode === 'local' ? (
+            {sourceMode === 'local' ? (
               <div className="block text-xs text-text-secondary">
                 {t('actions.ruleLocalPath')}
                 <div className="mt-1">

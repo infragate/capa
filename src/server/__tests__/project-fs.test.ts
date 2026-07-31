@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import {
   listProjectFs,
+  mkdirInsideProject,
   resolveInsideProject,
   writeProjectImport,
 } from '../project-fs';
@@ -54,5 +55,20 @@ describe('project-fs', () => {
       asSkillDir: true,
     });
     expect(skill.path).toBe('.capa/imports/my-skill');
+  });
+
+  it('refuses to mkdir through a symlink that escapes the project', () => {
+    const outside = mkdtempSync(join(tmpdir(), 'capa-outside-'));
+    try {
+      try {
+        symlinkSync(outside, join(root, '.capa'), process.platform === 'win32' ? 'junction' : undefined);
+      } catch {
+        // Symlink creation may require elevated privileges on Windows.
+        return;
+      }
+      expect(() => mkdirInsideProject(root, '.capa/imports')).toThrow(/symlink/i);
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
   });
 });

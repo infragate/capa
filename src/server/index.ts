@@ -898,21 +898,21 @@ class CapaServer {
           headers: { 'Content-Type': 'application/json' },
         });
       }
-      const asSkillDir = String(form.get('asSkillDir') || '') === 'true';
-      const subdir = form.get('subdir');
-      const bytes = new Uint8Array(await file.arrayBuffer());
-      if (bytes.byteLength === 0) {
+      if (file.size === 0) {
         return new Response(JSON.stringify({ error: 'Empty file' }), {
           status: 400,
           headers: { 'Content-Type': 'application/json' },
         });
       }
-      if (bytes.byteLength > 2 * 1024 * 1024) {
+      if (file.size > 2 * 1024 * 1024) {
         return new Response(JSON.stringify({ error: 'File too large (max 2 MiB)' }), {
           status: 400,
           headers: { 'Content-Type': 'application/json' },
         });
       }
+      const asSkillDir = String(form.get('asSkillDir') || '') === 'true';
+      const subdir = form.get('subdir');
+      const bytes = new Uint8Array(await file.arrayBuffer());
       const written = writeProjectImport(project.path, {
         filename: file.name || 'upload.md',
         bytes,

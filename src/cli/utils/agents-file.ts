@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from 'fs';
-import { join, resolve, dirname } from 'path';
+import { join, dirname } from 'path';
 import type { AgentFileConfig, SecurityOptions, SubAgent, Capabilities } from '../../types/capabilities';
 import {
   loadBlockedPhrases,
@@ -16,7 +16,7 @@ import {
   renderSubAgentSkillsAndTools,
 } from '../../shared/providers/handlers';
 import type { AuthenticatedFetch } from '../../shared/authenticated-fetch';
-import { fetchRepoFile, fetchTextFile, type RepoSnapshotResolver } from '../../shared/repo-file';
+import { fetchRepoFile, fetchTextFile, assertSafeRepoPath, type RepoSnapshotResolver } from '../../shared/repo-file';
 import { parseGitRawUrl } from '../../shared/git-providers/registry';
 import { refSuffix } from '../../shared/git-providers/parsers';
 import { taskLog } from '../ui';
@@ -280,7 +280,7 @@ export async function installAgentsFile(
         );
       }
       const capabilitiesDir = dirname(capabilitiesFilePath);
-      const resolvedPath = resolve(capabilitiesDir, config.base.path);
+      const resolvedPath = assertSafeRepoPath(capabilitiesDir, config.base.path);
       if (!existsSync(resolvedPath)) {
         throw new Error(
           `agents.base local file not found: ${resolvedPath} (resolved from path "${config.base.path}")`
@@ -394,7 +394,7 @@ export async function installAgentsFile(
       }
       resolvedId = snippet.id;
       const capabilitiesDir = dirname(capabilitiesFilePath);
-      const resolvedPath = resolve(capabilitiesDir, snippet.path);
+      const resolvedPath = assertSafeRepoPath(capabilitiesDir, snippet.path);
       if (!existsSync(resolvedPath)) {
         throw new Error(
           `Agent snippet "${snippet.id}" local file not found: ${resolvedPath} ` +
