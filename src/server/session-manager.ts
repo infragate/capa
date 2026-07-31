@@ -235,6 +235,14 @@ export class SessionManager {
   }
 
   /**
+   * Drop in-memory capabilities for a project (e.g. after delete/clean).
+   */
+  clearProjectCapabilities(projectId: string): void {
+    this.projectCapabilities.delete(projectId);
+    this.capabilitiesLoadInflight.delete(projectId);
+  }
+
+  /**
    * Get capabilities for a project (loads from DB on cache miss, e.g. after server restart)
    */
   getProjectCapabilities(projectId: string): Capabilities | null {

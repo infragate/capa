@@ -1,7 +1,13 @@
 /**
  * Discover and stop live `capa wrap` processes without a PID registry.
  * `capa stop` scans the process table for capa binaries whose argv includes `wrap`.
+ * Project-scoped stop also reads wrap-session.json files under ~/.capa/workspaces.
  */
+
+import { readdirSync, existsSync, statSync } from 'fs';
+import { join, resolve } from 'path';
+import { getWorkspacesDir, WORKSPACE_MARKER } from '../../../shared/workspaces/paths';
+import { pathsEqual, readWrapSession, WRAP_SESSION_FILE } from './session-file';
 
 export function isPidRunning(pid: number): boolean {
   if (!Number.isFinite(pid) || pid <= 0) return false;
@@ -26,12 +32,84 @@ function tryKill(pid: number, signal: NodeJS.Signals): boolean {
   }
 }
 
+export interface WrapProcess {
+  pid: number;
+  commandLine: string;
+}
+
 /**
- * Find capa processes whose argv includes `wrap`.
+ * Normalize a path for display / tests (absolute; lowercase + backslashes on Windows).
  */
-export async function findWrapPids(): Promise<number[]> {
+export function normalizePathForMatch(p: string): string {
+  const abs = resolve(p);
+  if (process.platform === 'win32') {
+    return abs.replace(/\//g, '\\').toLowerCase();
+  }
+  return abs;
+}
+
+/** Split a process command line into argv-like tokens (handles simple quotes). */
+export function tokenizeCommandLine(commandLine: string): string[] {
+  const tokens: string[] = [];
+  const re = /"([^"]*)"|'([^']*)'|(\S+)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(commandLine)) !== null) {
+    tokens.push(m[1] ?? m[2] ?? m[3] ?? '');
+  }
+  return tokens;
+}
+
+function tokenMatchesAnyPath(token: string, paths: string[]): boolean {
+  if (!token || token.length < 2) return false;
+  // Skip flags / bare words that aren't path-like.
+  if (!/[\\/]/.test(token) && !/^[A-Za-z]:/.test(token)) return false;
+  try {
+    return paths.some((p) => pathsEqual(token, p));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * True when a process command line belongs to a wrap session for `realProjectPath`
+ * (or one of its wrap workspace/cache paths).
+ *
+ * Uses argv-shaped matching (not substring includes) so `/proj` does not match `/proj2`.
+ */
+export function commandLineMatchesProject(
+  commandLine: string,
+  realProjectPath: string,
+  extraPaths: string[] = [],
+): boolean {
+  const targets = [realProjectPath, ...extraPaths].map((p) => resolve(p));
+  const tokens = tokenizeCommandLine(commandLine);
+
+  const watchIdx = tokens.findIndex(
+    (t) => t === '__wrap_watch__' || t.endsWith('/__wrap_watch__') || t.endsWith('\\__wrap_watch__'),
+  );
+  if (watchIdx >= 0) {
+    const realArg = tokens[watchIdx + 1];
+    const wsArg = tokens[watchIdx + 2];
+    if (realArg && tokenMatchesAnyPath(realArg, targets)) return true;
+    if (wsArg && tokenMatchesAnyPath(wsArg, targets)) return true;
+  }
+
+  const projectFlagIdx = tokens.findIndex((t) => t === '--project');
+  if (projectFlagIdx >= 0) {
+    const arg = tokens[projectFlagIdx + 1];
+    if (arg && tokenMatchesAnyPath(arg, targets)) return true;
+  }
+
+  // Exact argv token equality only (boundary-safe).
+  return tokens.some((token) => tokenMatchesAnyPath(token, targets));
+}
+
+/**
+ * List capa processes whose argv includes `wrap` or `__wrap_watch__`.
+ */
+export async function listWrapProcesses(): Promise<WrapProcess[]> {
   const self = process.pid;
-  const pids: number[] = [];
+  const procs: WrapProcess[] = [];
 
   if (process.platform === 'win32') {
     try {
@@ -42,20 +120,25 @@ export async function findWrapPids(): Promise<number[]> {
           '-Command',
           `Get-CimInstance Win32_Process -Filter "Name = 'capa.exe'" | ` +
             `Where-Object { ($_.CommandLine -match '\\swrap(\\s|$)' -or $_.CommandLine -match '__wrap_watch__') -and $_.ProcessId -ne ${self} } | ` +
-            `Select-Object -ExpandProperty ProcessId`,
+            `ForEach-Object { "{0}\t{1}" -f $_.ProcessId, $_.CommandLine }`,
         ],
         { stdout: 'pipe', stderr: 'ignore' },
       );
       const out = await new Response(proc.stdout).text();
       await proc.exited;
       for (const line of out.split(/\r?\n/)) {
-        const n = parseInt(line.trim(), 10);
-        if (Number.isFinite(n) && n > 0) pids.push(n);
+        const tab = line.indexOf('\t');
+        if (tab < 0) continue;
+        const n = parseInt(line.slice(0, tab).trim(), 10);
+        const cmd = line.slice(tab + 1);
+        if (Number.isFinite(n) && n > 0 && cmd) {
+          procs.push({ pid: n, commandLine: cmd });
+        }
       }
     } catch {
       // ignore
     }
-    return [...new Set(pids)];
+    return procs;
   }
 
   try {
@@ -71,15 +154,94 @@ export async function findWrapPids(): Promise<number[]> {
       const pid = parseInt(m[1]!, 10);
       const cmd = m[2]!;
       if (pid === self) continue;
-      // e.g. `capa wrap cursor`, `./dist/capa wrap …`, `bun src/cli/index.ts wrap …`
       if (!/\bwrap\b/.test(cmd) && !/__wrap_watch__/.test(cmd)) continue;
       if (!/\bcapa(?:\.exe)?\b/i.test(cmd) && !/src\/cli\/index\.ts\b/.test(cmd)) continue;
-      pids.push(pid);
+      procs.push({ pid, commandLine: cmd });
     }
   } catch {
     // ignore
   }
-  return [...new Set(pids)];
+  return procs;
+}
+
+/**
+ * Find capa processes whose argv includes `wrap`.
+ */
+export async function findWrapPids(): Promise<number[]> {
+  const procs = await listWrapProcesses();
+  return [...new Set(procs.map((p) => p.pid))];
+}
+
+async function listWorkspacePathsForProject(realProjectPath: string): Promise<string[]> {
+  const real = resolve(realProjectPath);
+  const dir = getWorkspacesDir();
+  if (!existsSync(dir)) return [];
+
+  const paths: string[] = [];
+  for (const name of readdirSync(dir)) {
+    const cachePath = join(dir, name);
+    try {
+      if (!statSync(cachePath).isDirectory()) continue;
+      const markerPath = join(cachePath, WORKSPACE_MARKER);
+      if (!existsSync(markerPath)) continue;
+      const marker = (await Bun.file(markerPath).json()) as {
+        realProjectPath?: string;
+        workingDir?: string;
+        cachePath?: string;
+      };
+      if (!marker?.realProjectPath || !pathsEqual(marker.realProjectPath, real)) continue;
+      paths.push(cachePath);
+      if (marker.workingDir) {
+        paths.push(join(cachePath, marker.workingDir));
+      }
+      if (marker.cachePath) {
+        paths.push(marker.cachePath);
+      }
+    } catch {
+      // skip
+    }
+  }
+  return paths;
+}
+
+async function pidsFromSessionFiles(realProjectPath: string): Promise<number[]> {
+  const real = resolve(realProjectPath);
+  const dir = getWorkspacesDir();
+  if (!existsSync(dir)) return [];
+
+  const pids: number[] = [];
+  for (const name of readdirSync(dir)) {
+    const cachePath = join(dir, name);
+    try {
+      if (!statSync(cachePath).isDirectory()) continue;
+      if (!existsSync(join(cachePath, WRAP_SESSION_FILE))) continue;
+      const session = await readWrapSession(cachePath);
+      if (!session || !pathsEqual(session.realProjectPath, real)) continue;
+      pids.push(session.pid);
+      if (session.watchPid) pids.push(session.watchPid);
+    } catch {
+      // skip
+    }
+  }
+  return pids;
+}
+
+/**
+ * Find wrap / __wrap_watch__ PIDs belonging to a specific real project path.
+ * Session files are authoritative; argv matching is a fallback.
+ */
+export async function findWrapPidsForProject(realProjectPath: string): Promise<number[]> {
+  const real = resolve(realProjectPath);
+  const fromSessions = await pidsFromSessionFiles(real);
+  const workspacePaths = await listWorkspacePathsForProject(real);
+  const procs = await listWrapProcesses();
+  const fromArgv = procs
+    .filter((p) => commandLineMatchesProject(p.commandLine, real, workspacePaths))
+    .map((p) => p.pid);
+
+  return [...new Set([...fromSessions, ...fromArgv])].filter(
+    (pid) => pid !== process.pid && Number.isFinite(pid) && pid > 0,
+  );
 }
 
 async function terminatePids(pids: number[]): Promise<void> {
@@ -101,6 +263,16 @@ async function terminatePids(pids: number[]): Promise<void> {
  */
 export async function stopAllWrapSessions(): Promise<number> {
   const pids = await findWrapPids();
+  if (pids.length === 0) return 0;
+  await terminatePids(pids);
+  return pids.length;
+}
+
+/**
+ * Stop wrap sessions for one real project. Returns how many PIDs were targeted.
+ */
+export async function stopWrapSessionsForProject(realProjectPath: string): Promise<number> {
+  const pids = await findWrapPidsForProject(realProjectPath);
   if (pids.length === 0) return 0;
   await terminatePids(pids);
   return pids.length;

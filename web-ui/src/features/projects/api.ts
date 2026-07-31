@@ -21,6 +21,9 @@ export const projectsApi = {
   get: (projectId: string) =>
     api.get<ProjectDetail>(`/api/projects/${encodeURIComponent(projectId)}`),
 
+  delete: (projectId: string) =>
+    api.delete<ActionResponse>(`/api/projects/${encodeURIComponent(projectId)}`),
+
   getVariables: (projectId: string) =>
     api.get<VariablesResponse>(`/api/projects/${encodeURIComponent(projectId)}/variables`),
 

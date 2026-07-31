@@ -27,6 +27,7 @@ import {
   listProjectFs,
   writeProjectImport,
 } from './project-fs';
+import { cleanProject } from '../cli/commands/clean-project';
 import {
   listRegistriesHandler,
   createRegistryHandler,
@@ -355,6 +356,12 @@ class CapaServer {
       return this.handleGetProject(projectId);
     }
 
+    // Delete / clean project (keeps capabilities file)
+    if (projectGetMatch && request.method === 'DELETE') {
+      const projectId = projectGetMatch[1];
+      return this.handleDeleteProject(projectId);
+    }
+
     // Live capabilities file change stream (SSE)
     const projectEventsMatch = path.match(/^\/api\/projects\/([^/]+)\/events$/);
     if (projectEventsMatch && request.method === 'GET') {
@@ -630,6 +637,62 @@ class CapaServer {
       return new Response(
         JSON.stringify({ error: error.message }),
         { status: 500, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+  }
+
+  private async handleDeleteProject(projectId: string): Promise<Response> {
+    const apiLogger = this.logger.child('API');
+    apiLogger.info(`Delete project: ${projectId}`);
+    try {
+      const project = this.db.getProject(projectId);
+      if (!project) {
+        return new Response(
+          JSON.stringify({ error: 'Project not found' }),
+          { status: 404, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+
+      if (isUnderWrapWorkspacesDir(project.path)) {
+        return new Response(
+          JSON.stringify({ error: 'Refusing to delete a wrap workspace shadow path' }),
+          { status: 400, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+
+      const result = await cleanProject({
+        projectPath: project.path,
+        projectId,
+        db: this.db,
+      });
+
+      this.capsWatcher.unwatchProject(projectId);
+      this.sessionManager.clearProjectCapabilities(projectId);
+      this.effectiveCapsCache.delete(projectId);
+
+      apiLogger.info(
+        `Deleted project ${projectId} (wrap stopped: ${result.wrapSessionsStopped}, workspaces pruned: ${result.workspacesPruned})`,
+      );
+      if (result.warnings.length > 0) {
+        for (const w of result.warnings) {
+          apiLogger.warn(w);
+        }
+      }
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          wrapSessionsStopped: result.wrapSessionsStopped,
+          workspacesPruned: result.workspacesPruned,
+          warnings: result.warnings,
+        }),
+        { headers: { 'Content-Type': 'application/json' } },
+      );
+    } catch (error: any) {
+      apiLogger.failure(`Error: ${error.message}`);
+      return new Response(
+        JSON.stringify({ error: error.message }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } },
       );
     }
   }
