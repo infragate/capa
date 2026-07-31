@@ -7,8 +7,15 @@ import { isAbsolute, join, relative } from 'path';
 import { getProvider } from '../shared/providers';
 import { parseSkillMd, type SkillMetadata } from '../shared/skill-md';
 import { parseRepoString } from '../shared/repo-string';
+import { assertSafeRepoPath } from '../shared/repo-file';
+import { getOrCreateSnapshot, type CachePlatform } from '../shared/cache';
+import type { AuthenticatedFetch } from '../shared/authenticated-fetch';
 import type { Capabilities, Skill } from '../types/capabilities';
 import type { ResolvedPluginInfo } from '../types/plugin';
+import {
+  findSkillsInDirectory,
+  readSkillFromDirectory,
+} from '../cli/commands/install-tasks/helpers/skill-discovery';
 
 export interface SkillContentResult {
   content: string;
@@ -175,16 +182,83 @@ export function resolveSkillContent(
 
 /**
  * Look up a skill by id in capabilities and resolve its SKILL.md content.
+ * Prefer installed/local/inline copies; fall back to fetching remote sources
+ * into the shared git cache (or HTTP for remote URLs).
  */
-export function resolveSkillContentById(
+export async function resolveSkillContentById(
   projectPath: string,
   capabilities: Capabilities,
   skillId: string,
-): SkillContentResult | null {
+  authFetch?: AuthenticatedFetch,
+): Promise<SkillContentResult | null> {
   const skill = (capabilities.skills ?? []).find((s) => s.id === skillId);
   if (!skill) return null;
   const providers = capabilities.providers ?? [];
-  return resolveSkillContent(projectPath, skill, providers);
+  const local = resolveSkillContent(projectPath, skill, providers);
+  if (local) return local;
+  if (authFetch) {
+    return fetchUninstalledSkillContent(skill, authFetch);
+  }
+  return null;
+}
+
+/**
+ * Fetch SKILL.md for an uninstalled github/gitlab/remote skill using the
+ * shared git cache (or HTTP for remote URLs). Returns null on failure.
+ */
+export async function fetchUninstalledSkillContent(
+  skill: Skill,
+  authFetch: AuthenticatedFetch,
+): Promise<SkillContentResult | null> {
+  try {
+    if (skill.type === 'remote' && skill.def?.url) {
+      const response = await authFetch.fetch(skill.def.url);
+      if (!response.ok) return null;
+      const text = await response.text();
+      // Reject HTML login pages
+      const trimmed = text.trimStart().slice(0, 200).toLowerCase();
+      if (trimmed.startsWith('<!doctype') || trimmed.startsWith('<html')) {
+        return null;
+      }
+      return tryParse(text, ['SKILL.md']);
+    }
+
+    if ((skill.type === 'github' || skill.type === 'gitlab') && skill.def?.repo) {
+      const platform = skill.type as CachePlatform;
+      const parsed = parseRepoString(skill.def.repo);
+      const snapshot = await getOrCreateSnapshot({
+        platform,
+        repoPath: parsed.ownerRepo,
+        authFetch,
+        version: skill.def.version ?? parsed.version,
+        ref: skill.def.ref ?? parsed.sha,
+      });
+
+      let skillMdPath: string | undefined;
+      if (parsed.mode === 'exact') {
+        const skillDir = assertSafeRepoPath(snapshot.snapshotDir, parsed.target);
+        const candidate = join(skillDir, 'SKILL.md');
+        if (!existsSync(candidate)) return null;
+        skillMdPath = candidate;
+      } else {
+        const found = findSkillsInDirectory(snapshot.snapshotDir);
+        const target = parsed.target || skill.id;
+        skillMdPath = found.get(target) || found.get(skill.id);
+        if (!skillMdPath) return null;
+      }
+
+      const skillData = readSkillFromDirectory(skillMdPath);
+      const files = [
+        'SKILL.md',
+        ...Array.from(skillData.additionalFiles.keys()).sort(),
+      ];
+      return tryParse(skillData.markdown, files);
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
 }
 
 /**

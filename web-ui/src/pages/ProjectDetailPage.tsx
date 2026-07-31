@@ -7,13 +7,11 @@ import { Page } from '../components/layout/Page';
 import { Alert } from '../components/common/Alert';
 import { Spinner } from '../components/common/Spinner';
 import { EmptyState } from '../components/common/EmptyState';
-import { PluginsSection } from '../features/projects/components/PluginsSection';
 import { CapabilitiesSection } from '../features/projects/components/CapabilitiesSection';
 import { ProvidersSection } from '../features/projects/components/ProvidersSection';
 import { OptionsSection } from '../features/projects/components/OptionsSection';
 import { VariablesForm } from '../features/projects/components/VariablesForm';
-import { OAuth2Section } from '../features/projects/components/OAuth2Section';
-import { useProject, useVariables, useOAuth2Servers } from '../features/projects/hooks';
+import { useProject, useProjectCapabilitiesLiveSync, useVariables, useOAuth2Servers } from '../features/projects/hooks';
 import { projectDisplayName, safeDecode } from '../lib/utils';
 
 export function ProjectDetailPage() {
@@ -30,6 +28,7 @@ export function ProjectDetailPage() {
   const { data: project, isLoading, error } = useProject(projectId);
   const { data: variables } = useVariables(projectId);
   const { data: oauth2Servers } = useOAuth2Servers(projectId);
+  useProjectCapabilitiesLiveSync(projectId);
 
   useEffect(() => {
     if (!projectId) return;
@@ -47,19 +46,8 @@ export function ProjectDetailPage() {
 
   const displayName = project ? projectDisplayName(project.path, projectId || undefined) : projectId || '';
   const caps = project?.capabilities;
-  const hasCapabilities =
-    caps &&
-    (caps.skills.length > 0 ||
-      caps.tools.length > 0 ||
-      caps.servers.length > 0 ||
-      (caps.subagents?.length ?? 0) > 0 ||
-      (caps.rules?.length ?? 0) > 0 ||
-      (caps.hooks?.length ?? 0) > 0);
-  const hasVariables = (variables?.required?.length ?? 0) > 0;
-  const hasOAuth = (oauth2Servers?.length ?? 0) > 0;
   const hasProviders = (caps?.providers?.length ?? 0) > 0;
-  const hasOptions = caps?.options != null;
-  const showNoConfig = !isLoading && !hasCapabilities && !hasProviders && !hasOptions && !hasVariables && !hasOAuth && !error;
+  const showNoConfig = !isLoading && !caps && !error;
 
   const missingVarCount = variables?.required
     ? variables.required.filter((v) => !variables.values?.[v]).length
@@ -121,7 +109,7 @@ export function ProjectDetailPage() {
                   <span>{t('projects:banner.pendingOAuth', { count: pendingOAuthCount })}</span>
                 </div>
                 <button
-                  onClick={() => scrollTo('oauth-section')}
+                  onClick={() => scrollTo('capabilities-section')}
                   className="inline-flex shrink-0 items-center gap-1.5 rounded-sm border border-[hsl(40_80%_50%/0.3)] bg-[hsl(40_80%_50%/0.12)] px-3 py-1.5 text-xs font-medium text-[hsl(40_80%_45%)] transition-colors hover:bg-[hsl(40_80%_50%/0.2)] cursor-pointer"
                 >
                   {t('projects:banner.connect')}
@@ -138,41 +126,27 @@ export function ProjectDetailPage() {
           <Alert type="error">{(error as Error).message}</Alert>
         ) : (
           <>
-            {caps?.resolvedPlugins && caps.resolvedPlugins.length > 0 && (
-              <PluginsSection
-                plugins={caps.resolvedPlugins}
-                skills={caps.skills}
-                tools={caps.tools}
-                servers={caps.servers}
-              />
-            )}
+            {hasProviders && <ProvidersSection providers={caps!.providers} />}
 
-            {caps?.providers && caps.providers.length > 0 && (
-              <ProvidersSection providers={caps.providers} />
-            )}
-
-            {hasCapabilities && (
+            <div id="capabilities-section">
               <CapabilitiesSection
-                skills={caps!.skills}
-                tools={caps!.tools}
-                servers={caps!.servers}
-                subagents={caps!.subagents ?? []}
-                rules={caps!.rules ?? []}
-                hooks={caps!.hooks ?? []}
+                skills={caps?.skills ?? []}
+                tools={caps?.tools ?? []}
+                servers={caps?.servers ?? []}
+                subagents={caps?.subagents ?? []}
+                rules={caps?.rules ?? []}
+                hooks={caps?.hooks ?? []}
+                plugins={caps?.plugins ?? []}
+                resolvedPlugins={caps?.resolvedPlugins ?? []}
                 projectId={projectId}
               />
-            )}
+            </div>
 
-            {caps?.options && <OptionsSection options={caps.options} />}
+            <OptionsSection projectId={projectId} options={caps?.options ?? null} />
 
             <VariablesForm projectId={projectId} returnUrl={returnUrl} />
 
-            <OAuth2Section
-              projectId={projectId}
-              onMessage={(text, type) => setMessage({ text, type })}
-            />
-
-            {showNoConfig && (
+            {showNoConfig && !caps && (
               <div className="rounded-lg border border-border-primary bg-bg-secondary p-6">
                 <EmptyState
                   title={t('projects:noConfig.title')}

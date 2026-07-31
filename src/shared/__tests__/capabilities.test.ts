@@ -5,6 +5,10 @@ import {
   writeCapabilitiesFile,
   normalizeCapabilities,
   appendCapabilityEntry,
+  removeCapabilityEntry,
+  updateCapabilityEntry,
+  reorderCapabilityEntries,
+  upsertOptions,
 } from '../capabilities';
 import { logger } from '../logger';
 import { mkdtempSync, rmSync } from 'fs';
@@ -326,6 +330,279 @@ describe('capabilities', () => {
 
       const parsed = await parseCapabilitiesFile(filePath, 'json');
       expect(parsed.tools.map(t => t.id)).toEqual(['t1']);
+    });
+  });
+
+  describe('removeCapabilityEntry', () => {
+    it('removes matching YAML entries while preserving comments', async () => {
+      const filePath = join(tempDir, 'capabilities.yaml');
+      await Bun.write(
+        filePath,
+        [
+          '# keep me',
+          'skills:',
+          '  - id: keep',
+          '    type: inline',
+          '    def:',
+          '      content: a',
+          '  - id: drop',
+          '    type: inline',
+          '    def:',
+          '      content: b',
+          '',
+        ].join('\n'),
+      );
+
+      const removed = await removeCapabilityEntry(
+        filePath,
+        'yaml',
+        'skills',
+        (e) => e.id === 'drop',
+      );
+      expect(removed).toBe(1);
+
+      const content = await Bun.file(filePath).text();
+      expect(content).toContain('# keep me');
+      const parsed = await parseCapabilitiesFile(filePath, 'yaml');
+      expect(parsed.skills.map((s) => s.id)).toEqual(['keep']);
+    });
+
+    it('removes matching JSON entries', async () => {
+      const filePath = join(tempDir, 'capabilities.json');
+      await writeCapabilitiesFile(filePath, 'json', {
+        skills: [
+          { id: 'a', type: 'inline', def: { content: 'a' } },
+          { id: 'b', type: 'inline', def: { content: 'b' } },
+        ],
+        servers: [],
+        tools: [],
+      });
+
+      const removed = await removeCapabilityEntry(
+        filePath,
+        'json',
+        'skills',
+        (e) => e.id === 'a',
+      );
+      expect(removed).toBe(1);
+      const parsed = await parseCapabilitiesFile(filePath, 'json');
+      expect(parsed.skills.map((s) => s.id)).toEqual(['b']);
+    });
+
+    it('returns 0 when section is missing', async () => {
+      const filePath = join(tempDir, 'capabilities.yaml');
+      await Bun.write(filePath, 'options:\n  toolExposure: on-demand\n');
+      const removed = await removeCapabilityEntry(
+        filePath,
+        'yaml',
+        'hooks',
+        () => true,
+      );
+      expect(removed).toBe(0);
+    });
+  });
+
+  describe('updateCapabilityEntry', () => {
+    it('updates the first matching YAML entry', async () => {
+      const filePath = join(tempDir, 'capabilities.yaml');
+      await Bun.write(
+        filePath,
+        [
+          'skills:',
+          '  - id: s1',
+          '    type: inline',
+          '    def:',
+          '      content: old',
+          '',
+        ].join('\n'),
+      );
+
+      const ok = await updateCapabilityEntry(
+        filePath,
+        'yaml',
+        'skills',
+        (e) => e.id === 's1',
+        (e) => ({
+          ...e,
+          def: { ...(e.def as object), content: 'new', description: 'updated' },
+        }),
+      );
+      expect(ok).toBe(true);
+      const parsed = await parseCapabilitiesFile(filePath, 'yaml');
+      expect(parsed.skills[0].def.content).toBe('new');
+      expect(parsed.skills[0].def.description).toBe('updated');
+    });
+
+    it('updates matching JSON entries', async () => {
+      const filePath = join(tempDir, 'capabilities.json');
+      await writeCapabilitiesFile(filePath, 'json', {
+        skills: [],
+        servers: [],
+        tools: [
+          {
+            id: 't1',
+            type: 'mcp',
+            def: { server: '@srv', tool: 'search' },
+            description: 'old',
+          },
+        ],
+      });
+
+      const ok = await updateCapabilityEntry(
+        filePath,
+        'json',
+        'tools',
+        (e) => e.id === 't1',
+        (e) => ({ ...e, description: 'new' }),
+      );
+      expect(ok).toBe(true);
+      const parsed = await parseCapabilitiesFile(filePath, 'json');
+      expect(parsed.tools[0].description).toBe('new');
+    });
+
+    it('returns false when no match', async () => {
+      const filePath = join(tempDir, 'capabilities.yaml');
+      await Bun.write(filePath, 'skills: []\n');
+      const ok = await updateCapabilityEntry(
+        filePath,
+        'yaml',
+        'skills',
+        (e) => e.id === 'missing',
+        (e) => e,
+      );
+      expect(ok).toBe(false);
+    });
+  });
+
+  describe('upsertOptions', () => {
+    it('merges options into YAML and preserves other keys', async () => {
+      const filePath = join(tempDir, 'capabilities.yaml');
+      await Bun.write(
+        filePath,
+        [
+          '# header',
+          'options:',
+          '  toolExposure: on-demand',
+          'skills: []',
+          '',
+        ].join('\n'),
+      );
+
+      await upsertOptions(filePath, 'yaml', {
+        toolExposure: 'expose-all',
+        requiresCommands: [{ cli: 'git', description: 'Git CLI' }],
+      });
+
+      const content = await Bun.file(filePath).text();
+      expect(content).toContain('# header');
+      const parsed = await parseCapabilitiesFile(filePath, 'yaml');
+      expect(parsed.options?.toolExposure).toBe('expose-all');
+      expect(parsed.options?.requiresCommands).toEqual([
+        { cli: 'git', description: 'Git CLI' },
+      ]);
+    });
+
+    it('creates options when missing (JSON)', async () => {
+      const filePath = join(tempDir, 'capabilities.json');
+      await Bun.write(filePath, JSON.stringify({ skills: [], servers: [], tools: [] }));
+
+      await upsertOptions(filePath, 'json', { toolExposure: 'none' });
+      const parsed = await parseCapabilitiesFile(filePath, 'json');
+      expect(parsed.options?.toolExposure).toBe('none');
+    });
+
+    it('removes a key when patch value is undefined', async () => {
+      const filePath = join(tempDir, 'capabilities.json');
+      await writeCapabilitiesFile(filePath, 'json', {
+        skills: [],
+        servers: [],
+        tools: [],
+        options: {
+          toolExposure: 'on-demand',
+          requiresCommands: [{ cli: 'node' }],
+        },
+      });
+
+      await upsertOptions(filePath, 'json', {
+        requiresCommands: undefined,
+      });
+      const parsed = await parseCapabilitiesFile(filePath, 'json');
+      expect(parsed.options?.toolExposure).toBe('on-demand');
+      expect(parsed.options?.requiresCommands).toBeUndefined();
+    });
+  });
+
+  describe('reorderCapabilityEntries', () => {
+    it('reorders YAML entries while preserving comments', async () => {
+      const filePath = join(tempDir, 'capabilities.yaml');
+      const original = [
+        'skills:',
+        '  # keep me',
+        '  - id: alpha',
+        '    type: inline',
+        '  - id: beta',
+        '    type: inline',
+        '  - id: gamma',
+        '    type: inline',
+        '',
+      ].join('\n');
+      await Bun.write(filePath, original);
+
+      await reorderCapabilityEntries(filePath, 'yaml', 'skills', ['gamma', 'alpha', 'beta']);
+
+      const content = await Bun.file(filePath).text();
+      expect(content).toContain('# keep me');
+      expect(content.indexOf('id: gamma')).toBeLessThan(content.indexOf('id: alpha'));
+      expect(content.indexOf('id: alpha')).toBeLessThan(content.indexOf('id: beta'));
+
+      const parsed = await parseCapabilitiesFile(filePath, 'yaml');
+      expect(parsed.skills.map((s: { id: string }) => s.id)).toEqual([
+        'gamma',
+        'alpha',
+        'beta',
+      ]);
+    });
+
+    it('reorders JSON entries', async () => {
+      const filePath = join(tempDir, 'capabilities.json');
+      await Bun.write(
+        filePath,
+        JSON.stringify({
+          skills: [
+            { id: 'a', type: 'inline' },
+            { id: 'b', type: 'inline' },
+            { id: 'c', type: 'inline' },
+          ],
+          servers: [],
+          tools: [],
+        }),
+      );
+
+      await reorderCapabilityEntries(filePath, 'json', 'skills', ['c', 'a', 'b']);
+      const parsed = await parseCapabilitiesFile(filePath, 'json');
+      expect(parsed.skills.map((s: { id: string }) => s.id)).toEqual(['c', 'a', 'b']);
+    });
+
+    it('rejects non-permutation ids', async () => {
+      const filePath = join(tempDir, 'capabilities.json');
+      await Bun.write(
+        filePath,
+        JSON.stringify({
+          skills: [
+            { id: 'a', type: 'inline' },
+            { id: 'b', type: 'inline' },
+          ],
+          servers: [],
+          tools: [],
+        }),
+      );
+
+      expect(
+        reorderCapabilityEntries(filePath, 'json', 'skills', ['a']),
+      ).rejects.toThrow(/exactly once/);
+      expect(
+        reorderCapabilityEntries(filePath, 'json', 'skills', ['a', 'missing']),
+      ).rejects.toThrow(/not found/);
     });
   });
 });

@@ -12,8 +12,11 @@ import { TokenRefreshScheduler } from './token-refresh-scheduler';
 import type { Capabilities, MCPServer, ToolMCPDefinition, ToolCommandDefinition } from '../types/capabilities';
 import type { OAuth2Config } from '../types/oauth';
 import { extractAllVariables } from '../shared/variable-resolver';
+import { detectCapabilitiesFile } from '../shared/paths';
+import { parseCapabilitiesFile } from '../shared/capabilities';
 import { RegistryManager } from '../shared/registries/manager';
 import { seedDefaultRegistries } from '../shared/registries/seed';
+import { CapabilitiesFileWatcher } from './capabilities-watcher';
 import {
   listRegistriesHandler,
   createRegistryHandler,
@@ -22,6 +25,10 @@ import {
   refreshRegistryHandler,
   previewRegistryHandler,
 } from './registries-routes';
+import {
+  handleCapabilitiesMutation,
+  buildVariablesResponse,
+} from './capabilities-routes';
 import type { RegistryCapability } from '../types/registry';
 import { VERSION } from '../version';
 import { logger } from '../shared/logger';
@@ -86,6 +93,8 @@ class CapaServer {
   /** Claude-style OAuth callback servers: port -> { server, idleTimer }; closed after completion or 5 min idle */
   private oauthCallbackServers = new Map<number, { server: HttpServer; idleTimer: ReturnType<typeof setTimeout> }>();
   private registryManager!: RegistryManager;
+  private capsWatcher!: CapabilitiesFileWatcher;
+  private projectEventClients = new Map<string, Set<(chunk: Uint8Array) => void>>();
   private startTime: number = Date.now();
   private logger = logger.child('CapaServer');
 
@@ -147,6 +156,16 @@ class CapaServer {
     this.tokenRefreshScheduler.start();
     this.logger.success('Token refresh scheduler started');
 
+    // Keep in-memory capabilities + UI in sync with on-disk edits
+    this.capsWatcher = new CapabilitiesFileWatcher(
+      (projectId) => this.reloadProjectCapabilitiesFromDisk(projectId),
+      {
+        info: (m) => this.logger.info(m),
+        warn: (m) => this.logger.warn(m),
+        debug: (m) => this.logger.debug(m),
+      },
+    );
+
     // Start HTTP server
     await this.startHttpServer();
 
@@ -154,6 +173,11 @@ class CapaServer {
 
     // Write PID file
     this.writePidFile();
+
+    // Watch all known projects' capabilities files
+    for (const project of this.db.getAllProjects()) {
+      void this.capsWatcher.watchProject(project.id, project.path);
+    }
 
     this.logger.success(`CAPA server running at http://${this.settings.server.host}:${this.settings.server.port}`);
     this.logger.info(`OAuth redirect server will start on-demand at http://${this.settings.server.host}:${this.settings.oauth_redirect_port || 3100}`);
@@ -257,7 +281,7 @@ class CapaServer {
       if (!auth.ok) {
         return this.authFailureResponse(request, auth.reason, auth.status);
       }
-      return this.handleAPI(request);
+      return this.handleAPI(request, server);
     }
 
     // Sub-agent MCP endpoints: /{projectId}/agents/{agentId}/mcp
@@ -295,7 +319,7 @@ class CapaServer {
     });
   }
 
-  private async handleAPI(request: Request): Promise<Response> {
+  private async handleAPI(request: Request, bunServer?: { timeout?: (req: Request, seconds: number) => void }): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname;
 
@@ -309,6 +333,14 @@ class CapaServer {
     if (projectGetMatch && request.method === 'GET') {
       const projectId = projectGetMatch[1];
       return this.handleGetProject(projectId);
+    }
+
+    // Live capabilities file change stream (SSE)
+    const projectEventsMatch = path.match(/^\/api\/projects\/([^/]+)\/events$/);
+    if (projectEventsMatch && request.method === 'GET') {
+      // Bun closes quiet streams after ~10s unless idle timeout is disabled.
+      bunServer?.timeout?.(request, 0);
+      return this.handleProjectEvents(projectEventsMatch[1]);
     }
 
     // Configure project
@@ -325,10 +357,39 @@ class CapaServer {
       return this.handleGetVariables(projectId);
     }
 
-    // Set variables
+    // Set variables (bulk)
     if (varsGetMatch && request.method === 'POST') {
       const projectId = varsGetMatch[1];
       return this.handleSetVariables(projectId, request);
+    }
+
+    // Put / delete a single variable in the catalog
+    const varItemMatch = path.match(/^\/api\/projects\/([^/]+)\/variables\/([^/]+)$/);
+    if (varItemMatch && request.method === 'PUT') {
+      return this.handlePutVariable(varItemMatch[1], decodeURIComponent(varItemMatch[2]), request);
+    }
+    if (varItemMatch && request.method === 'DELETE') {
+      return this.handleDeleteVariable(varItemMatch[1], decodeURIComponent(varItemMatch[2]));
+    }
+
+    // Capabilities file mutations (write YAML + configure)
+    const capsProjectMatch = path.match(/^\/api\/projects\/([^/]+)\/capabilities(?:\/|$)/);
+    if (capsProjectMatch) {
+      const projectId = capsProjectMatch[1];
+      const mutation = await handleCapabilitiesMutation(
+        {
+          db: this.db,
+          registryManager: this.registryManager,
+          configure: (id, caps) => this.runProjectConfigure(id, caps),
+          markSelfWrite: (id) => this.capsWatcher.markSelfWrite(id),
+          notifyChanged: (id) => this.notifyProjectChanged(id),
+        },
+        projectId,
+        path,
+        request.method,
+        request,
+      );
+      if (mutation) return mutation;
     }
 
     // Get OAuth2 servers
@@ -554,7 +615,18 @@ class CapaServer {
         );
       }
 
-      const capabilities = this.sessionManager.getProjectCapabilities(projectId);
+      let capabilities = this.sessionManager.getProjectCapabilities(projectId);
+      try {
+        const file = await detectCapabilitiesFile(project.path);
+        if (file) {
+          // Disk is source of truth for the UI — always serve the file contents.
+          capabilities = await parseCapabilitiesFile(file.path, file.format);
+          this.sessionManager.setProjectCapabilities(projectId, capabilities);
+          void this.capsWatcher.watchProject(projectId, project.path);
+        }
+      } catch {
+        // ignore unreadable capabilities file; keep cached capabilities if any
+      }
 
       // Pre-fetch managed hooks once and group by hookId so the per-hook
       // map below stays O(n) instead of issuing one DB query per hook.
@@ -586,6 +658,7 @@ class CapaServer {
               description,
               descriptionSource,
               requires: s.def?.requires || [],
+              content: s.type === 'inline' ? (s.def?.content || null) : null,
               sourcePlugin: s.sourcePlugin || null,
               sourceUrl: resolveSkillSourceUrl(s, capabilities.resolvedPlugins),
             };
@@ -594,12 +667,17 @@ class CapaServer {
             const base: Record<string, any> = {
               id: t.id,
               type: t.type,
+              description: t.description || null,
               sourcePlugin: t.sourcePlugin || null,
             };
             if (t.type === 'mcp') {
               const mcpDef = t.def as ToolMCPDefinition;
               base.mcpServer = mcpDef.server;
               base.mcpTool = mcpDef.tool;
+              base.defaults = mcpDef.defaults || null;
+              base.formatter = mcpDef.formatter
+                ? { cmd: mcpDef.formatter.cmd, timeout: mcpDef.formatter.timeout }
+                : null;
             } else if (t.type === 'command') {
               const cmdDef = t.def as ToolCommandDefinition;
               base.command = cmdDef.run.cmd;
@@ -619,8 +697,34 @@ class CapaServer {
               url: s.def?.url || null,
               cmd: s.def?.cmd || null,
               args: s.def?.args || null,
+              env: s.def?.env || null,
+              headers: s.def?.headers || null,
+              cwd: s.def?.cwd || null,
+              tlsSkipVerify: s.def?.tlsSkipVerify === true,
+              oauth2: s.def?.oauth2
+                ? {
+                    clientId:
+                      s.def.oauth2.clientId ??
+                      s.def.oauth2.client_id ??
+                      s.def.oauth2.oauth?.clientId ??
+                      null,
+                    clientSecret: s.def.oauth2.clientSecret ?? null,
+                    authorizationUrl:
+                      s.def.oauth2.authorizationUrl ??
+                      s.def.oauth2.authorizationEndpoint ??
+                      null,
+                    tokenUrl:
+                      s.def.oauth2.tokenUrl ?? s.def.oauth2.tokenEndpoint ?? null,
+                    scopes:
+                      s.def.oauth2.scopes ??
+                      (s.def.oauth2.scope ? [s.def.oauth2.scope] : null),
+                    redirectUri: s.def.oauth2.redirectUri ?? null,
+                    pkce: s.def.oauth2.pkce === true,
+                  }
+                : null,
               sourcePlugin: s.sourcePlugin || null,
               displayName: s.displayName || null,
+              description: s.description || null,
               requiresOAuth,
               isConnected,
             };
@@ -641,6 +745,10 @@ class CapaServer {
             providers: r.providers || [],
             appliesTo: r.appliesTo || [],
             alwaysApply: r.alwaysApply || false,
+            content: r.type === 'inline' ? (r.content || null) : null,
+            url: r.url || null,
+            path: r.path || null,
+            def: r.def || null,
           })),
           hooks: (capabilities.hooks || []).map(h => ({
             id: h.id,
@@ -655,7 +763,17 @@ class CapaServer {
             sourceType: h.source?.type || null,
             command: h.command ?? null,
             prompt: h.prompt ?? null,
+            sourceContent:
+              h.source?.type === 'inline' &&
+              typeof (h.source as { content?: unknown }).content === 'string'
+                ? (h.source as { content: string }).content
+                : null,
             installed: installedHooksByHookId.get(h.id) ?? [],
+          })),
+          plugins: (capabilities.plugins || []).map(p => ({
+            id: p.id || null,
+            type: p.type,
+            def: p.def,
           })),
           options: capabilities.options ? {
             toolExposure: capabilities.options.toolExposure || null,
@@ -771,7 +889,17 @@ class CapaServer {
         );
       }
 
-      const capabilities = this.sessionManager.getProjectCapabilities(projectId);
+      let capabilities = this.sessionManager.getProjectCapabilities(projectId);
+      if (!capabilities) {
+        try {
+          const file = await detectCapabilitiesFile(project.path);
+          if (file) {
+            capabilities = await parseCapabilitiesFile(file.path, file.format);
+          }
+        } catch {
+          // ignore
+        }
+      }
       if (!capabilities) {
         return new Response(
           JSON.stringify({ error: 'Project not configured' }),
@@ -787,7 +915,14 @@ class CapaServer {
         );
       }
 
-      const resolved = resolveSkillContentById(project.path, capabilities, skillId);
+      const { createAuthenticatedFetch } = await import('../shared/authenticated-fetch');
+      const authFetch = createAuthenticatedFetch(this.db);
+      const resolved = await resolveSkillContentById(
+        project.path,
+        capabilities,
+        skillId,
+        authFetch,
+      );
       if (!resolved) {
         return new Response(
           JSON.stringify({ error: 'Skill content not available' }),
@@ -1037,6 +1172,11 @@ class CapaServer {
 
     this.sessionManager.setProjectCapabilities(projectId, capabilities);
 
+    const project = this.db.getProject(projectId);
+    if (project) {
+      void this.capsWatcher.watchProject(projectId, project.path);
+    }
+
     const capabilitiesToUse = capabilities;
 
     // -- OAuth2 detection (parallel) ------------------------------------
@@ -1258,25 +1398,58 @@ class CapaServer {
     const apiLogger = this.logger.child('API');
     apiLogger.info(`Get variables for project: ${projectId}`);
     const capabilities = this.sessionManager.getProjectCapabilities(projectId);
-    if (!capabilities) {
-      apiLogger.warn('Project not configured');
-      return new Response(
-        JSON.stringify({ error: 'Project not configured' }),
-        { status: 404, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-
-    const requiredVars = extractAllVariables(capabilities);
     const values = this.db.getAllVariables(projectId);
-    apiLogger.info(`Required: ${requiredVars.length}, Set: ${Object.keys(values).length}`);
-
-    return new Response(
-      JSON.stringify({
-        required: requiredVars,
-        values,
-      }),
-      { headers: { 'Content-Type': 'application/json' } }
+    const body = buildVariablesResponse(capabilities, values);
+    apiLogger.info(
+      `Required: ${body.required.length}, Catalog: ${body.catalog.length}, Set: ${Object.keys(values).length}`,
     );
+
+    return new Response(JSON.stringify(body), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  private async handlePutVariable(
+    projectId: string,
+    name: string,
+    request: Request,
+  ): Promise<Response> {
+    const apiLogger = this.logger.child('API');
+    try {
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+        return new Response(
+          JSON.stringify({ error: 'Invalid variable name' }),
+          { status: 400, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      let value = '';
+      try {
+        const body = (await request.json()) as { value?: string };
+        if (typeof body?.value === 'string') value = body.value;
+      } catch {
+        // empty body → create with empty value
+      }
+      apiLogger.info(`Put variable ${name} for project: ${projectId}`);
+      this.db.setVariable(projectId, name, value);
+      return new Response(JSON.stringify({ success: true }), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    } catch (error: any) {
+      apiLogger.failure(`Error: ${error.message}`);
+      return new Response(JSON.stringify({ error: error.message }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+  }
+
+  private async handleDeleteVariable(projectId: string, name: string): Promise<Response> {
+    const apiLogger = this.logger.child('API');
+    apiLogger.info(`Delete variable ${name} for project: ${projectId}`);
+    this.db.deleteVariable(projectId, name);
+    return new Response(JSON.stringify({ success: true }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
   }
 
   private async handleSetVariables(projectId: string, request: Request): Promise<Response> {
@@ -2289,6 +2462,100 @@ class CapaServer {
     return new Response('Method not allowed', { status: 405 });
   }
 
+  private async reloadProjectCapabilitiesFromDisk(projectId: string): Promise<void> {
+    const project = this.db.getProject(projectId);
+    if (!project) return;
+    const file = await detectCapabilitiesFile(project.path);
+    if (!file) {
+      this.logger.warn(`Capabilities file missing for ${projectId}`);
+      this.notifyProjectChanged(projectId);
+      return;
+    }
+    const caps = await parseCapabilitiesFile(file.path, file.format);
+    await this.runProjectConfigure(projectId, caps);
+    this.notifyProjectChanged(projectId);
+  }
+
+  private notifyProjectChanged(projectId: string): void {
+    const clients = this.projectEventClients.get(projectId);
+    if (!clients || clients.size === 0) return;
+    const encoder = new TextEncoder();
+    const chunk = encoder.encode(
+      `event: capabilities-changed\ndata: ${JSON.stringify({ projectId, at: Date.now() })}\n\n`,
+    );
+    for (const send of [...clients]) {
+      try {
+        send(chunk);
+      } catch {
+        clients.delete(send);
+      }
+    }
+  }
+
+  private handleProjectEvents(projectId: string): Response {
+    const project = this.db.getProject(projectId);
+    if (!project) {
+      return new Response(JSON.stringify({ error: 'Project not found' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    void this.capsWatcher.watchProject(projectId, project.path);
+
+    const encoder = new TextEncoder();
+    let send: ((chunk: Uint8Array) => void) | null = null;
+    let heartbeat: ReturnType<typeof setInterval> | null = null;
+
+    const stream = new ReadableStream<Uint8Array>({
+      start: (controller) => {
+        send = (chunk) => {
+          try {
+            controller.enqueue(chunk);
+          } catch {
+            // Client gone
+            throw new Error('sse client closed');
+          }
+        };
+        let set = this.projectEventClients.get(projectId);
+        if (!set) {
+          set = new Set();
+          this.projectEventClients.set(projectId, set);
+        }
+        set.add(send);
+        // Ask the client to sync on connect/reconnect (covers missed events).
+        controller.enqueue(
+          encoder.encode(
+            `event: capabilities-changed\ndata: ${JSON.stringify({ projectId, at: Date.now(), reason: 'connected' })}\n\n`,
+          ),
+        );
+        // Keep Bun's idle timer happy even if timeout(0) is unavailable.
+        heartbeat = setInterval(() => {
+          try {
+            controller.enqueue(encoder.encode(`: ping ${Date.now()}\n\n`));
+          } catch {
+            if (heartbeat) clearInterval(heartbeat);
+          }
+        }, 15000);
+      },
+      cancel: () => {
+        if (heartbeat) clearInterval(heartbeat);
+        if (!send) return;
+        const set = this.projectEventClients.get(projectId);
+        set?.delete(send);
+        if (set && set.size === 0) this.projectEventClients.delete(projectId);
+      },
+    });
+
+    return new Response(stream, {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache, no-transform',
+        Connection: 'keep-alive',
+      },
+    });
+  }
+
   private writePidFile() {
     const pidFile = getPidFilePath();
     const content = `${process.pid}:${VERSION}`;
@@ -2297,6 +2564,8 @@ class CapaServer {
 
   async stop() {
     this.logger.info('Stopping CAPA server...');
+
+    this.capsWatcher?.stop();
 
     // Stop token refresh scheduler
     this.tokenRefreshScheduler.stop();

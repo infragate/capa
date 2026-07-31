@@ -25,6 +25,7 @@ export interface Skill {
   description: string | null;
   descriptionSource?: 'capabilities' | 'frontmatter' | null;
   requires: string[];
+  content?: string | null;
   sourcePlugin: SourcePlugin | null;
   /** External origin URL for github / gitlab / remote / plugin skills. */
   sourceUrl?: string | null;
@@ -33,9 +34,12 @@ export interface Skill {
 export interface Tool {
   id: string;
   type: 'mcp' | 'command';
+  description?: string | null;
   sourcePlugin: SourcePlugin | null;
   mcpServer?: string;
   mcpTool?: string;
+  defaults?: Record<string, unknown> | null;
+  formatter?: { cmd: string; timeout?: number } | null;
   command?: string;
   commandArgs?: CommandArg[];
   /** Optional group name for command-type tools. */
@@ -65,17 +69,32 @@ export interface EnrichedTool extends Tool {
   _inputSchema?: ToolInputSchema;
 }
 
+export interface ServerOAuth2Config {
+  clientId: string | null;
+  clientSecret: string | null;
+  authorizationUrl: string | null;
+  tokenUrl: string | null;
+  scopes: string[] | null;
+  redirectUri: string | null;
+  pkce: boolean;
+}
+
 export interface Server {
   id: string;
   type: string;
   url: string | null;
   cmd: string | null;
   args: string[] | null;
+  env?: Record<string, string> | null;
+  headers?: Record<string, string> | null;
+  cwd?: string | null;
+  tlsSkipVerify?: boolean;
+  oauth2?: ServerOAuth2Config | null;
   sourcePlugin: SourcePlugin | null;
   displayName: string | null;
   requiresOAuth: boolean;
   isConnected: boolean | null;
-  description?: string;
+  description?: string | null;
 }
 
 export interface ResolvedPlugin {
@@ -99,11 +118,15 @@ export interface SubAgent {
 
 export interface Rule {
   id: string;
-  type: 'inline' | 'remote' | 'github' | 'gitlab';
+  type: 'inline' | 'remote' | 'github' | 'gitlab' | 'local';
   description: string | null;
   providers: string[];
   appliesTo: string[];
   alwaysApply: boolean;
+  content?: string | null;
+  url?: string | null;
+  path?: string | null;
+  def?: { repo: string } | null;
 }
 
 export interface InstalledHook {
@@ -126,8 +149,21 @@ export interface Hook {
   sourceType: 'inline' | 'remote' | 'github' | 'gitlab' | 'local' | null;
   command: string | null;
   prompt: string | null;
+  /** Inline `source.content` when body lives under `source` instead of command/prompt. */
+  sourceContent?: string | null;
   /** One row per provider where capa successfully installed this hook. */
   installed: InstalledHook[];
+}
+
+export interface AuthoredPlugin {
+  id: string | null;
+  type: string;
+  def: {
+    repo: string;
+    version?: string;
+    ref?: string;
+    subpath?: string;
+  };
 }
 
 export interface RequiredCommand {
@@ -151,6 +187,7 @@ export interface ProjectCapabilities {
   tools: Tool[];
   servers: Server[];
   resolvedPlugins: ResolvedPlugin[] | null;
+  plugins?: AuthoredPlugin[];
   providers: string[];
   subagents: SubAgent[];
   rules: Rule[];
@@ -168,8 +205,27 @@ export interface ProjectDetail {
 
 export interface VariablesResponse {
   required: string[];
+  catalog: string[];
   values: Record<string, string>;
 }
+
+export interface CapabilitiesMutationResponse {
+  success: boolean;
+  needsCredentials?: boolean;
+  missingVars?: string[];
+  oauth2Servers?: string[];
+  error?: string;
+  [key: string]: unknown;
+}
+
+export type CapabilitySection =
+  | 'skills'
+  | 'servers'
+  | 'tools'
+  | 'plugins'
+  | 'subagents'
+  | 'rules'
+  | 'hooks';
 
 export interface OAuth2Server {
   serverId: string;

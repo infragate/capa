@@ -1,5 +1,34 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useEffect } from 'react';
 import { projectsApi } from './api';
+import type { CapabilitySection, ProjectDetail } from '../../types/api';
+
+function invalidateProjectQueries(qc: ReturnType<typeof useQueryClient>, projectId: string) {
+  qc.invalidateQueries({ queryKey: ['project', projectId] });
+  qc.invalidateQueries({ queryKey: ['variables', projectId] });
+  qc.invalidateQueries({ queryKey: ['oauth2-servers', projectId] });
+  qc.invalidateQueries({ queryKey: ['server-tools', projectId] });
+  qc.invalidateQueries({ queryKey: ['skill-content', projectId] });
+}
+
+function reorderByIds<T extends { id: string | null }>(items: T[], ids: string[]): T[] {
+  const byId = new Map<string, T>();
+  const rest: T[] = [];
+  for (const item of items) {
+    if (item.id) byId.set(item.id, item);
+    else rest.push(item);
+  }
+  const next: T[] = [];
+  for (const id of ids) {
+    const item = byId.get(id);
+    if (item) {
+      next.push(item);
+      byId.delete(id);
+    }
+  }
+  next.push(...byId.values(), ...rest);
+  return next;
+}
 
 export function useProjects() {
   return useQuery({
@@ -15,6 +44,48 @@ export function useProject(projectId: string | null) {
     queryFn: () => projectsApi.get(projectId!),
     enabled: !!projectId,
   });
+}
+
+/**
+ * Keep the project page in sync when capabilities.yaml/json changes on disk
+ * (manual edits or other processes). Server pushes via SSE.
+ */
+export function useProjectCapabilitiesLiveSync(projectId: string | null) {
+  const qc = useQueryClient();
+  useEffect(() => {
+    if (!projectId) return;
+
+    let es: EventSource | null = null;
+    let disposed = false;
+
+    const sync = () => {
+      void qc.invalidateQueries({ queryKey: ['project', projectId] });
+      void qc.invalidateQueries({ queryKey: ['variables', projectId] });
+      void qc.invalidateQueries({ queryKey: ['oauth2-servers', projectId] });
+      void qc.invalidateQueries({ queryKey: ['server-tools', projectId] });
+      void qc.invalidateQueries({ queryKey: ['skill-content', projectId] });
+    };
+
+    const connect = () => {
+      if (disposed) return;
+      es?.close();
+      es = new EventSource(`/api/projects/${encodeURIComponent(projectId)}/events`);
+      es.addEventListener('capabilities-changed', sync);
+      // Refetch after every (re)connect — covers events missed while disconnected.
+      es.onopen = () => {
+        sync();
+      };
+    };
+
+    connect();
+
+    return () => {
+      disposed = true;
+      es?.removeEventListener('capabilities-changed', sync);
+      es?.close();
+      es = null;
+    };
+  }, [projectId, qc]);
 }
 
 export function useVariables(projectId: string | null) {
@@ -37,6 +108,27 @@ export function useSaveVariables(projectId: string) {
   });
 }
 
+export function usePutVariable(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ name, value }: { name: string; value?: string }) =>
+      projectsApi.putVariable(projectId, name, value ?? ''),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['variables', projectId] });
+    },
+  });
+}
+
+export function useDeleteVariable(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) => projectsApi.deleteVariable(projectId, name),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['variables', projectId] });
+    },
+  });
+}
+
 export function useOAuth2Servers(projectId: string | null) {
   return useQuery({
     queryKey: ['oauth2-servers', projectId],
@@ -50,11 +142,18 @@ export function useOAuth2Servers(projectId: string | null) {
 export function useDisconnectOAuth(projectId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (serverId: string) =>
-      projectsApi.disconnectOAuth(projectId, serverId),
+    mutationFn: (serverId: string) => projectsApi.disconnectOAuth(projectId, serverId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['oauth2-servers', projectId] });
+      qc.invalidateQueries({ queryKey: ['project', projectId] });
+      qc.invalidateQueries({ queryKey: ['server-tools', projectId] });
     },
+  });
+}
+
+export function useStartOAuth(projectId: string) {
+  return useMutation({
+    mutationFn: (serverId: string) => projectsApi.startOAuth(projectId, serverId),
   });
 }
 
@@ -65,7 +164,6 @@ export function useServerTools(projectId: string | null, serverId: string | null
     enabled: !!projectId && !!serverId,
     select: (data) => data.tools,
     staleTime: 60_000,
-    // Don't retry an unreachable MCP server — surface the error immediately.
     retry: false,
   });
 }
@@ -77,5 +175,111 @@ export function useSkillContent(projectId: string | null, skillId: string | null
     enabled: !!projectId && !!skillId,
     staleTime: 5 * 60_000,
     retry: false,
+  });
+}
+
+export function useAppendCapability(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      section,
+      entry,
+    }: {
+      section: CapabilitySection;
+      entry: Record<string, unknown>;
+    }) => projectsApi.appendCapability(projectId, section, entry),
+    onSuccess: () => invalidateProjectQueries(qc, projectId),
+  });
+}
+
+export function useUpdateCapability(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      section,
+      entryId,
+      patch,
+    }: {
+      section: CapabilitySection;
+      entryId: string;
+      patch: Record<string, unknown>;
+    }) => projectsApi.updateCapability(projectId, section, entryId, patch),
+    onSuccess: () => invalidateProjectQueries(qc, projectId),
+  });
+}
+
+export function useDeleteCapability(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      section,
+      entryId,
+      cascadeTools,
+    }: {
+      section: CapabilitySection;
+      entryId: string;
+      cascadeTools?: boolean;
+    }) => projectsApi.deleteCapability(projectId, section, entryId, { cascadeTools }),
+    onSuccess: () => invalidateProjectQueries(qc, projectId),
+  });
+}
+
+export function useReorderCapability(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ section, ids }: { section: CapabilitySection; ids: string[] }) =>
+      projectsApi.reorderCapability(projectId, section, ids),
+    onMutate: async ({ section, ids }) => {
+      await qc.cancelQueries({ queryKey: ['project', projectId] });
+      const previous = qc.getQueryData<ProjectDetail>(['project', projectId]);
+      qc.setQueryData<ProjectDetail>(['project', projectId], (old) => {
+        if (!old?.capabilities) return old;
+        const caps = old.capabilities;
+        const nextCaps = { ...caps };
+        if (section === 'skills') nextCaps.skills = reorderByIds(caps.skills, ids);
+        else if (section === 'servers') nextCaps.servers = reorderByIds(caps.servers, ids);
+        else if (section === 'tools') nextCaps.tools = reorderByIds(caps.tools, ids);
+        else if (section === 'plugins' && caps.plugins) {
+          nextCaps.plugins = reorderByIds(caps.plugins, ids);
+        } else if (section === 'subagents') {
+          nextCaps.subagents = reorderByIds(caps.subagents, ids);
+        } else if (section === 'rules') nextCaps.rules = reorderByIds(caps.rules, ids);
+        else if (section === 'hooks') nextCaps.hooks = reorderByIds(caps.hooks, ids);
+        return { ...old, capabilities: nextCaps };
+      });
+      return { previous };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.previous) {
+        qc.setQueryData(['project', projectId], ctx.previous);
+      }
+    },
+    onSettled: () => invalidateProjectQueries(qc, projectId),
+  });
+}
+
+export function usePatchOptions(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (patch: Record<string, unknown>) => projectsApi.patchOptions(projectId, patch),
+    onSuccess: () => invalidateProjectQueries(qc, projectId),
+  });
+}
+
+export function useAddFromRegistry(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      section,
+      registry,
+      itemId,
+      capability,
+    }: {
+      section: 'skills' | 'plugins';
+      registry: string;
+      itemId: string;
+      capability?: 'skills' | 'plugins';
+    }) => projectsApi.addFromRegistry(projectId, section, { registry, itemId, capability }),
+    onSuccess: () => invalidateProjectQueries(qc, projectId),
   });
 }

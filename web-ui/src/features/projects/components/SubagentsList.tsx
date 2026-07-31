@@ -1,138 +1,316 @@
-import { useState } from 'react';
+import { useState, type FormEvent } from 'react';
+import * as Dialog from '@radix-ui/react-dialog';
+import { Trash2, X, Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { ChevronRight, Bot } from 'lucide-react';
-import type { SubAgent } from '../../../types/api';
-import { highlightText, matchesSearch } from '../../../lib/utils';
+import type { Skill, SubAgent, Tool } from '../../../types/api';
+import { matchesSearch } from '../../../lib/utils';
+import { capaIdIssue, sanitizeCapaIdInput } from '../../../lib/ids';
+import { refMatchesTool, skillRequiresRef } from '../../../lib/toolRefs';
+import { ReorderableList } from '../../../components/common/ReorderableList';
+import { useAppendCapability, useDeleteCapability, useReorderCapability, useUpdateCapability } from '../hooks';
 
-const DESC_PREVIEW_LENGTH = 80;
+function capaIdErrorMessage(id: string, t: (key: string) => string): string | null {
+  const issue = capaIdIssue(id);
+  if (!issue) return null;
+  if (issue === 'empty') return t('actions.idInvalidEmpty');
+  if (issue === 'invalidStart') return t('actions.idInvalidStart');
+  return t('actions.idInvalidChars');
+}
 
 interface SubagentsListProps {
   subagents: SubAgent[];
-  search?: string;
+  skills: Skill[];
+  tools: Tool[];
+  search: string;
+  projectId: string;
+  addOpen: boolean;
+  onAddOpenChange: (open: boolean) => void;
 }
 
-export function SubagentsList({ subagents, search = '' }: SubagentsListProps) {
+export function SubagentsList({
+  subagents,
+  skills,
+  tools,
+  search,
+  projectId,
+  addOpen,
+  onAddOpenChange,
+}: SubagentsListProps) {
   const { t } = useTranslation('projects');
-
-  const visible = subagents.filter((agent) =>
-    matchesSearch(
-      [agent.id, agent.description, ...agent.skills, ...agent.tools],
-      search,
-    ),
+  const deleteMutation = useDeleteCapability(projectId);
+  const reorderMutation = useReorderCapability(projectId);
+  const updateMutation = useUpdateCapability(projectId);
+  const [editing, setEditing] = useState<SubAgent | null>(null);
+  const searching = !!search.trim();
+  const visible = subagents.filter((s) =>
+    matchesSearch([s.id, s.description, s.instructions, ...s.skills, ...s.tools], search),
   );
 
   return (
     <div>
-      <div className="mb-3 flex items-center gap-2 text-sm font-medium text-text-primary">
-        <Bot size={18} />
-        <span>{t('detail.subagents')}</span>
-        <span className="rounded-sm bg-bg-tertiary px-1.5 py-0.5 text-xs text-text-secondary">
-          {visible.length}
-        </span>
-      </div>
       {visible.length === 0 ? (
         <div className="py-6 text-center text-xs text-text-tertiary">
-          {search ? t('detail.noSubagentsMatch') : t('detail.noSubagents')}
+          {search ? t('detail.noSubagentsMatch') : t('actions.emptySubagents')}
         </div>
       ) : (
-        <div className="max-h-[520px] space-y-1 overflow-y-auto pr-1">
-          {visible.map((agent) => (
-            <SubagentItem key={agent.id} agent={agent} search={search} />
-          ))}
-        </div>
+        <ReorderableList
+          items={visible}
+          getId={(a) => a.id}
+          disabled={searching}
+          handleLabel={t('actions.dragToReorder')}
+          className="space-y-2"
+          onReorder={(ids) => reorderMutation.mutate({ section: 'subagents', ids })}
+          renderItem={(agent, { handle }) => (
+            <div className="flex items-start gap-1 rounded-sm border border-border-tertiary bg-bg-tertiary p-3 pl-1">
+              {handle}
+              <button
+                type="button"
+                className="min-w-0 flex-1 text-left cursor-pointer"
+                onClick={() => setEditing(agent)}
+              >
+                <div className="font-mono text-[13px] font-medium text-text-primary">{agent.id}</div>
+                {agent.description && (
+                  <p className="mt-1 text-xs text-text-secondary">{agent.description}</p>
+                )}
+                <div className="mt-2 flex flex-wrap gap-1">
+                  {agent.skills.map((s) => (
+                    <span key={s} className="rounded-sm bg-accent-primary/10 px-1.5 py-0.5 font-mono text-[10px] text-accent-primary">
+                      {s}
+                    </span>
+                  ))}
+                  {agent.tools.map((toolId) => (
+                    <span key={toolId} className="rounded-sm bg-bg-secondary px-1.5 py-0.5 font-mono text-[10px] text-text-tertiary">
+                      {toolId}
+                    </span>
+                  ))}
+                </div>
+              </button>
+              <button
+                type="button"
+                title={t('actions.delete')}
+                disabled={deleteMutation.isPending}
+                onClick={() => {
+                  if (confirm(t('actions.confirmDeleteSubagent', { id: agent.id }))) {
+                    deleteMutation.mutate({ section: 'subagents', entryId: agent.id });
+                  }
+                }}
+                className="rounded-sm p-2 text-text-tertiary hover:bg-error-bg hover:text-error-text cursor-pointer"
+              >
+                <Trash2 size={14} />
+              </button>
+            </div>
+          )}
+        />
       )}
+
+      <SubagentDialog
+        open={addOpen || !!editing}
+        initial={editing}
+        skills={skills}
+        tools={tools}
+        projectId={projectId}
+        busy={updateMutation.isPending}
+        onOpenChange={(open) => {
+          if (!open) {
+            onAddOpenChange(false);
+            setEditing(null);
+          }
+        }}
+        onUpdate={async (entryId, patch) => {
+          await updateMutation.mutateAsync({ section: 'subagents', entryId, patch });
+        }}
+      />
     </div>
   );
 }
 
-function SubagentItem({ agent, search }: { agent: SubAgent; search: string }) {
+function SubagentDialog({
+  open,
+  initial,
+  skills,
+  tools,
+  projectId,
+  onOpenChange,
+  onUpdate,
+  busy,
+}: {
+  open: boolean;
+  initial: SubAgent | null;
+  skills: Skill[];
+  tools: Tool[];
+  projectId: string;
+  onOpenChange: (open: boolean) => void;
+  onUpdate: (entryId: string, patch: Record<string, unknown>) => Promise<void>;
+  busy: boolean;
+}) {
   const { t } = useTranslation('projects');
-  const [expanded, setExpanded] = useState(false);
+  const appendMutation = useAppendCapability(projectId);
+  const isEdit = !!initial;
+  const [id, setId] = useState('');
+  const [description, setDescription] = useState('');
+  const [instructions, setInstructions] = useState('');
+  const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
+  const [selectedTools, setSelectedTools] = useState<string[]>([]);
+  const [error, setError] = useState<string | null>(null);
 
-  const desc = agent.description || '';
-  const descPreview =
-    desc.length > DESC_PREVIEW_LENGTH
-      ? desc.slice(0, DESC_PREVIEW_LENGTH) + '...'
-      : desc;
+  function toggleTool(tool: Tool) {
+    const ref = skillRequiresRef(tool);
+    setSelectedTools((list) => {
+      const has = list.some((r) => refMatchesTool(r, tool));
+      if (has) return list.filter((r) => !refMatchesTool(r, tool));
+      return [...list.filter((r) => !refMatchesTool(r, tool)), ref];
+    });
+  }
+
+  function toggleSkill(skillId: string) {
+    setSelectedSkills((list) =>
+      list.includes(skillId) ? list.filter((v) => v !== skillId) : [...list, skillId],
+    );
+  }
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    const idErr = capaIdErrorMessage(id, t);
+    if (idErr) {
+      setError(idErr);
+      return;
+    }
+    const entry = {
+      id: id.trim(),
+      description: description.trim() || undefined,
+      instructions: instructions.trim() || undefined,
+      skills: selectedSkills,
+      tools: selectedTools,
+    };
+    try {
+      if (isEdit && initial) {
+        await onUpdate(initial.id, entry);
+      } else {
+        await appendMutation.mutateAsync({ section: 'subagents', entry });
+      }
+      onOpenChange(false);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
+  const pending = busy || appendMutation.isPending;
 
   return (
-    <div className="overflow-hidden rounded-sm border border-border-tertiary bg-bg-tertiary">
-      <button
-        type="button"
-        onClick={() => setExpanded((v) => !v)}
-        className="flex w-full cursor-pointer items-start gap-2 px-3 py-2 text-left hover:bg-hover-bg"
-      >
-        <ChevronRight
-          size={14}
-          className={`mt-0.5 shrink-0 text-text-tertiary transition-transform duration-150 ${expanded ? 'rotate-90' : ''}`}
-        />
-        <div className="min-w-0 flex-1">
-          <span
-            className="truncate font-mono text-xs font-medium text-text-primary"
-            title={agent.id}
-            dangerouslySetInnerHTML={{ __html: highlightText(agent.id, search) }}
-          />
-          {!expanded && (
-            <div className="mt-0.5 truncate text-[11px] text-text-tertiary" title={desc || undefined}>
-              {descPreview || t('subagents.noDescription')}
-            </div>
-          )}
-        </div>
-      </button>
-
-      {expanded && (
-        <div className="border-t border-border-secondary px-3 pb-3 pt-2 text-xs">
-          {desc && (
-            <p
-              className="mb-2 break-words leading-relaxed text-text-secondary"
-              dangerouslySetInnerHTML={{ __html: highlightText(desc, search) }}
-            />
-          )}
-
-          {agent.skills.length > 0 && (
-            <div className="mb-2">
-              <span className="font-medium text-text-primary">
-                {t('subagents.skills')}:
-              </span>{' '}
-              <span className="text-text-secondary">
-                {agent.skills.map((s, i) => (
-                  <span key={s}>
-                    {i > 0 && ', '}
-                    <span dangerouslySetInnerHTML={{ __html: highlightText(s, search) }} />
-                  </span>
-                ))}
-              </span>
-            </div>
-          )}
-
-          {agent.tools.length > 0 && (
-            <div className="mb-2">
-              <span className="font-medium text-text-primary">
-                {t('subagents.tools')}:
-              </span>{' '}
-              <span className="text-text-secondary">
-                {agent.tools.map((tool, i) => (
-                  <span key={tool}>
-                    {i > 0 && ', '}
-                    <span dangerouslySetInnerHTML={{ __html: highlightText(tool, search) }} />
-                  </span>
-                ))}
-              </span>
-            </div>
-          )}
-
-          {agent.instructions && (
+    <Dialog.Root
+      open={open}
+      onOpenChange={(next) => {
+        if (next) {
+          setId(initial?.id || '');
+          setDescription(initial?.description || '');
+          setInstructions(initial?.instructions || '');
+          setSelectedSkills(initial?.skills || []);
+          setSelectedTools(initial?.tools || []);
+          setError(null);
+        }
+        onOpenChange(next);
+      }}
+    >
+      <Dialog.Portal>
+        <Dialog.Overlay className="ui-overlay fixed inset-0 z-40 bg-black/40" />
+        <Dialog.Content className="ui-dialog fixed z-50 max-h-[90vh] w-[min(560px,92vw)] overflow-y-auto rounded-lg border border-border-primary bg-bg-secondary p-5 shadow-lg">
+          <div className="mb-4 flex items-center justify-between">
+            <Dialog.Title className="text-base font-medium text-text-primary">
+              {isEdit ? t('actions.editSubagent') : t('actions.addSubagent')}
+            </Dialog.Title>
+            <Dialog.Close asChild>
+              <button type="button" className="rounded-sm p-1 text-text-tertiary hover:bg-hover-bg cursor-pointer">
+                <X size={16} />
+              </button>
+            </Dialog.Close>
+          </div>
+          {error && <p className="mb-3 text-xs text-error-text">{error}</p>}
+          <form onSubmit={handleSubmit} className="space-y-3">
+            <label className="block text-xs text-text-secondary">
+              ID
+              <input
+                value={id}
+                disabled={isEdit}
+                onChange={(e) => setId(sanitizeCapaIdInput(e.target.value))}
+                className="mt-1 w-full rounded-sm border border-border-tertiary bg-bg-tertiary px-2.5 py-2 font-mono text-sm text-text-primary disabled:opacity-60"
+              />
+            </label>
+            <label className="block text-xs text-text-secondary">
+              {t('actions.description')}
+              <input
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                className="mt-1 w-full rounded-sm border border-border-tertiary bg-bg-tertiary px-2.5 py-2 text-sm text-text-primary"
+              />
+            </label>
+            <label className="block text-xs text-text-secondary">
+              {t('actions.instructions')}
+              <textarea
+                value={instructions}
+                onChange={(e) => setInstructions(e.target.value)}
+                rows={4}
+                className="mt-1 w-full rounded-sm border border-border-tertiary bg-bg-tertiary px-2.5 py-2 text-xs text-text-primary"
+              />
+            </label>
             <div>
-              <span className="font-medium text-text-primary">
-                {t('subagents.instructions')}:
-              </span>
-              <pre className="mt-1 overflow-x-auto rounded-sm bg-bg-secondary p-2 font-mono text-[11px] leading-relaxed text-text-secondary">
-                {agent.instructions}
-              </pre>
+              <div className="mb-1 text-xs text-text-secondary">{t('detail.skills')}</div>
+              <div className="flex flex-wrap gap-1">
+                {skills.map((skill) => (
+                  <button
+                    key={skill.id}
+                    type="button"
+                    onClick={() => toggleSkill(skill.id)}
+                    className={`rounded-sm px-1.5 py-0.5 font-mono text-[10px] cursor-pointer ${
+                      selectedSkills.includes(skill.id)
+                        ? 'bg-accent-primary/15 text-accent-primary'
+                        : 'bg-bg-tertiary text-text-tertiary'
+                    }`}
+                  >
+                    {skill.id}
+                  </button>
+                ))}
+                {skills.length === 0 && (
+                  <span className="text-[11px] text-text-tertiary">{t('actions.emptySkills')}</span>
+                )}
+              </div>
             </div>
-          )}
-        </div>
-      )}
-    </div>
+            <div>
+              <div className="mb-1 text-xs text-text-secondary">{t('detail.configuredTools')}</div>
+              <div className="flex flex-wrap gap-1">
+                {tools.map((tool) => {
+                  const checked = selectedTools.some((r) => refMatchesTool(r, tool));
+                  return (
+                  <button
+                    key={tool.id}
+                    type="button"
+                    onClick={() => toggleTool(tool)}
+                    className={`rounded-sm px-1.5 py-0.5 font-mono text-[10px] cursor-pointer ${
+                      checked
+                        ? 'bg-accent-primary/15 text-accent-primary'
+                        : 'bg-bg-tertiary text-text-tertiary'
+                    }`}
+                  >
+                    {tool.id}
+                  </button>
+                  );
+                })}
+                {tools.length === 0 && (
+                  <span className="text-[11px] text-text-tertiary">{t('actions.emptyTools')}</span>
+                )}
+              </div>
+            </div>
+            <button
+              type="submit"
+              disabled={pending}
+              className="inline-flex items-center gap-2 rounded-sm bg-accent-primary px-3 py-2 text-xs font-medium text-white cursor-pointer disabled:opacity-50"
+            >
+              {pending && <Loader2 size={14} className="animate-spin" />}
+              {isEdit ? t('actions.save') : t('actions.add')}
+            </button>
+          </form>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }

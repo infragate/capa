@@ -1,7 +1,12 @@
 import * as yaml from 'js-yaml';
-import { parseDocument, isSeq } from 'yaml';
+import { parseDocument, isSeq, isMap } from 'yaml';
+import type { YAMLMap, YAMLSeq } from 'yaml';
 import { z } from 'zod';
-import type { Capabilities, CapabilitiesFormat } from '../types/capabilities';
+import type {
+  Capabilities,
+  CapabilitiesFormat,
+  CapabilitiesOptions,
+} from '../types/capabilities';
 import { logger } from './logger';
 
 const KNOWN_CAPABILITY_KEYS = new Set([
@@ -119,7 +124,7 @@ export async function writeCapabilitiesFile(
   await Bun.write(path, content);
 }
 
-type ArrayCapabilitySection =
+export type ArrayCapabilitySection =
   | 'skills'
   | 'servers'
   | 'tools'
@@ -127,6 +132,22 @@ type ArrayCapabilitySection =
   | 'subagents'
   | 'rules'
   | 'hooks';
+
+export type CapabilityEntryPredicate = (entry: Record<string, unknown>) => boolean;
+
+function asPlainObject(value: unknown): Record<string, unknown> | null {
+  if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return null;
+}
+
+function yamlItemToObject(item: unknown): Record<string, unknown> | null {
+  if (isMap(item)) {
+    return (item as YAMLMap).toJSON() as Record<string, unknown>;
+  }
+  return asPlainObject(item);
+}
 
 /**
  * Append a single entry to one of the array-valued capability sections,
@@ -161,5 +182,250 @@ export async function appendCapabilityEntry(
   } else {
     doc.set(section, doc.createNode([entry]));
   }
+  await Bun.write(path, doc.toString());
+}
+
+/**
+ * Remove entries matching `predicate` from an array-valued capability section.
+ * Returns the number of removed entries. YAML path preserves comments/ordering.
+ */
+export async function removeCapabilityEntry(
+  path: string,
+  format: CapabilitiesFormat,
+  section: ArrayCapabilitySection,
+  predicate: CapabilityEntryPredicate
+): Promise<number> {
+  const content = await Bun.file(path).text();
+
+  if (format === 'json') {
+    const data = JSON.parse(content) as Record<string, unknown>;
+    const list = Array.isArray(data[section])
+      ? (data[section] as unknown[])
+      : [];
+    const next = list.filter((item) => {
+      const obj = asPlainObject(item);
+      return !(obj && predicate(obj));
+    });
+    const removed = list.length - next.length;
+    data[section] = next;
+    await Bun.write(path, JSON.stringify(data, null, 2) + '\n');
+    return removed;
+  }
+
+  const doc = parseDocument(content);
+  const existing = doc.get(section);
+  if (!isSeq(existing)) {
+    return 0;
+  }
+
+  const seq = existing as YAMLSeq;
+  let removed = 0;
+  for (let i = seq.items.length - 1; i >= 0; i--) {
+    const obj = yamlItemToObject(seq.items[i]);
+    if (obj && predicate(obj)) {
+      seq.delete(i);
+      removed++;
+    }
+  }
+  await Bun.write(path, doc.toString());
+  return removed;
+}
+
+/**
+ * Update the first entry matching `predicate` by merging/replacing via `updater`.
+ * Returns true if an entry was updated.
+ */
+export async function updateCapabilityEntry(
+  path: string,
+  format: CapabilitiesFormat,
+  section: ArrayCapabilitySection,
+  predicate: CapabilityEntryPredicate,
+  updater: (entry: Record<string, unknown>) => Record<string, unknown>
+): Promise<boolean> {
+  const content = await Bun.file(path).text();
+
+  if (format === 'json') {
+    const data = JSON.parse(content) as Record<string, unknown>;
+    const list = Array.isArray(data[section])
+      ? (data[section] as unknown[])
+      : [];
+    let updated = false;
+    data[section] = list.map((item) => {
+      const obj = asPlainObject(item);
+      if (!updated && obj && predicate(obj)) {
+        updated = true;
+        return updater({ ...obj });
+      }
+      return item;
+    });
+    if (updated) {
+      await Bun.write(path, JSON.stringify(data, null, 2) + '\n');
+    }
+    return updated;
+  }
+
+  const doc = parseDocument(content);
+  const existing = doc.get(section);
+  if (!isSeq(existing)) {
+    return false;
+  }
+
+  const seq = existing as YAMLSeq;
+  for (let i = 0; i < seq.items.length; i++) {
+    const obj = yamlItemToObject(seq.items[i]);
+    if (obj && predicate(obj)) {
+      seq.set(i, doc.createNode(updater({ ...obj })));
+      await Bun.write(path, doc.toString());
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Reorder entries in an array-valued capability section to match `orderedIds`.
+ * YAML path preserves item nodes (comments attached to entries survive).
+ * `orderedIds` must be a permutation of the section's current entry ids.
+ */
+export async function reorderCapabilityEntries(
+  path: string,
+  format: CapabilitiesFormat,
+  section: ArrayCapabilitySection,
+  orderedIds: string[],
+): Promise<void> {
+  if (new Set(orderedIds).size !== orderedIds.length) {
+    throw new Error('ordered ids must be unique');
+  }
+
+  const content = await Bun.file(path).text();
+
+  if (format === 'json') {
+    const data = JSON.parse(content) as Record<string, unknown>;
+    const list = Array.isArray(data[section])
+      ? (data[section] as unknown[])
+      : [];
+    const byId = new Map<string, unknown>();
+    const withoutId: unknown[] = [];
+    for (const item of list) {
+      const obj = asPlainObject(item);
+      const id = obj && typeof obj.id === 'string' ? obj.id : null;
+      if (id) {
+        if (byId.has(id)) {
+          throw new Error(`duplicate id "${id}" in ${section}`);
+        }
+        byId.set(id, item);
+      } else {
+        withoutId.push(item);
+      }
+    }
+
+    assertPermutation(orderedIds, [...byId.keys()], section);
+
+    const next: unknown[] = [];
+    for (const id of orderedIds) {
+      next.push(byId.get(id)!);
+    }
+    next.push(...withoutId);
+    data[section] = next;
+    await Bun.write(path, JSON.stringify(data, null, 2) + '\n');
+    return;
+  }
+
+  const doc = parseDocument(content);
+  const existing = doc.get(section);
+  if (!isSeq(existing)) {
+    if (orderedIds.length === 0) return;
+    throw new Error(`${section} section is missing or not a list`);
+  }
+
+  const seq = existing as YAMLSeq;
+  const byId = new Map<string, unknown>();
+  const withoutId: unknown[] = [];
+  for (const item of seq.items) {
+    const obj = yamlItemToObject(item);
+    const id = obj && typeof obj.id === 'string' ? obj.id : null;
+    if (id) {
+      if (byId.has(id)) {
+        throw new Error(`duplicate id "${id}" in ${section}`);
+      }
+      byId.set(id, item);
+    } else {
+      withoutId.push(item);
+    }
+  }
+
+  assertPermutation(orderedIds, [...byId.keys()], section);
+
+  const nextItems: unknown[] = [];
+  for (const id of orderedIds) {
+    nextItems.push(byId.get(id)!);
+  }
+  nextItems.push(...withoutId);
+  seq.items = nextItems as YAMLSeq['items'];
+  await Bun.write(path, doc.toString());
+}
+
+function assertPermutation(
+  orderedIds: string[],
+  currentIds: string[],
+  section: string,
+): void {
+  if (orderedIds.length !== currentIds.length) {
+    throw new Error(
+      `ids must include every ${section.slice(0, -1)} exactly once (got ${orderedIds.length}, expected ${currentIds.length})`,
+    );
+  }
+  const current = new Set(currentIds);
+  for (const id of orderedIds) {
+    if (!current.has(id)) {
+      throw new Error(`${section.slice(0, -1)} "${id}" not found`);
+    }
+  }
+}
+
+export type OptionsPatch = Partial<
+  Pick<CapabilitiesOptions, 'toolExposure' | 'requiresCommands' | 'security'>
+>;
+
+/**
+ * Shallow-merge `patch` into the top-level `options` object.
+ * Missing `options` is created. Explicit `undefined` values remove that key.
+ */
+export async function upsertOptions(
+  path: string,
+  format: CapabilitiesFormat,
+  patch: OptionsPatch
+): Promise<void> {
+  const content = await Bun.file(path).text();
+
+  if (format === 'json') {
+    const data = JSON.parse(content) as Record<string, unknown>;
+    const options = asPlainObject(data.options) ?? {};
+    for (const [key, value] of Object.entries(patch)) {
+      if (value === undefined) {
+        delete options[key];
+      } else {
+        options[key] = value;
+      }
+    }
+    data.options = options;
+    await Bun.write(path, JSON.stringify(data, null, 2) + '\n');
+    return;
+  }
+
+  const doc = parseDocument(content);
+  const existing = doc.get('options');
+  const options: Record<string, unknown> = isMap(existing)
+    ? ((existing as YAMLMap).toJSON() as Record<string, unknown>)
+    : asPlainObject(existing) ?? {};
+
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === undefined) {
+      delete options[key];
+    } else {
+      options[key] = value;
+    }
+  }
+  doc.set('options', doc.createNode(options));
   await Bun.write(path, doc.toString());
 }
