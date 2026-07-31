@@ -71,3 +71,15 @@ export async function refuseIfWrapWorkspace(command: string): Promise<boolean> {
   );
   return true;
 }
+
+/**
+ * Path used for project identity (DB id / MCP endpoint).
+ * Inside a wrap workspace this is the real project path; otherwise `dir`.
+ */
+export async function resolveProjectIdentityPath(
+  dir: string = process.cwd(),
+): Promise<string> {
+  const marker = await readWorkspaceMarker(dir);
+  if (marker?.realProjectPath) return resolve(marker.realProjectPath);
+  return resolve(dir);
+}

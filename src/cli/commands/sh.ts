@@ -5,6 +5,7 @@ import type { Capabilities } from '../../types/capabilities';
 import { getQualifiedToolName } from '../../types/capabilities';
 import { slugify } from '../../shared/slug';
 import { CAPA_RAW_ARG } from '../../server/tool-formatter';
+import { resolveProjectIdentityPath } from '../utils/wrap/marker';
 
 interface ShellToolInfo {
   id: string;
@@ -679,7 +680,10 @@ export async function shellCommand(args: string[]): Promise<void> {
 
   const serverUrl = status.url;
   const capabilities = await parseCapabilitiesFile(capFile.path, capFile.format);
-  const projectId = generateProjectId(cwd);
+  // Wrap installs register the real project path; resolve identity so `capa sh`
+  // from the shadow workspace hits the same project id / MCP tools.
+  const identityPath = await resolveProjectIdentityPath(cwd);
+  const projectId = generateProjectId(identityPath);
 
   let tools: ShellToolInfo[];
   try {
