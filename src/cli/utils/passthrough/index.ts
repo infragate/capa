@@ -24,6 +24,7 @@ import {
   buildHookEntry,
   type AddKind,
 } from '../../commands/add-builders';
+import { tryResolveRegistryItem } from '../../commands/resolve-registry-source';
 import { upsertNativeMcpServer } from './native-mcp';
 import type { Capabilities, Skill, MCPServer, Plugin } from '../../../types/capabilities';
 import type { Rule } from '../../../types/rules';
@@ -82,6 +83,98 @@ function emptyCapabilities(providers: string[]): Capabilities {
   };
 }
 
+async function passthroughInstallSkill(opts: {
+  skill: Skill;
+  projectPath: string;
+  projectId: string;
+  providers: string[];
+  db: CapaDatabase;
+  settings: Awaited<ReturnType<typeof loadSettings>>;
+  noCache: boolean;
+  written: string[];
+}): Promise<void> {
+  const { skill, projectPath, projectId, providers, db, settings, noCache, written } = opts;
+  const caps = emptyCapabilities(providers);
+  const lockBuilder = new LockfileBuilder(null);
+  const outcome = await installOneSkill(
+    skill,
+    projectPath,
+    projectId,
+    providers,
+    db,
+    settings,
+    caps,
+    join(projectPath, 'capabilities.yaml'),
+    lockBuilder,
+    noCache,
+    new Map(),
+    { trackManaged: false },
+  );
+  if (outcome === 'installed') {
+    for (const pid of providers) {
+      const prov = getProvider(pid);
+      if (prov) written.push(join(projectPath, prov.skillsDir, skill.id));
+    }
+    console.log(`✓ Passthrough: installed skill "${skill.id}"`);
+  } else {
+    console.log(`⚠ Skill "${skill.id}" was skipped (${outcome})`);
+  }
+}
+
+async function passthroughInstallPlugin(opts: {
+  plugin: Plugin;
+  projectPath: string;
+  projectId: string;
+  providers: string[];
+  db: CapaDatabase;
+  noCache: boolean;
+  written: string[];
+  warnings: string[];
+}): Promise<void> {
+  const { plugin, projectPath, projectId, providers, db, noCache, written, warnings } = opts;
+  const caps = emptyCapabilities(providers);
+  caps.plugins = [plugin];
+  const authFetch = createAuthenticatedFetch(db);
+  const lockBuilder = new LockfileBuilder(null);
+  const pluginsBaseDir = join(projectPath, '.capa-passthrough', 'plugins');
+  const result = await resolvePlugins(
+    caps,
+    projectPath,
+    projectId,
+    authFetch,
+    db,
+    getRepoSnapshot,
+    join(projectPath, 'capabilities.yaml'),
+    lockBuilder,
+    { noCache, trackManaged: false, pluginsBaseDir },
+  );
+  warnings.push(...result.warnings);
+  for (const skill of result.mergedCapabilities.skills ?? []) {
+    if (skill.type !== 'plugin' && skill.type !== 'installed') continue;
+    for (const pid of providers) {
+      const prov = getProvider(pid);
+      if (prov) written.push(join(projectPath, prov.skillsDir, skill.id));
+    }
+  }
+  for (const server of result.mergedCapabilities.servers ?? []) {
+    if (server.type !== 'mcp') continue;
+    const def = {
+      ...server.def,
+      env: expandEnvInRecord(server.def.env),
+      headers: expandEnvInRecord(server.def.headers),
+    };
+    const mcpResult = await upsertNativeMcpServer(projectPath, server.id, def, providers);
+    warnings.push(...mcpResult.warnings);
+    for (const w of mcpResult.written) written.push(`${w.configPath}#${w.serverKey}`);
+    if (server.def.url) {
+      warnings.push(
+        `Server "${server.id}" uses a remote URL — complete OAuth/auth in your provider if required.`,
+      );
+    }
+  }
+  console.log(`✓ Passthrough: installed plugin "${plugin.id}"`);
+}
+
 export async function passthroughAdd(
   source: string | undefined,
   kind: AddKind,
@@ -106,85 +199,104 @@ export async function passthroughAdd(
 
   const { db, settings } = await openAuthDb();
   try {
-    if (kind === 'skill') {
+    // Registry sources (skills-sh:…, claude-plugins:…, …) for skill/plugin kinds
+    if ((kind === 'skill' || kind === 'plugin') && source) {
+      const resolved = await tryResolveRegistryItem(source);
+      if (resolved) {
+        console.log(`Resolving from registry "${resolved.registryName}"...`);
+        if (options.plugin && resolved.capability !== 'plugins') {
+          console.warn(
+            `  ⚠ --plugin ignored: registry "${resolved.registryId}" resolved "${resolved.itemId}" as a ${resolved.capability.slice(0, -1)}.`,
+          );
+        }
+        if (options.skill && resolved.capability !== 'skills') {
+          console.warn(
+            `  ⚠ --skill ignored: registry "${resolved.registryId}" resolved "${resolved.itemId}" as a ${resolved.capability.slice(0, -1)}.`,
+          );
+        }
+        if (resolved.capability === 'skills' && resolved.skill) {
+          await passthroughInstallSkill({
+            skill: resolved.skill,
+            projectPath,
+            projectId,
+            providers,
+            db,
+            settings,
+            noCache: !!options.noCache,
+            written,
+          });
+        } else if (resolved.capability === 'plugins' && resolved.plugin) {
+          await passthroughInstallPlugin({
+            plugin: resolved.plugin,
+            projectPath,
+            projectId,
+            providers,
+            db,
+            noCache: !!options.noCache,
+            written,
+            warnings,
+          });
+        }
+        // fall through to summary
+      } else if (kind === 'skill') {
+        const skillDef = await parseSkillSource(source);
+        const skill: Skill = { id: skillDef.id, type: skillDef.type, def: skillDef.def };
+        await passthroughInstallSkill({
+          skill,
+          projectPath,
+          projectId,
+          providers,
+          db,
+          settings,
+          noCache: !!options.noCache,
+          written,
+        });
+      } else if (kind === 'plugin') {
+        const parsed = parsePluginSource(source);
+        const plugin: Plugin = { id: parsed.idHint, type: parsed.type, def: parsed.def };
+        await passthroughInstallPlugin({
+          plugin,
+          projectPath,
+          projectId,
+          providers,
+          db,
+          noCache: !!options.noCache,
+          written,
+          warnings,
+        });
+      }
+    } else if (kind === 'skill') {
       if (!source) {
         throw new Error('Missing <source>. Example: capa add owner/repo@skill --passthrough');
       }
       const skillDef = await parseSkillSource(source);
       const skill: Skill = { id: skillDef.id, type: skillDef.type, def: skillDef.def };
-      const caps = emptyCapabilities(providers);
-      const lockBuilder = new LockfileBuilder(null);
-      const outcome = await installOneSkill(
+      await passthroughInstallSkill({
         skill,
         projectPath,
         projectId,
         providers,
         db,
         settings,
-        caps,
-        join(projectPath, 'capabilities.yaml'),
-        lockBuilder,
-        !!options.noCache,
-        new Map(),
-        { trackManaged: false },
-      );
-      if (outcome === 'installed') {
-        for (const pid of providers) {
-          const prov = getProvider(pid);
-          if (prov) written.push(join(projectPath, prov.skillsDir, skill.id));
-        }
-        console.log(`✓ Passthrough: installed skill "${skill.id}"`);
-      } else {
-        console.log(`⚠ Skill "${skill.id}" was skipped (${outcome})`);
-      }
+        noCache: !!options.noCache,
+        written,
+      });
     } else if (kind === 'plugin') {
       if (!source) {
         throw new Error('Missing <source>. Example: capa add --plugin owner/repo --passthrough');
       }
       const parsed = parsePluginSource(source);
       const plugin: Plugin = { id: parsed.idHint, type: parsed.type, def: parsed.def };
-      const caps = emptyCapabilities(providers);
-      caps.plugins = [plugin];
-      const authFetch = createAuthenticatedFetch(db);
-      const lockBuilder = new LockfileBuilder(null);
-      const pluginsBaseDir = join(projectPath, '.capa-passthrough', 'plugins');
-      const result = await resolvePlugins(
-        caps,
+      await passthroughInstallPlugin({
+        plugin,
         projectPath,
         projectId,
-        authFetch,
+        providers,
         db,
-        getRepoSnapshot,
-        join(projectPath, 'capabilities.yaml'),
-        lockBuilder,
-        { noCache: !!options.noCache, trackManaged: false, pluginsBaseDir },
-      );
-      warnings.push(...result.warnings);
-      for (const skill of result.mergedCapabilities.skills ?? []) {
-        if (skill.type !== 'plugin' && skill.type !== 'installed') continue;
-        for (const pid of providers) {
-          const prov = getProvider(pid);
-          if (prov) written.push(join(projectPath, prov.skillsDir, skill.id));
-        }
-      }
-      // Native MCP for plugin servers
-      for (const server of result.mergedCapabilities.servers ?? []) {
-        if (server.type !== 'mcp') continue;
-        const def = {
-          ...server.def,
-          env: expandEnvInRecord(server.def.env),
-          headers: expandEnvInRecord(server.def.headers),
-        };
-        const mcpResult = await upsertNativeMcpServer(projectPath, server.id, def, providers);
-        warnings.push(...mcpResult.warnings);
-        for (const w of mcpResult.written) written.push(`${w.configPath}#${w.serverKey}`);
-        if (server.def.url) {
-          warnings.push(
-            `Server "${server.id}" uses a remote URL — complete OAuth/auth in your provider if required.`,
-          );
-        }
-      }
-      console.log(`✓ Passthrough: installed plugin "${plugin.id}"`);
+        noCache: !!options.noCache,
+        written,
+        warnings,
+      });
     } else if (kind === 'server') {
       if (source) {
         throw new Error('Server mode does not take a positional <source>; use --id/--cmd/--url flags.');
