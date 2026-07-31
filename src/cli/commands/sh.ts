@@ -1,3 +1,4 @@
+import { resolve } from 'path';
 import { detectCapabilitiesFile, generateProjectId } from '../../shared/paths';
 import { parseCapabilitiesFile } from '../../shared/capabilities';
 import { getDatabasePath, loadSettings } from '../../shared/config';
@@ -306,7 +307,25 @@ async function ensureProjectConfigured(
   const settings = await loadSettings();
   const db = new CapaDatabase(getDatabasePath(settings));
   try {
-    db.upsertProject({ id: projectId, path: identityPath });
+    const existing = db.getProject(projectId);
+    if (existing) {
+      const existingPath = resolve(existing.path);
+      const wantPath = resolve(identityPath);
+      const samePath =
+        process.platform === 'win32'
+          ? existingPath.toLowerCase() === wantPath.toLowerCase()
+          : existingPath === wantPath;
+      if (!samePath) {
+        throw new Error(
+          `Project id "${projectId}" is already registered at a different path:\n` +
+            `  existing: ${existing.path}\n` +
+            `  this:     ${identityPath}\n` +
+            `Remove the conflicting project or reinstall from the correct directory.`,
+        );
+      }
+    } else {
+      db.upsertProject({ id: projectId, path: identityPath });
+    }
   } finally {
     db.close();
   }
