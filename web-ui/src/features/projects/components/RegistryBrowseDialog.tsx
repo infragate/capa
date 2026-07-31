@@ -10,6 +10,7 @@ import { useAddFromRegistry, useAppendCapability } from '../hooks';
 import { Spinner } from '../../../components/common/Spinner';
 import { FileTree } from '../../../components/common/FileTree';
 import { capaIdIssue, sanitizeCapaIdInput } from '../../../lib/ids';
+import { LocalPathPicker } from './LocalPathPicker';
 
 function capaIdErrorMessage(id: string, t: (key: string) => string): string | null {
   const issue = capaIdIssue(id);
@@ -38,6 +39,8 @@ export interface RegistryBrowseDialogProps {
   title: string;
   /** Skills also support creating an inline skill. */
   allowInline?: boolean;
+  /** Skills also support creating a local (from file) skill. */
+  allowLocal?: boolean;
 }
 
 type ResultRow = RegistryItemSummary & { registryId: string; registryName: string; registryIcon?: string };
@@ -49,13 +52,14 @@ export function RegistryBrowseDialog({
   capability,
   title,
   allowInline = false,
+  allowLocal = false,
 }: RegistryBrowseDialogProps) {
   const { t } = useTranslation('projects');
   const { data: registries } = useRegistries();
   const addMutation = useAddFromRegistry(projectId);
   const appendMutation = useAppendCapability(projectId);
 
-  const [mode, setMode] = useState<'registry' | 'inline'>('registry');
+  const [mode, setMode] = useState<'registry' | 'inline' | 'local'>('registry');
   const [registryId, setRegistryId] = useState(ALL);
   const [query, setQuery] = useState('');
   const [searching, setSearching] = useState(false);
@@ -69,6 +73,9 @@ export function RegistryBrowseDialog({
   // Inline skill fields
   const [inlineId, setInlineId] = useState('');
   const [inlineContent, setInlineContent] = useState('');
+  // Local skill fields
+  const [localId, setLocalId] = useState('');
+  const [localPath, setLocalPath] = useState('');
 
   const busy = addMutation.isPending || appendMutation.isPending;
 
@@ -94,6 +101,8 @@ export function RegistryBrowseDialog({
     setError(null);
     setInlineId('');
     setInlineContent('');
+    setLocalId('');
+    setLocalPath('');
     setDropdownOpen(false);
   }, [open]);
 
@@ -221,6 +230,33 @@ export function RegistryBrowseDialog({
     }
   }
 
+  async function handleLocalSubmit(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    if (!localId.trim() || !localPath.trim()) {
+      setError(t('actions.skillLocalRequired'));
+      return;
+    }
+    const idErr = capaIdErrorMessage(localId, t);
+    if (idErr) {
+      setError(idErr);
+      return;
+    }
+    try {
+      await appendMutation.mutateAsync({
+        section: 'skills',
+        entry: {
+          id: localId.trim(),
+          type: 'local',
+          def: { path: localPath.trim() },
+        },
+      });
+      onOpenChange(false);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
   const previewHtml = useMemo(
     () => (detail?.preview ? renderMarkdown(detail.preview) : ''),
     [detail?.preview],
@@ -240,8 +276,8 @@ export function RegistryBrowseDialog({
             </Dialog.Close>
           </div>
 
-          {allowInline && (
-            <div className="flex gap-2 border-b border-border-secondary px-5 py-2">
+          {(allowInline || allowLocal) && (
+            <div className="flex flex-wrap gap-2 border-b border-border-secondary px-5 py-2">
               <button
                 type="button"
                 onClick={() => setMode('registry')}
@@ -253,17 +289,32 @@ export function RegistryBrowseDialog({
               >
                 {t('actions.fromRegistry')}
               </button>
-              <button
-                type="button"
-                onClick={() => setMode('inline')}
-                className={`rounded-sm px-3 py-1.5 text-xs font-medium cursor-pointer ${
-                  mode === 'inline'
-                    ? 'bg-accent-primary/15 text-accent-primary'
-                    : 'bg-bg-tertiary text-text-secondary'
-                }`}
-              >
-                {t('actions.createInline')}
-              </button>
+              {allowInline && (
+                <button
+                  type="button"
+                  onClick={() => setMode('inline')}
+                  className={`rounded-sm px-3 py-1.5 text-xs font-medium cursor-pointer ${
+                    mode === 'inline'
+                      ? 'bg-accent-primary/15 text-accent-primary'
+                      : 'bg-bg-tertiary text-text-secondary'
+                  }`}
+                >
+                  {t('actions.createInline')}
+                </button>
+              )}
+              {allowLocal && (
+                <button
+                  type="button"
+                  onClick={() => setMode('local')}
+                  className={`rounded-sm px-3 py-1.5 text-xs font-medium cursor-pointer ${
+                    mode === 'local'
+                      ? 'bg-accent-primary/15 text-accent-primary'
+                      : 'bg-bg-tertiary text-text-secondary'
+                  }`}
+                >
+                  {t('actions.fromFile')}
+                </button>
+              )}
             </div>
           )}
 
@@ -273,7 +324,40 @@ export function RegistryBrowseDialog({
             </div>
           )}
 
-          {mode === 'inline' && allowInline ? (
+          {mode === 'local' && allowLocal ? (
+            <form onSubmit={handleLocalSubmit} className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-5">
+              <label className="block text-xs text-text-secondary">
+                {t('actions.skillId')}
+                <input
+                  value={localId}
+                  onChange={(e) => setLocalId(sanitizeCapaIdInput(e.target.value))}
+                  className="mt-1 w-full rounded-sm border border-border-tertiary bg-bg-tertiary px-2.5 py-2 font-mono text-sm text-text-primary"
+                />
+              </label>
+              <div className="block text-xs text-text-secondary">
+                {t('actions.skillLocalPath')}
+                <div className="mt-1">
+                  <LocalPathPicker
+                    projectId={projectId}
+                    value={localPath}
+                    onChange={setLocalPath}
+                    dirsOnly
+                    uploadAsSkillDir
+                    placeholder={t('actions.skillLocalPathHint')}
+                  />
+                </div>
+                <p className="mt-1 text-[11px] text-text-tertiary">{t('actions.skillLocalPathHint')}</p>
+              </div>
+              <button
+                type="submit"
+                disabled={busy}
+                className="inline-flex w-fit items-center gap-2 rounded-sm bg-accent-primary px-3 py-2 text-xs font-medium text-white cursor-pointer disabled:opacity-50"
+              >
+                {busy && <Loader2 size={14} className="animate-spin" />}
+                {t('actions.add')}
+              </button>
+            </form>
+          ) : mode === 'inline' && allowInline ? (
             <form onSubmit={handleInlineSubmit} className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-5">
               <label className="block text-xs text-text-secondary">
                 {t('actions.skillId')}

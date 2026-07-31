@@ -1,6 +1,6 @@
 import type { CapaDatabase } from '../db/database';
 import type { RegistryManager } from '../shared/registries/manager';
-import type { Capabilities, CapabilitiesFormat } from '../types/capabilities';
+import type { AgentFileConfig, Capabilities, CapabilitiesFormat } from '../types/capabilities';
 import type { RegistryCapability } from '../types/registry';
 import type { Skill } from '../types/capabilities';
 import type { Plugin } from '../types/plugin';
@@ -11,6 +11,7 @@ import {
   removeCapabilityEntry,
   reorderCapabilityEntries,
   updateCapabilityEntry,
+  upsertAgents,
   upsertOptions,
   type ArrayCapabilitySection,
   type OptionsPatch,
@@ -138,6 +139,11 @@ export async function handleCapabilitiesMutation(
   // PATCH /capabilities/options
   if (rest === '/options' && method === 'PATCH') {
     return handlePatchOptions(deps, projectId, request);
+  }
+
+  // PUT /capabilities/agents — replace or clear the agents object
+  if (rest === '/agents' && method === 'PUT') {
+    return handlePutAgents(deps, projectId, request);
   }
 
   // POST /capabilities/skills/from-registry
@@ -459,6 +465,38 @@ async function handlePatchOptions(
 
   try {
     await upsertOptions(loaded.path, loaded.format, body);
+    return await afterWrite(deps, projectId, loaded.path, loaded.format);
+  } catch (err: any) {
+    return jsonError(err?.message ?? String(err), 400);
+  }
+}
+
+async function handlePutAgents(
+  deps: CapabilitiesRouteDeps,
+  projectId: string,
+  request: Request,
+): Promise<Response> {
+  let body: { agents?: AgentFileConfig | null };
+  try {
+    body = (await request.json()) as typeof body;
+  } catch {
+    return jsonError('Invalid JSON body', 400);
+  }
+
+  if (!('agents' in body)) {
+    return jsonError('Body must include an "agents" field (object or null)', 400);
+  }
+
+  const agents = body.agents;
+  if (agents !== null && (typeof agents !== 'object' || Array.isArray(agents))) {
+    return jsonError('"agents" must be an object or null', 400);
+  }
+
+  const loaded = await loadProjectFile(deps.db, projectId);
+  if (!loaded.ok) return loaded.response;
+
+  try {
+    await upsertAgents(loaded.path, loaded.format, agents ?? null);
     return await afterWrite(deps, projectId, loaded.path, loaded.format);
   } catch (err: any) {
     return jsonError(err?.message ?? String(err), 400);

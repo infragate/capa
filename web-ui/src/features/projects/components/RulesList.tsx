@@ -7,6 +7,7 @@ import { matchesSearch } from '../../../lib/utils';
 import { capaIdIssue, sanitizeCapaIdInput } from '../../../lib/ids';
 import { ReorderableList } from '../../../components/common/ReorderableList';
 import { sourceTypeBadgeClasses } from './sourceTypeColors';
+import { LocalPathPicker } from './LocalPathPicker';
 import { useAppendCapability, useDeleteCapability, useReorderCapability, useUpdateCapability } from '../hooks';
 
 function capaIdErrorMessage(id: string, t: (key: string) => string): string | null {
@@ -32,7 +33,7 @@ export function RulesList({ rules, search, projectId, addOpen, onAddOpenChange }
   const updateMutation = useUpdateCapability(projectId);
   const [editing, setEditing] = useState<Rule | null>(null);
   const searching = !!search.trim();
-  const visible = rules.filter((r) => matchesSearch([r.id, r.description, r.content], search));
+  const visible = rules.filter((r) => matchesSearch([r.id, r.description, r.content, r.path], search));
 
   return (
     <div>
@@ -64,6 +65,11 @@ export function RulesList({ rules, search, projectId, addOpen, onAddOpenChange }
                 </div>
                 {rule.description && (
                   <p className="mt-1 text-xs text-text-secondary">{rule.description}</p>
+                )}
+                {rule.path && (
+                  <p className="mt-1 truncate font-mono text-[11px] text-text-tertiary" title={rule.path}>
+                    {rule.path}
+                  </p>
                 )}
                 {rule.content && (
                   <p className="mt-1 line-clamp-2 font-mono text-[11px] text-text-tertiary">{rule.content}</p>
@@ -105,8 +111,6 @@ export function RulesList({ rules, search, projectId, addOpen, onAddOpenChange }
               entryId: editing.id,
               patch: entry,
             });
-          } else {
-            // handled in dialog via append
           }
         }}
         projectId={projectId}
@@ -137,34 +141,47 @@ function RuleDialog({
 }) {
   const { t } = useTranslation('projects');
   const appendMutation = useAppendCapability(projectId);
+  const [sourceMode, setSourceMode] = useState<'inline' | 'local'>('inline');
   const [id, setId] = useState(initial?.id || '');
   const [description, setDescription] = useState(initial?.description || '');
   const [content, setContent] = useState(initial?.content || '');
+  const [path, setPath] = useState(initial?.path || '');
   const [error, setError] = useState<string | null>(null);
-
-  // sync when opening
-  if (open && initial && id !== initial.id && mode === 'edit') {
-    // controlled reset via key on parent is cleaner — use effect-free key approach
-  }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
-    if (!id.trim() || !content.trim()) {
-      setError(t('actions.ruleRequired'));
-      return;
-    }
     const idErr = capaIdErrorMessage(id, t);
     if (idErr) {
       setError(idErr);
       return;
     }
-    const entry = {
-      id: id.trim(),
-      type: 'inline' as const,
-      description: description.trim() || undefined,
-      content: content.trim(),
-    };
+
+    const useLocal = !isEdit && sourceMode === 'local';
+    if (useLocal) {
+      if (!id.trim() || !path.trim()) {
+        setError(t('actions.ruleLocalRequired'));
+        return;
+      }
+    } else if (!id.trim() || !content.trim()) {
+      setError(t('actions.ruleRequired'));
+      return;
+    }
+
+    const entry = useLocal
+      ? {
+          id: id.trim(),
+          type: 'local' as const,
+          description: description.trim() || undefined,
+          path: path.trim(),
+        }
+      : {
+          id: id.trim(),
+          type: 'inline' as const,
+          description: description.trim() || undefined,
+          content: content.trim(),
+        };
+
     try {
       if (isEdit) {
         await onSubmit(entry);
@@ -184,14 +201,18 @@ function RuleDialog({
       open={open}
       onOpenChange={(next) => {
         if (next && !isEdit) {
+          setSourceMode('inline');
           setId('');
           setDescription('');
           setContent('');
+          setPath('');
           setError(null);
         } else if (next && initial) {
+          setSourceMode(initial.type === 'local' ? 'local' : 'inline');
           setId(initial.id);
           setDescription(initial.description || '');
           setContent(initial.content || '');
+          setPath(initial.path || '');
           setError(null);
         }
         onOpenChange(next);
@@ -211,6 +232,32 @@ function RuleDialog({
             </Dialog.Close>
           </div>
           {error && <p className="mb-3 text-xs text-error-text">{error}</p>}
+          {!isEdit && (
+            <div className="mb-3 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setSourceMode('inline')}
+                className={`rounded-sm px-3 py-1.5 text-xs font-medium cursor-pointer ${
+                  sourceMode === 'inline'
+                    ? 'bg-accent-primary/15 text-accent-primary'
+                    : 'bg-bg-tertiary text-text-secondary'
+                }`}
+              >
+                {t('actions.createInline')}
+              </button>
+              <button
+                type="button"
+                onClick={() => setSourceMode('local')}
+                className={`rounded-sm px-3 py-1.5 text-xs font-medium cursor-pointer ${
+                  sourceMode === 'local'
+                    ? 'bg-accent-primary/15 text-accent-primary'
+                    : 'bg-bg-tertiary text-text-secondary'
+                }`}
+              >
+                {t('actions.fromFile')}
+              </button>
+            </div>
+          )}
           <form onSubmit={handleSubmit} className="space-y-3">
             <label className="block text-xs text-text-secondary">
               ID
@@ -229,15 +276,31 @@ function RuleDialog({
                 className="mt-1 w-full rounded-sm border border-border-tertiary bg-bg-tertiary px-2.5 py-2 text-sm text-text-primary"
               />
             </label>
-            <label className="block text-xs text-text-secondary">
-              {t('actions.content')}
-              <textarea
-                value={content}
-                onChange={(e) => setContent(e.target.value)}
-                rows={8}
-                className="mt-1 w-full rounded-sm border border-border-tertiary bg-bg-tertiary px-2.5 py-2 font-mono text-xs text-text-primary"
-              />
-            </label>
+            {!isEdit && sourceMode === 'local' ? (
+              <div className="block text-xs text-text-secondary">
+                {t('actions.ruleLocalPath')}
+                <div className="mt-1">
+                  <LocalPathPicker
+                    projectId={projectId}
+                    value={path}
+                    onChange={setPath}
+                    ext="md"
+                    placeholder={t('actions.ruleLocalPathHint')}
+                  />
+                </div>
+                <p className="mt-1 text-[11px] text-text-tertiary">{t('actions.ruleLocalPathHint')}</p>
+              </div>
+            ) : (
+              <label className="block text-xs text-text-secondary">
+                {t('actions.content')}
+                <textarea
+                  value={content}
+                  onChange={(e) => setContent(e.target.value)}
+                  rows={8}
+                  className="mt-1 w-full rounded-sm border border-border-tertiary bg-bg-tertiary px-2.5 py-2 font-mono text-xs text-text-primary"
+                />
+              </label>
+            )}
             <button
               type="submit"
               disabled={pending}

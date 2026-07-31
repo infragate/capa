@@ -10,6 +10,9 @@ import type {
   ActionResponse,
   CapabilitiesMutationResponse,
   CapabilitySection,
+  ProjectFsListResponse,
+  ProjectFsUploadResponse,
+  AgentFileConfig,
 } from '../../types/api';
 
 export const projectsApi = {
@@ -98,6 +101,52 @@ export const projectsApi = {
       `/api/projects/${encodeURIComponent(projectId)}/capabilities/options`,
       patch,
     ),
+
+  putAgents: (projectId: string, agents: AgentFileConfig | Record<string, unknown> | null) =>
+    api.put<CapabilitiesMutationResponse>(
+      `/api/projects/${encodeURIComponent(projectId)}/capabilities/agents`,
+      { agents },
+    ),
+
+  listFs: (
+    projectId: string,
+    opts?: { path?: string; ext?: string; dirsOnly?: boolean },
+  ) => {
+    const params = new URLSearchParams();
+    if (opts?.path) params.set('path', opts.path);
+    if (opts?.ext) params.set('ext', opts.ext);
+    if (opts?.dirsOnly) params.set('dirsOnly', 'true');
+    const qs = params.toString();
+    return api.get<ProjectFsListResponse>(
+      `/api/projects/${encodeURIComponent(projectId)}/fs${qs ? `?${qs}` : ''}`,
+    );
+  },
+
+  uploadFs: async (
+    projectId: string,
+    file: File,
+    opts?: { asSkillDir?: boolean; subdir?: string },
+  ) => {
+    const form = new FormData();
+    form.append('file', file);
+    if (opts?.asSkillDir) form.append('asSkillDir', 'true');
+    if (opts?.subdir) form.append('subdir', opts.subdir);
+    const res = await fetch(
+      `/api/projects/${encodeURIComponent(projectId)}/fs`,
+      { method: 'POST', body: form },
+    );
+    if (!res.ok) {
+      const text = await res.text().catch(() => res.statusText);
+      try {
+        const parsed = JSON.parse(text);
+        if (parsed?.error) throw new Error(parsed.error);
+      } catch (err) {
+        if (err instanceof Error && err.message !== text) throw err;
+      }
+      throw new Error(text);
+    }
+    return res.json() as Promise<ProjectFsUploadResponse>;
+  },
 
   addFromRegistry: (
     projectId: string,

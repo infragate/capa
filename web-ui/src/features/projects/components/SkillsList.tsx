@@ -21,7 +21,7 @@ export function SkillsList({ skills, search, projectId }: SkillsListProps) {
   const deleteMutation = useDeleteCapability(projectId);
   const reorderMutation = useReorderCapability(projectId);
   const searching = !!search.trim();
-  const visible = skills.filter((s) => matchesSearch([s.id, s.description], search));
+  const visible = skills.filter((s) => matchesSearch([s.id, s.description, s.path], search));
 
   return (
     <div>
@@ -66,6 +66,11 @@ export function SkillsList({ skills, search, projectId }: SkillsListProps) {
                         __html: highlightText(skill.description, search),
                       }}
                     />
+                  )}
+                  {skill.path && (
+                    <p className="mt-1 truncate font-mono text-[11px] text-text-tertiary" title={skill.path}>
+                      {skill.path}
+                    </p>
                   )}
                   {skill.sourcePlugin?.name && (
                     <div className="mt-2 flex items-center gap-1.5 text-[11px] text-text-tertiary">

@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Plus } from 'lucide-react';
 import type {
+  AgentFileConfig,
   AuthoredPlugin,
   Hook,
   ResolvedPlugin,
@@ -19,6 +20,7 @@ import { ToolsSection } from './ToolsSection';
 import { RulesList } from './RulesList';
 import { HooksList } from './HooksList';
 import { SubagentsList } from './SubagentsList';
+import { AgentsEditor } from './AgentsEditor';
 import { PluginsEditor } from './PluginsEditor';
 import { RegistryBrowseDialog } from './RegistryBrowseDialog';
 
@@ -91,6 +93,7 @@ interface CapabilitiesSectionProps {
   subagents: SubAgent[];
   rules: Rule[];
   hooks: Hook[];
+  agents: AgentFileConfig | null;
   plugins: AuthoredPlugin[];
   resolvedPlugins: ResolvedPlugin[];
   projectId: string;
@@ -103,6 +106,7 @@ export function CapabilitiesSection({
   subagents,
   rules,
   hooks,
+  agents,
   plugins,
   resolvedPlugins,
   projectId,
@@ -121,6 +125,9 @@ export function CapabilitiesSection({
   const q = search.trim();
   const searching = q.length > 0;
 
+  const agentsCount =
+    (agents?.base ? 1 : 0) + (agents?.additional?.length ?? 0);
+
   const forceOpen = useMemo(() => {
     if (!searching) {
       return {
@@ -129,13 +136,21 @@ export function CapabilitiesSection({
         tools: false,
         rules: false,
         hooks: false,
+        agents: false,
         subagents: false,
       };
     }
 
+    const agentsMatch =
+      (agents?.base &&
+        matchesSearch([agents.base.path, agents.base.ref, agents.base.type], q)) ||
+      (agents?.additional || []).some((s) =>
+        matchesSearch([s.id, s.content, s.path, s.url], q),
+      );
+
     return {
       plugins: plugins.some((p) => matchesSearch([p.id, p.def?.repo], q)),
-      skills: skills.some((s) => matchesSearch([s.id, s.description], q)),
+      skills: skills.some((s) => matchesSearch([s.id, s.description, s.path], q)),
       tools:
         servers.some((s) => {
           const cmdStr = s.cmd ? [s.cmd, ...(s.args || [])].join(' ') : '';
@@ -144,13 +159,14 @@ export function CapabilitiesSection({
         tools.some((tool) =>
           matchesSearch([tool.id, tool.description, tool.mcpTool, tool.mcpServer, tool.command], q),
         ),
-      rules: rules.some((r) => matchesSearch([r.id, r.description, r.content], q)),
+      rules: rules.some((r) => matchesSearch([r.id, r.description, r.content, r.path], q)),
       hooks: hooks.some((h) => matchesSearch([h.id, h.description, h.on, h.command, h.prompt], q)),
+      agents: !!agentsMatch,
       subagents: subagents.some((s) =>
         matchesSearch([s.id, s.description, s.instructions, ...s.skills, ...s.tools], q),
       ),
     };
-  }, [searching, q, plugins, skills, servers, tools, rules, hooks, subagents]);
+  }, [searching, q, plugins, skills, servers, tools, rules, hooks, agents, subagents]);
 
   const needsOAuthCount = useMemo(
     () => servers.filter((s) => s.requiresOAuth && !s.isConnected).length,
@@ -203,6 +219,7 @@ export function CapabilitiesSection({
             capability="skills"
             title={t('actions.addSkill')}
             allowInline
+            allowLocal
           />
         }
       >
@@ -276,6 +293,14 @@ export function CapabilitiesSection({
           addOpen={addHookOpen}
           onAddOpenChange={setAddHookOpen}
         />
+      </CapabilityCollapsible>
+
+      <CapabilityCollapsible
+        title={t('detail.agents')}
+        count={agentsCount}
+        forceOpen={forceOpen.agents}
+      >
+        <AgentsEditor agents={agents} search={search} projectId={projectId} />
       </CapabilityCollapsible>
 
       <CapabilityCollapsible

@@ -379,6 +379,30 @@ export async function installAgentsFile(
           sourceLabel: `agents snippet "${resolvedId}"`,
         });
       }
+    } else if (snippet.type === 'local') {
+      if (!snippet.id) throw new Error(`Agent local snippet is missing an "id" field.`);
+      if (!snippet.path) {
+        throw new Error(
+          `Agent snippet "${snippet.id}" is type 'local' but has no "path" field ` +
+            `(e.g. "path: ./docs/team.md").`,
+        );
+      }
+      if (!capabilitiesFilePath) {
+        throw new Error(
+          `Agent snippet "${snippet.id}" type 'local' requires the capabilities file path to resolve relative paths.`,
+        );
+      }
+      resolvedId = snippet.id;
+      const capabilitiesDir = dirname(capabilitiesFilePath);
+      const resolvedPath = resolve(capabilitiesDir, snippet.path);
+      if (!existsSync(resolvedPath)) {
+        throw new Error(
+          `Agent snippet "${snippet.id}" local file not found: ${resolvedPath} ` +
+            `(resolved from path "${snippet.path}")`,
+        );
+      }
+      taskLog(`  Reading local snippet "${resolvedId}" from ${resolvedPath}`);
+      body = readFileSync(resolvedPath, 'utf8');
     } else if (snippet.type === 'github' || snippet.type === 'gitlab') {
       const resolved = await resolveRepoSnippet(snippet.type, snippet, ctx);
       resolvedId = resolved.id;

@@ -6,6 +6,7 @@ import type {
   Capabilities,
   CapabilitiesFormat,
   CapabilitiesOptions,
+  AgentFileConfig,
 } from '../types/capabilities';
 import { logger } from './logger';
 
@@ -427,5 +428,36 @@ export async function upsertOptions(
     }
   }
   doc.set('options', doc.createNode(options));
+  await Bun.write(path, doc.toString());
+}
+
+/**
+ * Replace (or remove) the top-level `agents` object.
+ * Pass `null` to delete the key. YAML path preserves unrelated comments/keys.
+ */
+export async function upsertAgents(
+  path: string,
+  format: CapabilitiesFormat,
+  agents: AgentFileConfig | null,
+): Promise<void> {
+  const content = await Bun.file(path).text();
+
+  if (format === 'json') {
+    const data = JSON.parse(content) as Record<string, unknown>;
+    if (agents === null) {
+      delete data.agents;
+    } else {
+      data.agents = agents;
+    }
+    await Bun.write(path, JSON.stringify(data, null, 2) + '\n');
+    return;
+  }
+
+  const doc = parseDocument(content);
+  if (agents === null) {
+    doc.delete('agents');
+  } else {
+    doc.set('agents', doc.createNode(agents));
+  }
   await Bun.write(path, doc.toString());
 }
