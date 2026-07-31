@@ -79,6 +79,7 @@
     "disconnect": "Disconnect",
     "connected": "Connected",
     "needsOAuth": "Needs OAuth",
+    "needsOAuthCount": "{{count}} need OAuth",
     "addSkill": "Add skill",
     "addServer": "Add server",
     "addCommandTool": "Add command tool",
@@ -204,6 +205,7 @@
     "cmd": "cmd",
     "requiredBy": "required by",
     "noToolsOnServer": "No tools found on this server",
+    "connectFirst": "Connect to this server first to list its tools",
     "serverUnreachable": "Server unreachable",
     "commandsGroup": "Commands"
   },

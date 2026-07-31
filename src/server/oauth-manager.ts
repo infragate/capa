@@ -17,6 +17,20 @@ import { isPermanentRefreshFailure } from '../shared/oauth-refresh';
 // Re-exported for backwards compatibility with existing import sites.
 export { isPermanentRefreshFailure };
 
+/** Resolve auth/token endpoints from mixed plugin + discovery field names. */
+function resolveAuthorizationEndpoint(oauth2Config: OAuth2Config): string | undefined {
+  return (
+    oauth2Config.authorizationEndpoint ||
+    (oauth2Config as { authorizationUrl?: string }).authorizationUrl
+  );
+}
+
+function resolveTokenEndpoint(oauth2Config: OAuth2Config): string | undefined {
+  return (
+    oauth2Config.tokenEndpoint || (oauth2Config as { tokenUrl?: string }).tokenUrl
+  );
+}
+
 /** Timeout for outbound HTTP requests made during OAuth2 detection (ms). */
 const OAUTH_DETECT_TIMEOUT_MS = 10_000;
 
@@ -251,7 +265,13 @@ export class OAuth2Manager {
     this.db.deleteExpiredFlowStates(10);
 
     // Build authorization URL per OAuth 2.1 with PKCE
-    const authUrl = new URL(oauth2Config.authorizationEndpoint);
+    const authorizationEndpoint = resolveAuthorizationEndpoint(oauth2Config);
+    if (!authorizationEndpoint) {
+      throw new Error(
+        'OAuth authorization endpoint is missing. Re-configure the project or reconnect after OAuth discovery succeeds.',
+      );
+    }
+    const authUrl = new URL(authorizationEndpoint);
     authUrl.searchParams.set('response_type', 'code');
     authUrl.searchParams.set('client_id', clientId);
     authUrl.searchParams.set('redirect_uri', redirectUri);
@@ -350,13 +370,17 @@ export class OAuth2Manager {
       }
 
       const oauth2Config = server.def.oauth2 as OAuth2Config;
+      const tokenEndpoint = resolveTokenEndpoint(oauth2Config);
+      if (!tokenEndpoint) {
+        return { success: false, error: 'OAuth token endpoint is missing for this server' };
+      }
 
       // Get client credentials if stored (from dynamic registration)
       const clientSecret = this.db.getVariable(project_id, `oauth2_client_secret_${server_id}`);
 
       this.logger.info('Exchanging code for tokens');
       this.logger.debug(`client_id: ${client_id}`);
-      this.logger.debug(`token_endpoint: ${oauth2Config.tokenEndpoint}`);
+      this.logger.debug(`token_endpoint: ${tokenEndpoint}`);
 
       // Store client_id for future token refresh operations
       this.db.setVariable(project_id, `oauth2_client_id_${server_id}`, client_id);
@@ -374,7 +398,7 @@ export class OAuth2Manager {
         tokenParams.client_secret = clientSecret;
       }
 
-      const tokenResponse = await fetch(oauth2Config.tokenEndpoint, {
+      const tokenResponse = await fetch(tokenEndpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
@@ -446,7 +470,13 @@ export class OAuth2Manager {
         tokenParams.client_secret = clientSecret;
       }
 
-      const response = await fetch(oauth2Config.tokenEndpoint, {
+      const tokenEndpoint = resolveTokenEndpoint(oauth2Config);
+      if (!tokenEndpoint) {
+        this.logger.failure(`No token endpoint for ${serverId}`);
+        return false;
+      }
+
+      const response = await fetch(tokenEndpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',

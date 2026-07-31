@@ -256,6 +256,7 @@ export function ToolsSection({
       queryFn: () => projectsApi.getServerTools(projectId, server.id),
       staleTime: 60_000,
       retry: false,
+      enabled: !(server.requiresOAuth && !server.isConnected),
     })),
   });
 
@@ -882,7 +883,20 @@ function ServerCard({
 
       {expanded && (
         <div className="border-t border-border-secondary px-2 pb-2 pt-2">
-          {!visibleTools ? (
+          {server.requiresOAuth && !server.isConnected ? (
+            <div className="flex flex-col items-center gap-2 py-3 text-center">
+              <p className="text-[11px] text-text-tertiary">{t('tool.connectFirst')}</p>
+              <button
+                type="button"
+                onClick={() => void handleConnect()}
+                disabled={startOAuth.isPending}
+                className="inline-flex items-center gap-1 rounded-sm border border-border-tertiary px-2.5 py-1 text-[11px] text-text-secondary cursor-pointer hover:bg-hover-bg disabled:opacity-50"
+              >
+                <Link2 size={12} />
+                {t('actions.connect')}
+              </button>
+            </div>
+          ) : !visibleTools ? (
             <Spinner className="py-3" />
           ) : visibleTools.length === 0 ? (
             <p className="py-2 text-center text-[11px] text-text-tertiary">

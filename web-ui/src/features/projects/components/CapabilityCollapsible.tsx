@@ -17,6 +17,8 @@ interface CapabilityCollapsibleProps {
   addLabel?: string;
   children: ReactNode;
   actions?: ReactNode;
+  /** Extra status chips next to the count (e.g. Needs OAuth). */
+  badges?: ReactNode;
   /** Rendered outside the collapsible body so dialogs work while collapsed. */
   dialog?: ReactNode;
 }
@@ -31,6 +33,7 @@ export function CapabilityCollapsible({
   addLabel,
   children,
   actions,
+  badges,
   dialog,
 }: CapabilityCollapsibleProps) {
   const [open, setOpen] = useState(defaultOpen);
@@ -61,6 +64,7 @@ export function CapabilityCollapsible({
             <span className="rounded-sm bg-bg-tertiary px-1.5 py-0.5 text-xs font-normal text-text-secondary tabular-nums">
               {count}
             </span>
+            {badges}
           </button>
         </Collapsible.Trigger>
         <div className="flex items-center gap-1">

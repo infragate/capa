@@ -18,6 +18,11 @@ import { RegistryManager } from '../shared/registries/manager';
 import { seedDefaultRegistries } from '../shared/registries/seed';
 import { CapabilitiesFileWatcher } from './capabilities-watcher';
 import {
+  loadEffectiveCapabilities,
+  preserveDiscoveredOAuth2,
+  type EffectiveCapsCacheEntry,
+} from './resolve-effective-capabilities';
+import {
   listRegistriesHandler,
   createRegistryHandler,
   deleteRegistryHandler,
@@ -95,6 +100,8 @@ class CapaServer {
   private registryManager!: RegistryManager;
   private capsWatcher!: CapabilitiesFileWatcher;
   private projectEventClients = new Map<string, Set<(chunk: Uint8Array) => void>>();
+  /** Cached plugin-expanded capabilities keyed by project id */
+  private effectiveCapsCache = new Map<string, EffectiveCapsCacheEntry>();
   private startTime: number = Date.now();
   private logger = logger.child('CapaServer');
 
@@ -619,8 +626,20 @@ class CapaServer {
       try {
         const file = await detectCapabilitiesFile(project.path);
         if (file) {
-          // Disk is source of truth for the UI — always serve the file contents.
-          capabilities = await parseCapabilitiesFile(file.path, file.format);
+          // Authored file is source of truth; expand plugins into derived servers/skills.
+          const authored = await parseCapabilitiesFile(file.path, file.format);
+          const previous = this.sessionManager.getProjectCapabilities(projectId);
+          capabilities = preserveDiscoveredOAuth2(
+            await loadEffectiveCapabilities(
+              authored,
+              project.path,
+              projectId,
+              file.path,
+              this.db,
+              this.effectiveCapsCache,
+            ),
+            previous,
+          );
           this.sessionManager.setProjectCapabilities(projectId, capabilities);
           void this.capsWatcher.watchProject(projectId, project.path);
         }
@@ -1166,18 +1185,37 @@ class CapaServer {
   ): Promise<Record<string, unknown>> {
     const apiLogger = this.logger.child('API');
     apiLogger.info(`Configure project: ${projectId}`);
-    apiLogger.info(`Skills: ${capabilities.skills.map(s => s.id).join(', ')}`);
-    apiLogger.info(`Tools: ${capabilities.tools.length}`);
-    apiLogger.info(`Servers: ${capabilities.servers.length}`);
-
-    this.sessionManager.setProjectCapabilities(projectId, capabilities);
 
     const project = this.db.getProject(projectId);
+    let capabilitiesToUse = capabilities;
+
+    if (project && (capabilities.plugins?.length ?? 0) > 0) {
+      const file = await detectCapabilitiesFile(project.path);
+      if (file) {
+        // Invalidate cache so a freshly added plugin is re-resolved.
+        this.effectiveCapsCache.delete(projectId);
+        capabilitiesToUse = await loadEffectiveCapabilities(
+          capabilities,
+          project.path,
+          projectId,
+          file.path,
+          this.db,
+          this.effectiveCapsCache,
+        );
+      }
+    } else {
+      this.effectiveCapsCache.delete(projectId);
+    }
+
+    apiLogger.info(`Skills: ${capabilitiesToUse.skills.map(s => s.id).join(', ')}`);
+    apiLogger.info(`Tools: ${capabilitiesToUse.tools.length}`);
+    apiLogger.info(`Servers: ${capabilitiesToUse.servers.length}`);
+
+    this.sessionManager.setProjectCapabilities(projectId, capabilitiesToUse);
+
     if (project) {
       void this.capsWatcher.watchProject(projectId, project.path);
     }
-
-    const capabilitiesToUse = capabilities;
 
     // -- OAuth2 detection (parallel) ------------------------------------
     // Servers requiring OAuth2 detection: every HTTP-based server that
@@ -1765,10 +1803,52 @@ class CapaServer {
 
       // Ensure the OAuth2Config we hand to the manager has the canonical snake_case
       // client_id populated so generateAuthorizationUrl emits the embedded app id.
-      const configForFlow: OAuth2Config = {
+      // Plugin manifests (e.g. Slack) often only embed client_id + callback_port;
+      // discovery fills authorization/token endpoints during configure — but GET
+      // can re-expand plugins and drop those. Discover on demand if still missing.
+      let configForFlow: OAuth2Config = {
         ...(server.def.oauth2 as OAuth2Config),
         ...(effectiveClientId ? { client_id: effectiveClientId } : {}),
       };
+      const hasAuthEndpoint = !!(
+        configForFlow.authorizationEndpoint ||
+        (configForFlow as { authorizationUrl?: string }).authorizationUrl
+      );
+      const hasTokenEndpoint = !!(
+        configForFlow.tokenEndpoint ||
+        (configForFlow as { tokenUrl?: string }).tokenUrl
+      );
+      if ((!hasAuthEndpoint || !hasTokenEndpoint) && server.def.url) {
+        apiLogger.info(`Discovering OAuth endpoints for ${serverId}…`);
+        const detected = await this.oauth2Manager.detectOAuth2Requirement(server.def.url, {
+          tlsSkipVerify: server.def.tlsSkipVerify,
+        });
+        if (!detected) {
+          return new Response(
+            JSON.stringify({
+              error:
+                'Could not discover OAuth authorization endpoints for this server. Check that the MCP URL is reachable.',
+            }),
+            { status: 502, headers: { 'Content-Type': 'application/json' } },
+          );
+        }
+        configForFlow = {
+          ...detected,
+          ...configForFlow,
+          authorizationEndpoint:
+            configForFlow.authorizationEndpoint ||
+            (configForFlow as { authorizationUrl?: string }).authorizationUrl ||
+            detected.authorizationEndpoint,
+          tokenEndpoint:
+            configForFlow.tokenEndpoint ||
+            (configForFlow as { tokenUrl?: string }).tokenUrl ||
+            detected.tokenEndpoint,
+          resourceServer: configForFlow.resourceServer || detected.resourceServer || server.def.url,
+          ...(effectiveClientId ? { client_id: effectiveClientId } : {}),
+        };
+        server.def.oauth2 = configForFlow;
+        this.sessionManager.setProjectCapabilities(projectId, capabilities);
+      }
 
       const { url: authUrl, state } = await this.oauth2Manager.generateAuthorizationUrl(
         projectId,

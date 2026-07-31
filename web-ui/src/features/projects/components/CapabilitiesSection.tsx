@@ -152,6 +152,11 @@ export function CapabilitiesSection({
     };
   }, [searching, q, plugins, skills, servers, tools, rules, hooks, subagents]);
 
+  const needsOAuthCount = useMemo(
+    () => servers.filter((s) => s.requiresOAuth && !s.isConnected).length,
+    [servers],
+  );
+
   return (
     <div className="mb-6 rounded-lg border border-border-primary bg-bg-secondary p-6">
       <div className="mb-4 flex items-center justify-between border-b border-border-secondary pb-4">
@@ -209,6 +214,15 @@ export function CapabilitiesSection({
         count={servers.length + tools.length}
         forceOpen={forceOpen.tools}
         keepMounted={addServerOpen || editServerOpen || addCommandToolOpen}
+        badges={
+          needsOAuthCount > 0 ? (
+            <span className="rounded-sm bg-[hsl(40_80%_50%/0.15)] px-1.5 py-0.5 text-[10px] font-medium text-[hsl(40_80%_45%)]">
+              {needsOAuthCount === 1
+                ? t('actions.needsOAuth')
+                : t('actions.needsOAuthCount', { count: needsOAuthCount })}
+            </span>
+          ) : null
+        }
         actions={
           <ToolsAddMenu
             onAddServer={() => setAddServerOpen(true)}
