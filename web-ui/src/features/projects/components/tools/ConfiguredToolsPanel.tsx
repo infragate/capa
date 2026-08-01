@@ -102,7 +102,9 @@ export function ConfiguredToolsPanel({
                   deleteMutation.mutate({ section: 'tools', entryId: tool.id });
                 }
               }}
-              deleting={deleteMutation.isPending}
+              deleting={
+                deleteMutation.isPending && deleteMutation.variables?.entryId === tool.id
+              }
               dragHandle={handle}
             />
           )}

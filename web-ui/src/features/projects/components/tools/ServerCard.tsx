@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import {
   ChevronRight,
   Trash2,
@@ -8,10 +8,11 @@ import {
   Link2,
   Unlink,
   Pencil,
+  Loader2,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { Server, ToolSchema } from '../../../../types/api';
-import { highlightText, matchesSearch } from '../../../../lib/utils';
+import { highlightText, isFormFieldTarget, matchesSearch } from '../../../../lib/utils';
 import { Spinner } from '../../../../components/common/Spinner';
 import {
   useAppendCapability,
@@ -53,8 +54,14 @@ export function ServerCard({
   const appendMutation = useAppendCapability(projectId);
   const startOAuth = useStartOAuth(projectId);
   const disconnectOAuth = useDisconnectOAuth(projectId);
+  const [pendingToolName, setPendingToolName] = useState<string | null>(null);
   const locked = !!server.sourcePlugin;
   const label = server.displayName || server.id;
+  const mutating =
+    appendMutation.isPending ||
+    deleteMutation.isPending ||
+    startOAuth.isPending ||
+    disconnectOAuth.isPending;
 
   const visibleTools = useMemo(() => {
     if (!tools) return undefined;
@@ -86,19 +93,24 @@ export function ServerCard({
   }
 
   async function handleUseTool(tool: ToolSchema) {
-    const toolId = suggestConfiguredToolId(server.id, tool.name, existingToolIds);
-    await appendMutation.mutateAsync({
-      section: 'tools',
-      entry: {
-        id: toolId,
-        type: 'mcp',
-        description: tool.description || undefined,
-        def: {
-          server: `@${server.id}`,
-          tool: tool.name,
+    setPendingToolName(tool.name);
+    try {
+      const toolId = suggestConfiguredToolId(server.id, tool.name, existingToolIds);
+      await appendMutation.mutateAsync({
+        section: 'tools',
+        entry: {
+          id: toolId,
+          type: 'mcp',
+          description: tool.description || undefined,
+          def: {
+            server: `@${server.id}`,
+            tool: tool.name,
+          },
         },
-      },
-    });
+      });
+    } finally {
+      setPendingToolName(null);
+    }
   }
 
   return (
@@ -148,24 +160,33 @@ export function ServerCard({
             <button
               type="button"
               onClick={() => void handleConnect()}
-              disabled={startOAuth.isPending}
+              disabled={mutating}
               className="inline-flex items-center gap-1 rounded-sm border border-border-tertiary px-2 py-1 text-[11px] cursor-pointer hover:bg-hover-bg disabled:opacity-50"
             >
-              <Link2 size={12} />
+              {startOAuth.isPending ? (
+                <Loader2 size={12} className="animate-spin" />
+              ) : (
+                <Link2 size={12} />
+              )}
               {t('actions.connect')}
             </button>
           )}
           {server.requiresOAuth && server.isConnected && (
             <button
               type="button"
+              disabled={mutating}
               onClick={() => {
                 if (confirm(t('oauth.confirmDisconnect', { name: label }))) {
                   disconnectOAuth.mutate(server.id);
                 }
               }}
-              className="inline-flex items-center gap-1 rounded-sm border border-border-tertiary px-2 py-1 text-[11px] cursor-pointer hover:bg-hover-bg"
+              className="inline-flex items-center gap-1 rounded-sm border border-border-tertiary px-2 py-1 text-[11px] cursor-pointer hover:bg-hover-bg disabled:opacity-50"
             >
-              <Unlink size={12} />
+              {disconnectOAuth.isPending ? (
+                <Loader2 size={12} className="animate-spin" />
+              ) : (
+                <Unlink size={12} />
+              )}
               {t('actions.disconnect')}
             </button>
           )}
@@ -178,18 +199,19 @@ export function ServerCard({
               <button
                 type="button"
                 title={t('actions.editServer')}
+                disabled={mutating}
                 onClick={(e) => {
                   e.stopPropagation();
                   onEdit();
                 }}
-                className="rounded-sm p-1.5 text-text-tertiary hover:bg-hover-bg hover:text-text-primary cursor-pointer"
+                className="rounded-sm p-1.5 text-text-tertiary hover:bg-hover-bg hover:text-text-primary cursor-pointer disabled:opacity-50"
               >
                 <Pencil size={14} />
               </button>
               <button
                 type="button"
                 title={t('actions.delete')}
-                disabled={deleteMutation.isPending}
+                disabled={mutating}
                 onClick={() => {
                   const cascade = confirm(t('actions.confirmDeleteServer', { id: server.id }));
                   if (!cascade) return;
@@ -200,9 +222,13 @@ export function ServerCard({
                     cascadeTools: alsoTools,
                   });
                 }}
-                className="rounded-sm p-1.5 text-text-tertiary hover:bg-error-bg hover:text-error-text cursor-pointer"
+                className="rounded-sm p-1.5 text-text-tertiary hover:bg-error-bg hover:text-error-text cursor-pointer disabled:opacity-50"
               >
-                <Trash2 size={14} />
+                {deleteMutation.isPending ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : (
+                  <Trash2 size={14} />
+                )}
               </button>
             </>
           )}
@@ -217,10 +243,14 @@ export function ServerCard({
               <button
                 type="button"
                 onClick={() => void handleConnect()}
-                disabled={startOAuth.isPending}
+                disabled={mutating}
                 className="inline-flex items-center gap-1 rounded-sm border border-border-tertiary px-2.5 py-1 text-[11px] text-text-secondary cursor-pointer hover:bg-hover-bg disabled:opacity-50"
               >
-                <Link2 size={12} />
+                {startOAuth.isPending ? (
+                  <Loader2 size={12} className="animate-spin" />
+                ) : (
+                  <Link2 size={12} />
+                )}
                 {t('actions.connect')}
               </button>
             </div>
@@ -237,6 +267,7 @@ export function ServerCard({
                 const inUse = configuredMcpKeys.has(key);
                 const anchor = remoteToolAnchor(server.id, tool.name);
                 const focused = focusedRemoteAnchor === anchor;
+                const adding = pendingToolName === tool.name;
                 return (
                   <div
                     key={`${server.id}::${tool.name}`}
@@ -244,11 +275,13 @@ export function ServerCard({
                     role="button"
                     tabIndex={0}
                     aria-pressed={focused}
+                    aria-busy={adding}
                     onClick={(e) => {
                       e.stopPropagation();
                       onSelectAnchor(anchor);
                     }}
                     onKeyDown={(e) => {
+                      if (isFormFieldTarget(e.target)) return;
                       if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault();
                         e.stopPropagation();
@@ -259,7 +292,7 @@ export function ServerCard({
                       focused
                         ? 'border-accent-primary ring-1 ring-accent-primary'
                         : 'border-border-secondary'
-                    }`}
+                    } ${adding ? 'opacity-80' : ''}`}
                   >
                     <div className="min-w-0 flex-1">
                       <div
@@ -268,7 +301,9 @@ export function ServerCard({
                       />
                       {tool.description && (
                         <div
-                          className="mt-0.5 line-clamp-2 text-[10px] text-text-secondary"
+                          className={`mt-0.5 text-[10px] text-text-secondary ${
+                            focused ? '' : 'line-clamp-2'
+                          }`}
                           dangerouslySetInnerHTML={{
                             __html: highlightText(tool.description, search),
                           }}
@@ -277,19 +312,25 @@ export function ServerCard({
                     </div>
                     <button
                       type="button"
-                      disabled={inUse || appendMutation.isPending}
+                      disabled={inUse || mutating}
                       title={inUse ? t('actions.toolInUse') : t('actions.useTool')}
                       onClick={(e) => {
                         e.stopPropagation();
                         void handleUseTool(tool);
                       }}
-                      className={`shrink-0 rounded-sm p-1.5 cursor-pointer disabled:cursor-default ${
+                      className={`shrink-0 rounded-sm p-1.5 cursor-pointer disabled:cursor-default disabled:opacity-50 ${
                         inUse
                           ? 'text-success-text'
                           : 'text-text-tertiary hover:bg-hover-bg hover:text-text-primary'
                       }`}
                     >
-                      {inUse ? <Check size={14} /> : <Plus size={14} />}
+                      {adding ? (
+                        <Loader2 size={14} className="animate-spin" />
+                      ) : inUse ? (
+                        <Check size={14} />
+                      ) : (
+                        <Plus size={14} />
+                      )}
                     </button>
                   </div>
                 );

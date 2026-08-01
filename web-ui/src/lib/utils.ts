@@ -73,6 +73,14 @@ export function matchesSearch(texts: (string | null | undefined)[], query: strin
   return texts.some((t) => t != null && t.toLowerCase().includes(q));
 }
 
+/** True when Space/Enter should type into a field, not activate a parent role=button. */
+export function isFormFieldTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+  return target.isContentEditable;
+}
+
 const BADGE_HUES = [
   0, 20, 40, 55, 80, 120, 155, 175, 195, 210,
   230, 250, 270, 290, 310, 330, 345, 15, 165, 50,

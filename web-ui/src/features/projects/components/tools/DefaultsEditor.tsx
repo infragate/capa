@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { EnrichedTool } from '../../../../types/api';
 
@@ -25,7 +26,11 @@ export function DefaultsEditor({
   if (entries.length === 0) return null;
 
   return (
-    <div className="space-y-1 pb-1" onClick={(e) => e.stopPropagation()}>
+    <div
+      className="space-y-1 pb-1"
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => e.stopPropagation()}
+    >
       {entries.map((name) => (
         <label key={name} className="flex items-center gap-2 text-[11px]">
           <span className="w-24 shrink-0 truncate font-mono text-text-secondary" title={name}>
@@ -33,8 +38,9 @@ export function DefaultsEditor({
           </span>
           <input
             value={draft[name] ?? ''}
+            disabled={busy}
             onChange={(e) => setDraft((d) => ({ ...d, [name]: e.target.value }))}
-            className="min-w-0 flex-1 rounded-sm border border-border-secondary bg-bg-secondary px-1.5 py-1 font-mono text-[11px] text-text-primary"
+            className="min-w-0 flex-1 rounded-sm border border-border-secondary bg-bg-secondary px-1.5 py-1 font-mono text-[11px] text-text-primary disabled:opacity-50"
           />
         </label>
       ))}
@@ -53,8 +59,9 @@ export function DefaultsEditor({
           }
           onSave(defaults);
         }}
-        className="mt-1 rounded-sm border border-border-tertiary px-2 py-1 text-[11px] cursor-pointer hover:bg-hover-bg disabled:opacity-50"
+        className="mt-1 inline-flex items-center gap-1.5 rounded-sm border border-border-tertiary px-2 py-1 text-[11px] cursor-pointer hover:bg-hover-bg disabled:opacity-50"
       >
+        {busy && <Loader2 size={12} className="animate-spin" />}
         {t('actions.saveDefaults')}
       </button>
     </div>
