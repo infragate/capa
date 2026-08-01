@@ -13,6 +13,7 @@ import { CAPA_SERVER_ICONS } from "../shared/mcp-icons";
 import { projectNameFromId } from "../shared/paths";
 import type {
 	Capabilities,
+	MCPServerDefinition,
 	Tool,
 	ToolCommandDefinition,
 	ToolMCPDefinition,
@@ -1677,5 +1678,17 @@ export class CapaMCPServer {
 	async close(): Promise<void> {
 		await this.mcpProxy.closeAll();
 		await this.server.close();
+	}
+
+	/**
+	 * Close cached MCP children whose server defs changed or were removed.
+	 * Invoked after capabilities reload / configure so version bumps take
+	 * effect without a full capa restart.
+	 */
+	async syncCachedMcpClients(
+		servers: Array<{ id: string; def: MCPServerDefinition }>,
+		previousServers?: Array<{ id: string; def: MCPServerDefinition }>,
+	): Promise<void> {
+		await this.mcpProxy.syncCachedServers(servers, previousServers);
 	}
 }

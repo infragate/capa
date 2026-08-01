@@ -39,6 +39,8 @@ export class MCPProxy {
 	private projectPath: string;
 	private oauth2Manager: OAuth2Manager;
 	private clients = new Map<string, Client>();
+	/** Launch fingerprint for each cached client (cmd/args/env/cwd/url/…). */
+	private clientFingerprints = new Map<string, string>();
 	/** Last unexpected stdio exit reason per server (from transport onerror). */
 	private stdioExitReasons = new Map<string, string>();
 	private logger = logger.child("MCPProxy");
@@ -280,23 +282,39 @@ export class MCPProxy {
 		serverId: string,
 		serverDefinition: MCPServerDefinition,
 	): Promise<Client | null> {
-		// Check if client already exists
+		const fingerprint = mcpServerLaunchFingerprint(serverDefinition);
 		const existing = this.clients.get(serverId);
 		if (existing) {
-			this.logger.debug(`Using existing MCP client for server: ${serverId}`);
-			return existing;
+			const cachedFp = this.clientFingerprints.get(serverId);
+			if (cachedFp === fingerprint) {
+				this.logger.debug(`Using existing MCP client for server: ${serverId}`);
+				return existing;
+			}
+			this.logger.info(
+				`MCP server ${serverId} config changed; respawning` +
+					(cachedFp ? ` (${summarizeFingerprint(cachedFp)} → ${summarizeFingerprint(fingerprint)})` : ""),
+			);
+			await this.closeServer(serverId);
 		}
 
 		this.logger.info(`Creating new MCP client for server: ${serverId}`);
 
 		// For local subprocess-based servers
 		if (serverDefinition.cmd) {
-			return await this.createStdioClient(serverId, serverDefinition);
+			return await this.createStdioClient(
+				serverId,
+				serverDefinition,
+				fingerprint,
+			);
 		}
 
 		// For remote HTTP-based servers
 		if (serverDefinition.url) {
-			return await this.createHttpClient(serverId, serverDefinition);
+			return await this.createHttpClient(
+				serverId,
+				serverDefinition,
+				fingerprint,
+			);
 		}
 
 		return null;
@@ -305,6 +323,7 @@ export class MCPProxy {
 	private async createHttpClient(
 		serverId: string,
 		serverDefinition: MCPServerDefinition,
+		fingerprint: string,
 	): Promise<Client | null> {
 		// Surface OAuth-disconnect as a typed error rather than a bare `null`, so
 		// on-demand callers (e.g. `capa sh <tool>`) can show "Authentication
@@ -348,13 +367,14 @@ export class MCPProxy {
 
 			client.onclose = () => {
 				this.logger.info(`Client ${serverId} closed, removing from cache`);
-				this.clients.delete(serverId);
+				this.forgetClient(serverId);
 			};
 
 			this.logger.debug("Connecting client...");
 			await this.connectWithTimeout(client, transport);
 
 			this.clients.set(serverId, client);
+			this.clientFingerprints.set(serverId, fingerprint);
 			this.logger.success("Client connected");
 			return client;
 		} catch (error: any) {
@@ -369,6 +389,7 @@ export class MCPProxy {
 	private async createStdioClient(
 		serverId: string,
 		serverDefinition: MCPServerDefinition,
+		fingerprint: string,
 	): Promise<Client | null> {
 		try {
 			this.logger.info(`Creating stdio client for: ${serverId}`);
@@ -408,13 +429,14 @@ export class MCPProxy {
 
 			client.onclose = () => {
 				this.logger.info(`Client ${serverId} closed, removing from cache`);
-				this.clients.delete(serverId);
+				this.forgetClient(serverId);
 			};
 
 			this.logger.debug("Connecting client...");
 			await this.connectWithTimeout(client, transport);
 
 			this.clients.set(serverId, client);
+			this.clientFingerprints.set(serverId, fingerprint);
 			this.logger.success("Client connected");
 			return client;
 		} catch (error) {
@@ -523,18 +545,110 @@ export class MCPProxy {
 	}
 
 	/**
+	 * Close a single cached MCP client (stdio child or HTTP session).
+	 */
+	async closeServer(serverId: string): Promise<void> {
+		const client = this.clients.get(serverId);
+		this.forgetClient(serverId);
+		this.stdioExitReasons.delete(serverId);
+		if (!client) return;
+		try {
+			await client.close();
+		} catch (error) {
+			this.logger.error(`Error closing client ${serverId}:`, error);
+		}
+	}
+
+	/**
+	 * Drop cached clients that were removed from capabilities, or whose
+	 * launch fingerprint changed between `previousServers` and `servers`.
+	 * Unchanged servers stay warm. Call-site fingerprinting in
+	 * getOrCreateClient still catches resolved-def drift (e.g. secret edits).
+	 */
+	async syncCachedServers(
+		servers: Array<{ id: string; def: MCPServerDefinition }>,
+		previousServers?: Array<{ id: string; def: MCPServerDefinition }>,
+	): Promise<void> {
+		const wanted = new Map(
+			servers.map((s) => [s.id, mcpServerLaunchFingerprint(s.def)]),
+		);
+		const previous = new Map(
+			(previousServers ?? []).map((s) => [
+				s.id,
+				mcpServerLaunchFingerprint(s.def),
+			]),
+		);
+
+		for (const serverId of [...this.clients.keys()]) {
+			const nextFp = wanted.get(serverId);
+			if (nextFp === undefined) {
+				this.logger.info(
+					`MCP server ${serverId} removed from capabilities; closing client`,
+				);
+				await this.closeServer(serverId);
+				continue;
+			}
+			const prevFp = previous.get(serverId);
+			if (prevFp !== undefined && prevFp !== nextFp) {
+				this.logger.info(
+					`MCP server ${serverId} config changed on configure; closing client (${summarizeFingerprint(prevFp)} → ${summarizeFingerprint(nextFp)})`,
+				);
+				await this.closeServer(serverId);
+			}
+		}
+	}
+
+	private forgetClient(serverId: string): void {
+		this.clients.delete(serverId);
+		this.clientFingerprints.delete(serverId);
+	}
+
+	/**
 	 * Close all clients
 	 */
 	async closeAll(): Promise<void> {
-		for (const [serverId, client] of this.clients) {
-			try {
-				await client.close();
-			} catch (error) {
-				this.logger.error(`Error closing client ${serverId}:`, error);
-			}
+		const ids = [...this.clients.keys()];
+		for (const serverId of ids) {
+			await this.closeServer(serverId);
 		}
-		this.clients.clear();
 	}
+}
+
+/** Stable fingerprint of the launch config used to connect an MCP server. */
+export function mcpServerLaunchFingerprint(def: MCPServerDefinition): string {
+	const sorted = (obj: Record<string, string> | undefined) =>
+		obj
+			? Object.fromEntries(
+					Object.entries(obj).sort(([a], [b]) => a.localeCompare(b)),
+				)
+			: null;
+	return JSON.stringify({
+		cmd: def.cmd ?? null,
+		args: def.args ?? null,
+		env: sorted(def.env),
+		cwd: def.cwd ?? null,
+		url: def.url ?? null,
+		headers: sorted(def.headers),
+		tlsSkipVerify: def.tlsSkipVerify ?? false,
+	});
+}
+
+function summarizeFingerprint(fingerprint: string): string {
+	try {
+		const parsed = JSON.parse(fingerprint) as {
+			cmd?: string | null;
+			args?: string[] | null;
+			url?: string | null;
+		};
+		if (parsed.cmd) {
+			const args = Array.isArray(parsed.args) ? parsed.args.join(" ") : "";
+			return `${parsed.cmd} ${args}`.trim();
+		}
+		if (parsed.url) return parsed.url;
+	} catch {
+		/* ignore */
+	}
+	return fingerprint.slice(0, 80);
 }
 
 /** Flatten MCP tool content blocks into a single error string for traces/clients. */

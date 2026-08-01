@@ -25,6 +25,12 @@ export interface ConfigureRouteDeps {
 	effectiveCapsCache: Map<string, EffectiveCapsCacheEntry>;
 	getOrCreateMCPServer: (projectId: string) => CapaMCPServer | null;
 	uiOrigin: () => string;
+	/** Close stale MCP children after capabilities are updated (version bumps, etc.). */
+	syncProjectMcpClients?: (
+		projectId: string,
+		servers: Capabilities["servers"],
+		previousServers?: Capabilities["servers"],
+	) => void | Promise<void>;
 }
 
 /**
@@ -74,7 +80,17 @@ export async function runProjectConfigure(
 	apiLogger.info(`Tools: ${capabilitiesToUse.tools.length}`);
 	apiLogger.info(`Servers: ${capabilitiesToUse.servers.length}`);
 
+	const previousCapabilities =
+		deps.sessionManager.getProjectCapabilities(projectId);
 	deps.sessionManager.setProjectCapabilities(projectId, capabilitiesToUse);
+
+	if (deps.syncProjectMcpClients) {
+		await deps.syncProjectMcpClients(
+			projectId,
+			capabilitiesToUse.servers,
+			previousCapabilities?.servers,
+		);
+	}
 
 	if (project) {
 		void deps.capsWatcher.watchProject(projectId, project.path);

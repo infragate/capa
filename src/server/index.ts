@@ -138,7 +138,22 @@ class CapaServer {
 			effectiveCapsCache: this.effectiveCapsCache,
 			getOrCreateMCPServer: (id) => this.getOrCreateMCPServer(id),
 			uiOrigin: () => this.uiOrigin(),
+			syncProjectMcpClients: (projectId, servers, previousServers) =>
+				this.syncProjectMcpClients(projectId, servers, previousServers),
 		};
+	}
+
+	/** Invalidate cached MCP children for a project after capabilities change. */
+	private async syncProjectMcpClients(
+		projectId: string,
+		servers: Capabilities["servers"],
+		previousServers?: Capabilities["servers"],
+	): Promise<void> {
+		for (const [key, mcp] of this.mcpServers) {
+			if (key === projectId || key.startsWith(`${projectId}:`)) {
+				await mcp.syncCachedMcpClients(servers, previousServers);
+			}
+		}
 	}
 
 	private projectRouteDeps(): ProjectRouteDeps {
