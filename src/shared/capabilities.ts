@@ -166,7 +166,11 @@ export function capabilityEntryReorderKey(
 			: null;
 
 	if (
-		(section === "skills" || section === "servers") &&
+		(section === "skills" ||
+			section === "servers" ||
+			section === "rules" ||
+			section === "hooks" ||
+			section === "subagents") &&
 		pluginName
 	) {
 		return `plugin:${pluginName}:${entry.id}`;

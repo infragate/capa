@@ -49,7 +49,7 @@ export function resolveProvidersForServer(
 }
 
 /**
- * Expand `plugins` into merged skills/servers (in memory only — not written to YAML).
+ * Expand `plugins` into merged skills/servers/rules/hooks/subagents (in memory only — not written to YAML).
  * Returns the authored capabilities unchanged when there are no plugins or providers.
  */
 export async function resolveEffectiveCapabilities(

@@ -235,13 +235,48 @@ export function parseMcpServers(
  * are returned untouched so they resolve from PATH or are interpreted by the
  * launched process. Rewriting them to `<pluginRoot>/<token>` produced
  * non-existent paths and silently broke command-based MCP servers (#94).
+ *
+ * On Windows the expanded root uses forward slashes. Claude Code (and Cursor)
+ * often run hook commands through Git Bash, which treats `\U`, `\T`, etc. as
+ * escapes and strips backslashes — breaking absolute Windows paths.
+ *
+ * Hook commands may include args after the path (`./hooks/run-hook.cmd session-start`);
+ * only the leading path token is resolved in that case.
+ *
+ * Pass `shellQuote: true` for hook commands run via a shell (Claude/Cursor → Git Bash).
+ * Without it, MCP argv/env values keep bare paths so Node spawn does not see literal quotes.
  */
-function resolvePluginRootInString(value: string, pluginRoot: string): string {
+export function resolvePluginRootInString(
+	value: string,
+	pluginRoot: string,
+	opts?: { shellQuote?: boolean },
+): string {
+	const root = pluginRoot.replace(/\\/g, "/");
+	const shellQuote = opts?.shellQuote === true;
+
 	if (value.includes("${CLAUDE_PLUGIN_ROOT}")) {
-		return value.replace(/\$\{CLAUDE_PLUGIN_ROOT\}/g, pluginRoot);
+		const expanded = value.replace(/\$\{CLAUDE_PLUGIN_ROOT\}/g, root);
+		if (!shellQuote || !/\s/.test(root)) return expanded;
+		// Already quoted around the expanded root (plugin authors often quote the placeholder).
+		if (expanded.includes(`"${root}`)) return expanded;
+		const escapedRoot = root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+		return expanded.replace(
+			new RegExp(`${escapedRoot}[^\\s]*`, "g"),
+			(path) => (/\s/.test(path) ? `"${path}"` : path),
+		);
 	}
+
+	// "./path/to/cmd args..." or "../path args..." — resolve path token only.
+	const relWithArgs = value.match(/^(\.[/\\][^\s]+|\.\.[/\\][^\s]+)(\s+[\s\S]*)?$/);
+	if (relWithArgs) {
+		const abs = resolve(pluginRoot, relWithArgs[1]).replace(/\\/g, "/");
+		const quoted = shellQuote && /\s/.test(abs) ? `"${abs}"` : abs;
+		return `${quoted}${relWithArgs[2] ?? ""}`;
+	}
+
 	if (value === "." || value.startsWith("./") || value.startsWith("../")) {
-		return resolve(pluginRoot, value);
+		const abs = resolve(pluginRoot, value).replace(/\\/g, "/");
+		return shellQuote && /\s/.test(abs) ? `"${abs}"` : abs;
 	}
 	return value;
 }

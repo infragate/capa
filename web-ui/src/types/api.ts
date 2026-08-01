@@ -109,6 +109,9 @@ export interface ResolvedPlugin {
   skills?: string[];
   /** Capa server IDs (after `as` rename) the plugin contributed. */
   serverIds?: string[];
+  subagentIds?: string[];
+  hookIds?: string[];
+  ruleIds?: string[];
 }
 
 export interface SubAgent {
@@ -117,6 +120,7 @@ export interface SubAgent {
   skills: string[];
   tools: string[];
   instructions: string | null;
+  sourcePlugin: SourcePlugin | null;
 }
 
 export interface Rule {
@@ -130,6 +134,7 @@ export interface Rule {
   url?: string | null;
   path?: string | null;
   def?: { repo: string } | null;
+  sourcePlugin: SourcePlugin | null;
 }
 
 export interface InstalledHook {
@@ -156,6 +161,7 @@ export interface Hook {
   sourceContent?: string | null;
   /** One row per provider where capa successfully installed this hook. */
   installed: InstalledHook[];
+  sourcePlugin: SourcePlugin | null;
 }
 
 export interface AuthoredPlugin {

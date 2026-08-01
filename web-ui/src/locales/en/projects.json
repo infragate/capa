@@ -318,7 +318,9 @@
     "skills": "Skills",
     "tools": "Tools",
     "instructions": "Instructions",
-    "noDescription": "No description"
+    "noDescription": "No description",
+    "viewTitle": "Sub-agent",
+    "noInstructions": "No instructions"
   },
   "rules": {
     "title": "Rules",
@@ -327,7 +329,10 @@
     "providers": "Providers",
     "appliesTo": "Applies to",
     "alwaysApply": "Always apply",
-    "allProviders": "All providers"
+    "allProviders": "All providers",
+    "viewTitle": "Rule",
+    "content": "Content",
+    "noContent": "No content"
   },
   "hooks": {
     "title": "Hooks",

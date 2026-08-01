@@ -5,4 +5,5 @@ export {
 	findPluginInDirectory,
 } from "./detect";
 
-export { resolvePluginServerDef } from "./mcp-parser";
+export { resolvePluginServerDef, resolvePluginRootInString } from "./mcp-parser";
+export { materializeCommandAsSkill } from "./commands-parser";

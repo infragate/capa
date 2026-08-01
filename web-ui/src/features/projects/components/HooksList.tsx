@@ -1,12 +1,15 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
-import { Trash2, X, Loader2 } from 'lucide-react';
+import { Trash2, X, Loader2, Lock } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { Hook } from '../../../types/api';
 import { matchesSearch } from '../../../lib/utils';
 import { capaIdErrorMessage, sanitizeCapaIdInput } from '../../../lib/ids';
 import { ReorderableList } from '../../../components/common/ReorderableList';
+import { SourceBadge } from '../../../components/common/ServerBadge';
+import { sourceTypeBadgeClasses } from './sourceTypeColors';
 import { useAppendCapability, useDeleteCapability, useReorderCapability, useUpdateCapability } from '../hooks';
+import { authoredReorderKeys, isPluginSourced } from '../lib/reorderKeys';
 
 const HOOK_EVENTS = [
   'sessionStart',
@@ -61,20 +64,32 @@ export function HooksList({ hooks, search, projectId, addOpen, onAddOpenChange }
         <ReorderableList
           items={visible}
           getId={(h) => h.id}
+          isLocked={(h) => isPluginSourced(h)}
           disabled={searching}
           handleLabel={t('actions.dragToReorder')}
           className="space-y-2"
-          onReorder={(ids) => reorderMutation.mutate({ section: 'hooks', ids })}
-          renderItem={(hook, { handle }) => (
-            <div className="flex items-start gap-1 rounded-sm border border-border-tertiary bg-bg-tertiary p-3 pl-1">
+          onReorder={(ids) =>
+            reorderMutation.mutate({
+              section: 'hooks',
+              ids: authoredReorderKeys(hooks, ids, (h) => h.id),
+            })
+          }
+          renderItem={(hook, { handle, locked }) => (
+            <div className="flex w-full items-stretch gap-1 rounded-sm border border-border-tertiary bg-bg-tertiary pl-1">
               {handle}
               <button
                 type="button"
-                className="min-w-0 flex-1 text-left cursor-pointer"
-                onClick={() => setEditing(hook)}
+                className={`min-w-0 flex-1 p-3 text-left ${locked ? 'cursor-default' : 'cursor-pointer ui-row-hover hover:bg-hover-bg'}`}
+                onClick={() => !locked && setEditing(hook)}
+                disabled={locked}
               >
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-mono text-[13px] font-medium text-text-primary">{hook.id}</span>
+                  {locked && (
+                    <span className={`rounded-sm px-1.5 py-0.5 text-[10px] uppercase ${sourceTypeBadgeClasses('plugin')}`}>
+                      plugin
+                    </span>
+                  )}
                   <span className="rounded-sm bg-bg-secondary px-1.5 py-0.5 text-[10px] text-text-tertiary">
                     {hook.on}
                   </span>
@@ -90,28 +105,42 @@ export function HooksList({ hooks, search, projectId, addOpen, onAddOpenChange }
                     {hookBody(hook)}
                   </p>
                 )}
+                {hook.sourcePlugin?.name && (
+                  <div className="mt-2 flex items-center gap-1.5 text-[11px] text-text-tertiary">
+                    <span>from</span>
+                    <SourceBadge name={hook.sourcePlugin.name} kind="plugin" />
+                  </div>
+                )}
               </button>
-              <button
-                type="button"
-                title={t('actions.delete')}
-                disabled={deleteMutation.isPending}
-                onClick={() => {
-                  if (confirm(t('actions.confirmDeleteHook', { id: hook.id }))) {
-                    deleteMutation.mutate({ section: 'hooks', entryId: hook.id });
-                  }
-                }}
-                className="rounded-sm p-2 text-text-tertiary hover:bg-error-bg hover:text-error-text cursor-pointer"
-              >
-                <Trash2 size={14} />
-              </button>
+              <div className="flex items-center pr-2">
+                {locked ? (
+                  <span title={t('actions.pluginLocked')} className="p-2 text-text-tertiary">
+                    <Lock size={14} />
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    title={t('actions.delete')}
+                    disabled={deleteMutation.isPending}
+                    onClick={() => {
+                      if (confirm(t('actions.confirmDeleteHook', { id: hook.id }))) {
+                        deleteMutation.mutate({ section: 'hooks', entryId: hook.id });
+                      }
+                    }}
+                    className="rounded-sm p-2 text-text-tertiary hover:bg-error-bg hover:text-error-text cursor-pointer"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                )}
+              </div>
             </div>
           )}
         />
       )}
 
       <HookDialog
-        open={addOpen || !!editing}
-        initial={editing}
+        open={(addOpen || !!editing) && !editing?.sourcePlugin}
+        initial={editing?.sourcePlugin ? null : editing}
         projectId={projectId}
         busy={updateMutation.isPending}
         onOpenChange={(open) => {
@@ -121,6 +150,7 @@ export function HooksList({ hooks, search, projectId, addOpen, onAddOpenChange }
           }
         }}
         onUpdate={async (entryId, patch) => {
+          if (editing?.sourcePlugin) return;
           await updateMutation.mutateAsync({ section: 'hooks', entryId, patch });
         }}
       />

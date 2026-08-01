@@ -261,7 +261,9 @@ export async function runProjectConfigure(
 	}
 
 	// -- Required variables ---------------------------------------------
-	const requiredVars = extractAllVariables(capabilitiesToUse);
+	// Authored capabilities only — plugin-merged subagents/skills/etc. can
+	// contain `${…}` as prose and must not become required credentials.
+	const requiredVars = extractAllVariables(capabilities);
 	apiLogger.info(`Required variables: ${requiredVars.join(", ")}`);
 
 	const missingVars: string[] = [];

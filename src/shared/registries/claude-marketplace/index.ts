@@ -5,11 +5,18 @@ export {
 	type FetchMarketplaceResult,
 } from "./fetch";
 export {
+	formatPluginContentsMarkdown,
+	pluginContentsToFiles,
+	summarizeUnifiedManifest,
+	type PluginContentsSummary,
+} from "./plugin-contents";
+export {
 	classifyMarketplaceSource,
 	marketplaceNameToSlug,
 	parseMarketplaceJson,
 } from "./parse";
 export {
+	createPluginInspector,
 	getInstalledMarketplaceMetaPath,
 	getInstalledMarketplacePath,
 	getMarketplaceManagedDir,

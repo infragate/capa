@@ -19,31 +19,49 @@ function renderMarkdown(md: string): string {
   return DOMPurify.sanitize(raw);
 }
 
+function listSection(title: string, items: string[] | undefined): string[] {
+  if (!items?.length) return [];
+  const lines = [`### ${title}`, ''];
+  for (const id of items) {
+    lines.push(`- \`${id}\``);
+  }
+  lines.push('');
+  return lines;
+}
+
 function buildLocalPluginPreview(
   plugin: AuthoredPlugin,
   resolved: ResolvedPlugin | undefined,
 ): string {
   const title = resolved?.name || plugin.id || plugin.def.repo;
-  const parts: string[] = [`# ${title}\n`];
-  if (plugin.def.repo) parts.push(`**Repository:** \`${plugin.def.repo}\`\n`);
+  const parts: string[] = [`# ${title}`, ''];
+  if (plugin.def.repo) parts.push(`**Repository:** \`${plugin.def.repo}\``, '');
   if (resolved?.version || plugin.def.version) {
-    parts.push(`**Version:** ${resolved?.version || plugin.def.version}\n`);
+    parts.push(`**Version:** ${resolved?.version || plugin.def.version}`, '');
   }
-  if (resolved?.skills?.length) {
-    parts.push(`## Skills\n`);
-    for (const s of resolved.skills) {
-      parts.push(`- **${s}**`);
-    }
-    parts.push('');
+  if (resolved?.provider) {
+    parts.push(`**Provider:** \`${resolved.provider}\``, '');
   }
-  if (resolved?.serverIds?.length) {
-    parts.push(`## MCP Servers\n`);
-    for (const id of resolved.serverIds) {
-      parts.push(`- **${id}**`);
-    }
-    parts.push('');
+
+  const hasContents =
+    (resolved?.skills?.length ?? 0) > 0 ||
+    (resolved?.serverIds?.length ?? 0) > 0 ||
+    (resolved?.subagentIds?.length ?? 0) > 0 ||
+    (resolved?.hookIds?.length ?? 0) > 0 ||
+    (resolved?.ruleIds?.length ?? 0) > 0;
+
+  if (hasContents) {
+    parts.push('## Contents', '');
+    parts.push(
+      ...listSection('Skills', resolved?.skills),
+      ...listSection('Sub-agents', resolved?.subagentIds),
+      ...listSection('Hooks', resolved?.hookIds),
+      ...listSection('Rules', resolved?.ruleIds),
+      ...listSection('MCP servers', resolved?.serverIds),
+    );
   }
-  parts.push('## Install\n');
+
+  parts.push('## Install', '');
   parts.push('```');
   parts.push(`capa add ${plugin.def.repo}`);
   parts.push('```');

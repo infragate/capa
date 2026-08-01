@@ -42,7 +42,18 @@ function isPlainObject(x: unknown): x is Record<string, unknown> {
 }
 
 /**
- * Recursively resolve variables in an object
+ * Plugin-merged entries (skills, servers, subagents, hooks, rules) are stamped
+ * with `sourcePlugin`. Their bodies can contain `${…}` as documentation or
+ * agent prose — those must not be treated as capa credential placeholders.
+ */
+function isPluginSourcedObject(obj: Record<string, unknown>): boolean {
+	return obj.sourcePlugin != null && typeof obj.sourcePlugin === "object";
+}
+
+/**
+ * Recursively resolve variables in an object.
+ * Only string *values* are resolved — object keys are left untouched.
+ * Plugin-sourced entries (`sourcePlugin`) are skipped entirely.
  */
 export function resolveVariablesInObject<T>(
 	obj: T,
@@ -60,8 +71,12 @@ export function resolveVariablesInObject<T>(
 	}
 
 	if (isPlainObject(obj)) {
+		if (isPluginSourcedObject(obj)) {
+			return obj;
+		}
 		const resolved: Record<string, unknown> = {};
 		for (const [key, value] of Object.entries(obj)) {
+			// Keys are never interpolated — only string values.
 			resolved[key] = resolveVariablesInObject(value, projectId, db);
 		}
 		return resolved as T;
@@ -71,7 +86,9 @@ export function resolveVariablesInObject<T>(
 }
 
 /**
- * Check if a string or object contains unresolved variables
+ * Check if a string or object contains unresolved variables.
+ * Only string values are inspected; object keys and plugin-sourced entries
+ * are ignored.
  */
 export function hasUnresolvedVariables(input: unknown): boolean {
 	if (typeof input === "string") {
@@ -83,6 +100,9 @@ export function hasUnresolvedVariables(input: unknown): boolean {
 	}
 
 	if (isPlainObject(input)) {
+		if (isPluginSourcedObject(input)) {
+			return false;
+		}
 		return Object.values(input).some(hasUnresolvedVariables);
 	}
 
@@ -90,7 +110,11 @@ export function hasUnresolvedVariables(input: unknown): boolean {
 }
 
 /**
- * Extract all unresolved variables from an object
+ * Extract all unresolved variables from an object.
+ *
+ * Scans string values only (never object keys). Skips any entry stamped with
+ * `sourcePlugin` so plugin-contributed content (e.g. subagent instructions)
+ * cannot invent required project credentials.
  */
 export function extractAllVariables(obj: unknown): string[] {
 	const variables = new Set<string>();
@@ -101,6 +125,9 @@ export function extractAllVariables(obj: unknown): string[] {
 		} else if (Array.isArray(value)) {
 			value.forEach(extract);
 		} else if (isPlainObject(value)) {
+			if (isPluginSourcedObject(value)) {
+				return;
+			}
 			Object.values(value).forEach(extract);
 		}
 	}

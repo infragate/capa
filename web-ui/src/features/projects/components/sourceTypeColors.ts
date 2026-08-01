@@ -24,6 +24,7 @@ const SOURCE_TYPE_COLORS: Record<string, string> = {
   gitlab: 'bg-orange-500/10 text-orange-400',
   local: 'bg-slate-500/10 text-slate-400',
   installed: 'bg-amber-500/10 text-amber-400',
+  plugin: 'bg-teal-500/10 text-teal-400',
 };
 
 const FALLBACK = 'bg-bg-secondary text-text-tertiary';

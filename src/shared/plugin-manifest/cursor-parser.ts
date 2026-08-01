@@ -1,6 +1,11 @@
 import type { UnifiedPluginManifest } from "../../types/plugin";
 import { getProvider } from "../providers";
+import { parseAgentEntries } from "./agents-parser";
+import { parseCommandEntries } from "./commands-parser";
+import { parseHookEntries } from "./hooks-parser";
 import { parseMcpServers } from "./mcp-parser";
+import { parseRuleEntries } from "./rules-parser";
+import { detectSkippedArtifacts } from "./skipped-artifacts";
 import {
 	isPlainObject,
 	parseSkillsField,
@@ -49,7 +54,7 @@ export function parseCursorManifest(
 ): UnifiedPluginManifest {
 	const record = isPlainObject(data) ? data : {};
 	const name = typeof record.name === "string" ? record.name : "unknown";
-	const skills = parseSkillsField(
+	const skillEntries = parseSkillsField(
 		repoRoot,
 		parseSkillsRaw(record.skills),
 		"skills",
@@ -58,13 +63,30 @@ export function parseCursorManifest(
 	const mcpServers = parseMcpServers(repoRoot, data, fallback, manifestDir);
 	applyCursorCliLoopback(mcpServers);
 
+	const knownSkillIds = new Set(skillEntries.map((s) => s.id));
+	const commandEntries = parseCommandEntries(repoRoot, record);
+	for (const c of commandEntries) knownSkillIds.add(c.id);
+
+	const agentEntries = parseAgentEntries(repoRoot, record, knownSkillIds);
+	const hookEntries = parseHookEntries(repoRoot, record).map((h) => ({
+		...h,
+		targetProvider: "cursor" as const,
+	}));
+	const ruleEntries = parseRuleEntries(repoRoot, record);
+	const skippedArtifacts = detectSkippedArtifacts(repoRoot);
+
 	return {
 		name,
 		version: typeof record.version === "string" ? record.version : undefined,
 		description:
 			typeof record.description === "string" ? record.description : undefined,
 		provider: "cursor",
-		skillEntries: skills,
+		skillEntries,
+		commandEntries,
+		agentEntries,
+		hookEntries,
+		ruleEntries,
 		mcpServers,
+		skippedArtifacts: skippedArtifacts.length > 0 ? skippedArtifacts : undefined,
 	};
 }

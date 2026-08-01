@@ -1,6 +1,7 @@
-import { existsSync, readdirSync } from "fs";
+import { existsSync, readdirSync, readFileSync } from "fs";
 import { join } from "path";
 import type { UnifiedSkillEntry } from "../../types/plugin";
+import { asOptionalString, splitMarkdownFrontmatter } from "./frontmatter";
 
 export interface ParsedMcpServerEntry {
 	url?: string;
@@ -55,7 +56,7 @@ export function getSkillEntriesFromPath(
 		const items = readdirSync(fullPath, { withFileTypes: true });
 		for (const item of items) {
 			if (!item.isDirectory()) continue;
-			const subPath = join(relativePath, item.name);
+			const subPath = join(relativePath, item.name).replace(/\\/g, "/");
 			const subSkillMd = join(repoRoot, subPath, "SKILL.md");
 			if (existsSync(subSkillMd)) {
 				entries.push({ id: item.name, relativePath: subPath });
@@ -69,6 +70,8 @@ export function getSkillEntriesFromPath(
 
 /**
  * Parse skills field (string or array) and return unified skill entries.
+ * When no `skills` field is set and `skills/` is empty/missing, fall back to
+ * a root-level `SKILL.md` (Claude single-skill plugin layout).
  */
 export function parseSkillsField(
 	repoRoot: string,
@@ -90,5 +93,21 @@ export function parseSkillsField(
 	for (const p of paths) {
 		entries.push(...getSkillEntriesFromPath(repoRoot, p));
 	}
+
+	if (entries.length === 0 && (raw === undefined || raw === null)) {
+		const rootSkill = join(repoRoot, "SKILL.md");
+		if (existsSync(rootSkill)) {
+			let id = "skill";
+			try {
+				const content = readFileSync(rootSkill, "utf-8");
+				const { frontmatter } = splitMarkdownFrontmatter(content);
+				id = asOptionalString(frontmatter?.name) ?? id;
+			} catch {
+				// keep default id
+			}
+			entries.push({ id, relativePath: "." });
+		}
+	}
+
 	return entries;
 }

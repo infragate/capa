@@ -43,8 +43,23 @@ describe('resolvePluginServerDef', () => {
       { cmd: './bin/server', args: ['./config.json'] },
       PLUGIN_ROOT
     );
-    expect(resolved.cmd).toBe(resolve(PLUGIN_ROOT, './bin/server'));
-    expect(resolved.args).toEqual([resolve(PLUGIN_ROOT, './config.json')]);
+    expect(resolved.cmd).toBe(resolve(PLUGIN_ROOT, './bin/server').replace(/\\/g, '/'));
+    expect(resolved.args).toEqual([resolve(PLUGIN_ROOT, './config.json').replace(/\\/g, '/')]);
+  });
+
+  it('rewrites Windows plugin roots with forward slashes for shell/Git Bash', () => {
+    const winRoot = 'C:\\Users\\Tony Zaitoun\\.capa\\plugins\\proj\\superpowers';
+    const resolved = resolvePluginServerDef(
+      {
+        cmd: 'node',
+        args: ['${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd', 'session-start'],
+      },
+      winRoot,
+    );
+    expect(resolved.args).toEqual([
+      'C:/Users/Tony Zaitoun/.capa/plugins/proj/superpowers/hooks/run-hook.cmd',
+      'session-start',
+    ]);
   });
 
   it('passes remote (url) servers through unchanged', () => {

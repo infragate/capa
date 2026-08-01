@@ -210,10 +210,11 @@ is the authoritative description of what ends up on disk. A
 `capabilities.plugins` entry is a *source* — typically a git repo — that
 capa clones, inspects, and decomposes into the same primitives every
 other capability uses
-(`skills`, `mcpServers`, `mcpTools`). Those primitives are then merged into
+(`skills`, `servers`, `rules`, `subagents`, `hooks`). Those primitives are then merged into
 `ctx.capabilitiesToUse` and flow through the same `install-skills`,
-`register-mcp-server`, `install-subagents` … tasks as if the user had
-written them inline.
+`install-rules`, `register-mcp-server`, `install-subagents`, `install-hooks`
+tasks as if the user had written them inline. The web UI shows plugin-sourced
+entries with a source badge and lock (same pattern as plugin skills/servers).
 
 The discovery pipeline lives in
 [`src/cli/commands/plugin-install.ts`](../src/cli/commands/plugin-install.ts)
@@ -234,12 +235,17 @@ and [`src/shared/plugin-manifest/detect.ts`](../src/shared/plugin-manifest/detec
    other format is currently unsupported — see
    [Plugin format support](#plugin-format-support) below.
 4. **Discover-mode fallback.** If no manifest is found, capa still scans
-   for a top-level `skills/` directory and a `.mcp.json` and treats them as
-   a claude-shaped pseudo-manifest.
+   for `skills/` (or a root `SKILL.md`), `commands/`, `agents/`, `hooks/`,
+   `rules/`, and `.mcp.json` and treats them as a claude-shaped
+   pseudo-manifest.
 5. **Decompose and merge.** The `UnifiedPluginManifest` exposes
-   `skillEntries`, `mcpServers`, and `mcpTools`. Each becomes a regular
-   capability entry that the normal install tasks pick up — there is no
-   separate plugin-write step.
+   `skillEntries`, `commandEntries` (legacy flat skills → synthetic skill
+   dirs), `mcpServers`, `agentEntries` → `subagents`, `hookEntries` →
+   `hooks` (provider-scoped; `${CLAUDE_PLUGIN_ROOT}` rewritten to the
+   stable plugin copy), and `ruleEntries` → `rules`. Unsupported artifacts
+   (LSP, monitors, themes, …) produce install warnings and are skipped.
+   There is no separate plugin-write step for rules/hooks/subagents —
+   later install tasks own provider files.
 
 ### Plugin format support
 

@@ -1,4 +1,4 @@
-import { join, resolve } from 'path';
+import { resolve } from 'path';
 import { resolveProviders } from '../../../shared/providers/resolve';
 import { createAuthenticatedFetch } from '../../../shared/authenticated-fetch';
 import { LockfileBuilder } from '../../../shared/lockfile';
@@ -8,9 +8,10 @@ import { installOneSkill } from '../../commands/install-tasks/helpers/install-on
 import { resolveRuleBody } from '../../commands/install-tasks/install-rules';
 import { installRules } from '../rules-installer';
 import { installHooks } from '../hooks-installer';
+import { installSubAgentInstructions } from '../agents-file';
 import { resolvePlugins } from '../../commands/plugin-install';
 import { upsertNativeMcpServer } from './native-mcp';
-import { expandEnvInRecord, loadEnvFileOptional, openAuthDb, PASSTHROUGH_PLUGINS_DIR } from './env';
+import { expandEnvInRecord, loadEnvFileOptional, openAuthDb } from './env';
 import type { MCPServer } from '../../../types/capabilities';
 import type { GetSnapshotResult } from '../../../shared/cache';
 
@@ -65,7 +66,6 @@ export async function passthroughInstall(opts: {
   let failed = 0;
 
   try {
-    const pluginsBaseDir = join(projectPath, PASSTHROUGH_PLUGINS_DIR);
     const pluginResult = await resolvePlugins(
       capabilities,
       projectPath,
@@ -75,7 +75,7 @@ export async function passthroughInstall(opts: {
       getRepoSnapshot,
       capabilitiesFile.path,
       lockBuilder,
-      { noCache: !!opts.noCache, trackManaged: false, pluginsBaseDir },
+      { noCache: !!opts.noCache, trackManaged: false },
     );
     warnings.push(...pluginResult.warnings);
     capabilities = pluginResult.mergedCapabilities;
@@ -154,6 +154,14 @@ export async function passthroughInstall(opts: {
       });
       warnings.push(...hookResult.warnings);
       added += hookResult.installed;
+    }
+
+    const subagents = capabilities.subagents ?? [];
+    if (subagents.length > 0) {
+      for (const agent of subagents) {
+        installSubAgentInstructions(projectPath, agent, capabilities, providers);
+        added++;
+      }
     }
 
     for (const server of capabilities.servers ?? []) {

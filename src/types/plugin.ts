@@ -69,7 +69,8 @@ export interface PluginDefinition {
 }
 
 /**
- * Attribution for capabilities that came from a plugin (skills, servers, tools).
+ * Attribution for capabilities that came from a plugin
+ * (skills, servers, tools, rules, hooks, subagents).
  */
 export interface SourcePlugin {
   id: string;   // Stable plugin id (e.g. slug + short ref)
@@ -97,6 +98,12 @@ export interface ResolvedPluginInfo {
    * are never referenced by user-declared tools.
    */
   serverIds?: string[];
+  /** Sub-agent IDs contributed by this plugin. */
+  subagentIds?: string[];
+  /** Hook IDs contributed by this plugin. */
+  hookIds?: string[];
+  /** Rule IDs contributed by this plugin. */
+  ruleIds?: string[];
 }
 
 /**
@@ -105,6 +112,67 @@ export interface ResolvedPluginInfo {
 export interface UnifiedSkillEntry {
   id: string;
   relativePath: string;
+}
+
+/**
+ * Legacy flat command (slash-command markdown) to convert into a skill tree.
+ */
+export interface UnifiedCommandEntry {
+  id: string;
+  /** Path to the `.md` file relative to the plugin root. */
+  relativePath: string;
+}
+
+/**
+ * Plugin agent markdown, mapped toward a capa `SubAgent`.
+ */
+export interface UnifiedAgentEntry {
+  id: string;
+  relativePath: string;
+  description?: string;
+  /** Body after frontmatter — becomes `SubAgent.instructions`. */
+  instructions: string;
+  /** Skill ids listed in agent frontmatter that exist in this plugin. */
+  skillIds: string[];
+  /** Frontmatter keys beyond name/description/skills that were not mapped. */
+  droppedFrontmatterKeys: string[];
+}
+
+/**
+ * One hook action from a provider plugin manifest's hooks file.
+ * Paths may still contain `${CLAUDE_PLUGIN_ROOT}` or `./…` until merge time.
+ */
+export interface UnifiedHookEntry {
+  /** Stable hint used to build `plugin-<installId>-…` ids at merge. */
+  idHint: string;
+  /** Native provider event name (e.g. `PreToolUse`, `sessionStart`). */
+  event: string;
+  type: 'command' | 'prompt';
+  command?: string;
+  prompt?: string;
+  matcher?: string;
+  timeout?: number;
+  failClosed?: boolean;
+  sequential?: boolean;
+  /**
+   * Capa provider this hook was declared for (`claude-code` from a Claude
+   * manifest, `cursor` from a Cursor manifest). Dual-manifest plugins can
+   * contribute both.
+   */
+  targetProvider?: 'claude-code' | 'cursor';
+}
+
+/**
+ * Cursor (or compatible) rule file from the plugin.
+ */
+export interface UnifiedRuleEntry {
+  id: string;
+  relativePath: string;
+  /** Rule body (frontmatter stripped). */
+  content: string;
+  description?: string;
+  appliesTo?: string[];
+  alwaysApply?: boolean;
 }
 
 /**
@@ -132,5 +200,15 @@ export interface UnifiedPluginManifest {
   description?: string;
   provider: PluginProvider;
   skillEntries: UnifiedSkillEntry[];
+  /** Legacy flat commands; materialised as skills at merge time. */
+  commandEntries?: UnifiedCommandEntry[];
+  agentEntries?: UnifiedAgentEntry[];
+  hookEntries?: UnifiedHookEntry[];
+  ruleEntries?: UnifiedRuleEntry[];
   mcpServers: Record<string, NormalizedPluginMCPServerDef>;
+  /**
+   * Artifact kinds present in the plugin tree that capa does not install
+   * (e.g. `lsp`, `monitors`, `themes`). Surfaced as install warnings.
+   */
+  skippedArtifacts?: string[];
 }

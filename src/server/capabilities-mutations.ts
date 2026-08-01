@@ -113,7 +113,11 @@ export async function handleUpdate(
 	}
 	if (
 		isPluginSourced(existing) &&
-		(section === "skills" || section === "servers")
+		(section === "skills" ||
+			section === "servers" ||
+			section === "rules" ||
+			section === "hooks" ||
+			section === "subagents")
 	) {
 		return jsonError(
 			`Cannot edit plugin-sourced ${section.slice(0, -1)}; remove the plugin instead`,
@@ -269,7 +273,11 @@ export async function handleDelete(
 	}
 	if (
 		isPluginSourced(existing) &&
-		(section === "skills" || section === "servers")
+		(section === "skills" ||
+			section === "servers" ||
+			section === "rules" ||
+			section === "hooks" ||
+			section === "subagents")
 	) {
 		return jsonError(
 			`Cannot delete plugin-sourced ${section.slice(0, -1)}; remove the plugin instead`,
