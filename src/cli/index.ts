@@ -301,14 +301,21 @@ if (process.argv[2] === '__server__') {
       .description('Fetch a registry adapter from a git repo or HTTPS URL and install it')
       .option(
         '--type <type>',
-        'Source type: github, gitlab, or url (auto-detected from source by default)',
+        'Source type: github, gitlab, url, or claude-marketplace (auto-detected from source by default)',
       )
       .option('--no-cache', 'Bypass the on-disk repo cache when fetching')
       .action(async (source: string, slug: string | undefined, opts: { type?: string; cache?: boolean }) => {
         let type: RegistrySourceType | undefined;
         if (opts.type) {
-          if (opts.type !== 'github' && opts.type !== 'gitlab' && opts.type !== 'url') {
-            error(`Invalid --type "${opts.type}". Expected one of: github, gitlab, url.`);
+          if (
+            opts.type !== 'github' &&
+            opts.type !== 'gitlab' &&
+            opts.type !== 'url' &&
+            opts.type !== 'claude-marketplace'
+          ) {
+            error(
+              `Invalid --type "${opts.type}". Expected one of: github, gitlab, url, claude-marketplace.`,
+            );
             process.exit(ExitCode.USER_ERROR);
           }
           type = opts.type;

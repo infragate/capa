@@ -13,7 +13,9 @@ interface AddRegistryDialogProps {
   onAdded: (slug: string) => void;
 }
 
-const TYPE_OPTIONS: RegistrySourceType[] = ['github', 'gitlab', 'url'];
+type AddMode = 'adapter' | 'claude-marketplace';
+
+const ADAPTER_TYPE_OPTIONS: RegistrySourceType[] = ['github', 'gitlab', 'url'];
 
 function isErrorWithMessage(err: unknown): err is { message: string } {
   return !!err && typeof (err as any).message === 'string';
@@ -21,21 +23,31 @@ function isErrorWithMessage(err: unknown): err is { message: string } {
 
 export function AddRegistryDialog({ open, onOpenChange, onAdded }: AddRegistryDialogProps) {
   const { t } = useTranslation('registries');
+  const [mode, setMode] = useState<AddMode>('adapter');
   const [type, setType] = useState<RegistrySourceType>('github');
   const [source, setSource] = useState('');
   const [slug, setSlug] = useState('');
   const [trusted, setTrusted] = useState(false);
-  const [preview, setPreview] = useState<{ content: string; ref: string | null } | null>(null);
+  const [preview, setPreview] = useState<{
+    content: string;
+    ref: string | null;
+    pluginCount?: number;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const previewMutation = usePreviewRegistry();
   const addMutation = useAddRegistry();
   const busy = previewMutation.isPending || addMutation.isPending;
 
+  const effectiveType: RegistrySourceType =
+    mode === 'claude-marketplace' ? 'claude-marketplace' : type;
+  const isMarketplace = mode === 'claude-marketplace';
+
   // Reset state whenever the dialog re-opens so a previously-failed attempt
   // doesn't leak into a fresh one.
   useEffect(() => {
     if (open) {
+      setMode('adapter');
       setType('github');
       setSource('');
       setSlug('');
@@ -49,7 +61,16 @@ export function AddRegistryDialog({ open, onOpenChange, onAdded }: AddRegistryDi
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  const canAdd = !!preview && trusted && !!source.trim() && !busy;
+  // Clearing preview when the mode/type/source changes avoids installing a
+  // previously-audited payload against a different source.
+  useEffect(() => {
+    setPreview(null);
+    setTrusted(false);
+  }, [mode, type, source]);
+
+  const canAdd = isMarketplace
+    ? !!preview && !!source.trim() && !busy
+    : !!preview && trusted && !!source.trim() && !busy;
 
   async function handlePreview() {
     setError(null);
@@ -59,8 +80,15 @@ export function AddRegistryDialog({ open, onOpenChange, onAdded }: AddRegistryDi
       return;
     }
     try {
-      const res = await previewMutation.mutateAsync({ type, source: source.trim() });
-      setPreview({ content: res.content, ref: res.resolvedRef });
+      const res = await previewMutation.mutateAsync({
+        type: effectiveType,
+        source: source.trim(),
+      });
+      setPreview({
+        content: res.content,
+        ref: res.resolvedRef,
+        pluginCount: res.pluginCount,
+      });
       if (!slug && res.derivedSlug) {
         setSlug(res.derivedSlug);
       }
@@ -78,12 +106,18 @@ export function AddRegistryDialog({ open, onOpenChange, onAdded }: AddRegistryDi
   async function handleAdd() {
     setError(null);
     if (!preview) {
-      setError(t('addDialog.errors.previewBeforeAdd'));
+      setError(
+        t(
+          isMarketplace
+            ? 'addDialog.errors.previewBeforeAddMarketplace'
+            : 'addDialog.errors.previewBeforeAdd',
+        ),
+      );
       return;
     }
     try {
       const res = await addMutation.mutateAsync({
-        type,
+        type: effectiveType,
         source: source.trim(),
         slug: slug.trim() || undefined,
       });
@@ -111,7 +145,7 @@ export function AddRegistryDialog({ open, onOpenChange, onAdded }: AddRegistryDi
                 {t('addDialog.title')}
               </Dialog.Title>
               <Dialog.Description className="mt-1 text-xs text-text-secondary">
-                {t('addDialog.description')}
+                {t(isMarketplace ? 'addDialog.descriptionMarketplace' : 'addDialog.description')}
               </Dialog.Description>
             </div>
             <Dialog.Close
@@ -124,22 +158,46 @@ export function AddRegistryDialog({ open, onOpenChange, onAdded }: AddRegistryDi
 
           <div className="flex-1 overflow-y-auto px-6 py-5">
             <div className="grid gap-4">
-              <label className="block">
-                <span className="mb-1 block text-xs font-medium text-text-secondary">
-                  {t('addDialog.fields.type')}
-                </span>
-                <select
-                  value={type}
-                  onChange={(e) => setType(e.target.value as RegistrySourceType)}
-                  className="w-full rounded-sm border border-border-primary bg-bg-primary px-2 py-2 text-sm text-text-primary"
-                >
-                  {TYPE_OPTIONS.map((opt) => (
-                    <option key={opt} value={opt}>
-                      {t(`addDialog.typeOptions.${opt}`)}
-                    </option>
+              <fieldset>
+                <legend className="mb-2 text-xs font-medium text-text-secondary">
+                  {t('addDialog.fields.mode')}
+                </legend>
+                <div className="flex flex-wrap gap-2">
+                  {(['adapter', 'claude-marketplace'] as const).map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => setMode(m)}
+                      className={
+                        mode === m
+                          ? 'rounded-sm border border-accent-primary bg-accent-primary/10 px-3 py-1.5 text-sm text-text-primary'
+                          : 'rounded-sm border border-border-primary bg-bg-tertiary px-3 py-1.5 text-sm text-text-secondary hover:bg-hover-bg'
+                      }
+                    >
+                      {t(`addDialog.modes.${m}`)}
+                    </button>
                   ))}
-                </select>
-              </label>
+                </div>
+              </fieldset>
+
+              {!isMarketplace && (
+                <label className="block">
+                  <span className="mb-1 block text-xs font-medium text-text-secondary">
+                    {t('addDialog.fields.type')}
+                  </span>
+                  <select
+                    value={type}
+                    onChange={(e) => setType(e.target.value as RegistrySourceType)}
+                    className="w-full rounded-sm border border-border-primary bg-bg-primary px-2 py-2 text-sm text-text-primary"
+                  >
+                    {ADAPTER_TYPE_OPTIONS.map((opt) => (
+                      <option key={opt} value={opt}>
+                        {t(`addDialog.typeOptions.${opt}`)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
 
               <label className="block">
                 <span className="mb-1 block text-xs font-medium text-text-secondary">
@@ -149,7 +207,11 @@ export function AddRegistryDialog({ open, onOpenChange, onAdded }: AddRegistryDi
                   type="text"
                   value={source}
                   onChange={(e) => setSource(e.target.value)}
-                  placeholder={t(`addDialog.sourcePlaceholders.${type}`)}
+                  placeholder={t(
+                    isMarketplace
+                      ? 'addDialog.sourcePlaceholders.claude-marketplace'
+                      : `addDialog.sourcePlaceholders.${type}`,
+                  )}
                   className="w-full rounded-sm border border-border-primary bg-bg-primary px-2 py-2 font-mono text-sm text-text-primary placeholder:text-text-tertiary"
                 />
               </label>
@@ -186,19 +248,37 @@ export function AddRegistryDialog({ open, onOpenChange, onAdded }: AddRegistryDi
                     {t('addDialog.preview.resolvedRef', { ref: preview.ref.slice(0, 7) })}
                   </span>
                 )}
+                {isMarketplace && preview?.pluginCount != null && (
+                  <span className="text-xs text-text-secondary">
+                    {t('addDialog.preview.pluginCount', { count: preview.pluginCount })}
+                  </span>
+                )}
               </div>
 
               <div className="rounded-sm border border-border-primary bg-bg-primary">
                 <div className="border-b border-border-secondary px-3 py-2 text-xs font-medium text-text-secondary">
-                  {t('addDialog.preview.title')}
+                  {t(
+                    isMarketplace
+                      ? 'addDialog.preview.titleMarketplace'
+                      : 'addDialog.preview.title',
+                  )}
                 </div>
                 <div className="max-h-72 overflow-auto">
                   {preview ? (
-                    <CodeBlock code={preview.content} language="typescript" />
+                    <CodeBlock
+                      code={preview.content}
+                      language={isMarketplace ? 'json' : 'typescript'}
+                    />
                   ) : (
                     <div className="flex items-center gap-2 px-3 py-6 text-xs text-text-tertiary">
                       <AlertTriangle className="h-3.5 w-3.5" />
-                      <span>{t('addDialog.preview.emptyHint')}</span>
+                      <span>
+                        {t(
+                          isMarketplace
+                            ? 'addDialog.preview.emptyHintMarketplace'
+                            : 'addDialog.preview.emptyHint',
+                        )}
+                      </span>
                     </div>
                   )}
                 </div>
@@ -213,22 +293,26 @@ export function AddRegistryDialog({ open, onOpenChange, onAdded }: AddRegistryDi
           </div>
 
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border-secondary px-6 py-4">
-            <label
-              className={
-                preview
-                  ? 'flex items-center gap-2 text-sm text-text-primary'
-                  : 'flex items-center gap-2 text-sm text-text-tertiary'
-              }
-              title={preview ? undefined : t('addDialog.errors.previewBeforeAdd')}
-            >
-              <input
-                type="checkbox"
-                checked={trusted}
-                onChange={(e) => setTrusted(e.target.checked)}
-                disabled={!preview}
-              />
-              <span>{t('addDialog.trust')}</span>
-            </label>
+            {isMarketplace ? (
+              <span className="text-xs text-text-secondary">{t('addDialog.marketplaceHint')}</span>
+            ) : (
+              <label
+                className={
+                  preview
+                    ? 'flex items-center gap-2 text-sm text-text-primary'
+                    : 'flex items-center gap-2 text-sm text-text-tertiary'
+                }
+                title={preview ? undefined : t('addDialog.errors.previewBeforeAdd')}
+              >
+                <input
+                  type="checkbox"
+                  checked={trusted}
+                  onChange={(e) => setTrusted(e.target.checked)}
+                  disabled={!preview}
+                />
+                <span>{t('addDialog.trust')}</span>
+              </label>
+            )}
             <div className="flex items-center gap-2">
               <Dialog.Close
                 type="button"

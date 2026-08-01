@@ -146,7 +146,7 @@ export function initSchema(db: Database): void {
 	db.run(`
       CREATE TABLE IF NOT EXISTS registries (
         slug TEXT PRIMARY KEY,
-        type TEXT NOT NULL CHECK(type IN ('github','gitlab','url')),
+        type TEXT NOT NULL CHECK(type IN ('github','gitlab','url','claude-marketplace')),
         source TEXT NOT NULL,
         enabled INTEGER NOT NULL DEFAULT 1,
         status TEXT NOT NULL DEFAULT 'pending'
@@ -158,6 +158,8 @@ export function initSchema(db: Database): void {
         updated_at INTEGER NOT NULL
       )
     `);
+
+	migrateRegistriesAllowClaudeMarketplace(db);
 
 	// Tracks individual capa-installed hook entries (one row per
 	// (provider, hook) tuple). `locator` is the JSON-encoded path inside
@@ -231,4 +233,44 @@ function ensureColumn(
 	}>;
 	if (cols.some((c) => c.name === column)) return;
 	db.run(`ALTER TABLE ${table} ADD COLUMN ${column} ${typeSql}`);
+}
+
+/**
+ * Existing DBs created `registries` with CHECK(type IN ('github','gitlab','url')).
+ * SQLite cannot ALTER a CHECK constraint, so rebuild the table when needed.
+ */
+function migrateRegistriesAllowClaudeMarketplace(db: Database): void {
+	const row = db
+		.query(
+			`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'registries'`,
+		)
+		.get() as { sql: string } | null;
+	if (!row?.sql) return;
+	if (row.sql.includes("'claude-marketplace'")) return;
+
+	db.run("BEGIN");
+	try {
+		db.run(`
+      CREATE TABLE registries_new (
+        slug TEXT PRIMARY KEY,
+        type TEXT NOT NULL CHECK(type IN ('github','gitlab','url','claude-marketplace')),
+        source TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        status TEXT NOT NULL DEFAULT 'pending'
+               CHECK(status IN ('pending','installed','failed','disabled')),
+        last_error TEXT,
+        resolved_ref TEXT,
+        installed_at INTEGER,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `);
+		db.run(`INSERT INTO registries_new SELECT * FROM registries`);
+		db.run(`DROP TABLE registries`);
+		db.run(`ALTER TABLE registries_new RENAME TO registries`);
+		db.run("COMMIT");
+	} catch (err) {
+		db.run("ROLLBACK");
+		throw err;
+	}
 }

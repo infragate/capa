@@ -384,4 +384,154 @@ describe('registries-routes', () => {
       expect(res.status).toBe(400);
     });
   });
+
+  describe('claude-marketplace type', () => {
+    const MARKETPLACE_JSON = JSON.stringify(
+      {
+        name: "developer-kit",
+        description: "Modular marketplace for developer kit plugins",
+        owner: { name: "Giuseppe Trisciuoglio" },
+        plugins: [
+          {
+            name: "developer-kit-typescript",
+            description: "TypeScript toolkit",
+            source: "./plugins/developer-kit-typescript",
+            version: "2.8.0",
+          },
+          {
+            name: "developer-kit",
+            description: "Core",
+            source: "./plugins/developer-kit-core",
+            version: "2.8.0",
+          },
+        ],
+      },
+      null,
+      2,
+    );
+
+    it('previews a marketplace.json URL and derives the catalog name as slug', async () => {
+      const mpServer = Bun.serve({
+        port: 0,
+        fetch(req) {
+          if (new URL(req.url).pathname.endsWith('/marketplace.json')) {
+            return new Response(MARKETPLACE_JSON, {
+              headers: { 'content-type': 'application/json' },
+            });
+          }
+          return new Response('not found', { status: 404 });
+        },
+      });
+      const marketplaceUrl = `http://localhost:${mpServer.port}/marketplace.json`;
+      try {
+        const url = new URL(
+          `http://localhost/api/registries/preview?type=claude-marketplace&source=${encodeURIComponent(marketplaceUrl)}`,
+        );
+        const res = await previewRegistryHandler(db, url);
+        expect(res.status).toBe(200);
+        const body = await jsonOf(res);
+        expect(body.derivedSlug).toBe('developer-kit');
+        expect(body.pluginCount).toBe(2);
+        expect(body.content).toContain('"developer-kit-typescript"');
+        expect(db.listRegistries()).toEqual([]);
+      } finally {
+        mpServer.stop();
+      }
+    });
+
+    it('installs from a marketplace.json URL, loads via manager, and searches plugins', async () => {
+      const mpServer = Bun.serve({
+        port: 0,
+        fetch(req) {
+          if (new URL(req.url).pathname.endsWith('/marketplace.json')) {
+            return new Response(MARKETPLACE_JSON, {
+              headers: { 'content-type': 'application/json' },
+            });
+          }
+          return new Response('not found', { status: 404 });
+        },
+      });
+      const marketplaceUrl = `http://localhost:${mpServer.port}/marketplace.json`;
+      try {
+        const req = new Request('http://localhost/api/registries', {
+          method: 'POST',
+          body: JSON.stringify({
+            type: 'claude-marketplace',
+            source: marketplaceUrl,
+          }),
+        });
+        const res = await createRegistryHandler(db, manager, req);
+        expect(res.status).toBe(201);
+        const body = await jsonOf(res);
+        expect(body.registry.slug).toBe('developer-kit');
+        expect(body.registry.type).toBe('claude-marketplace');
+        expect(body.manifest.id).toBe('developer-kit');
+        expect(existsSync(join(managedDir, 'developer-kit', 'marketplace.json'))).toBe(true);
+        expect(existsSync(join(managedDir, 'developer-kit', 'marketplace.meta.json'))).toBe(true);
+
+        // Bare JSON URL marketplaces have no ownerRepo — relative sources
+        // are listed but not installable. Search still works.
+        await manager.reload();
+        const search = await manager.search('developer-kit', {
+          capability: 'plugins',
+          query: '',
+        });
+        expect(search.total).toBe(2);
+        expect(search.items.map((i) => i.id).sort()).toEqual([
+          'developer-kit',
+          'developer-kit-typescript',
+        ]);
+      } finally {
+        mpServer.stop();
+      }
+    });
+
+    it('installs a git-backed marketplace when materializing from a local snapshot fixture', async () => {
+      // Simulate install by writing managed files directly then loading —
+      // full git clone is covered by unit source-mapping tests.
+      const { writeFileSync: write } = await import('fs');
+      const slug = 'dk-local';
+      const dir = join(managedDir, slug);
+      mkdirSync(dir, { recursive: true });
+      write(join(dir, 'marketplace.json'), MARKETPLACE_JSON);
+      write(
+        join(dir, 'marketplace.meta.json'),
+        JSON.stringify({
+          source: 'giuseppe-trisciuoglio/developer-kit',
+          host: 'github',
+          ownerRepo: 'giuseppe-trisciuoglio/developer-kit',
+          marketplaceName: 'developer-kit',
+          pluginCount: 2,
+          fetchedAt: Date.now(),
+        }),
+      );
+      db.upsertRegistry({
+        slug,
+        type: 'claude-marketplace',
+        source: 'giuseppe-trisciuoglio/developer-kit',
+        status: 'installed',
+        enabled: true,
+      });
+      await manager.reload();
+      const detail = await manager.view(slug, {
+        capability: 'plugins',
+        id: 'developer-kit-typescript',
+      });
+      expect(detail.installSnippet).toMatchObject({
+        id: 'developer-kit-typescript',
+        type: 'github',
+        def: {
+          repo: 'giuseppe-trisciuoglio/developer-kit@developer-kit-typescript',
+        },
+      });
+
+      const core = await manager.view(slug, {
+        capability: 'plugins',
+        id: 'developer-kit',
+      });
+      expect((core.installSnippet as any).def.repo).toBe(
+        'giuseppe-trisciuoglio/developer-kit::plugins/developer-kit-core',
+      );
+    });
+  });
 });

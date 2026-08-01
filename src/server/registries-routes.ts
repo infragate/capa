@@ -25,9 +25,19 @@ function jsonOk(body: unknown, status = 200): Response {
 }
 
 function parseTypeQuery(value: string | null): RegistrySourceType | null {
-	if (value === "github" || value === "gitlab" || value === "url") return value;
+	if (
+		value === "github" ||
+		value === "gitlab" ||
+		value === "url" ||
+		value === "claude-marketplace"
+	) {
+		return value;
+	}
 	return null;
 }
+
+const TYPE_HELP = "github, gitlab, url, claude-marketplace";
+
 
 export async function listRegistriesHandler(
 	db: CapaDatabase,
@@ -66,34 +76,47 @@ export async function createRegistryHandler(
 
 	const type = parseTypeQuery(body.type ?? null);
 	if (!type) {
-		return jsonError('Field "type" must be one of: github, gitlab, url.', 400);
+		return jsonError(`Field "type" must be one of: ${TYPE_HELP}.`, 400);
 	}
 	const source = body.source;
 	if (!source || typeof source !== "string") {
 		return jsonError('Field "source" is required.', 400);
 	}
 
-	let slug: string;
+	let installSlug: string;
 	try {
-		slug = body.slug ?? deriveSlug(source, type);
+		installSlug = body.slug?.trim() || deriveSlug(source, type);
 	} catch (err: any) {
 		return jsonError(`Cannot derive slug: ${err?.message ?? err}`, 400);
 	}
-	if (!isValidSlug(slug)) {
+	if (!isValidSlug(installSlug)) {
 		return jsonError(
-			`Invalid slug "${slug}". Allowed: lowercase letters, digits, and dashes; must start with a letter or digit.`,
+			`Invalid slug "${installSlug}". Allowed: lowercase letters, digits, and dashes; must start with a letter or digit.`,
 			400,
 		);
-	}
-	if (db.getRegistry(slug)) {
-		return jsonError(`Registry "${slug}" already exists.`, 409);
 	}
 
 	try {
 		const authFetch = createAuthenticatedFetch(db);
-		const result = await installRegistry({ slug, type, source }, authFetch);
+
+		// Prefer marketplace.json `name` as the slug when the caller omitted one.
+		if (type === "claude-marketplace" && !body.slug?.trim()) {
+			const preview = await fetchAdapterSource({ type, source }, authFetch);
+			if (preview.preferredSlug && isValidSlug(preview.preferredSlug)) {
+				installSlug = preview.preferredSlug;
+			}
+		}
+
+		if (db.getRegistry(installSlug)) {
+			return jsonError(`Registry "${installSlug}" already exists.`, 409);
+		}
+
+		const result = await installRegistry(
+			{ slug: installSlug, type, source },
+			authFetch,
+		);
 		const record = db.upsertRegistry({
-			slug,
+			slug: installSlug,
 			type,
 			source,
 			status: "installed",
@@ -159,7 +182,7 @@ export async function patchRegistryHandler(
 	// materialized adapter matches the new upstream pointer.
 	const newType = hasType ? parseTypeQuery(body.type!) : existing.type;
 	if (hasType && !newType) {
-		return jsonError('Field "type" must be one of: github, gitlab, url.', 400);
+		return jsonError(`Field "type" must be one of: ${TYPE_HELP}.`, 400);
 	}
 	const newSource = hasSource ? body.source!.trim() : existing.source;
 	if (hasSource && !newSource) {
@@ -259,25 +282,30 @@ export async function previewRegistryHandler(
 	const type = parseTypeQuery(url.searchParams.get("type"));
 	const source = url.searchParams.get("source");
 	if (!type) {
-		return jsonError('Query "type" must be one of: github, gitlab, url.', 400);
+		return jsonError(`Query "type" must be one of: ${TYPE_HELP}.`, 400);
 	}
 	if (!source) {
 		return jsonError('Query "source" is required.', 400);
 	}
 	try {
 		const authFetch = createAuthenticatedFetch(db);
-		const { content, resolvedRef } = await fetchAdapterSource(
-			{ type, source },
-			authFetch,
-		);
+		const { content, resolvedRef, preferredSlug, pluginCount } =
+			await fetchAdapterSource({ type, source }, authFetch);
 		let derivedSlug: string | null = null;
 		try {
-			const candidate = deriveSlug(source, type);
+			const candidate =
+				(preferredSlug && isValidSlug(preferredSlug) ? preferredSlug : null) ??
+				deriveSlug(source, type);
 			derivedSlug = isValidSlug(candidate) ? candidate : null;
 		} catch {
 			derivedSlug = null;
 		}
-		return jsonOk({ content, resolvedRef, derivedSlug });
+		return jsonOk({
+			content,
+			resolvedRef,
+			derivedSlug,
+			...(typeof pluginCount === "number" ? { pluginCount } : {}),
+		});
 	} catch (err: any) {
 		return jsonError(err?.message ?? String(err), 400);
 	}

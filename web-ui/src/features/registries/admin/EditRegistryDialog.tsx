@@ -14,7 +14,12 @@ interface EditRegistryDialogProps {
   onSaved: (slug: string) => void;
 }
 
-const TYPE_OPTIONS: RegistrySourceType[] = ['github', 'gitlab', 'url'];
+const TYPE_OPTIONS: RegistrySourceType[] = [
+  'github',
+  'gitlab',
+  'url',
+  'claude-marketplace',
+];
 
 function isErrorWithMessage(err: unknown): err is { message: string } {
   return !!err && typeof (err as any).message === 'string';
@@ -37,9 +42,8 @@ export function EditRegistryDialog({
   const editMutation = useEditRegistry();
   const busy = previewMutation.isPending || editMutation.isPending;
 
-  // Re-seed the form whenever a different record is opened or the dialog
-  // toggles open — so a previously-failed attempt doesn't leak into a
-  // fresh edit session.
+  const isMarketplace = type === 'claude-marketplace';
+
   useEffect(() => {
     if (open && record) {
       setType(record.type);
@@ -57,9 +61,10 @@ export function EditRegistryDialog({
 
   const trimmedSource = source.trim();
   const changed = type !== record.type || trimmedSource !== record.source;
-  // Same security gate as the Add dialog: a fresh preview + trust check is
-  // required before persisting *new* code under a known slug.
-  const canSave = !busy && trimmedSource.length > 0 && (!changed || (preview && trusted));
+  const canSave =
+    !busy &&
+    trimmedSource.length > 0 &&
+    (!changed || (preview && (isMarketplace || trusted)));
 
   async function handlePreview() {
     setError(null);
@@ -90,7 +95,13 @@ export function EditRegistryDialog({
       return;
     }
     if (!preview) {
-      setError(t('addDialog.errors.previewBeforeAdd'));
+      setError(
+        t(
+          isMarketplace
+            ? 'addDialog.errors.previewBeforeAddMarketplace'
+            : 'addDialog.errors.previewBeforeAdd',
+        ),
+      );
       return;
     }
     try {
@@ -123,7 +134,11 @@ export function EditRegistryDialog({
                 {t('editDialog.title', { slug: record.slug })}
               </Dialog.Title>
               <Dialog.Description className="mt-1 text-xs text-text-secondary">
-                {t('editDialog.description')}
+                {t(
+                  isMarketplace
+                    ? 'editDialog.descriptionMarketplace'
+                    : 'editDialog.description',
+                )}
               </Dialog.Description>
             </div>
             <Dialog.Close
@@ -157,7 +172,11 @@ export function EditRegistryDialog({
                 </span>
                 <select
                   value={type}
-                  onChange={(e) => setType(e.target.value as RegistrySourceType)}
+                  onChange={(e) => {
+                    setType(e.target.value as RegistrySourceType);
+                    setPreview(null);
+                    setTrusted(false);
+                  }}
                   className="w-full rounded-sm border border-border-primary bg-bg-primary px-2 py-2 text-sm text-text-primary"
                 >
                   {TYPE_OPTIONS.map((opt) => (
@@ -204,15 +223,28 @@ export function EditRegistryDialog({
 
               <div className="rounded-sm border border-border-primary bg-bg-primary">
                 <div className="border-b border-border-secondary px-3 py-2 text-xs font-medium text-text-secondary">
-                  {t('addDialog.preview.title')}
+                  {t(
+                    isMarketplace
+                      ? 'addDialog.preview.titleMarketplace'
+                      : 'addDialog.preview.title',
+                  )}
                 </div>
                 <div className="max-h-72 overflow-auto">
                   {preview ? (
-                    <CodeBlock code={preview.content} language="typescript" />
+                    <CodeBlock
+                      code={preview.content}
+                      language={isMarketplace ? 'json' : 'typescript'}
+                    />
                   ) : (
                     <div className="flex items-center gap-2 px-3 py-6 text-xs text-text-tertiary">
                       <AlertTriangle className="h-3.5 w-3.5" />
-                      <span>{t('addDialog.preview.emptyHint')}</span>
+                      <span>
+                        {t(
+                          isMarketplace
+                            ? 'addDialog.preview.emptyHintMarketplace'
+                            : 'addDialog.preview.emptyHint',
+                        )}
+                      </span>
                     </div>
                   )}
                 </div>
@@ -227,28 +259,32 @@ export function EditRegistryDialog({
           </div>
 
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border-secondary px-6 py-4">
-            <label
-              className={
-                changed && preview
-                  ? 'flex items-center gap-2 text-sm text-text-primary'
-                  : 'flex items-center gap-2 text-sm text-text-tertiary'
-              }
-              title={
-                !changed
-                  ? t('editDialog.noChanges')
-                  : !preview
-                    ? t('addDialog.errors.previewBeforeAdd')
-                    : undefined
-              }
-            >
-              <input
-                type="checkbox"
-                checked={trusted}
-                onChange={(e) => setTrusted(e.target.checked)}
-                disabled={!preview || !changed}
-              />
-              <span>{t('addDialog.trust')}</span>
-            </label>
+            {isMarketplace ? (
+              <span className="text-xs text-text-secondary">{t('addDialog.marketplaceHint')}</span>
+            ) : (
+              <label
+                className={
+                  changed && preview
+                    ? 'flex items-center gap-2 text-sm text-text-primary'
+                    : 'flex items-center gap-2 text-sm text-text-tertiary'
+                }
+                title={
+                  !changed
+                    ? t('editDialog.noChanges')
+                    : !preview
+                      ? t('addDialog.errors.previewBeforeAdd')
+                      : undefined
+                }
+              >
+                <input
+                  type="checkbox"
+                  checked={trusted}
+                  onChange={(e) => setTrusted(e.target.checked)}
+                  disabled={!preview || !changed}
+                />
+                <span>{t('addDialog.trust')}</span>
+              </label>
+            )}
             <div className="flex items-center gap-2">
               <Dialog.Close
                 type="button"
