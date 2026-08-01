@@ -57,6 +57,14 @@ export function ConfiguredToolCard({
     if (!editingDesc) setDraftDesc(tool.description || '');
   }, [tool.description, editingDesc]);
 
+  useEffect(() => {
+    if (!deleting) return;
+    setEditingDesc(false);
+    setEditingId(false);
+    setDefaultsOpen(false);
+    setFormatterOpen(false);
+  }, [deleting]);
+
   async function saveRename() {
     const next = draftId.replace(/[^a-zA-Z0-9_-]/g, '');
     const idErr = capaIdErrorMessage(next, t);
@@ -182,7 +190,7 @@ export function ConfiguredToolCard({
               <textarea
                 autoFocus
                 value={draftDesc}
-                disabled={updateMutation.isPending}
+                disabled={busy}
                 rows={focused ? 4 : 2}
                 onChange={(e) => setDraftDesc(e.target.value)}
                 placeholder={originalDesc || t('actions.description')}
@@ -191,7 +199,7 @@ export function ConfiguredToolCard({
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  disabled={updateMutation.isPending}
+                  disabled={busy}
                   onClick={() => void saveDescription()}
                   className="inline-flex items-center gap-1.5 rounded-sm border border-border-tertiary px-2 py-1 text-[11px] cursor-pointer hover:bg-hover-bg disabled:opacity-50"
                 >
@@ -200,7 +208,7 @@ export function ConfiguredToolCard({
                 </button>
                 <button
                   type="button"
-                  disabled={updateMutation.isPending}
+                  disabled={busy}
                   onClick={() => {
                     setDraftDesc(tool.description || '');
                     setEditingDesc(false);
@@ -337,7 +345,7 @@ export function ConfiguredToolCard({
               <div className="ui-panel-enter">
                 <DefaultsEditor
                   tool={tool}
-                  busy={updateMutation.isPending}
+                  busy={busy}
                   onSave={(defaults) =>
                     updateMutation.mutate({
                       section: 'tools',
@@ -383,7 +391,7 @@ export function ConfiguredToolCard({
             <div className="ui-panel-enter">
               <FormatterEditor
                 tool={tool}
-                busy={updateMutation.isPending}
+                busy={busy}
                 onSave={(formatter) =>
                   updateMutation.mutate({
                     section: 'tools',
