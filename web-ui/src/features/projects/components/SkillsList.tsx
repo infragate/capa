@@ -8,6 +8,7 @@ import { ReorderableList } from '../../../components/common/ReorderableList';
 import { sourceTypeBadgeClasses } from './sourceTypeColors';
 import { SkillDetailDialog } from './SkillDetailDialog';
 import { useDeleteCapability, useReorderCapability } from '../hooks';
+import { isPluginSourced, skillReorderKey } from '../lib/reorderKeys';
 
 interface SkillsListProps {
   skills: Skill[];
@@ -32,13 +33,14 @@ export function SkillsList({ skills, search, projectId }: SkillsListProps) {
       ) : (
         <ReorderableList
           items={visible}
-          getId={(s) => s.id}
+          getId={(s) => skillReorderKey(s)}
+          isLocked={(s) => isPluginSourced(s)}
           disabled={searching}
           handleLabel={t('actions.dragToReorder')}
           className="space-y-2"
           onReorder={(ids) => reorderMutation.mutate({ section: 'skills', ids })}
           renderItem={(skill, { handle }) => {
-            const locked = !!skill.sourcePlugin;
+            const locked = isPluginSourced(skill);
             return (
               <div className="flex w-full items-stretch gap-1 rounded-sm border border-border-tertiary bg-bg-tertiary pl-1">
                 {handle}

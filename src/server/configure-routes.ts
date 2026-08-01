@@ -34,6 +34,50 @@ export interface ConfigureRouteDeps {
 }
 
 /**
+ * Reload in-memory capabilities after a file write without probing OAuth or
+ * validating every MCP tool. Used for reorder (and similar) so large projects
+ * do not block or drop the HTTP response while re-checking 6+ servers.
+ */
+export async function applyProjectCapabilitiesOnly(
+	deps: ConfigureRouteDeps,
+	projectId: string,
+	capabilities: Capabilities,
+): Promise<{ success: true }> {
+	const apiLogger = logger.child("CapaServer").child("API");
+	apiLogger.info(`Refresh capabilities (light) for project: ${projectId}`);
+
+	const project = deps.db.getProject(projectId);
+	let capabilitiesToUse = capabilities;
+
+	if (project && (capabilities.plugins?.length ?? 0) > 0) {
+		const file = await detectCapabilitiesFile(project.path);
+		if (file) {
+			deps.effectiveCapsCache.delete(projectId);
+			capabilitiesToUse = await loadEffectiveCapabilities(
+				capabilities,
+				project.path,
+				projectId,
+				file.path,
+				deps.db,
+				deps.effectiveCapsCache,
+			);
+		}
+	} else {
+		deps.effectiveCapsCache.delete(projectId);
+	}
+
+	deps.sessionManager.setProjectCapabilities(projectId, capabilitiesToUse);
+	if (project) {
+		void deps.capsWatcher.watchProject(projectId, project.path);
+	}
+
+	apiLogger.success(
+		`Capabilities refreshed (tools=${capabilitiesToUse.tools.length}, servers=${capabilitiesToUse.servers.length})`,
+	);
+	return { success: true };
+}
+
+/**
  * Configure a project: detect OAuth2 requirements per HTTP server, check
  * required variables, and validate that the configured tools actually
  * exist on their remote servers. Both the OAuth2 probe and the tool-list

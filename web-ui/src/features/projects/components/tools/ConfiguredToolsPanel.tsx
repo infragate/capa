@@ -3,7 +3,7 @@ import type { EnrichedTool, Skill, Tool, ToolSchema } from '../../../../types/ap
 import { matchesSearch } from '../../../../lib/utils';
 import { useDeleteCapability, useReorderCapability } from '../../hooks';
 import { ReorderableList } from '../../../../components/common/ReorderableList';
-import { configuredToolAnchor, isToolFocused } from './anchors';
+import { configuredToolAnchor, configuredToolReorderKey, isToolFocused } from './anchors';
 import { ConfiguredToolCard } from './ConfiguredToolCard';
 
 export function ConfiguredToolsPanel({
@@ -80,7 +80,7 @@ export function ConfiguredToolsPanel({
       <div data-tools-panel-content>
         <ReorderableList
           items={visible}
-          getId={(tool) => tool.id}
+          getId={(tool) => configuredToolReorderKey(tool)}
           disabled={searching}
           handleLabel={t('actions.dragToReorder')}
           className="space-y-2"
@@ -102,7 +102,9 @@ export function ConfiguredToolsPanel({
                   deleteMutation.mutate({ section: 'tools', entryId: tool.id });
                 }
               }}
-              deleting={deleteMutation.isPending}
+              deleting={
+                deleteMutation.isPending && deleteMutation.variables?.entryId === tool.id
+              }
               dragHandle={handle}
             />
           )}

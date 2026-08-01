@@ -584,6 +584,76 @@ describe('capabilities', () => {
       expect(parsed.skills.map((s: { id: string }) => s.id)).toEqual(['c', 'a', 'b']);
     });
 
+    it('reorders tools with duplicate ids using server+tool keys', async () => {
+      const filePath = join(tempDir, 'capabilities.json');
+      await Bun.write(
+        filePath,
+        JSON.stringify({
+          skills: [],
+          servers: [],
+          tools: [
+            {
+              id: 'search',
+              type: 'mcp',
+              def: { server: '@owl', tool: 'search' },
+            },
+            {
+              id: 'search',
+              type: 'mcp',
+              def: { server: '@other', tool: 'search' },
+            },
+            {
+              id: 'ping',
+              type: 'mcp',
+              def: { server: '@owl', tool: 'ping' },
+            },
+          ],
+        }),
+      );
+
+      await reorderCapabilityEntries(filePath, 'json', 'tools', [
+        'search::other::search',
+        'ping::owl::ping',
+        'search::owl::search',
+      ]);
+      const parsed = await parseCapabilitiesFile(filePath, 'json');
+      expect(
+        parsed.tools.map((t: { id: string; def: { server: string; tool: string } }) => [
+          t.id,
+          t.def.server,
+          t.def.tool,
+        ]),
+      ).toEqual([
+        ['search', '@other', 'search'],
+        ['ping', '@owl', 'ping'],
+        ['search', '@owl', 'search'],
+      ]);
+    });
+
+    it('ignores plugin-prefixed skill keys and reorders authored skills', async () => {
+      const filePath = join(tempDir, 'capabilities.json');
+      await Bun.write(
+        filePath,
+        JSON.stringify({
+          skills: [
+            { id: 'alpha', type: 'inline' },
+            { id: 'beta', type: 'inline' },
+          ],
+          servers: [],
+          tools: [],
+        }),
+      );
+
+      await reorderCapabilityEntries(filePath, 'json', 'skills', [
+        'plugin:demo:shared',
+        'beta',
+        'plugin:other:shared',
+        'alpha',
+      ]);
+      const parsed = await parseCapabilitiesFile(filePath, 'json');
+      expect(parsed.skills.map((s: { id: string }) => s.id)).toEqual(['beta', 'alpha']);
+    });
+
     it('rejects non-permutation ids', async () => {
       const filePath = join(tempDir, 'capabilities.json');
       await Bun.write(
@@ -603,7 +673,7 @@ describe('capabilities', () => {
       ).rejects.toThrow(/exactly once/);
       expect(
         reorderCapabilityEntries(filePath, 'json', 'skills', ['a', 'missing']),
-      ).rejects.toThrow(/not found/);
+      ).rejects.toThrow(/exactly once/);
     });
   });
 

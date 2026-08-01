@@ -7,6 +7,7 @@ import {
 	updateCapabilityEntry,
 } from "../shared/capabilities";
 import {
+	afterReorderWrite,
 	afterWrite,
 	asObj,
 	type CapabilitiesRouteDeps,
@@ -75,13 +76,15 @@ export async function handleReorder(
 	if (!loaded.ok) return loaded.response;
 
 	try {
+		// Mark before the write so the disk watcher ignores our own mtime bump.
+		deps.markSelfWrite?.(projectId);
 		await reorderCapabilityEntries(
 			loaded.path,
 			loaded.format,
 			section,
 			ids as string[],
 		);
-		return await afterWrite(deps, projectId, loaded.path, loaded.format);
+		return await afterReorderWrite(deps, projectId, loaded.path, loaded.format);
 	} catch (err: any) {
 		return jsonError(err?.message ?? String(err), 400);
 	}

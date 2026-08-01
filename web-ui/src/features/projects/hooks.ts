@@ -1,7 +1,16 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState, useCallback } from 'react';
 import { projectsApi } from './api';
-import type { CapabilitySection, ProjectDetail, ToolCallRecord } from '../../types/api';
+import type {
+  CapabilitySection,
+  ProjectDetail,
+  Server,
+  Skill,
+  Tool,
+  ToolCallRecord,
+} from '../../types/api';
+import { configuredToolReorderKey } from './components/tools/anchors';
+import { reorderByKey, serverReorderKey, skillReorderKey } from './lib/reorderKeys';
 
 function invalidateProjectQueries(qc: ReturnType<typeof useQueryClient>, projectId: string) {
   qc.invalidateQueries({ queryKey: ['project', projectId] });
@@ -28,6 +37,18 @@ function reorderByIds<T extends { id: string | null }>(items: T[], ids: string[]
   }
   next.push(...byId.values(), ...rest);
   return next;
+}
+
+function reorderToolsByKey(tools: Tool[], keys: string[]): Tool[] {
+  return reorderByKey(tools, keys, configuredToolReorderKey);
+}
+
+function reorderSkillsByKey(skills: Skill[], keys: string[]): Skill[] {
+  return reorderByKey(skills, keys, skillReorderKey);
+}
+
+function reorderServersByKey(servers: Server[], keys: string[]): Server[] {
+  return reorderByKey(servers, keys, serverReorderKey);
 }
 
 export function useProjects() {
@@ -316,7 +337,60 @@ export function useAppendCapability(projectId: string) {
       section: CapabilitySection;
       entry: Record<string, unknown>;
     }) => projectsApi.appendCapability(projectId, section, entry),
-    onSuccess: () => invalidateProjectQueries(qc, projectId),
+    onMutate: async ({ section, entry }) => {
+      if (section !== 'tools') return undefined;
+      await qc.cancelQueries({ queryKey: ['project', projectId] });
+      const previous = qc.getQueryData<ProjectDetail>(['project', projectId]);
+      const id = typeof entry.id === 'string' ? entry.id : null;
+      if (!id || !previous?.capabilities) return { previous };
+
+      const def =
+        entry.def && typeof entry.def === 'object' && !Array.isArray(entry.def)
+          ? (entry.def as Record<string, unknown>)
+          : {};
+      const optimistic = {
+        id,
+        type: (entry.type === 'command' ? 'command' : 'mcp') as 'mcp' | 'command',
+        description: typeof entry.description === 'string' ? entry.description : null,
+        sourcePlugin: null,
+        mcpServer: typeof def.server === 'string' ? def.server : undefined,
+        mcpTool: typeof def.tool === 'string' ? def.tool : undefined,
+        defaults:
+          def.defaults && typeof def.defaults === 'object'
+            ? (def.defaults as Record<string, unknown>)
+            : null,
+        formatter:
+          def.formatter &&
+          typeof def.formatter === 'object' &&
+          typeof (def.formatter as { cmd?: unknown }).cmd === 'string'
+            ? (def.formatter as { cmd: string; timeout?: number })
+            : null,
+        command:
+          def.run && typeof def.run === 'object' && !Array.isArray(def.run)
+            ? typeof (def.run as Record<string, unknown>).cmd === 'string'
+              ? ((def.run as Record<string, unknown>).cmd as string)
+              : undefined
+            : typeof entry.command === 'string'
+              ? entry.command
+              : undefined,
+        group: typeof entry.group === 'string' ? entry.group : undefined,
+      };
+
+      qc.setQueryData<ProjectDetail>(['project', projectId], {
+        ...previous,
+        capabilities: {
+          ...previous.capabilities,
+          tools: [...previous.capabilities.tools, optimistic],
+        },
+      });
+      return { previous };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.previous) {
+        qc.setQueryData(['project', projectId], ctx.previous);
+      }
+    },
+    onSettled: () => invalidateProjectQueries(qc, projectId),
   });
 }
 
@@ -364,9 +438,9 @@ export function useReorderCapability(projectId: string) {
         if (!old?.capabilities) return old;
         const caps = old.capabilities;
         const nextCaps = { ...caps };
-        if (section === 'skills') nextCaps.skills = reorderByIds(caps.skills, ids);
-        else if (section === 'servers') nextCaps.servers = reorderByIds(caps.servers, ids);
-        else if (section === 'tools') nextCaps.tools = reorderByIds(caps.tools, ids);
+        if (section === 'skills') nextCaps.skills = reorderSkillsByKey(caps.skills, ids);
+        else if (section === 'servers') nextCaps.servers = reorderServersByKey(caps.servers, ids);
+        else if (section === 'tools') nextCaps.tools = reorderToolsByKey(caps.tools, ids);
         else if (section === 'plugins' && caps.plugins) {
           nextCaps.plugins = reorderByIds(caps.plugins, ids);
         } else if (section === 'subagents') {
@@ -382,7 +456,11 @@ export function useReorderCapability(projectId: string) {
         qc.setQueryData(['project', projectId], ctx.previous);
       }
     },
-    onSettled: () => invalidateProjectQueries(qc, projectId),
+    // Reorder does not change servers/tool schemas — only refresh the project doc
+    // to avoid stampedes of /servers/*/tools while the optimistic order is correct.
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ['project', projectId] });
+    },
   });
 }
 

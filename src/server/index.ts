@@ -23,6 +23,7 @@ import { handleCapabilitiesMutation } from "./capabilities-routes";
 import { CapabilitiesFileWatcher } from "./capabilities-watcher";
 import {
 	type ConfigureRouteDeps,
+	applyProjectCapabilitiesOnly,
 	handleProjectConfigure,
 	runProjectConfigure,
 } from "./configure-routes";
@@ -564,6 +565,8 @@ class CapaServer {
 					db: this.db,
 					registryManager: this.registryManager,
 					configure: (id, caps) => this._runProjectConfigure(id, caps),
+					refreshCapabilities: (id, caps) =>
+						this._refreshProjectCapabilities(id, caps),
 					markSelfWrite: (id) => this.capsWatcher.markSelfWrite(id),
 					notifyChanged: (id) => this.notifyProjectChanged(id),
 				},
@@ -902,6 +905,17 @@ class CapaServer {
 			projectId,
 			capabilities,
 			onProgress,
+		);
+	}
+
+	private _refreshProjectCapabilities(
+		projectId: string,
+		capabilities: Capabilities,
+	): Promise<Record<string, unknown>> {
+		return applyProjectCapabilitiesOnly(
+			this.configureRouteDeps(),
+			projectId,
+			capabilities,
 		);
 	}
 

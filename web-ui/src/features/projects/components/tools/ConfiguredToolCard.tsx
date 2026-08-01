@@ -1,8 +1,8 @@
-import { useState, type ReactNode } from 'react';
-import { ChevronRight, Trash2, Pencil } from 'lucide-react';
+import { useEffect, useState, type ReactNode } from 'react';
+import { ChevronRight, Trash2, Pencil, Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import type { EnrichedTool, Skill, Tool } from '../../../../types/api';
-import { highlightText } from '../../../../lib/utils';
+import type { EnrichedTool, Skill } from '../../../../types/api';
+import { highlightText, isFormFieldTarget } from '../../../../lib/utils';
 import { SourceBadge } from '../../../../components/common/ServerBadge';
 import { useUpdateCapability } from '../../hooks';
 import { capaIdErrorMessage, sanitizeCapaIdInput } from '../../../../lib/ids';
@@ -41,10 +41,29 @@ export function ConfiguredToolCard({
   const updateSkillMutation = useUpdateCapability(projectId);
   const [editingId, setEditingId] = useState(false);
   const [draftId, setDraftId] = useState(tool.id);
+  const [editingDesc, setEditingDesc] = useState(false);
+  const [draftDesc, setDraftDesc] = useState(tool.description || '');
   const [defaultsOpen, setDefaultsOpen] = useState(false);
   const [formatterOpen, setFormatterOpen] = useState(!!tool.formatter);
   const [skillsOpen, setSkillsOpen] = useState(false);
-  const desc = tool.description || tool._description || '';
+
+  const displayDesc = tool.description || tool._description || '';
+  const originalDesc = tool._description || '';
+  const hasCustomDesc = !!(tool.description && originalDesc && tool.description !== originalDesc);
+  const busy =
+    updateMutation.isPending || updateSkillMutation.isPending || deleting;
+
+  useEffect(() => {
+    if (!editingDesc) setDraftDesc(tool.description || '');
+  }, [tool.description, editingDesc]);
+
+  useEffect(() => {
+    if (!deleting) return;
+    setEditingDesc(false);
+    setEditingId(false);
+    setDefaultsOpen(false);
+    setFormatterOpen(false);
+  }, [deleting]);
 
   async function saveRename() {
     const next = draftId.replace(/[^a-zA-Z0-9_-]/g, '');
@@ -66,17 +85,38 @@ export function ConfiguredToolCard({
     }
   }
 
+  async function saveDescription() {
+    const next = draftDesc.trim();
+    const current = (tool.description || '').trim();
+    if (next === current) {
+      setEditingDesc(false);
+      return;
+    }
+    try {
+      await updateMutation.mutateAsync({
+        section: 'tools',
+        entryId: tool.id,
+        patch: { description: next || null },
+      });
+      setEditingDesc(false);
+    } catch {
+      // keep editing so user can fix
+    }
+  }
+
   return (
     <div
       data-link-anchor={configuredToolAnchor(tool)}
       role="button"
       tabIndex={0}
       aria-pressed={focused}
+      aria-busy={busy}
       onClick={(e) => {
         e.stopPropagation();
         onSelect();
       }}
       onKeyDown={(e) => {
+        if (isFormFieldTarget(e.target)) return;
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
           e.stopPropagation();
@@ -87,7 +127,7 @@ export function ConfiguredToolCard({
         focused
           ? 'border-accent-primary ring-1 ring-accent-primary'
           : 'border-border-tertiary hover:border-border-primary'
-      }`}
+      } ${busy ? 'opacity-80' : ''}`}
     >
       <div className="flex items-start gap-2">
         {dragHandle}
@@ -97,6 +137,7 @@ export function ConfiguredToolCard({
               <form
                 className="flex min-w-0 flex-1 items-center gap-1"
                 onClick={(e) => e.stopPropagation()}
+                onKeyDown={(e) => e.stopPropagation()}
                 onSubmit={(e) => {
                   e.preventDefault();
                   void saveRename();
@@ -105,11 +146,12 @@ export function ConfiguredToolCard({
                 <input
                   autoFocus
                   value={draftId}
+                  disabled={busy}
                   spellCheck={false}
                   autoComplete="off"
                   onChange={(e) => setDraftId(sanitizeCapaIdInput(e.target.value))}
                   onBlur={() => void saveRename()}
-                  className="min-w-0 flex-1 rounded-sm border border-border-secondary bg-bg-secondary px-1.5 py-0.5 font-mono text-xs text-text-primary"
+                  className="min-w-0 flex-1 rounded-sm border border-border-secondary bg-bg-secondary px-1.5 py-0.5 font-mono text-xs text-text-primary disabled:opacity-50"
                 />
               </form>
             ) : (
@@ -121,12 +163,13 @@ export function ConfiguredToolCard({
                 <button
                   type="button"
                   title={t('actions.renameTool')}
+                  disabled={busy}
                   onClick={(e) => {
                     e.stopPropagation();
                     setDraftId(tool.id);
                     setEditingId(true);
                   }}
-                  className="rounded-sm p-1 text-text-tertiary hover:bg-hover-bg hover:text-text-primary cursor-pointer"
+                  className="rounded-sm p-1 text-text-tertiary hover:bg-hover-bg hover:text-text-primary cursor-pointer disabled:opacity-50"
                 >
                   <Pencil size={12} />
                 </button>
@@ -135,13 +178,84 @@ export function ConfiguredToolCard({
             <span className="shrink-0 rounded-sm bg-bg-secondary px-1.5 py-0.5 text-[10px] uppercase text-text-tertiary">
               {tool.type}
             </span>
+            {busy && <Loader2 size={12} className="animate-spin text-text-tertiary" />}
           </div>
-          {desc && (
-            <p
-              className="mt-1 text-[11px] text-text-secondary"
-              dangerouslySetInnerHTML={{ __html: highlightText(desc, search) }}
-            />
+
+          {editingDesc ? (
+            <div
+              className="mt-1 space-y-1"
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => e.stopPropagation()}
+            >
+              <textarea
+                autoFocus
+                value={draftDesc}
+                disabled={busy}
+                rows={focused ? 4 : 2}
+                onChange={(e) => setDraftDesc(e.target.value)}
+                placeholder={originalDesc || t('actions.description')}
+                className="w-full resize-y rounded-sm border border-border-secondary bg-bg-secondary px-1.5 py-1 text-[11px] text-text-primary disabled:opacity-50"
+              />
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void saveDescription()}
+                  className="inline-flex items-center gap-1.5 rounded-sm border border-border-tertiary px-2 py-1 text-[11px] cursor-pointer hover:bg-hover-bg disabled:opacity-50"
+                >
+                  {updateMutation.isPending && <Loader2 size={12} className="animate-spin" />}
+                  {t('actions.saveDescription')}
+                </button>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => {
+                    setDraftDesc(tool.description || '');
+                    setEditingDesc(false);
+                  }}
+                  className="rounded-sm px-2 py-1 text-[11px] text-text-tertiary hover:bg-hover-bg cursor-pointer disabled:opacity-50"
+                >
+                  {t('actions.cancel')}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="mt-1 flex items-start gap-1">
+              {displayDesc ? (
+                <p
+                  className={`min-w-0 flex-1 text-[11px] text-text-secondary ${
+                    focused ? '' : 'line-clamp-2'
+                  }`}
+                  dangerouslySetInnerHTML={{ __html: highlightText(displayDesc, search) }}
+                />
+              ) : (
+                <p className="min-w-0 flex-1 text-[11px] italic text-text-tertiary">
+                  {t('actions.noDescription')}
+                </p>
+              )}
+              <button
+                type="button"
+                title={t('actions.editToolDescription')}
+                disabled={busy}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setDraftDesc(tool.description || displayDesc);
+                  setEditingDesc(true);
+                }}
+                className="shrink-0 rounded-sm p-1 text-text-tertiary hover:bg-hover-bg hover:text-text-primary cursor-pointer disabled:opacity-50"
+              >
+                <Pencil size={12} />
+              </button>
+            </div>
           )}
+
+          {focused && hasCustomDesc && (
+            <p className="mt-1 text-[10px] text-text-tertiary">
+              <span className="uppercase tracking-wide">{t('actions.originalDescription')}: </span>
+              {originalDesc}
+            </p>
+          )}
+
           {tool.type === 'mcp' && tool.mcpServer && (
             <div className="mt-1 flex items-center gap-1 text-[11px] text-text-tertiary">
               <SourceBadge name={tool.mcpServer.replace(/^@/, '')} kind="server" search={search} />
@@ -180,11 +294,12 @@ export function ConfiguredToolCard({
           <button
             type="button"
             title={t('actions.editCommandTool')}
+            disabled={busy}
             onClick={(e) => {
               e.stopPropagation();
               onEditCommand();
             }}
-            className="rounded-sm p-1.5 text-text-tertiary hover:bg-hover-bg hover:text-text-primary cursor-pointer"
+            className="rounded-sm p-1.5 text-text-tertiary hover:bg-hover-bg hover:text-text-primary cursor-pointer disabled:opacity-50"
           >
             <Pencil size={14} />
           </button>
@@ -192,14 +307,14 @@ export function ConfiguredToolCard({
         <button
           type="button"
           title={t('actions.delete')}
-          disabled={deleting}
+          disabled={busy}
           onClick={(e) => {
             e.stopPropagation();
             onDelete();
           }}
-          className="rounded-sm p-1.5 text-text-tertiary hover:bg-error-bg hover:text-error-text cursor-pointer"
+          className="rounded-sm p-1.5 text-text-tertiary hover:bg-error-bg hover:text-error-text cursor-pointer disabled:opacity-50"
         >
-          <Trash2 size={14} />
+          {deleting ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
         </button>
       </div>
 
@@ -209,11 +324,12 @@ export function ConfiguredToolCard({
           <div className="mt-2 border-t border-border-secondary pt-1">
             <button
               type="button"
+              disabled={busy && !defaultsOpen}
               onClick={(e) => {
                 e.stopPropagation();
                 setDefaultsOpen((v) => !v);
               }}
-              className="flex w-full items-center gap-1 py-1 text-left text-[10px] uppercase tracking-wide text-text-tertiary cursor-pointer hover:text-text-secondary"
+              className="flex w-full items-center gap-1 py-1 text-left text-[10px] uppercase tracking-wide text-text-tertiary cursor-pointer hover:text-text-secondary disabled:opacity-50"
             >
               <ChevronRight
                 size={12}
@@ -227,24 +343,24 @@ export function ConfiguredToolCard({
             </button>
             {defaultsOpen && (
               <div className="ui-panel-enter">
-              <DefaultsEditor
-                tool={tool}
-                busy={updateMutation.isPending}
-                onSave={(defaults) =>
-                  updateMutation.mutate({
-                    section: 'tools',
-                    entryId: tool.id,
-                    patch: {
-                      def: {
-                        server: tool.mcpServer,
-                        tool: tool.mcpTool,
-                        defaults,
-                        ...(tool.formatter ? { formatter: tool.formatter } : {}),
+                <DefaultsEditor
+                  tool={tool}
+                  busy={busy}
+                  onSave={(defaults) =>
+                    updateMutation.mutate({
+                      section: 'tools',
+                      entryId: tool.id,
+                      patch: {
+                        def: {
+                          server: tool.mcpServer,
+                          tool: tool.mcpTool,
+                          defaults,
+                          ...(tool.formatter ? { formatter: tool.formatter } : {}),
+                        },
                       },
-                    },
-                  })
-                }
-              />
+                    })
+                  }
+                />
               </div>
             )}
           </div>
@@ -254,11 +370,12 @@ export function ConfiguredToolCard({
         <div className="mt-1 border-t border-border-secondary pt-1">
           <button
             type="button"
+            disabled={busy && !formatterOpen}
             onClick={(e) => {
               e.stopPropagation();
               setFormatterOpen((v) => !v);
             }}
-            className="flex w-full items-center gap-1 py-1 text-left text-[10px] uppercase tracking-wide text-text-tertiary cursor-pointer hover:text-text-secondary"
+            className="flex w-full items-center gap-1 py-1 text-left text-[10px] uppercase tracking-wide text-text-tertiary cursor-pointer hover:text-text-secondary disabled:opacity-50"
           >
             <ChevronRight
               size={12}
@@ -272,24 +389,24 @@ export function ConfiguredToolCard({
           </button>
           {formatterOpen && (
             <div className="ui-panel-enter">
-            <FormatterEditor
-              tool={tool}
-              busy={updateMutation.isPending}
-              onSave={(formatter) =>
-                updateMutation.mutate({
-                  section: 'tools',
-                  entryId: tool.id,
-                  patch: {
-                    def: {
-                      server: tool.mcpServer,
-                      tool: tool.mcpTool,
-                      ...(tool.defaults ? { defaults: tool.defaults } : {}),
-                      formatter,
+              <FormatterEditor
+                tool={tool}
+                busy={busy}
+                onSave={(formatter) =>
+                  updateMutation.mutate({
+                    section: 'tools',
+                    entryId: tool.id,
+                    patch: {
+                      def: {
+                        server: tool.mcpServer,
+                        tool: tool.mcpTool,
+                        ...(tool.defaults ? { defaults: tool.defaults } : {}),
+                        formatter,
+                      },
                     },
-                  },
-                })
-              }
-            />
+                  })
+                }
+              />
             </div>
           )}
         </div>
@@ -323,7 +440,7 @@ export function ConfiguredToolCard({
                   <button
                     key={skill.id}
                     type="button"
-                    disabled={!!skill.sourcePlugin || updateSkillMutation.isPending}
+                    disabled={!!skill.sourcePlugin || updateSkillMutation.isPending || deleting}
                     onClick={() => {
                       const next = withSkillRequiresTool(skill.requires, tool, !checked);
                       updateSkillMutation.mutate({
