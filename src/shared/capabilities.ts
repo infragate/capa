@@ -150,14 +150,28 @@ function asPlainObject(value: unknown): Record<string, unknown> | null {
 
 /**
  * Stable reorder identity for a capability entry.
- * Tools may reuse the same `id` across MCP servers, so MCP tools key on
- * `id::server::mcpTool` (server without leading `@`).
+ * - MCP tools may reuse the same `id` across servers → `id::server::mcpTool`
+ * - Plugin-sourced skills/servers may reuse bare ids → `plugin:name:id`
  */
 export function capabilityEntryReorderKey(
 	section: ArrayCapabilitySection,
 	entry: Record<string, unknown>,
 ): string | null {
 	if (typeof entry.id !== "string") return null;
+
+	const sourcePlugin = asPlainObject(entry.sourcePlugin);
+	const pluginName =
+		sourcePlugin && typeof sourcePlugin.name === "string"
+			? sourcePlugin.name
+			: null;
+
+	if (
+		(section === "skills" || section === "servers") &&
+		pluginName
+	) {
+		return `plugin:${pluginName}:${entry.id}`;
+	}
+
 	if (section === "tools" && entry.type === "mcp") {
 		const def = asPlainObject(entry.def);
 		if (
@@ -351,10 +365,15 @@ export async function reorderCapabilityEntries(
 			}
 		}
 
-		assertPermutation(orderedKeys, [...byKey.keys()], section);
+		// UI lists may include plugin-expanded entries that are not in the file.
+		const knownKeys = orderedKeys.filter((key) => byKey.has(key));
+		if (new Set(knownKeys).size !== knownKeys.length) {
+			throw new Error("ordered ids must be unique");
+		}
+		assertPermutation(knownKeys, [...byKey.keys()], section);
 
 		const next: unknown[] = [];
-		for (const key of orderedKeys) {
+		for (const key of knownKeys) {
 			next.push(byKey.get(key)!);
 		}
 		next.push(...withoutKey);
@@ -386,10 +405,14 @@ export async function reorderCapabilityEntries(
 		}
 	}
 
-	assertPermutation(orderedKeys, [...byKey.keys()], section);
+	const knownKeys = orderedKeys.filter((key) => byKey.has(key));
+	if (new Set(knownKeys).size !== knownKeys.length) {
+		throw new Error("ordered ids must be unique");
+	}
+	assertPermutation(knownKeys, [...byKey.keys()], section);
 
 	const nextItems: unknown[] = [];
-	for (const key of orderedKeys) {
+	for (const key of knownKeys) {
 		nextItems.push(byKey.get(key)!);
 	}
 	nextItems.push(...withoutKey);

@@ -630,6 +630,30 @@ describe('capabilities', () => {
       ]);
     });
 
+    it('ignores plugin-prefixed skill keys and reorders authored skills', async () => {
+      const filePath = join(tempDir, 'capabilities.json');
+      await Bun.write(
+        filePath,
+        JSON.stringify({
+          skills: [
+            { id: 'alpha', type: 'inline' },
+            { id: 'beta', type: 'inline' },
+          ],
+          servers: [],
+          tools: [],
+        }),
+      );
+
+      await reorderCapabilityEntries(filePath, 'json', 'skills', [
+        'plugin:demo:shared',
+        'beta',
+        'plugin:other:shared',
+        'alpha',
+      ]);
+      const parsed = await parseCapabilitiesFile(filePath, 'json');
+      expect(parsed.skills.map((s: { id: string }) => s.id)).toEqual(['beta', 'alpha']);
+    });
+
     it('rejects non-permutation ids', async () => {
       const filePath = join(tempDir, 'capabilities.json');
       await Bun.write(
@@ -649,7 +673,7 @@ describe('capabilities', () => {
       ).rejects.toThrow(/exactly once/);
       expect(
         reorderCapabilityEntries(filePath, 'json', 'skills', ['a', 'missing']),
-      ).rejects.toThrow(/not found/);
+      ).rejects.toThrow(/exactly once/);
     });
   });
 

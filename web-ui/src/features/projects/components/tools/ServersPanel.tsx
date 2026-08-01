@@ -3,6 +3,7 @@ import type { Server, ToolSchema } from '../../../../types/api';
 import { matchesSearch } from '../../../../lib/utils';
 import { useReorderCapability } from '../../hooks';
 import { ReorderableList } from '../../../../components/common/ReorderableList';
+import { isPluginSourced, serverReorderKey } from '../../lib/reorderKeys';
 import { toolMatchesSearch } from './anchors';
 import { ServerCard } from './ServerCard';
 
@@ -66,7 +67,8 @@ export function ServersPanel({
       <div data-tools-panel-content>
         <ReorderableList
           items={visible}
-          getId={(s) => s.id}
+          getId={(s) => serverReorderKey(s)}
+          isLocked={(s) => isPluginSourced(s)}
           disabled={searching}
           handleLabel={t('actions.dragToReorder')}
           className="space-y-2"

@@ -82,6 +82,8 @@ interface ReorderableListProps<T> {
   items: T[];
   getId: (item: T) => string;
   disabled?: boolean;
+  /** When true, the item cannot be dragged (e.g. plugin-sourced). */
+  isLocked?: (item: T) => boolean;
   onReorder: (orderedIds: string[]) => void;
   className?: string;
   handleLabel: string;
@@ -91,6 +93,7 @@ interface ReorderableListProps<T> {
       handle: ReactNode;
       isDragging: boolean;
       isOver: boolean;
+      locked: boolean;
     },
   ) => ReactNode;
 }
@@ -99,6 +102,7 @@ export function ReorderableList<T>({
   items,
   getId,
   disabled,
+  isLocked,
   onReorder,
   className,
   handleLabel,
@@ -146,6 +150,8 @@ export function ReorderableList<T>({
 
   function armRow(id: string) {
     if (disabled) return;
+    const item = items.find((entry) => getId(entry) === id);
+    if (item && isLocked?.(item)) return;
     // Enable draggable synchronously so the next pointer move can start a drag
     // before React paints — critical on large tool lists.
     if (armedIdRef.current && armedIdRef.current !== id) {
@@ -187,10 +193,11 @@ export function ReorderableList<T>({
     <div ref={listRef} className={className}>
       {items.map((item) => {
         const id = getId(item);
+        const locked = !!isLocked?.(item);
         const isDragging = draggingId === id;
         const isOver = overId === id && draggingId !== null && draggingId !== id;
 
-        const handle = (
+        const handle = locked ? null : (
           <ReorderHandle
             disabled={disabled}
             label={handleLabel}
@@ -205,9 +212,9 @@ export function ReorderableList<T>({
               if (el) rowRefs.current.set(id, el);
               else rowRefs.current.delete(id);
             }}
-            draggable={!disabled && armedId === id}
+            draggable={!disabled && !locked && armedId === id}
             onDragStart={(e) => {
-              if (disabled || armedIdRef.current !== id) {
+              if (disabled || locked || armedIdRef.current !== id) {
                 e.preventDefault();
                 return;
               }
@@ -247,7 +254,7 @@ export function ReorderableList<T>({
               isOver && 'rounded-sm ring-1 ring-accent-primary',
             )}
           >
-            {renderItem(item, { handle, isDragging, isOver })}
+            {renderItem(item, { handle, isDragging, isOver, locked })}
           </div>
         );
       })}
