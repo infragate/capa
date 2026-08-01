@@ -150,8 +150,8 @@ export async function resolvePlugins(
   const mergedRules: Rule[] = Array.isArray(capabilities.rules) ? [...capabilities.rules] : [];
   const resolvedPlugins: ResolvedPluginInfo[] = [];
   const tempDirs: string[] = [];
-  const providers = capabilities.providers;
-  if (!providers || providers.length === 0) {
+  const providers: string[] = capabilities.providers ?? [];
+  if (providers.length === 0) {
     throw new Error('No providers configured. Resolve providers before calling resolvePlugins.');
   }
 
