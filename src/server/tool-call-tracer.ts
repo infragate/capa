@@ -107,12 +107,18 @@ export class ToolCallTracer {
 	}
 }
 
-/** Map MCP clientInfo.name to a stable activity source label. */
+/** Map tool execution + MCP clientInfo.name to a stable activity source label. */
 export function resolveToolCallSource(
 	clientName: string | null | undefined,
+	toolType?: "mcp" | "command" | null,
 ): string {
-	if (clientName === "capa-shell") return "shell";
-	if (clientName && clientName.trim()) return clientName.trim();
+	// Prefer the executed tool type: command tools are "shell", MCP tools are "mcp"
+	// — even when the client is capa-shell (which speaks MCP for both).
+	if (toolType === "command") return "shell";
+	if (toolType === "mcp") return "mcp";
+	if (clientName && clientName.trim() && clientName !== "capa-shell") {
+		return clientName.trim();
+	}
 	return "mcp";
 }
 

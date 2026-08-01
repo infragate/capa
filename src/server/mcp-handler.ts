@@ -175,13 +175,14 @@ export class CapaMCPServer {
 		toolName: string;
 		metaTool?: string | null;
 		args?: unknown;
+		toolType?: "mcp" | "command" | null;
 	}): string | null {
 		if (!this.tracer) return null;
 		return this.tracer.start({
 			projectId: this.projectId,
 			sessionId: this.sessionId,
 			agentId: this.agentId,
-			source: resolveToolCallSource(this.clientName),
+			source: resolveToolCallSource(this.clientName, input.toolType),
 			kind: input.kind,
 			toolName: input.toolName,
 			metaTool: input.metaTool ?? null,
@@ -374,12 +375,6 @@ export class CapaMCPServer {
 				this.ensureSession();
 			}
 
-			const traceId = this.beginTrace({
-				kind: "tool",
-				toolName: name,
-				args: cleanArgs,
-			});
-
 			// Sub-agent tool access guard: reject calls to tools outside the agent's allowed set
 			if (this.agentId) {
 				const capabilities = this.sessionManager.getProjectCapabilities(
@@ -403,6 +398,11 @@ export class CapaMCPServer {
 									},
 								],
 							};
+							const traceId = this.beginTrace({
+								kind: "tool",
+								toolName: name,
+								args: cleanArgs,
+							});
 							this.finishTraceError(
 								traceId,
 								`Tool not available on sub-agent: ${name}`,
@@ -419,6 +419,14 @@ export class CapaMCPServer {
 				this.projectId,
 				name,
 			);
+			const traceId = this.beginTrace({
+				kind: "tool",
+				toolName: name,
+				args: cleanArgs,
+				toolType: toolDef?.type === "command" || toolDef?.type === "mcp"
+					? toolDef.type
+					: null,
+			});
 			if (!toolDef) {
 				const missing = {
 					content: [
@@ -686,12 +694,7 @@ export class CapaMCPServer {
 			(args.data ?? {}) as Record<string, any>,
 		);
 		const session = this.ensureSession();
-		const traceId = this.beginTrace({
-			kind: "call_tool",
-			toolName,
-			metaTool: "call_tool",
-			args: { name: toolName, data: toolData },
-		});
+		let traceId: string | null = null;
 		try {
 			this.logger.info(`Calling tool via call_tool: ${toolName}`);
 			this.logger.debug(`Tool data: ${JSON.stringify(toolData)}`);
@@ -701,6 +704,16 @@ export class CapaMCPServer {
 				this.projectId,
 				toolName,
 			);
+			traceId = this.beginTrace({
+				kind: "call_tool",
+				toolName,
+				metaTool: "call_tool",
+				args: { name: toolName, data: toolData },
+				toolType:
+					toolDef?.type === "command" || toolDef?.type === "mcp"
+						? toolDef.type
+						: "mcp",
+			});
 			if (!toolDef) {
 				this.logger.warn(`Tool not found: ${toolName}`);
 				// No schema attached — by definition we don't have a matching tool.
@@ -1516,12 +1529,6 @@ export class CapaMCPServer {
 				this.ensureSession();
 			}
 
-			const traceId = this.beginTrace({
-				kind: "tool",
-				toolName: name,
-				args: cleanArgs,
-			});
-
 			// Sub-agent tool access guard: reject calls to tools outside the agent's allowed set
 			if (this.agentId && capabilities) {
 				const allowedToolIds = this.getAgentAllowedToolIds(capabilities);
@@ -1544,8 +1551,13 @@ export class CapaMCPServer {
 								},
 							],
 						};
+						const deniedTraceId = this.beginTrace({
+							kind: "tool",
+							toolName: name,
+							args: cleanArgs,
+						});
 						this.finishTraceError(
-							traceId,
+							deniedTraceId,
 							`Tool not available on sub-agent: ${name}`,
 							denied,
 						);
@@ -1563,6 +1575,15 @@ export class CapaMCPServer {
 				this.projectId,
 				name,
 			);
+			const traceId = this.beginTrace({
+				kind: "tool",
+				toolName: name,
+				args: cleanArgs,
+				toolType:
+					toolDef?.type === "command" || toolDef?.type === "mcp"
+						? toolDef.type
+						: null,
+			});
 			if (!toolDef) {
 				this.logger.warn("Tool not found");
 				this.finishTraceError(traceId, `Tool not found: ${name}`);

@@ -17,8 +17,10 @@ import { notifyToolCall } from "../project-routes";
 import type { ToolCallRecord } from "../../types/database";
 
 describe("tool-call-tracer helpers", () => {
-	it("maps capa-shell to shell source", () => {
-		expect(resolveToolCallSource("capa-shell")).toBe("shell");
+	it("maps tool type to shell/mcp source (capa-shell is still MCP client)", () => {
+		expect(resolveToolCallSource("capa-shell", "command")).toBe("shell");
+		expect(resolveToolCallSource("capa-shell", "mcp")).toBe("mcp");
+		expect(resolveToolCallSource("capa-shell")).toBe("mcp");
 		expect(resolveToolCallSource("cursor-ide")).toBe("cursor-ide");
 		expect(resolveToolCallSource(null)).toBe("mcp");
 		expect(resolveToolCallSource(undefined)).toBe("mcp");
