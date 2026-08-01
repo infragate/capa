@@ -49,6 +49,49 @@ export interface Session {
   last_activity: number;
 }
 
+export type ToolCallStatus = 'running' | 'ok' | 'error';
+export type ToolCallKind = 'setup_tools' | 'call_tool' | 'tool';
+
+export interface ToolCallRecord {
+  id: string;
+  project_id: string;
+  session_id: string | null;
+  started_at: number;
+  duration_ms: number | null;
+  status: ToolCallStatus;
+  /** `shell` for capa sh; otherwise MCP client name or `mcp`. */
+  source: string | null;
+  kind: ToolCallKind;
+  tool_name: string;
+  meta_tool: string | null;
+  args_json: string | null;
+  result_preview: string | null;
+  /** UTF-8 byte length of the original (pre-truncate) result text. */
+  result_bytes: number | null;
+  /** Estimated tokens for the original result (~chars/4). */
+  result_tokens: number | null;
+  error_message: string | null;
+  agent_id: string | null;
+}
+
+/** One-minute activity bucket for the last-hour chart. */
+export interface ToolCallBucket {
+  /** Start of the minute (epoch ms). */
+  t: number;
+  count: number;
+}
+
+export interface ToolCallStats {
+  total: number;
+  errors: number;
+  avg_duration_ms: number | null;
+  shell: number;
+  mcp: number;
+  window_ms: number;
+  /** 60 one-minute buckets ending at the current minute. */
+  buckets: ToolCallBucket[];
+}
+
 export interface GitIntegration {
   id: number;
   platform: 'github' | 'gitlab' | 'github-enterprise' | 'gitlab-self-managed';

@@ -10,6 +10,8 @@ import type {
 	RegistryRecord,
 	RegistryStatus,
 	Session,
+	ToolCallRecord,
+	ToolCallStats,
 	ToolInitState,
 } from "../types/database";
 import { GitIntegrationsRepo } from "./git-integrations";
@@ -23,6 +25,13 @@ import { RegistriesRepo, type RegistryUpsertInput } from "./registries";
 import { initSchema } from "./schema";
 import { SessionsRepo } from "./sessions";
 import { SubAgentsRepo } from "./sub-agents";
+import {
+	type ToolCallFinish,
+	type ToolCallInsert,
+	type ToolCallListOptions,
+	type ToolCallListResult,
+	ToolCallsRepo,
+} from "./tool-calls";
 import { ToolInitStateRepo } from "./tool-init-state";
 import { VariablesRepo } from "./variables";
 
@@ -37,6 +46,7 @@ export class CapaDatabase {
 	private oauthFlowState: OAuthFlowStateRepo;
 	private gitIntegrations: GitIntegrationsRepo;
 	private toolInitState: ToolInitStateRepo;
+	private toolCalls: ToolCallsRepo;
 	private subAgents: SubAgentsRepo;
 	private mcpSubprocesses: MCPSubprocessesRepo;
 	private registries: RegistriesRepo;
@@ -58,6 +68,7 @@ export class CapaDatabase {
 		this.oauthFlowState = new OAuthFlowStateRepo(this.db);
 		this.gitIntegrations = new GitIntegrationsRepo(this.db);
 		this.toolInitState = new ToolInitStateRepo(this.db);
+		this.toolCalls = new ToolCallsRepo(this.db);
 		this.subAgents = new SubAgentsRepo(this.db);
 		this.mcpSubprocesses = new MCPSubprocessesRepo(this.db);
 		this.registries = new RegistriesRepo(this.db);
@@ -382,6 +393,32 @@ export class CapaDatabase {
        ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
 			[key, value],
 		);
+	}
+
+	// Tool-call activity (project page live feed)
+	insertToolCall(row: ToolCallInsert): ToolCallRecord {
+		return this.toolCalls.insert(row);
+	}
+
+	finishToolCall(id: string, update: ToolCallFinish): ToolCallRecord | null {
+		return this.toolCalls.finish(id, update);
+	}
+
+	getToolCall(id: string): ToolCallRecord | null {
+		return this.toolCalls.get(id);
+	}
+
+	listToolCalls(
+		projectId: string,
+		options: ToolCallListOptions | number = {},
+	): ToolCallListResult {
+		const opts =
+			typeof options === "number" ? { limit: options } : (options ?? {});
+		return this.toolCalls.listRecent(projectId, opts);
+	}
+
+	getToolCallStats(projectId: string, sinceMs?: number): ToolCallStats {
+		return this.toolCalls.stats(projectId, sinceMs);
 	}
 
 	close(): void {

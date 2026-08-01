@@ -13,6 +13,7 @@ import { CAPA_SERVER_ICONS } from "../shared/mcp-icons";
 import { projectNameFromId } from "../shared/paths";
 import type {
 	Capabilities,
+	MCPServerDefinition,
 	Tool,
 	ToolCommandDefinition,
 	ToolMCPDefinition,
@@ -33,6 +34,11 @@ import {
 } from "./mcp-tool-defaults";
 import type { SessionInfo } from "./session-manager";
 import { SessionManager } from "./session-manager";
+import {
+	previewFromToolResult,
+	resolveToolCallSource,
+	type ToolCallTracer,
+} from "./tool-call-tracer";
 import { CommandToolExecutor } from "./tool-executor";
 import { buildToolCallText, extractCapaShellMeta } from "./tool-formatter";
 
@@ -103,7 +109,10 @@ export class CapaMCPServer {
 	/** Sub-agent ID — null means the main (unfiltered) agent endpoint. */
 	private agentId: string | null;
 	private sessionId: string | null = null;
+	/** MCP clientInfo.name from the last initialize (e.g. capa-shell). */
+	private clientName: string | null = null;
 	private toolSchemaCache: Map<string, MCPTool> = new Map();
+	private tracer: ToolCallTracer | null;
 	private logger = logger.child("MCPHandler");
 
 	constructor(
@@ -112,12 +121,14 @@ export class CapaMCPServer {
 		projectId: string,
 		projectPath: string,
 		agentId?: string,
+		tracer?: ToolCallTracer | null,
 	) {
 		this.db = db;
 		this.sessionManager = sessionManager;
 		this.projectId = projectId;
 		this.projectPath = projectPath;
 		this.agentId = agentId ?? null;
+		this.tracer = tracer ?? null;
 		this.mcpProxy = new MCPProxy(db, projectId, projectPath);
 
 		this.server = new Server(
@@ -157,6 +168,60 @@ export class CapaMCPServer {
 		const session = this.sessionManager.createSession(this.projectId);
 		this.sessionId = session.sessionId;
 		return session;
+	}
+
+	private beginTrace(input: {
+		kind: "setup_tools" | "call_tool" | "tool";
+		toolName: string;
+		metaTool?: string | null;
+		args?: unknown;
+	}): string | null {
+		if (!this.tracer) return null;
+		return this.tracer.start({
+			projectId: this.projectId,
+			sessionId: this.sessionId,
+			agentId: this.agentId,
+			source: resolveToolCallSource(this.clientName),
+			kind: input.kind,
+			toolName: input.toolName,
+			metaTool: input.metaTool ?? null,
+			args: input.args,
+		});
+	}
+
+	private finishTraceOk(traceId: string | null, result: unknown): void {
+		if (!traceId || !this.tracer) return;
+		const isError =
+			result != null &&
+			typeof result === "object" &&
+			(result as { isError?: boolean }).isError === true;
+		if (isError) {
+			const preview = previewFromToolResult(result);
+			this.tracer.finish(traceId, {
+				status: "error",
+				resultPreview: preview,
+				errorMessage: preview,
+			});
+			return;
+		}
+		this.tracer.finish(traceId, {
+			status: "ok",
+			resultPreview: previewFromToolResult(result),
+		});
+	}
+
+	private finishTraceError(
+		traceId: string | null,
+		errorMessage: string,
+		result?: unknown,
+	): void {
+		if (!traceId || !this.tracer) return;
+		this.tracer.finish(traceId, {
+			status: "error",
+			errorMessage,
+			resultPreview:
+				result !== undefined ? previewFromToolResult(result) : undefined,
+		});
 	}
 
 	/**
@@ -309,6 +374,12 @@ export class CapaMCPServer {
 				this.ensureSession();
 			}
 
+			const traceId = this.beginTrace({
+				kind: "tool",
+				toolName: name,
+				args: cleanArgs,
+			});
+
 			// Sub-agent tool access guard: reject calls to tools outside the agent's allowed set
 			if (this.agentId) {
 				const capabilities = this.sessionManager.getProjectCapabilities(
@@ -322,7 +393,7 @@ export class CapaMCPServer {
 							(id) => normalizeToolName(id) === normalizedName,
 						);
 						if (!isAllowed) {
-							return {
+							const denied = {
 								content: [
 									{
 										type: "text",
@@ -332,6 +403,12 @@ export class CapaMCPServer {
 									},
 								],
 							};
+							this.finishTraceError(
+								traceId,
+								`Tool not available on sub-agent: ${name}`,
+								denied,
+							);
+							return denied;
 						}
 					}
 				}
@@ -343,7 +420,7 @@ export class CapaMCPServer {
 				name,
 			);
 			if (!toolDef) {
-				return {
+				const missing = {
 					content: [
 						{
 							type: "text",
@@ -351,72 +428,102 @@ export class CapaMCPServer {
 						},
 					],
 				};
+				this.finishTraceError(traceId, `Tool not found: ${name}`, missing);
+				return missing;
 			}
 
 			// Execute tool based on type
-			let result: any;
-			if (toolDef.type === "command") {
-				const executor = new CommandToolExecutor(
-					this.db,
-					this.projectId,
-					this.projectPath,
-				);
-				result = await executor.execute(
-					name,
-					toolDef.def as ToolCommandDefinition,
-					cleanArgs,
-				);
-			} else if (toolDef.type === "mcp") {
-				const mcpDef = toolDef.def as ToolMCPDefinition;
-				const capabilities = this.sessionManager.getProjectCapabilities(
-					this.projectId,
-				);
-				if (!capabilities) {
-					return {
-						content: [
-							{
-								type: "text",
-								text: JSON.stringify({
-									error: "Project capabilities not found",
-								}),
-							},
-						],
-					};
+			try {
+				let result: any;
+				if (toolDef.type === "command") {
+					const executor = new CommandToolExecutor(
+						this.db,
+						this.projectId,
+						this.projectPath,
+					);
+					result = await executor.execute(
+						name,
+						toolDef.def as ToolCommandDefinition,
+						cleanArgs,
+					);
+				} else if (toolDef.type === "mcp") {
+					const mcpDef = toolDef.def as ToolMCPDefinition;
+					const capabilities = this.sessionManager.getProjectCapabilities(
+						this.projectId,
+					);
+					if (!capabilities) {
+						const missingCaps = {
+							content: [
+								{
+									type: "text",
+									text: JSON.stringify({
+										error: "Project capabilities not found",
+									}),
+								},
+							],
+						};
+						this.finishTraceError(
+							traceId,
+							"Project capabilities not found",
+							missingCaps,
+						);
+						return missingCaps;
+					}
+
+					// Find server definition
+					const serverId = mcpDef.server.replace("@", "");
+					const serverDef = capabilities.servers.find((s) => s.id === serverId);
+					if (!serverDef) {
+						const missingServer = {
+							content: [
+								{
+									type: "text",
+									text: JSON.stringify({
+										error: `Server not found: ${serverId}`,
+									}),
+								},
+							],
+						};
+						this.finishTraceError(
+							traceId,
+							`Server not found: ${serverId}`,
+							missingServer,
+						);
+						return missingServer;
+					}
+
+					result = await this.mcpProxy.executeTool(
+						name,
+						mcpDef,
+						serverDef.def,
+						mergeDefaults(mcpDef.defaults, cleanArgs),
+					);
 				}
 
-				// Find server definition
-				const serverId = mcpDef.server.replace("@", "");
-				const serverDef = capabilities.servers.find((s) => s.id === serverId);
-				if (!serverDef) {
-					return {
-						content: [
-							{
-								type: "text",
-								text: JSON.stringify({
-									error: `Server not found: ${serverId}`,
-								}),
-							},
-						],
-					};
-				}
-
-				result = await this.mcpProxy.executeTool(
-					name,
-					mcpDef,
-					serverDef.def,
-					mergeDefaults(mcpDef.defaults, cleanArgs),
+				const content = await this.buildToolCallContent(result, toolDef, {
+					skipFormatter,
+				});
+				this.finishTraceOk(traceId, content);
+				return content;
+			} catch (error: any) {
+				this.finishTraceError(
+					traceId,
+					error?.message || "Tool execution failed",
 				);
+				throw error;
 			}
-
-			return await this.buildToolCallContent(result, toolDef, {
-				skipFormatter,
-			});
 		});
 	}
 
 	private async handleSetupTools(args: { skills: string[] }): Promise<any> {
+		this.ensureSession();
+		const traceId = this.beginTrace({
+			kind: "setup_tools",
+			toolName: "setup_tools",
+			metaTool: "setup_tools",
+			args,
+		});
 		try {
-			this.ensureSession();
 			const toolIds = this.sessionManager.setupTools(
 				this.sessionId!,
 				args.skills,
@@ -428,32 +535,42 @@ export class CapaMCPServer {
 				this.sessionManager.getSession(this.sessionId!)?.activeSkills ??
 				args.skills;
 
-			// Send tools/list_changed notification (for backward compatibility)
-			await this.server.notification({
-				method: "notifications/tools/list_changed",
-				params: {},
-			});
+			// Send tools/list_changed when a live MCP transport is attached.
+			// The HTTP handleMessage path has no persistent client transport, so
+			// the SDK throws "Not connected" — that's expected and ignored.
+			try {
+				await this.server.notification({
+					method: "notifications/tools/list_changed",
+					params: {},
+				});
+			} catch {
+				/* no connected transport */
+			}
 
 			const payload = buildSetupToolsPayload(
 				args.skills,
 				activeSkills,
 				signatures,
 			);
-			return {
+			const result = {
 				content: [{ type: "text", text: JSON.stringify(payload) }],
 			};
+			this.finishTraceOk(traceId, result);
+			return result;
 		} catch (error: any) {
 			const errorMessage = this.formatSetupToolsError(error);
 			// Per the MCP spec, tool execution failures are reported with
 			// `isError: true` on the result so the LLM sees the text content —
 			// keep `setup_tools` consistent with the `call_tool` error path so
 			// clients don't have to special-case the meta-tools.
-			return {
+			const result = {
 				content: [
 					{ type: "text", text: JSON.stringify({ error: errorMessage }) },
 				],
 				isError: true,
 			};
+			this.finishTraceError(traceId, errorMessage, result);
+			return result;
 		}
 	}
 
@@ -568,8 +685,14 @@ export class CapaMCPServer {
 		const { cleanArgs: toolData, skipFormatter } = extractCapaShellMeta(
 			(args.data ?? {}) as Record<string, any>,
 		);
+		const session = this.ensureSession();
+		const traceId = this.beginTrace({
+			kind: "call_tool",
+			toolName,
+			metaTool: "call_tool",
+			args: { name: toolName, data: toolData },
+		});
 		try {
-			const session = this.ensureSession();
 			this.logger.info(`Calling tool via call_tool: ${toolName}`);
 			this.logger.debug(`Tool data: ${JSON.stringify(toolData)}`);
 
@@ -581,11 +704,17 @@ export class CapaMCPServer {
 			if (!toolDef) {
 				this.logger.warn(`Tool not found: ${toolName}`);
 				// No schema attached — by definition we don't have a matching tool.
-				return await this.buildCallToolErrorResult(
+				const result = await this.buildCallToolErrorResult(
 					toolName,
 					`Tool not found: ${toolName}. Make sure you've called setup_tools to activate the required skills.`,
 					{ includeSchema: false },
 				);
+				this.finishTraceError(
+					traceId,
+					`Tool not found: ${toolName}`,
+					result,
+				);
+				return result;
 			}
 
 			// Check if tool is in available tools for the session (normalize for dot/underscore compat)
@@ -598,11 +727,17 @@ export class CapaMCPServer {
 				this.logger.warn(`Tool not activated: ${toolName}`);
 				// The tool exists but isn't activated — `setup_tools` is the next
 				// step, so don't pre-emptively dump the schema and confuse the agent.
-				return await this.buildCallToolErrorResult(
+				const result = await this.buildCallToolErrorResult(
 					toolName,
 					`Tool "${toolName}" is not activated. Call setup_tools with the appropriate skills first.`,
 					{ includeSchema: false },
 				);
+				this.finishTraceError(
+					traceId,
+					`Tool not activated: ${toolName}`,
+					result,
+				);
+				return result;
 			}
 
 			this.logger.debug(`Tool type: ${toolDef.type}`);
@@ -627,10 +762,16 @@ export class CapaMCPServer {
 				// through the error helper so the agent gets the full schema back and
 				// can self-correct on the next call.
 				if (result && result.success === false) {
-					return await this.buildCallToolErrorResult(
+					const errResult = await this.buildCallToolErrorResult(
 						toolName,
 						result.error || "Command tool failed",
 					);
+					this.finishTraceError(
+						traceId,
+						result.error || "Command tool failed",
+						errResult,
+					);
+					return errResult;
 				}
 			} else if (toolDef.type === "mcp") {
 				this.logger.debug("Executing MCP tool...");
@@ -640,11 +781,17 @@ export class CapaMCPServer {
 				);
 				if (!capabilities) {
 					this.logger.warn("Project capabilities not found");
-					return await this.buildCallToolErrorResult(
+					const errResult = await this.buildCallToolErrorResult(
 						toolName,
 						"Project capabilities not found",
 						{ includeSchema: false },
 					);
+					this.finishTraceError(
+						traceId,
+						"Project capabilities not found",
+						errResult,
+					);
+					return errResult;
 				}
 
 				// Find server definition
@@ -652,11 +799,17 @@ export class CapaMCPServer {
 				const serverDef = capabilities.servers.find((s) => s.id === serverId);
 				if (!serverDef) {
 					this.logger.warn(`Server not found: ${serverId}`);
-					return await this.buildCallToolErrorResult(
+					const errResult = await this.buildCallToolErrorResult(
 						toolName,
 						`Server not found: ${serverId}`,
 						{ includeSchema: false },
 					);
+					this.finishTraceError(
+						traceId,
+						`Server not found: ${serverId}`,
+						errResult,
+					);
+					return errResult;
 				}
 
 				this.logger.debug(`Using MCP server: ${serverId}`);
@@ -669,16 +822,24 @@ export class CapaMCPServer {
 				this.logger.debug("MCP tool executed");
 			}
 
-			return await this.buildToolCallContent(result, toolDef, {
+			const content = await this.buildToolCallContent(result, toolDef, {
 				skipFormatter,
 			});
+			this.finishTraceOk(traceId, content);
+			return content;
 		} catch (error: any) {
 			this.logger.failure(`call_tool execution error: ${error.message}`);
 			// Likely an arg/schema problem — attach the schema so the agent can retry.
-			return await this.buildCallToolErrorResult(
+			const errResult = await this.buildCallToolErrorResult(
 				toolName,
 				error?.message || "Tool execution failed",
 			);
+			this.finishTraceError(
+				traceId,
+				error?.message || "Tool execution failed",
+				errResult,
+			);
+			return errResult;
 		}
 	}
 
@@ -1078,15 +1239,29 @@ export class CapaMCPServer {
 	}
 
 	/**
-	 * Build the MCP content payload for a successful tool execution, applying an
-	 * optional formatter for MCP tools unless bypassed via `capa sh --raw`.
+	 * Build the MCP content payload for a tool execution, applying an optional
+	 * formatter for MCP tools unless bypassed via `capa sh --raw`.
+	 *
+	 * Executor failures (`{ success: false, error }`) are returned with
+	 * `isError: true` so callers (and activity traces) treat them as failures.
 	 */
 	private async buildToolCallContent(
 		result: unknown,
 		toolDef: Tool,
 		options?: { skipFormatter?: boolean },
-	): Promise<{ content: Array<{ type: "text"; text: string }> }> {
+	): Promise<{
+		content: Array<{ type: "text"; text: string }>;
+		isError?: boolean;
+	}> {
+		const failed =
+			result != null &&
+			typeof result === "object" &&
+			"success" in result &&
+			(result as { success: unknown }).success === false;
 		const text = await buildToolCallText(result, toolDef, options);
+		if (failed) {
+			return { content: [{ type: "text", text }], isError: true };
+		}
 		return { content: [{ type: "text", text }] };
 	}
 
@@ -1101,8 +1276,16 @@ export class CapaMCPServer {
 		// Handle initialization
 		if (message.method === "initialize") {
 			this.logger.info("Initialize request");
-			const session = this.ensureSession();
+			const clientName = message.params?.clientInfo?.name;
+			this.clientName =
+				typeof clientName === "string" && clientName.trim()
+					? clientName.trim()
+					: null;
+			this.ensureSession();
 			this.logger.debug(`Session ID: ${this.sessionId}`);
+			if (this.clientName) {
+				this.logger.debug(`Client: ${this.clientName}`);
+			}
 
 			return {
 				jsonrpc: "2.0",
@@ -1257,60 +1440,17 @@ export class CapaMCPServer {
 
 			// Handle setup_tools
 			if (name === "setup_tools") {
-				try {
-					this.ensureSession();
-
-					this.logger.info(`Activating skills: ${args.skills.join(", ")}`);
-					const toolIds = this.sessionManager.setupTools(
-						this.sessionId!,
-						args.skills,
-					);
-					this.logger.success(
-						`Loaded ${toolIds.length} tool(s): ${toolIds.join(", ")}`,
-					);
-
-					const signatures = await this.buildToolSignaturesFor(toolIds);
-					// `setupTools` updates the session's activeSkills set; read it back so
-					// we report the merged list (not just this call's skills) to the agent.
-					const activeSkills =
-						this.sessionManager.getSession(this.sessionId!)?.activeSkills ??
-						args.skills;
-					const payload = buildSetupToolsPayload(
-						args.skills,
-						activeSkills,
-						signatures,
-					);
-
-					return {
-						jsonrpc: "2.0",
-						id: message.id,
-						result: {
-							content: [{ type: "text", text: JSON.stringify(payload) }],
-						},
-					};
-				} catch (error: any) {
-					this.logger.failure(`Error: ${error.message}`);
-					// Mirror the SDK path and the `call_tool` error contract: surface
-					// tool-execution failures as `result.isError = true` content rather
-					// than a JSON-RPC error so the LLM sees the structured payload (a
-					// JSON-RPC error gets eaten by most clients before it reaches the
-					// model).
-					return {
-						jsonrpc: "2.0",
-						id: message.id,
-						result: {
-							content: [
-								{
-									type: "text",
-									text: JSON.stringify({
-										error: this.formatSetupToolsError(error),
-									}),
-								},
-							],
-							isError: true,
-						},
-					};
-				}
+				this.logger.info(
+					`Activating skills: ${(cleanArgs as { skills?: string[] }).skills?.join(", ") ?? ""}`,
+				);
+				const result = await this.handleSetupTools(
+					cleanArgs as { skills: string[] },
+				);
+				return {
+					jsonrpc: "2.0",
+					id: message.id,
+					result,
+				};
 			}
 
 			// Handle call_tool
@@ -1333,148 +1473,14 @@ export class CapaMCPServer {
 					};
 				}
 
-				const toolName = args?.name;
-				const { cleanArgs: toolData, skipFormatter } = extractCapaShellMeta(
-					(args?.data ?? {}) as Record<string, any>,
+				const result = await this.handleCallTool(
+					cleanArgs as { name: string; data: object },
 				);
-
-				try {
-					const session = this.ensureSession();
-					this.logger.info(`Calling tool via call_tool: ${toolName}`);
-					this.logger.debug(`Tool data: ${JSON.stringify(toolData)}`);
-
-					// Find tool definition
-					const toolDef = this.sessionManager.getToolDefinition(
-						this.projectId,
-						toolName,
-					);
-					if (!toolDef) {
-						this.logger.warn(`Tool not found: ${toolName}`);
-						return {
-							jsonrpc: "2.0",
-							id: message.id,
-							result: await this.buildCallToolErrorResult(
-								toolName,
-								`Tool not found: ${toolName}. Make sure you've called setup_tools to activate the required skills.`,
-								{ includeSchema: false },
-							),
-						};
-					}
-
-					// Check if tool is in available tools for the session (normalize for dot/underscore compat)
-					const normalizedToolName = normalizeToolName(toolName);
-					if (
-						!session.availableTools.some(
-							(t) => normalizeToolName(t) === normalizedToolName,
-						)
-					) {
-						this.logger.warn(`Tool not activated: ${toolName}`);
-						return {
-							jsonrpc: "2.0",
-							id: message.id,
-							result: await this.buildCallToolErrorResult(
-								toolName,
-								`Tool "${toolName}" is not activated. Call setup_tools with the appropriate skills first.`,
-								{ includeSchema: false },
-							),
-						};
-					}
-
-					this.logger.debug(`Tool type: ${toolDef.type}`);
-
-					// Execute tool based on type
-					let result: any;
-					if (toolDef.type === "command") {
-						this.logger.debug("Executing command tool...");
-						const executor = new CommandToolExecutor(
-							this.db,
-							this.projectId,
-							this.projectPath,
-						);
-						result = await executor.execute(
-							toolName,
-							toolDef.def as ToolCommandDefinition,
-							toolData,
-						);
-						this.logger.debug(`Command executed, success: ${result.success}`);
-						// Command-tool failures land here as `{success: false, error}`
-						// (e.g. "Missing required argument: title") — they don't throw.
-						// Route them through the error helper so the agent gets the full
-						// schema back and can self-correct on the next call.
-						if (result && result.success === false) {
-							return {
-								jsonrpc: "2.0",
-								id: message.id,
-								result: await this.buildCallToolErrorResult(
-									toolName,
-									result.error || "Command tool failed",
-								),
-							};
-						}
-					} else if (toolDef.type === "mcp") {
-						this.logger.debug("Executing MCP tool...");
-						const mcpDef = toolDef.def as ToolMCPDefinition;
-						if (!capabilities) {
-							this.logger.warn("Project capabilities not found");
-							return {
-								jsonrpc: "2.0",
-								id: message.id,
-								result: await this.buildCallToolErrorResult(
-									toolName,
-									"Project capabilities not found",
-									{ includeSchema: false },
-								),
-							};
-						}
-
-						// Find server definition
-						const serverId = mcpDef.server.replace("@", "");
-						const serverDef = capabilities.servers.find(
-							(s) => s.id === serverId,
-						);
-						if (!serverDef) {
-							this.logger.warn(`Server not found: ${serverId}`);
-							return {
-								jsonrpc: "2.0",
-								id: message.id,
-								result: await this.buildCallToolErrorResult(
-									toolName,
-									`Server not found: ${serverId}`,
-									{ includeSchema: false },
-								),
-							};
-						}
-
-						this.logger.debug(`Using MCP server: ${serverId}`);
-						result = await this.mcpProxy.executeTool(
-							toolName,
-							mcpDef,
-							serverDef.def,
-							mergeDefaults(mcpDef.defaults, toolData),
-						);
-						this.logger.debug("MCP tool executed");
-					}
-
-					const content = await this.buildToolCallContent(result, toolDef, {
-						skipFormatter,
-					});
-					return {
-						jsonrpc: "2.0",
-						id: message.id,
-						result: content,
-					};
-				} catch (error: any) {
-					this.logger.failure(`call_tool execution error: ${error.message}`);
-					// Likely an arg/schema problem — attach the schema so the agent can self-correct.
-					return {
-						jsonrpc: "2.0",
-						id: message.id,
-						result: await this.buildCallToolErrorResult(
-							toolName,
-							error?.message || "Tool execution failed",
-						),
-					};
-				}
+				return {
+					jsonrpc: "2.0",
+					id: message.id,
+					result,
+				};
 			}
 
 			// Prevent meta-tools from being called in expose-all mode
@@ -1505,6 +1511,17 @@ export class CapaMCPServer {
 			const toolExposureMode =
 				capabilities?.options?.toolExposure || "expose-all";
 
+			// Only require session for on-demand mode
+			if (toolExposureMode === "on-demand") {
+				this.ensureSession();
+			}
+
+			const traceId = this.beginTrace({
+				kind: "tool",
+				toolName: name,
+				args: cleanArgs,
+			});
+
 			// Sub-agent tool access guard: reject calls to tools outside the agent's allowed set
 			if (this.agentId && capabilities) {
 				const allowedToolIds = this.getAgentAllowedToolIds(capabilities);
@@ -1517,27 +1534,28 @@ export class CapaMCPServer {
 						this.logger.warn(
 							`Sub-agent "${this.agentId}" attempted to call unauthorized tool: ${name}`,
 						);
+						const denied = {
+							content: [
+								{
+									type: "text",
+									text: JSON.stringify({
+										error: `Tool "${name}" is not available on this sub-agent endpoint (${this.agentId}). Use the main capa endpoint to access all tools.`,
+									}),
+								},
+							],
+						};
+						this.finishTraceError(
+							traceId,
+							`Tool not available on sub-agent: ${name}`,
+							denied,
+						);
 						return {
 							jsonrpc: "2.0",
 							id: message.id,
-							result: {
-								content: [
-									{
-										type: "text",
-										text: JSON.stringify({
-											error: `Tool "${name}" is not available on this sub-agent endpoint (${this.agentId}). Use the main capa endpoint to access all tools.`,
-										}),
-									},
-								],
-							},
+							result: denied,
 						};
 					}
 				}
-			}
-
-			// Only require session for on-demand mode
-			if (toolExposureMode === "on-demand") {
-				this.ensureSession();
 			}
 
 			// Find tool definition
@@ -1547,6 +1565,7 @@ export class CapaMCPServer {
 			);
 			if (!toolDef) {
 				this.logger.warn("Tool not found");
+				this.finishTraceError(traceId, `Tool not found: ${name}`);
 				return {
 					jsonrpc: "2.0",
 					id: message.id,
@@ -1578,11 +1597,10 @@ export class CapaMCPServer {
 				} else if (toolDef.type === "mcp") {
 					this.logger.debug("Executing MCP tool...");
 					const mcpDef = toolDef.def as ToolMCPDefinition;
-					const capabilities = this.sessionManager.getProjectCapabilities(
-						this.projectId,
-					);
-					if (!capabilities) {
+					const caps = this.sessionManager.getProjectCapabilities(this.projectId);
+					if (!caps) {
 						this.logger.warn("Project capabilities not found");
+						this.finishTraceError(traceId, "Project capabilities not found");
 						return {
 							jsonrpc: "2.0",
 							id: message.id,
@@ -1595,9 +1613,10 @@ export class CapaMCPServer {
 
 					// Find server definition
 					const serverId = mcpDef.server.replace("@", "");
-					const serverDef = capabilities.servers.find((s) => s.id === serverId);
+					const serverDef = caps.servers.find((s) => s.id === serverId);
 					if (!serverDef) {
 						this.logger.warn(`Server not found: ${serverId}`);
+						this.finishTraceError(traceId, `Server not found: ${serverId}`);
 						return {
 							jsonrpc: "2.0",
 							id: message.id,
@@ -1621,6 +1640,7 @@ export class CapaMCPServer {
 				const content = await this.buildToolCallContent(result, toolDef, {
 					skipFormatter,
 				});
+				this.finishTraceOk(traceId, content);
 				return {
 					jsonrpc: "2.0",
 					id: message.id,
@@ -1628,6 +1648,10 @@ export class CapaMCPServer {
 				};
 			} catch (error: any) {
 				this.logger.failure(`Tool execution error: ${error.message}`);
+				this.finishTraceError(
+					traceId,
+					error.message || "Tool execution failed",
+				);
 				return {
 					jsonrpc: "2.0",
 					id: message.id,
@@ -1654,5 +1678,17 @@ export class CapaMCPServer {
 	async close(): Promise<void> {
 		await this.mcpProxy.closeAll();
 		await this.server.close();
+	}
+
+	/**
+	 * Close cached MCP children whose server defs changed or were removed.
+	 * Invoked after capabilities reload / configure so version bumps take
+	 * effect without a full capa restart.
+	 */
+	async syncCachedMcpClients(
+		servers: Array<{ id: string; def: MCPServerDefinition }>,
+		previousServers?: Array<{ id: string; def: MCPServerDefinition }>,
+	): Promise<void> {
+		await this.mcpProxy.syncCachedServers(servers, previousServers);
 	}
 }

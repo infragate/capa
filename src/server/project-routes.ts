@@ -9,6 +9,7 @@ import type {
 	ToolCommandDefinition,
 	ToolMCPDefinition,
 } from "../types/capabilities";
+import type { ToolCallRecord } from "../types/database";
 import type { CapabilitiesFileWatcher } from "./capabilities-watcher";
 import type { ConfigureRouteDeps } from "./configure-routes";
 import { runProjectConfigure } from "./configure-routes";
@@ -474,6 +475,69 @@ export function notifyProjectChanged(
 			clients.delete(send);
 		}
 	}
+}
+
+export function notifyToolCall(
+	projectEventClients: Map<string, Set<(chunk: Uint8Array) => void>>,
+	projectId: string,
+	record: ToolCallRecord,
+): void {
+	const clients = projectEventClients.get(projectId);
+	if (!clients || clients.size === 0) return;
+	const encoder = new TextEncoder();
+	const chunk = encoder.encode(
+		`event: tool-call\ndata: ${JSON.stringify(record)}\n\n`,
+	);
+	for (const send of [...clients]) {
+		try {
+			send(chunk);
+		} catch {
+			clients.delete(send);
+		}
+	}
+}
+
+export function handleGetProjectActivity(
+	deps: ProjectRouteDeps,
+	projectId: string,
+	limitParam: string | null,
+	beforeParam: string | null = null,
+	beforeIdParam: string | null = null,
+): Response {
+	const project = deps.db.getProject(projectId);
+	if (!project) {
+		return new Response(JSON.stringify({ error: "Project not found" }), {
+			status: 404,
+			headers: JSON_HEADERS,
+		});
+	}
+	const parsedLimit = limitParam ? Number.parseInt(limitParam, 10) : 50;
+	const limit = Number.isFinite(parsedLimit) ? parsedLimit : 50;
+	const parsedBefore = beforeParam ? Number.parseInt(beforeParam, 10) : NaN;
+	const beforeStartedAt = Number.isFinite(parsedBefore) ? parsedBefore : null;
+	const beforeId = beforeIdParam?.trim() ? beforeIdParam.trim() : null;
+	const page = deps.db.listToolCalls(projectId, {
+		limit,
+		beforeStartedAt,
+		beforeId,
+		before: beforeStartedAt,
+	});
+	return new Response(JSON.stringify(page), { headers: JSON_HEADERS });
+}
+
+export function handleGetProjectActivityStats(
+	deps: ProjectRouteDeps,
+	projectId: string,
+): Response {
+	const project = deps.db.getProject(projectId);
+	if (!project) {
+		return new Response(JSON.stringify({ error: "Project not found" }), {
+			status: 404,
+			headers: JSON_HEADERS,
+		});
+	}
+	const stats = deps.db.getToolCallStats(projectId);
+	return new Response(JSON.stringify(stats), { headers: JSON_HEADERS });
 }
 
 export async function reloadProjectCapabilitiesFromDisk(

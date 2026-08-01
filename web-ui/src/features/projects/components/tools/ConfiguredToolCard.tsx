@@ -165,6 +165,16 @@ export function ConfiguredToolCard({
               group: <span className="font-mono">{tool.group}</span>
             </p>
           )}
+          {tool.type === 'command' &&
+            (tool.commandArgs || []).some((a) => a.default !== undefined) && (
+              <p className="mt-0.5 text-[10px] text-text-tertiary">
+                {t('actions.defaults')}:{' '}
+                {(tool.commandArgs || [])
+                  .filter((a) => a.default !== undefined)
+                  .map((a) => `${a.name}=${JSON.stringify(a.default)}`)
+                  .join(', ')}
+              </p>
+            )}
         </div>
         {onEditCommand && (
           <button

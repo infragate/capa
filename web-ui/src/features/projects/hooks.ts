@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useEffect } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { projectsApi } from './api';
-import type { CapabilitySection, ProjectDetail } from '../../types/api';
+import type { CapabilitySection, ProjectDetail, ToolCallRecord } from '../../types/api';
 
 function invalidateProjectQueries(qc: ReturnType<typeof useQueryClient>, projectId: string) {
   qc.invalidateQueries({ queryKey: ['project', projectId] });
@@ -98,6 +98,122 @@ export function useProjectCapabilitiesLiveSync(projectId: string | null) {
       es = null;
     };
   }, [projectId, qc]);
+}
+
+function mergeToolCall(prev: ToolCallRecord[], next: ToolCallRecord): ToolCallRecord[] {
+  const idx = prev.findIndex((c) => c.id === next.id);
+  if (idx === -1) {
+    return [next, ...prev].slice(0, 1000);
+  }
+  const copy = prev.slice();
+  copy[idx] = next;
+  return copy;
+}
+
+const ACTIVITY_PAGE_SIZE = 50;
+
+/**
+ * Recent tool-call activity + live SSE updates for the project page feed.
+ * Retains at most 1000 traces server-side; UI pages with Load more.
+ */
+export function useProjectActivity(projectId: string | null) {
+  const qc = useQueryClient();
+  const [calls, setCalls] = useState<ToolCallRecord[]>([]);
+  const [hasMore, setHasMore] = useState(false);
+  const [total, setTotal] = useState(0);
+  const [live, setLive] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+
+  const history = useQuery({
+    queryKey: ['activity', projectId],
+    queryFn: () => projectsApi.getActivity(projectId!, { limit: ACTIVITY_PAGE_SIZE }),
+    enabled: !!projectId,
+  });
+
+  const stats = useQuery({
+    queryKey: ['activity-stats', projectId],
+    queryFn: () => projectsApi.getActivityStats(projectId!),
+    enabled: !!projectId,
+    refetchInterval: 15_000,
+  });
+
+  useEffect(() => {
+    if (!history.data) return;
+    setCalls(history.data.calls);
+    setHasMore(history.data.hasMore);
+    setTotal(history.data.total);
+  }, [history.data]);
+
+  useEffect(() => {
+    if (!projectId) return;
+
+    let es: EventSource | null = null;
+    let disposed = false;
+
+    const onToolCall = (ev: MessageEvent) => {
+      try {
+        const record = JSON.parse(String(ev.data)) as ToolCallRecord;
+        setCalls((prev) => mergeToolCall(prev, record));
+        void qc.invalidateQueries({ queryKey: ['activity-stats', projectId] });
+      } catch {
+        // ignore malformed events
+      }
+    };
+
+    const connect = () => {
+      if (disposed) return;
+      es?.close();
+      es = new EventSource(`/api/projects/${encodeURIComponent(projectId)}/events`);
+      es.addEventListener('tool-call', onToolCall);
+      es.onopen = () => setLive(true);
+      es.onerror = () => setLive(false);
+    };
+
+    connect();
+
+    return () => {
+      disposed = true;
+      setLive(false);
+      es?.removeEventListener('tool-call', onToolCall);
+      es?.close();
+      es = null;
+    };
+  }, [projectId, qc]);
+
+  const loadMore = useCallback(async () => {
+    if (!projectId || loadingMore || !hasMore || calls.length === 0) return;
+    const oldest = calls[calls.length - 1];
+    if (!oldest) return;
+    setLoadingMore(true);
+    try {
+      const page = await projectsApi.getActivity(projectId, {
+        limit: ACTIVITY_PAGE_SIZE,
+        before: oldest.started_at,
+        beforeId: oldest.id,
+      });
+      setCalls((prev) => {
+        const seen = new Set(prev.map((c) => c.id));
+        const appended = page.calls.filter((c) => !seen.has(c.id));
+        return [...prev, ...appended].slice(0, 1000);
+      });
+      setHasMore(page.hasMore);
+      setTotal(page.total);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [projectId, loadingMore, hasMore, calls]);
+
+  return {
+    calls,
+    stats: stats.data ?? null,
+    isLoading: history.isLoading,
+    error: history.error,
+    live,
+    hasMore,
+    total,
+    loadingMore,
+    loadMore,
+  };
 }
 
 export function useVariables(projectId: string | null) {

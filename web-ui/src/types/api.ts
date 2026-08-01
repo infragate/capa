@@ -64,6 +64,7 @@ export interface CommandArg {
   type?: string;
   description?: string;
   required?: boolean;
+  default?: unknown;
 }
 
 export interface EnrichedTool extends Tool {
@@ -316,6 +317,49 @@ export interface IntegrationsResponse {
 export interface OAuthStartResponse {
   authorizationUrl?: string;
   error?: string;
+}
+
+export type ToolCallStatus = 'running' | 'ok' | 'error';
+export type ToolCallKind = 'setup_tools' | 'call_tool' | 'tool';
+
+export interface ToolCallRecord {
+  id: string;
+  project_id: string;
+  session_id: string | null;
+  started_at: number;
+  duration_ms: number | null;
+  status: ToolCallStatus;
+  source: string | null;
+  kind: ToolCallKind;
+  tool_name: string;
+  meta_tool: string | null;
+  args_json: string | null;
+  result_preview: string | null;
+  result_bytes: number | null;
+  result_tokens: number | null;
+  error_message: string | null;
+  agent_id: string | null;
+}
+
+export interface ActivityResponse {
+  calls: ToolCallRecord[];
+  total: number;
+  hasMore: boolean;
+}
+
+export interface ActivityBucket {
+  t: number;
+  count: number;
+}
+
+export interface ActivityStats {
+  total: number;
+  errors: number;
+  avg_duration_ms: number | null;
+  shell: number;
+  mcp: number;
+  window_ms: number;
+  buckets: ActivityBucket[];
 }
 
 export interface ActionResponse {
