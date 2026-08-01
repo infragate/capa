@@ -1,48 +1,48 @@
-import { readFileSync, existsSync } from 'fs';
-import { resolve, dirname, sep } from 'path';
-import type { SecurityOptions } from '../types/capabilities';
-import { logger } from './logger';
+import { existsSync, readFileSync } from "fs";
+import { dirname, resolve, sep } from "path";
+import type { SecurityOptions } from "../types/capabilities";
+import { logger } from "./logger";
 
-const RED = '\x1b[31m';
-const RESET = '\x1b[0m';
+const RED = "\x1b[31m";
+const RESET = "\x1b[0m";
 
 /**
  * Error thrown when a blocked phrase is detected in a skill during installation.
  */
 export class BlockedPhraseError extends Error {
-  constructor(
-    message: string,
-    public readonly skillId: string,
-    public readonly filePath: string,
-    public readonly phrase: string,
-    public readonly pluginName?: string
-  ) {
-    super(message);
-    this.name = 'BlockedPhraseError';
-  }
+	constructor(
+		message: string,
+		public readonly skillId: string,
+		public readonly filePath: string,
+		public readonly phrase: string,
+		public readonly pluginName?: string,
+	) {
+		super(message);
+		this.name = "BlockedPhraseError";
+	}
 }
 
 /**
  * Output a blocked phrase error in red and exit the process.
  */
 export function reportBlockedPhraseAndExit(
-  skillId: string,
-  filePath: string,
-  phrase: string,
-  pluginName?: string
+	skillId: string,
+	filePath: string,
+	phrase: string,
+	pluginName?: string,
 ): never {
-  const location = pluginName
-    ? `Skill "${skillId}" in plugin "${pluginName}"`
-    : `Skill "${skillId}"`;
-  const msg =
-    `\n${RED}✗ Installation blocked: forbidden phrase detected${RESET}\n\n` +
-    `  ${RED}${location}${RESET}\n` +
-    `  File: ${filePath}\n` +
-    `  Forbidden phrase: ${RED}"${phrase}"${RESET}\n\n` +
-    `  Installation has been stopped. Remove the phrase from the skill or update\n` +
-    `  your security configuration (options.security.blockedPhrases) and try again.\n`;
-  logger.error(msg);
-  process.exit(1);
+	const location = pluginName
+		? `Skill "${skillId}" in plugin "${pluginName}"`
+		: `Skill "${skillId}"`;
+	const msg =
+		`\n${RED}✗ Installation blocked: forbidden phrase detected${RESET}\n\n` +
+		`  ${RED}${location}${RESET}\n` +
+		`  File: ${filePath}\n` +
+		`  Forbidden phrase: ${RED}"${phrase}"${RESET}\n\n` +
+		`  Installation has been stopped. Remove the phrase from the skill or update\n` +
+		`  your security configuration (options.security.blockedPhrases) and try again.\n`;
+	logger.error(msg);
+	process.exit(1);
 }
 
 /**
@@ -50,18 +50,32 @@ export function reportBlockedPhraseAndExit(
  * Covers standard whitespace (tab, LF, CR) and all printable ASCII (space U+0020 through tilde U+007E).
  * This guarantees that skill markdown structure (-, :, ", ', newlines, symbols) is never stripped.
  */
-const BASELINE_ALLOWED_INNER = '\\t\\n\\r\\x20-\\x7E';
+const BASELINE_ALLOWED_INNER = "\\t\\n\\r\\x20-\\x7E";
 const TEXT_EXTENSIONS = new Set([
-  '.md', '.txt', '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs',
-  '.json', '.yaml', '.yml', '.html', '.css', '.xml'
+	".md",
+	".txt",
+	".ts",
+	".tsx",
+	".js",
+	".jsx",
+	".mjs",
+	".cjs",
+	".json",
+	".yaml",
+	".yml",
+	".html",
+	".css",
+	".xml",
 ]);
 
 /**
  * Check if a filename has a text extension (for security checks and sanitization)
  */
 export function isTextFile(filename: string): boolean {
-  const ext = filename.includes('.') ? filename.slice(filename.lastIndexOf('.')) : '';
-  return TEXT_EXTENSIONS.has(ext.toLowerCase());
+	const ext = filename.includes(".")
+		? filename.slice(filename.lastIndexOf("."))
+		: "";
+	return TEXT_EXTENSIONS.has(ext.toLowerCase());
 }
 
 /**
@@ -71,25 +85,30 @@ export function isTextFile(filename: string): boolean {
  * @param capabilitiesFilePath - Full path to capabilities file (for resolving relative file paths)
  */
 export function loadBlockedPhrases(
-  security: SecurityOptions | undefined,
-  capabilitiesFilePath: string
+	security: SecurityOptions | undefined,
+	capabilitiesFilePath: string,
 ): string[] {
-  const blocked = security?.blockedPhrases;
-  if (blocked === undefined) return [];
+	const blocked = security?.blockedPhrases;
+	if (blocked === undefined) return [];
 
-  if (Array.isArray(blocked)) {
-    return blocked
-      .filter((p): p is string => typeof p === 'string')
-      .map((p) => p.trim())
-      .filter((p) => p.length > 0);
-  }
+	if (Array.isArray(blocked)) {
+		return blocked
+			.filter((p): p is string => typeof p === "string")
+			.map((p) => p.trim())
+			.filter((p) => p.length > 0);
+	}
 
-  if (typeof blocked === 'object' && blocked !== null && 'file' in blocked && typeof blocked.file === 'string') {
-    const capabilitiesDir = resolve(dirname(capabilitiesFilePath));
-    return loadBlockedPhrasesFromFile(blocked.file, capabilitiesDir);
-  }
+	if (
+		typeof blocked === "object" &&
+		blocked !== null &&
+		"file" in blocked &&
+		typeof blocked.file === "string"
+	) {
+		const capabilitiesDir = resolve(dirname(capabilitiesFilePath));
+		return loadBlockedPhrasesFromFile(blocked.file, capabilitiesDir);
+	}
 
-  return [];
+	return [];
 }
 
 /**
@@ -97,51 +116,53 @@ export function loadBlockedPhrases(
  * Rejects paths that resolve outside capabilitiesDir.
  */
 export function loadBlockedPhrasesFromFile(
-  filePath: string,
-  capabilitiesDir: string
+	filePath: string,
+	capabilitiesDir: string,
 ): string[] {
-  const rootResolved = resolve(capabilitiesDir);
-  const resolved = resolve(rootResolved, filePath);
-  const rootWithSep = rootResolved.endsWith(sep) ? rootResolved : rootResolved + sep;
-  if (resolved !== rootResolved && !resolved.startsWith(rootWithSep)) {
-    throw new Error(
-      `Blocked-phrases file path escapes the capabilities directory: ${filePath}`
-    );
-  }
-  if (!existsSync(resolved)) {
-    throw new Error(
-      `Blocked phrases file not found: ${resolved}\n` +
-      `  Resolved from: ${filePath} (relative to ${rootResolved})`
-    );
-  }
-  const content = readFileSync(resolved, 'utf-8');
-  return content
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
+	const rootResolved = resolve(capabilitiesDir);
+	const resolved = resolve(rootResolved, filePath);
+	const rootWithSep = rootResolved.endsWith(sep)
+		? rootResolved
+		: rootResolved + sep;
+	if (resolved !== rootResolved && !resolved.startsWith(rootWithSep)) {
+		throw new Error(
+			`Blocked-phrases file path escapes the capabilities directory: ${filePath}`,
+		);
+	}
+	if (!existsSync(resolved)) {
+		throw new Error(
+			`Blocked phrases file not found: ${resolved}\n` +
+				`  Resolved from: ${filePath} (relative to ${rootResolved})`,
+		);
+	}
+	const content = readFileSync(resolved, "utf-8");
+	return content
+		.split(/\r?\n/)
+		.map((line) => line.trim())
+		.filter((line) => line.length > 0);
 }
 
 /** NFKC + lowercase so fullwidth/homoglyph variants cannot bypass substring checks. */
 function normalizeForPhraseMatch(text: string): string {
-  return text.normalize('NFKC').toLowerCase();
+	return text.normalize("NFKC").toLowerCase();
 }
 
 /**
  * Check if content contains any blocked phrase (case-insensitive, NFKC-normalized).
  */
 export function checkBlockedPhrases(
-  content: string,
-  phrases: string[]
+	content: string,
+	phrases: string[],
 ): { blocked: boolean; phrase?: string } {
-  if (phrases.length === 0) return { blocked: false };
+	if (phrases.length === 0) return { blocked: false };
 
-  const haystack = normalizeForPhraseMatch(content);
-  for (const phrase of phrases) {
-    if (haystack.includes(normalizeForPhraseMatch(phrase))) {
-      return { blocked: true, phrase };
-    }
-  }
-  return { blocked: false };
+	const haystack = normalizeForPhraseMatch(content);
+	for (const phrase of phrases) {
+		if (haystack.includes(normalizeForPhraseMatch(phrase))) {
+			return { blocked: true, phrase };
+		}
+	}
+	return { blocked: false };
 }
 
 /**
@@ -157,42 +178,49 @@ export function checkBlockedPhrases(
  *   May include surrounding brackets (e.g. `[\\u00A0-\\uFFFF]`) or just the inner content.
  *   Pass an empty string to apply baseline-only sanitization (strip all non-ASCII Unicode).
  */
-export function sanitizeContent(content: string, allowedCharacters: string): string {
-  let userInner = allowedCharacters.trim();
-  if (userInner.startsWith('[') && userInner.endsWith(']')) {
-    userInner = userInner.slice(1, -1);
-  }
+export function sanitizeContent(
+	content: string,
+	allowedCharacters: string,
+): string {
+	let userInner = allowedCharacters.trim();
+	if (userInner.startsWith("[") && userInner.endsWith("]")) {
+		userInner = userInner.slice(1, -1);
+	}
 
-  // Combine baseline with user's extra allowances. The baseline ensures that printable
-  // ASCII and standard whitespace are never stripped, regardless of user configuration.
-  const combined = BASELINE_ALLOWED_INNER + userInner;
+	// Combine baseline with user's extra allowances. The baseline ensures that printable
+	// ASCII and standard whitespace are never stripped, regardless of user configuration.
+	const combined = BASELINE_ALLOWED_INNER + userInner;
 
-  try {
-    const regex = new RegExp(`[^${combined}]`, 'g');
-    return content.replace(regex, ' ');
-  } catch {
-    // Invalid user-provided regex — fall back to baseline only
-    const fallback = new RegExp(`[^${BASELINE_ALLOWED_INNER}]`, 'g');
-    return content.replace(fallback, ' ');
-  }
+	try {
+		const regex = new RegExp(`[^${combined}]`, "g");
+		return content.replace(regex, " ");
+	} catch {
+		// Invalid user-provided regex — fall back to baseline only
+		const fallback = new RegExp(`[^${BASELINE_ALLOWED_INNER}]`, "g");
+		return content.replace(fallback, " ");
+	}
 }
 
 /**
  * Check if blocked phrases feature is enabled (property must be present).
  * Omit or comment out blockedPhrases to disable.
  */
-export function isBlockedPhrasesEnabled(security: SecurityOptions | undefined): boolean {
-  if (!security) return false;
-  return security.blockedPhrases !== undefined;
+export function isBlockedPhrasesEnabled(
+	security: SecurityOptions | undefined,
+): boolean {
+	if (!security) return false;
+	return security.blockedPhrases !== undefined;
 }
 
 /**
  * Check if character sanitization is enabled (property must be present).
  * Omit or comment out allowedCharacters to disable.
  */
-export function isCharacterSanitizationEnabled(security: SecurityOptions | undefined): boolean {
-  if (!security) return false;
-  return security.allowedCharacters !== undefined;
+export function isCharacterSanitizationEnabled(
+	security: SecurityOptions | undefined,
+): boolean {
+	if (!security) return false;
+	return security.allowedCharacters !== undefined;
 }
 
 /**
@@ -200,9 +228,11 @@ export function isCharacterSanitizationEnabled(security: SecurityOptions | undef
  * Returns null when character sanitization is disabled (allowedCharacters omitted/malformed).
  * An empty string is valid and means "baseline-only" sanitization (strip non-ASCII Unicode).
  */
-export function getAllowedCharacters(security: SecurityOptions | undefined): string | null {
-  const chars = security?.allowedCharacters;
-  if (chars === undefined) return null;
-  if (typeof chars !== 'string') return null;
-  return chars;
+export function getAllowedCharacters(
+	security: SecurityOptions | undefined,
+): string | null {
+	const chars = security?.allowedCharacters;
+	if (chars === undefined) return null;
+	if (typeof chars !== "string") return null;
+	return chars;
 }

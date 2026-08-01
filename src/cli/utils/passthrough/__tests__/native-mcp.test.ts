@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, readFileSync, existsSync, mkdirSync, writeFileSync
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { buildNativeMcpEntry, upsertNativeMcpServer } from '../native-mcp';
-import type { McpIntegration } from '../../../types/providers';
+import type { McpIntegration } from '../../../../types/providers';
 
 const cursorMcp: McpIntegration = {
   configPath: '.cursor/mcp.json',

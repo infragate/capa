@@ -23,7 +23,7 @@ describe('checkRequiredCommand', () => {
     const execFileSpy = spyOn(childProcess, 'execFile').mockImplementation(
       (() => {
         throw new Error('should not spawn');
-      }) as typeof childProcess.execFile,
+      }) as unknown as typeof childProcess.execFile,
     );
 
     expect(checkRequiredCommand({ cli: 'git; rm -rf /' })).rejects.toThrow(/Invalid command name/);

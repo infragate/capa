@@ -14,20 +14,26 @@
  * Anything else (5xx, timeouts, thrown errors) is treated as transient so
  * we don't delete a perfectly valid stored token on a temporary outage.
  */
-const PERMANENT_REFRESH_FAILURE_MARKERS = ['invalid_grant', 'invalid_token', 'expired'];
+const PERMANENT_REFRESH_FAILURE_MARKERS = [
+	"invalid_grant",
+	"invalid_token",
+	"expired",
+];
 
 export function isPermanentRefreshFailure(
-  error?: unknown,
-  response?: Response,
-  responseBody?: string,
+	error?: unknown,
+	response?: Response,
+	responseBody?: string,
 ): boolean {
-  if (response) {
-    const status = response.status;
-    if (status === 400 || status === 401 || status === 403) {
-      const body = (responseBody ?? '').toLowerCase();
-      return PERMANENT_REFRESH_FAILURE_MARKERS.some((marker) => body.includes(marker));
-    }
-    return false;
-  }
-  return false;
+	if (response) {
+		const status = response.status;
+		if (status === 400 || status === 401 || status === 403) {
+			const body = (responseBody ?? "").toLowerCase();
+			return PERMANENT_REFRESH_FAILURE_MARKERS.some((marker) =>
+				body.includes(marker),
+			);
+		}
+		return false;
+	}
+	return false;
 }

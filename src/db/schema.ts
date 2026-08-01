@@ -1,7 +1,7 @@
-import type { Database } from 'bun:sqlite';
+import type { Database } from "bun:sqlite";
 
 export function initSchema(db: Database): void {
-  db.run(`
+	db.run(`
       CREATE TABLE IF NOT EXISTS projects (
         id TEXT PRIMARY KEY,
         path TEXT UNIQUE NOT NULL,
@@ -10,7 +10,7 @@ export function initSchema(db: Database): void {
       )
     `);
 
-  db.run(`
+	db.run(`
       CREATE TABLE IF NOT EXISTS variables (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         project_id TEXT NOT NULL,
@@ -22,7 +22,7 @@ export function initSchema(db: Database): void {
       )
     `);
 
-  db.run(`
+	db.run(`
       CREATE TABLE IF NOT EXISTS managed_files (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         project_id TEXT NOT NULL,
@@ -33,7 +33,7 @@ export function initSchema(db: Database): void {
       )
     `);
 
-  db.run(`
+	db.run(`
       CREATE TABLE IF NOT EXISTS tool_init_state (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         project_id TEXT NOT NULL,
@@ -46,7 +46,7 @@ export function initSchema(db: Database): void {
       )
     `);
 
-  db.run(`
+	db.run(`
       CREATE TABLE IF NOT EXISTS mcp_subprocesses (
         id TEXT PRIMARY KEY,
         config_hash TEXT UNIQUE NOT NULL,
@@ -58,7 +58,7 @@ export function initSchema(db: Database): void {
       )
     `);
 
-  db.run(`
+	db.run(`
       CREATE TABLE IF NOT EXISTS sessions (
         session_id TEXT PRIMARY KEY,
         project_id TEXT NOT NULL,
@@ -69,7 +69,7 @@ export function initSchema(db: Database): void {
       )
     `);
 
-  db.run(`
+	db.run(`
       CREATE TABLE IF NOT EXISTS oauth_tokens (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         project_id TEXT NOT NULL,
@@ -86,7 +86,7 @@ export function initSchema(db: Database): void {
       )
     `);
 
-  db.run(`
+	db.run(`
       CREATE TABLE IF NOT EXISTS oauth_flow_state (
         state TEXT PRIMARY KEY,
         project_id TEXT NOT NULL,
@@ -98,7 +98,7 @@ export function initSchema(db: Database): void {
       )
     `);
 
-  db.run(`
+	db.run(`
       CREATE TABLE IF NOT EXISTS git_integrations (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         platform TEXT NOT NULL,
@@ -113,7 +113,7 @@ export function initSchema(db: Database): void {
       )
     `);
 
-  db.run(`
+	db.run(`
       CREATE TABLE IF NOT EXISTS project_capabilities (
         project_id TEXT PRIMARY KEY,
         capabilities_json TEXT NOT NULL,
@@ -122,7 +122,7 @@ export function initSchema(db: Database): void {
       )
     `);
 
-  db.run(`
+	db.run(`
       CREATE TABLE IF NOT EXISTS sub_agents (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         project_id TEXT NOT NULL,
@@ -133,7 +133,7 @@ export function initSchema(db: Database): void {
       )
     `);
 
-  db.run(`
+	db.run(`
       CREATE TABLE IF NOT EXISTS project_providers (
         project_id TEXT NOT NULL,
         provider_id TEXT NOT NULL,
@@ -143,7 +143,7 @@ export function initSchema(db: Database): void {
       )
     `);
 
-  db.run(`
+	db.run(`
       CREATE TABLE IF NOT EXISTS registries (
         slug TEXT PRIMARY KEY,
         type TEXT NOT NULL CHECK(type IN ('github','gitlab','url')),
@@ -159,11 +159,11 @@ export function initSchema(db: Database): void {
       )
     `);
 
-  // Tracks individual capa-installed hook entries (one row per
-  // (provider, hook) tuple). `locator` is the JSON-encoded path inside
-  // the provider's hooks-root that the entry occupies — see
-  // `shared/providers/hook-handlers.ts` for the layout per shape.
-  db.run(`
+	// Tracks individual capa-installed hook entries (one row per
+	// (provider, hook) tuple). `locator` is the JSON-encoded path inside
+	// the provider's hooks-root that the entry occupies — see
+	// `shared/providers/hook-handlers.ts` for the layout per shape.
+	db.run(`
       CREATE TABLE IF NOT EXISTS managed_hooks (
         id           INTEGER PRIMARY KEY AUTOINCREMENT,
         project_id   TEXT NOT NULL,
@@ -178,9 +178,9 @@ export function initSchema(db: Database): void {
       )
     `);
 
-  // Generic key/value store for small server-wide flags that don't deserve
-  // their own table (e.g. "have we seeded the default registries yet").
-  db.run(`
+	// Generic key/value store for small server-wide flags that don't deserve
+	// their own table (e.g. "have we seeded the default registries yet").
+	db.run(`
       CREATE TABLE IF NOT EXISTS meta (
         key   TEXT PRIMARY KEY,
         value TEXT NOT NULL

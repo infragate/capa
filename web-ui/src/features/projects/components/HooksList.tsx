@@ -4,17 +4,9 @@ import { Trash2, X, Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { Hook } from '../../../types/api';
 import { matchesSearch } from '../../../lib/utils';
-import { capaIdIssue, sanitizeCapaIdInput } from '../../../lib/ids';
+import { capaIdErrorMessage, sanitizeCapaIdInput } from '../../../lib/ids';
 import { ReorderableList } from '../../../components/common/ReorderableList';
 import { useAppendCapability, useDeleteCapability, useReorderCapability, useUpdateCapability } from '../hooks';
-
-function capaIdErrorMessage(id: string, t: (key: string) => string): string | null {
-  const issue = capaIdIssue(id);
-  if (!issue) return null;
-  if (issue === 'empty') return t('actions.idInvalidEmpty');
-  if (issue === 'invalidStart') return t('actions.idInvalidStart');
-  return t('actions.idInvalidChars');
-}
 
 const HOOK_EVENTS = [
   'sessionStart',

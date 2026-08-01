@@ -87,7 +87,7 @@ export function CapabilityCollapsible({
       </div>
       {bodyMounted && (
         <Collapsible.Content
-          forceMount={keepMounted && !effectiveOpen}
+          forceMount={keepMounted && !effectiveOpen ? true : undefined}
           className={
             effectiveOpen
               ? 'overflow-hidden pb-4 data-[state=open]:animate-collapsible-down'
