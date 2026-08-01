@@ -316,7 +316,60 @@ export function useAppendCapability(projectId: string) {
       section: CapabilitySection;
       entry: Record<string, unknown>;
     }) => projectsApi.appendCapability(projectId, section, entry),
-    onSuccess: () => invalidateProjectQueries(qc, projectId),
+    onMutate: async ({ section, entry }) => {
+      if (section !== 'tools') return undefined;
+      await qc.cancelQueries({ queryKey: ['project', projectId] });
+      const previous = qc.getQueryData<ProjectDetail>(['project', projectId]);
+      const id = typeof entry.id === 'string' ? entry.id : null;
+      if (!id || !previous?.capabilities) return { previous };
+
+      const def =
+        entry.def && typeof entry.def === 'object' && !Array.isArray(entry.def)
+          ? (entry.def as Record<string, unknown>)
+          : {};
+      const optimistic = {
+        id,
+        type: (entry.type === 'command' ? 'command' : 'mcp') as 'mcp' | 'command',
+        description: typeof entry.description === 'string' ? entry.description : null,
+        sourcePlugin: null,
+        mcpServer: typeof def.server === 'string' ? def.server : undefined,
+        mcpTool: typeof def.tool === 'string' ? def.tool : undefined,
+        defaults:
+          def.defaults && typeof def.defaults === 'object'
+            ? (def.defaults as Record<string, unknown>)
+            : null,
+        formatter:
+          def.formatter &&
+          typeof def.formatter === 'object' &&
+          typeof (def.formatter as { cmd?: unknown }).cmd === 'string'
+            ? (def.formatter as { cmd: string; timeout?: number })
+            : null,
+        command:
+          def.run && typeof def.run === 'object' && !Array.isArray(def.run)
+            ? typeof (def.run as Record<string, unknown>).cmd === 'string'
+              ? ((def.run as Record<string, unknown>).cmd as string)
+              : undefined
+            : typeof entry.command === 'string'
+              ? entry.command
+              : undefined,
+        group: typeof entry.group === 'string' ? entry.group : undefined,
+      };
+
+      qc.setQueryData<ProjectDetail>(['project', projectId], {
+        ...previous,
+        capabilities: {
+          ...previous.capabilities,
+          tools: [...previous.capabilities.tools, optimistic],
+        },
+      });
+      return { previous };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.previous) {
+        qc.setQueryData(['project', projectId], ctx.previous);
+      }
+    },
+    onSettled: () => invalidateProjectQueries(qc, projectId),
   });
 }
 
