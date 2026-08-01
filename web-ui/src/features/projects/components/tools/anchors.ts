@@ -19,6 +19,23 @@ export function configuredToolAnchor(tool: {
   return `cfg:${tool.id}`;
 }
 
+/**
+ * Reorder API key for a configured tool. Must match server
+ * `capabilityEntryReorderKey` for the tools section:
+ * MCP → `id::server::mcpTool`, command → `id`.
+ */
+export function configuredToolReorderKey(tool: {
+  id: string;
+  type?: string;
+  mcpServer?: string | null;
+  mcpTool?: string | null;
+}): string {
+  if (tool.type === 'mcp' && tool.mcpServer && tool.mcpTool) {
+    return `${tool.id}::${tool.mcpServer.replace(/^@/, '')}::${tool.mcpTool}`;
+  }
+  return tool.id;
+}
+
 export function remoteToolAnchor(serverId: string, toolName: string): string {
   return `remote:${serverId}::${toolName}`;
 }

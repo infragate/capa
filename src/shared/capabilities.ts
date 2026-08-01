@@ -148,6 +148,29 @@ function asPlainObject(value: unknown): Record<string, unknown> | null {
 	return null;
 }
 
+/**
+ * Stable reorder identity for a capability entry.
+ * Tools may reuse the same `id` across MCP servers, so MCP tools key on
+ * `id::server::mcpTool` (server without leading `@`).
+ */
+export function capabilityEntryReorderKey(
+	section: ArrayCapabilitySection,
+	entry: Record<string, unknown>,
+): string | null {
+	if (typeof entry.id !== "string") return null;
+	if (section === "tools" && entry.type === "mcp") {
+		const def = asPlainObject(entry.def);
+		if (
+			def &&
+			typeof def.server === "string" &&
+			typeof def.tool === "string"
+		) {
+			return `${entry.id}::${def.server.replace(/^@/, "")}::${def.tool}`;
+		}
+	}
+	return entry.id;
+}
+
 function yamlItemToObject(item: unknown): Record<string, unknown> | null {
 	if (isMap(item)) {
 		return (item as YAMLMap).toJSON() as Record<string, unknown>;
@@ -291,17 +314,18 @@ export async function updateCapabilityEntry(
 }
 
 /**
- * Reorder entries in an array-valued capability section to match `orderedIds`.
+ * Reorder entries in an array-valued capability section to match `orderedKeys`.
  * YAML path preserves item nodes (comments attached to entries survive).
- * `orderedIds` must be a permutation of the section's current entry ids.
+ * `orderedKeys` must be a permutation of the section's current entry keys
+ * (see {@link capabilityEntryReorderKey}).
  */
 export async function reorderCapabilityEntries(
 	path: string,
 	format: CapabilitiesFormat,
 	section: ArrayCapabilitySection,
-	orderedIds: string[],
+	orderedKeys: string[],
 ): Promise<void> {
-	if (new Set(orderedIds).size !== orderedIds.length) {
+	if (new Set(orderedKeys).size !== orderedKeys.length) {
 		throw new Error("ordered ids must be unique");
 	}
 
@@ -312,28 +336,28 @@ export async function reorderCapabilityEntries(
 		const list = Array.isArray(data[section])
 			? (data[section] as unknown[])
 			: [];
-		const byId = new Map<string, unknown>();
-		const withoutId: unknown[] = [];
+		const byKey = new Map<string, unknown>();
+		const withoutKey: unknown[] = [];
 		for (const item of list) {
 			const obj = asPlainObject(item);
-			const id = obj && typeof obj.id === "string" ? obj.id : null;
-			if (id) {
-				if (byId.has(id)) {
-					throw new Error(`duplicate id "${id}" in ${section}`);
+			const key = obj ? capabilityEntryReorderKey(section, obj) : null;
+			if (key) {
+				if (byKey.has(key)) {
+					throw new Error(`duplicate id "${key}" in ${section}`);
 				}
-				byId.set(id, item);
+				byKey.set(key, item);
 			} else {
-				withoutId.push(item);
+				withoutKey.push(item);
 			}
 		}
 
-		assertPermutation(orderedIds, [...byId.keys()], section);
+		assertPermutation(orderedKeys, [...byKey.keys()], section);
 
 		const next: unknown[] = [];
-		for (const id of orderedIds) {
-			next.push(byId.get(id)!);
+		for (const key of orderedKeys) {
+			next.push(byKey.get(key)!);
 		}
-		next.push(...withoutId);
+		next.push(...withoutKey);
 		data[section] = next;
 		await Bun.write(path, JSON.stringify(data, null, 2) + "\n");
 		return;
@@ -342,33 +366,33 @@ export async function reorderCapabilityEntries(
 	const doc = parseDocument(content);
 	const existing = doc.get(section);
 	if (!isSeq(existing)) {
-		if (orderedIds.length === 0) return;
+		if (orderedKeys.length === 0) return;
 		throw new Error(`${section} section is missing or not a list`);
 	}
 
 	const seq = existing as YAMLSeq;
-	const byId = new Map<string, unknown>();
-	const withoutId: unknown[] = [];
+	const byKey = new Map<string, unknown>();
+	const withoutKey: unknown[] = [];
 	for (const item of seq.items) {
 		const obj = yamlItemToObject(item);
-		const id = obj && typeof obj.id === "string" ? obj.id : null;
-		if (id) {
-			if (byId.has(id)) {
-				throw new Error(`duplicate id "${id}" in ${section}`);
+		const key = obj ? capabilityEntryReorderKey(section, obj) : null;
+		if (key) {
+			if (byKey.has(key)) {
+				throw new Error(`duplicate id "${key}" in ${section}`);
 			}
-			byId.set(id, item);
+			byKey.set(key, item);
 		} else {
-			withoutId.push(item);
+			withoutKey.push(item);
 		}
 	}
 
-	assertPermutation(orderedIds, [...byId.keys()], section);
+	assertPermutation(orderedKeys, [...byKey.keys()], section);
 
 	const nextItems: unknown[] = [];
-	for (const id of orderedIds) {
-		nextItems.push(byId.get(id)!);
+	for (const key of orderedKeys) {
+		nextItems.push(byKey.get(key)!);
 	}
-	nextItems.push(...withoutId);
+	nextItems.push(...withoutKey);
 	seq.items = nextItems as YAMLSeq["items"];
 	await Bun.write(path, doc.toString());
 }

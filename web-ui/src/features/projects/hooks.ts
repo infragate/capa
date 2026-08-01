@@ -1,7 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState, useCallback } from 'react';
 import { projectsApi } from './api';
-import type { CapabilitySection, ProjectDetail, ToolCallRecord } from '../../types/api';
+import type { CapabilitySection, ProjectDetail, Tool, ToolCallRecord } from '../../types/api';
+import { configuredToolReorderKey } from './components/tools/anchors';
 
 function invalidateProjectQueries(qc: ReturnType<typeof useQueryClient>, projectId: string) {
   qc.invalidateQueries({ queryKey: ['project', projectId] });
@@ -27,6 +28,26 @@ function reorderByIds<T extends { id: string | null }>(items: T[], ids: string[]
     }
   }
   next.push(...byId.values(), ...rest);
+  return next;
+}
+
+function reorderToolsByKey(tools: Tool[], keys: string[]): Tool[] {
+  const byKey = new Map<string, Tool>();
+  const rest: Tool[] = [];
+  for (const tool of tools) {
+    const key = configuredToolReorderKey(tool);
+    if (byKey.has(key)) rest.push(tool);
+    else byKey.set(key, tool);
+  }
+  const next: Tool[] = [];
+  for (const key of keys) {
+    const tool = byKey.get(key);
+    if (tool) {
+      next.push(tool);
+      byKey.delete(key);
+    }
+  }
+  next.push(...byKey.values(), ...rest);
   return next;
 }
 
@@ -419,7 +440,7 @@ export function useReorderCapability(projectId: string) {
         const nextCaps = { ...caps };
         if (section === 'skills') nextCaps.skills = reorderByIds(caps.skills, ids);
         else if (section === 'servers') nextCaps.servers = reorderByIds(caps.servers, ids);
-        else if (section === 'tools') nextCaps.tools = reorderByIds(caps.tools, ids);
+        else if (section === 'tools') nextCaps.tools = reorderToolsByKey(caps.tools, ids);
         else if (section === 'plugins' && caps.plugins) {
           nextCaps.plugins = reorderByIds(caps.plugins, ids);
         } else if (section === 'subagents') {
