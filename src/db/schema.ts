@@ -186,4 +186,49 @@ export function initSchema(db: Database): void {
         value TEXT NOT NULL
       )
     `);
+
+	// Recent tool-call activity for the project page live feed.
+	db.run(`
+      CREATE TABLE IF NOT EXISTS tool_calls (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        session_id TEXT,
+        started_at INTEGER NOT NULL,
+        duration_ms INTEGER,
+        status TEXT NOT NULL,
+        source TEXT,
+        kind TEXT NOT NULL,
+        tool_name TEXT NOT NULL,
+        meta_tool TEXT,
+        args_json TEXT,
+        result_preview TEXT,
+        result_bytes INTEGER,
+        result_tokens INTEGER,
+        error_message TEXT,
+        agent_id TEXT,
+        FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+      )
+    `);
+
+	ensureColumn(db, "tool_calls", "result_bytes", "INTEGER");
+	ensureColumn(db, "tool_calls", "result_tokens", "INTEGER");
+
+	db.run(`
+      CREATE INDEX IF NOT EXISTS idx_tool_calls_project_started
+        ON tool_calls(project_id, started_at DESC)
+    `);
+}
+
+/** Add a column if missing (SQLite has no IF NOT EXISTS for ADD COLUMN). */
+function ensureColumn(
+	db: Database,
+	table: string,
+	column: string,
+	typeSql: string,
+): void {
+	const cols = db.query(`PRAGMA table_info(${table})`).all() as Array<{
+		name: string;
+	}>;
+	if (cols.some((c) => c.name === column)) return;
+	db.run(`ALTER TABLE ${table} ADD COLUMN ${column} ${typeSql}`);
 }

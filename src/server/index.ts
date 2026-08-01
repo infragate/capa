@@ -52,11 +52,14 @@ import { OAuth2Manager } from "./oauth-manager";
 import {
 	handleDeleteProject,
 	handleGetProject,
+	handleGetProjectActivity,
+	handleGetProjectActivityStats,
 	handleGetProjects,
 	handleProjectEvents,
 	handleProjectFsList,
 	handleProjectFsUpload,
 	notifyProjectChanged,
+	notifyToolCall,
 	type ProjectRouteDeps,
 	reloadProjectCapabilitiesFromDisk,
 } from "./project-routes";
@@ -71,6 +74,7 @@ import {
 import { type EffectiveCapsCacheEntry } from "./resolve-effective-capabilities";
 import { SessionManager } from "./session-manager";
 import { SubprocessManager } from "./subprocess-manager";
+import { ToolCallTracer } from "./tool-call-tracer";
 import {
 	handleForceTokenRefresh,
 	handleTokenRefreshStatus,
@@ -115,6 +119,7 @@ class CapaServer {
 	>();
 	private registryManager!: RegistryManager;
 	private capsWatcher!: CapabilitiesFileWatcher;
+	private toolCallTracer!: ToolCallTracer;
 	private projectEventClients = new Map<
 		string,
 		Set<(chunk: Uint8Array) => void>
@@ -217,6 +222,9 @@ class CapaServer {
 		this.subprocessManager = new SubprocessManager(this.db);
 		this.oauth2Manager = new OAuth2Manager(this.db);
 		this.gitIntegrationManager = new GitIntegrationManager(this.db);
+		this.toolCallTracer = new ToolCallTracer(this.db, (projectId, record) => {
+			notifyToolCall(this.projectEventClients, projectId, record);
+		});
 
 		// Connect OAuth2Manager with SessionManager for capabilities access
 		this.oauth2Manager.setCapabilitiesProvider(() =>
@@ -468,6 +476,27 @@ class CapaServer {
 			// Bun closes quiet streams after ~10s unless idle timeout is disabled.
 			bunServer?.timeout?.(request, 0);
 			return this.handleProjectEvents(projectEventsMatch[1]);
+		}
+
+		// Recent tool-call activity for the project page feed
+		const activityMatch = path.match(/^\/api\/projects\/([^/]+)\/activity$/);
+		if (activityMatch && request.method === "GET") {
+			return handleGetProjectActivity(
+				this.projectRouteDeps(),
+				activityMatch[1],
+				url.searchParams.get("limit"),
+				url.searchParams.get("before"),
+			);
+		}
+
+		const activityStatsMatch = path.match(
+			/^\/api\/projects\/([^/]+)\/activity\/stats$/,
+		);
+		if (activityStatsMatch && request.method === "GET") {
+			return handleGetProjectActivityStats(
+				this.projectRouteDeps(),
+				activityStatsMatch[1],
+			);
 		}
 
 		// Configure project
@@ -805,6 +834,7 @@ class CapaServer {
 			projectId,
 			project.path,
 			agentId,
+			this.toolCallTracer,
 		);
 		this.mcpServers.set(cacheKey, mcpServer);
 		return mcpServer;
@@ -1565,6 +1595,7 @@ class CapaServer {
 				projectId,
 				project.path,
 				agentId,
+				this.toolCallTracer,
 			);
 
 			this.mcpServers.set(cacheKey, mcpServer);

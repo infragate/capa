@@ -11,7 +11,52 @@ type CommandArgDraft = {
   type: 'string' | 'number' | 'boolean' | 'object' | 'array';
   description: string;
   required: boolean;
+  /** Raw text from the form; empty means no default. */
+  defaultValue: string;
 };
+
+function defaultToDraft(value: unknown): string {
+  if (value === undefined || value === null) return '';
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function parseDefaultValue(
+  raw: string,
+  type: CommandArgDraft['type'],
+): { ok: true; value: unknown } | { ok: false } {
+  const trimmed = raw.trim();
+  if (!trimmed) return { ok: true, value: undefined };
+
+  if (type === 'string') {
+    return { ok: true, value: trimmed };
+  }
+  if (type === 'number') {
+    const n = Number(trimmed);
+    if (!Number.isFinite(n)) return { ok: false };
+    return { ok: true, value: n };
+  }
+  if (type === 'boolean') {
+    if (trimmed === 'true') return { ok: true, value: true };
+    if (trimmed === 'false') return { ok: true, value: false };
+    return { ok: false };
+  }
+  // object / array — must be valid JSON
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (type === 'array' && !Array.isArray(parsed)) return { ok: false };
+    if (type === 'object' && (parsed === null || Array.isArray(parsed) || typeof parsed !== 'object')) {
+      return { ok: false };
+    }
+    return { ok: true, value: parsed };
+  } catch {
+    return { ok: false };
+  }
+}
 
 export function CommandToolDialog({
   projectId,
@@ -57,6 +102,7 @@ export function CommandToolDialog({
           : 'string') as CommandArgDraft['type'],
         description: a.description || '',
         required: !!a.required,
+        defaultValue: defaultToDraft(a.default),
       })),
     );
     setError(null);
@@ -91,6 +137,28 @@ export function CommandToolDialog({
         return;
       }
     }
+
+    const serializedArgs: Array<Record<string, unknown>> = [];
+    for (const a of args) {
+      const parsed = parseDefaultValue(a.defaultValue, a.type);
+      if (!parsed.ok) {
+        setError(
+          t('actions.commandArgDefaultInvalid', {
+            name: a.name.trim() || '?',
+            type: a.type,
+          }),
+        );
+        return;
+      }
+      serializedArgs.push({
+        name: a.name.trim(),
+        type: a.type,
+        ...(a.description.trim() ? { description: a.description.trim() } : {}),
+        ...(a.required ? { required: true } : { required: false }),
+        ...(parsed.value !== undefined ? { default: parsed.value } : {}),
+      });
+    }
+
     const entry: Record<string, unknown> = {
       id: id.trim(),
       type: 'command',
@@ -99,12 +167,7 @@ export function CommandToolDialog({
       def: {
         run: {
           cmd: cmd.trim(),
-          args: args.map((a) => ({
-            name: a.name.trim(),
-            type: a.type,
-            ...(a.description.trim() ? { description: a.description.trim() } : {}),
-            ...(a.required ? { required: true } : {}),
-          })),
+          args: serializedArgs,
         },
       },
     };
@@ -199,7 +262,13 @@ export function CommandToolDialog({
                     onClick={() =>
                       setArgs((prev) => [
                         ...prev,
-                        { name: '', type: 'string', description: '', required: false },
+                        {
+                          name: '',
+                          type: 'string',
+                          description: '',
+                          required: false,
+                          defaultValue: '',
+                        },
                       ])
                     }
                     className="rounded-sm px-2 py-1 text-[11px] text-accent-primary hover:bg-hover-bg cursor-pointer"
@@ -261,6 +330,38 @@ export function CommandToolDialog({
                             onChange={(e) => updateArg(index, { description: e.target.value })}
                             className="mt-1 w-full rounded-sm border border-border-secondary bg-bg-secondary px-2 py-1.5 text-xs text-text-primary"
                           />
+                        </label>
+                        <label className="block text-[11px] text-text-secondary">
+                          {t('actions.commandArgDefault')}
+                          {arg.type === 'boolean' ? (
+                            <select
+                              value={arg.defaultValue}
+                              onChange={(e) => updateArg(index, { defaultValue: e.target.value })}
+                              className="mt-1 w-full rounded-sm border border-border-secondary bg-bg-secondary px-2 py-1.5 font-mono text-xs text-text-primary"
+                            >
+                              <option value="">—</option>
+                              <option value="true">true</option>
+                              <option value="false">false</option>
+                            </select>
+                          ) : (
+                            <input
+                              value={arg.defaultValue}
+                              onChange={(e) => updateArg(index, { defaultValue: e.target.value })}
+                              placeholder={
+                                arg.type === 'number'
+                                  ? '0'
+                                  : arg.type === 'object'
+                                    ? '{"key":"value"}'
+                                    : arg.type === 'array'
+                                      ? '[]'
+                                      : ''
+                              }
+                              className="mt-1 w-full rounded-sm border border-border-secondary bg-bg-secondary px-2 py-1.5 font-mono text-xs text-text-primary"
+                            />
+                          )}
+                          <span className="mt-0.5 block text-[10px] text-text-tertiary">
+                            {t('actions.commandArgDefaultHint')}
+                          </span>
                         </label>
                         <label className="inline-flex items-center gap-2 text-[11px] text-text-secondary cursor-pointer">
                           <input

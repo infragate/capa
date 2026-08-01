@@ -11,6 +11,7 @@ import { CapabilitiesSection } from '../features/projects/components/Capabilitie
 import { ProvidersSection } from '../features/projects/components/ProvidersSection';
 import { OptionsSection } from '../features/projects/components/OptionsSection';
 import { VariablesForm } from '../features/projects/components/VariablesForm';
+import { ActivitySection } from '../features/projects/components/activity/ActivitySection';
 import {
   useProject,
   useProjectCapabilitiesLiveSync,
@@ -160,7 +161,7 @@ export function ProjectDetailPage() {
               </button>
             </div>
 
-            {hasProviders && <ProvidersSection providers={caps!.providers} />}
+            <ActivitySection projectId={projectId} />
 
             <div id="capabilities-section">
               <CapabilitiesSection
@@ -176,6 +177,8 @@ export function ProjectDetailPage() {
                 projectId={projectId}
               />
             </div>
+
+            {hasProviders && <ProvidersSection providers={caps!.providers} />}
 
             <OptionsSection projectId={projectId} options={caps?.options ?? null} />
 
