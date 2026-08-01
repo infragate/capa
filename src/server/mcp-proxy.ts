@@ -111,6 +111,15 @@ export class MCPProxy {
 				arguments: args,
 			});
 
+			if (result.isError) {
+				const errorText = formatMcpContentError(result.content);
+				this.logger.failure(`Tool returned isError: ${errorText}`);
+				return {
+					success: false,
+					error: errorText,
+				};
+			}
+
 			this.logger.success("Tool call succeeded");
 			return {
 				success: true,
@@ -145,6 +154,13 @@ export class MCPProxy {
 						name: definition.tool,
 						arguments: args,
 					});
+					if (retryResult.isError) {
+						const errorText = formatMcpContentError(retryResult.content);
+						this.logger.failure(
+							`Tool returned isError after reconnect: ${errorText}`,
+						);
+						return { success: false, error: errorText };
+					}
 					this.logger.success("Tool call succeeded after reconnect");
 					return { success: true, result: retryResult.content };
 				} catch (retryError: any) {
@@ -518,5 +534,25 @@ export class MCPProxy {
 			}
 		}
 		this.clients.clear();
+	}
+}
+
+/** Flatten MCP tool content blocks into a single error string for traces/clients. */
+function formatMcpContentError(content: unknown): string {
+	if (typeof content === "string" && content.trim()) return content;
+	if (Array.isArray(content)) {
+		const parts = content
+			.map((item) => {
+				if (!item || typeof item !== "object") return null;
+				const text = (item as { text?: unknown }).text;
+				return typeof text === "string" ? text : null;
+			})
+			.filter((t): t is string => !!t && t.length > 0);
+		if (parts.length > 0) return parts.join("\n");
+	}
+	try {
+		return JSON.stringify(content) || "Tool returned an error";
+	} catch {
+		return "Tool returned an error";
 	}
 }

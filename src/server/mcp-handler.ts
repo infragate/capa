@@ -534,11 +534,17 @@ export class CapaMCPServer {
 				this.sessionManager.getSession(this.sessionId!)?.activeSkills ??
 				args.skills;
 
-			// Send tools/list_changed notification (for backward compatibility)
-			await this.server.notification({
-				method: "notifications/tools/list_changed",
-				params: {},
-			});
+			// Send tools/list_changed when a live MCP transport is attached.
+			// The HTTP handleMessage path has no persistent client transport, so
+			// the SDK throws "Not connected" — that's expected and ignored.
+			try {
+				await this.server.notification({
+					method: "notifications/tools/list_changed",
+					params: {},
+				});
+			} catch {
+				/* no connected transport */
+			}
 
 			const payload = buildSetupToolsPayload(
 				args.skills,
@@ -1232,15 +1238,29 @@ export class CapaMCPServer {
 	}
 
 	/**
-	 * Build the MCP content payload for a successful tool execution, applying an
-	 * optional formatter for MCP tools unless bypassed via `capa sh --raw`.
+	 * Build the MCP content payload for a tool execution, applying an optional
+	 * formatter for MCP tools unless bypassed via `capa sh --raw`.
+	 *
+	 * Executor failures (`{ success: false, error }`) are returned with
+	 * `isError: true` so callers (and activity traces) treat them as failures.
 	 */
 	private async buildToolCallContent(
 		result: unknown,
 		toolDef: Tool,
 		options?: { skipFormatter?: boolean },
-	): Promise<{ content: Array<{ type: "text"; text: string }> }> {
+	): Promise<{
+		content: Array<{ type: "text"; text: string }>;
+		isError?: boolean;
+	}> {
+		const failed =
+			result != null &&
+			typeof result === "object" &&
+			"success" in result &&
+			(result as { success: unknown }).success === false;
 		const text = await buildToolCallText(result, toolDef, options);
+		if (failed) {
+			return { content: [{ type: "text", text }], isError: true };
+		}
 		return { content: [{ type: "text", text }] };
 	}
 
