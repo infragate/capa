@@ -33,10 +33,18 @@ export type ConfigureAfterWrite = (
 	capabilities: Capabilities,
 ) => Promise<Record<string, unknown>>;
 
+/** Update session cache after reorder without OAuth/tool validation. */
+export type RefreshAfterReorder = (
+	projectId: string,
+	capabilities: Capabilities,
+) => Promise<Record<string, unknown>>;
+
 export interface CapabilitiesRouteDeps {
 	db: CapaDatabase;
 	registryManager: RegistryManager;
 	configure: ConfigureAfterWrite;
+	/** Light path used by reorder — skips MCP validation / OAuth probes. */
+	refreshCapabilities?: RefreshAfterReorder;
 	/** Called around capa-owned file writes so the disk watcher can ignore them. */
 	markSelfWrite?: (projectId: string) => void;
 	/** Notify live UI clients after a successful write+configure. */
@@ -100,6 +108,31 @@ export async function afterWrite(
 	return jsonOk({
 		success: true,
 		...configureResult,
+	});
+}
+
+/**
+ * After reordering a section: refresh the in-memory capabilities cache only.
+ * Full configure (OAuth detection + validating every tool against MCP servers)
+ * is unnecessary for order changes and can stall or drop the HTTP response on
+ * large projects.
+ */
+export async function afterReorderWrite(
+	deps: CapabilitiesRouteDeps,
+	projectId: string,
+	path: string,
+	format: CapabilitiesFormat,
+): Promise<Response> {
+	deps.markSelfWrite?.(projectId);
+	const caps = await parseCapabilitiesFile(path, format);
+	const refresh = deps.refreshCapabilities ?? deps.configure;
+	const result = await refresh(projectId, caps);
+	// Do not broadcast capabilities-changed — that invalidates server-tools for
+	// every client and stampedes MCP list_tools. The mutating UI already applied
+	// an optimistic reorder and will refetch the project document.
+	return jsonOk({
+		success: true,
+		...result,
 	});
 }
 

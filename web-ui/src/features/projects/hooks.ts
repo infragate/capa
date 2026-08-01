@@ -456,7 +456,11 @@ export function useReorderCapability(projectId: string) {
         qc.setQueryData(['project', projectId], ctx.previous);
       }
     },
-    onSettled: () => invalidateProjectQueries(qc, projectId),
+    // Reorder does not change servers/tool schemas — only refresh the project doc
+    // to avoid stampedes of /servers/*/tools while the optimistic order is correct.
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ['project', projectId] });
+    },
   });
 }
 
