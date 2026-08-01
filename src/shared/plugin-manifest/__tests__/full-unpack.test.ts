@@ -6,7 +6,9 @@ import { parseClaudeManifest } from "../claude-parser";
 import { parseCursorManifest } from "../cursor-parser";
 import { materializeCommandAsSkill } from "../commands-parser";
 import { detectAndParseManifest } from "../detect";
+import { parseHookEntries } from "../hooks-parser";
 import { resolvePluginRootInString } from "../mcp-parser";
+import { safePluginEntryId } from "../safe-id";
 
 describe("plugin full unpack parsers", () => {
 	let root: string;
@@ -299,5 +301,80 @@ describe("plugin full unpack parsers", () => {
 		expect(manifest).not.toBeNull();
 		expect(manifest!.agentEntries.map((a) => a.id)).toContain("helper");
 		expect(manifest!.hookEntries.some((h) => h.event === "Stop")).toBe(true);
+	});
+
+	it("discover-mode reads root SKILL.md frontmatter name", () => {
+		writeFileSync(
+			join(root, "SKILL.md"),
+			"---\nname: my-root-skill\ndescription: Root\n---\n\nBody\n",
+		);
+		const manifest = detectAndParseManifest(root, ["claude-code"]);
+		expect(manifest).not.toBeNull();
+		expect(manifest!.skillEntries).toEqual([
+			{ id: "my-root-skill", relativePath: "." },
+		]);
+	});
+
+	it("sanitizes agent frontmatter names that contain path separators", () => {
+		expect(safePluginEntryId("../evil", "reviewer")).toBe("evil");
+		expect(safePluginEntryId("..\\..\\x", "reviewer")).toBe("x");
+		mkdirSync(join(root, ".claude-plugin"), { recursive: true });
+		writeFileSync(
+			join(root, ".claude-plugin", "plugin.json"),
+			JSON.stringify({ name: "demo" }),
+		);
+		mkdirSync(join(root, "agents"), { recursive: true });
+		writeFileSync(
+			join(root, "agents", "safe.md"),
+			"---\nname: ../escape-hatch\ndescription: Bad\n---\n\nNope.\n",
+		);
+		const manifest = parseClaudeManifest(root, { name: "demo" });
+		expect(manifest.agentEntries).toHaveLength(1);
+		expect(manifest.agentEntries[0].id).toBe("escape-hatch");
+		expect(manifest.agentEntries[0].id).not.toContain("..");
+		expect(manifest.agentEntries[0].id).not.toContain("/");
+	});
+
+	it("keeps unique idHints when hook actions share a name", () => {
+		const entries = parseHookEntries(root, {
+			hooks: {
+				Stop: [
+					{
+						hooks: [
+							{ type: "prompt", name: "Same", prompt: "one" },
+							{ type: "prompt", name: "Same", prompt: "two" },
+						],
+					},
+				],
+			},
+		});
+		expect(entries).toHaveLength(2);
+		expect(entries[0].idHint).toBe("same-0");
+		expect(entries[1].idHint).toBe("same-1");
+		expect(new Set(entries.map((e) => e.idHint)).size).toBe(2);
+	});
+
+	it("concatenates overlapping events when hooks is an array of sources", () => {
+		mkdirSync(join(root, "hooks"), { recursive: true });
+		writeFileSync(
+			join(root, "hooks", "a.json"),
+			JSON.stringify({
+				hooks: {
+					Stop: [{ hooks: [{ type: "prompt", prompt: "from-a" }] }],
+				},
+			}),
+		);
+		writeFileSync(
+			join(root, "hooks", "b.json"),
+			JSON.stringify({
+				hooks: {
+					Stop: [{ hooks: [{ type: "prompt", prompt: "from-b" }] }],
+				},
+			}),
+		);
+		const entries = parseHookEntries(root, {
+			hooks: ["./hooks/a.json", "./hooks/b.json"],
+		});
+		expect(entries.map((e) => e.prompt)).toEqual(["from-a", "from-b"]);
 	});
 });

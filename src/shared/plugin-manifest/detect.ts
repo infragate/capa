@@ -19,7 +19,7 @@ import { discoverDefaultHooks } from "./hooks-parser";
 import { normalizeMcpServerEntry } from "./mcp-parser";
 import { discoverDefaultRules } from "./rules-parser";
 import { detectSkippedArtifacts } from "./skipped-artifacts";
-import { getSkillEntriesFromPath } from "./types-helpers";
+import { parseSkillsField } from "./types-helpers";
 
 /** Map capabilities provider names to plugin provider (manifest) names */
 function toPluginProvider(provider: string): PluginProvider | null {
@@ -152,10 +152,7 @@ export function detectAndParseManifest(
 	}
 
 	// Fallback: no manifest — discover skills/, commands/, agents/, hooks/, rules/, .mcp.json
-	const skillEntries = getSkillEntriesFromPath(repoRoot, "skills");
-	if (skillEntries.length === 0 && existsSync(join(repoRoot, "SKILL.md"))) {
-		skillEntries.push({ id: "skill", relativePath: "." });
-	}
+	const skillEntries = parseSkillsField(repoRoot, undefined, "skills");
 	const defaultMcpRel =
 		getProvider("claude-code")?.mcp?.defaultMcpFallbackPath ??
 		getProviderByPluginProviderId("claude")?.mcp?.defaultMcpFallbackPath ??

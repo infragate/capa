@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, writeFileSync, unlinkSync } from 'fs';
-import { join } from 'path';
+import { isAbsolute, join, relative, resolve } from 'path';
 import type { SubAgent, Capabilities } from '../../../types/capabilities';
 import { getProvider } from '../../../shared/providers';
 import {
@@ -76,7 +76,16 @@ function writeSubAgentFile(
   const agentsDir = join(projectPath, sa.dir);
   mkdirSync(agentsDir, { recursive: true });
 
-  const filePath = join(agentsDir, `${subAgent.id}${sa.extension}`);
+  const agentsDirResolved = resolve(agentsDir);
+  const filePath = resolve(agentsDir, `${subAgent.id}${sa.extension}`);
+  const rel = relative(agentsDirResolved, filePath);
+  if (!rel || rel.startsWith('..') || isAbsolute(rel)) {
+    taskLog(
+      `  ⚠ Skipping subagent "${subAgent.id}": id escapes ${sa.dir} (refusing path traversal)`,
+    );
+    return;
+  }
+
   const content = buildSubAgentFileContent(provider, subAgent, capabilities, skillDescriptions);
   writeFileSync(filePath, content, 'utf8');
 

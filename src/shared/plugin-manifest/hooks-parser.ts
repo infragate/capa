@@ -35,6 +35,22 @@ function loadHooksObject(
 	return null;
 }
 
+function mergeHooksObjects(
+	into: Record<string, unknown>,
+	part: Record<string, unknown>,
+): Record<string, unknown> {
+	const out: Record<string, unknown> = { ...into };
+	for (const [key, value] of Object.entries(part)) {
+		const existing = out[key];
+		if (Array.isArray(existing) && Array.isArray(value)) {
+			out[key] = [...existing, ...value];
+		} else {
+			out[key] = value;
+		}
+	}
+	return out;
+}
+
 function parseHookAction(
 	event: string,
 	action: unknown,
@@ -62,8 +78,9 @@ function parseHookAction(
 		typeof action.name === "string" && action.name.length > 0
 			? action.name
 			: undefined;
+	// Always include index so duplicate `name` values cannot collide on Hook.id.
 	const idHint = name
-		? slugify(name)
+		? `${slugify(name) || "hook"}-${index}`
 		: `${slugify(event) || "hook"}-${index}`;
 
 	const timeout =
@@ -149,7 +166,7 @@ export function parseHookEntries(
 			for (const item of fromManifest) {
 				const part = loadHooksObject(repoRoot, item);
 				if (part) {
-					hooksObj = { ...(hooksObj ?? {}), ...part };
+					hooksObj = mergeHooksObjects(hooksObj ?? {}, part);
 				}
 			}
 		} else {

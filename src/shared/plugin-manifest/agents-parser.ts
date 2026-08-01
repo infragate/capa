@@ -7,6 +7,7 @@ import {
 	splitMarkdownFrontmatter,
 } from "./frontmatter";
 import { collectFiles, resolveComponentPaths } from "./path-field";
+import { safePluginEntryId } from "./safe-id";
 
 /** Frontmatter keys we map into capa SubAgent fields. */
 const MAPPED_KEYS = new Set(["name", "description", "skills"]);
@@ -44,10 +45,8 @@ export function parseAgentEntries(
 		}
 		const { frontmatter, body } = splitMarkdownFrontmatter(content);
 		const fm = frontmatter ?? {};
-		const id =
-			asOptionalString(fm.name) ??
-			basename(rel).replace(/\.md$/i, "") ??
-			"agent";
+		const fileStem = basename(rel).replace(/\.md$/i, "") || "agent";
+		const id = safePluginEntryId(asOptionalString(fm.name), fileStem);
 		if (seen.has(id)) continue;
 		seen.add(id);
 
