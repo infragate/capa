@@ -502,6 +502,7 @@ export function handleGetProjectActivity(
 	projectId: string,
 	limitParam: string | null,
 	beforeParam: string | null = null,
+	beforeIdParam: string | null = null,
 ): Response {
 	const project = deps.db.getProject(projectId);
 	if (!project) {
@@ -513,8 +514,14 @@ export function handleGetProjectActivity(
 	const parsedLimit = limitParam ? Number.parseInt(limitParam, 10) : 50;
 	const limit = Number.isFinite(parsedLimit) ? parsedLimit : 50;
 	const parsedBefore = beforeParam ? Number.parseInt(beforeParam, 10) : NaN;
-	const before = Number.isFinite(parsedBefore) ? parsedBefore : null;
-	const page = deps.db.listToolCalls(projectId, { limit, before });
+	const beforeStartedAt = Number.isFinite(parsedBefore) ? parsedBefore : null;
+	const beforeId = beforeIdParam?.trim() ? beforeIdParam.trim() : null;
+	const page = deps.db.listToolCalls(projectId, {
+		limit,
+		beforeStartedAt,
+		beforeId,
+		before: beforeStartedAt,
+	});
 	return new Response(JSON.stringify(page), { headers: JSON_HEADERS });
 }
 

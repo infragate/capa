@@ -189,6 +189,7 @@ export function useProjectActivity(projectId: string | null) {
       const page = await projectsApi.getActivity(projectId, {
         limit: ACTIVITY_PAGE_SIZE,
         before: oldest.started_at,
+        beforeId: oldest.id,
       });
       setCalls((prev) => {
         const seen = new Set(prev.map((c) => c.id));

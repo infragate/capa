@@ -66,10 +66,11 @@ export const projectsApi = {
       `/api/projects/${encodeURIComponent(projectId)}/skills/${encodeURIComponent(skillId)}/content`,
     ),
 
-  getActivity: (projectId: string, opts?: { limit?: number; before?: number }) => {
+  getActivity: (projectId: string, opts?: { limit?: number; before?: number; beforeId?: string }) => {
     const params = new URLSearchParams();
     params.set('limit', String(opts?.limit ?? 50));
     if (opts?.before != null) params.set('before', String(opts.before));
+    if (opts?.beforeId) params.set('beforeId', opts.beforeId);
     return api.get<ActivityResponse>(
       `/api/projects/${encodeURIComponent(projectId)}/activity?${params}`,
     );

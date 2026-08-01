@@ -11,7 +11,9 @@ type CommandArgDraft = {
   type: 'string' | 'number' | 'boolean' | 'object' | 'array';
   description: string;
   required: boolean;
-  /** Raw text from the form; empty means no default. */
+  /** When false, no default is persisted (distinct from an empty-string default). */
+  hasDefault: boolean;
+  /** Raw text from the form; for strings this is preserved as-is (including whitespace). */
   defaultValue: string;
 };
 
@@ -28,13 +30,17 @@ function defaultToDraft(value: unknown): string {
 function parseDefaultValue(
   raw: string,
   type: CommandArgDraft['type'],
+  hasDefault: boolean,
 ): { ok: true; value: unknown } | { ok: false } {
-  const trimmed = raw.trim();
-  if (!trimmed) return { ok: true, value: undefined };
+  if (!hasDefault) return { ok: true, value: undefined };
 
   if (type === 'string') {
-    return { ok: true, value: trimmed };
+    return { ok: true, value: raw };
   }
+
+  const trimmed = raw.trim();
+  if (!trimmed) return { ok: false };
+
   if (type === 'number') {
     const n = Number(trimmed);
     if (!Number.isFinite(n)) return { ok: false };
@@ -102,6 +108,7 @@ export function CommandToolDialog({
           : 'string') as CommandArgDraft['type'],
         description: a.description || '',
         required: !!a.required,
+        hasDefault: a.default !== undefined,
         defaultValue: defaultToDraft(a.default),
       })),
     );
@@ -140,7 +147,7 @@ export function CommandToolDialog({
 
     const serializedArgs: Array<Record<string, unknown>> = [];
     for (const a of args) {
-      const parsed = parseDefaultValue(a.defaultValue, a.type);
+      const parsed = parseDefaultValue(a.defaultValue, a.type, a.hasDefault);
       if (!parsed.ok) {
         setError(
           t('actions.commandArgDefaultInvalid', {
@@ -267,6 +274,7 @@ export function CommandToolDialog({
                           type: 'string',
                           description: '',
                           required: false,
+                          hasDefault: false,
                           defaultValue: '',
                         },
                       ])
@@ -331,38 +339,67 @@ export function CommandToolDialog({
                             className="mt-1 w-full rounded-sm border border-border-secondary bg-bg-secondary px-2 py-1.5 text-xs text-text-primary"
                           />
                         </label>
-                        <label className="block text-[11px] text-text-secondary">
-                          {t('actions.commandArgDefault')}
-                          {arg.type === 'boolean' ? (
-                            <select
-                              value={arg.defaultValue}
-                              onChange={(e) => updateArg(index, { defaultValue: e.target.value })}
-                              className="mt-1 w-full rounded-sm border border-border-secondary bg-bg-secondary px-2 py-1.5 font-mono text-xs text-text-primary"
-                            >
-                              <option value="">—</option>
-                              <option value="true">true</option>
-                              <option value="false">false</option>
-                            </select>
-                          ) : (
+                        <div className="space-y-1.5">
+                          <label className="flex items-center gap-2 text-[11px] text-text-secondary cursor-pointer">
                             <input
-                              value={arg.defaultValue}
-                              onChange={(e) => updateArg(index, { defaultValue: e.target.value })}
-                              placeholder={
-                                arg.type === 'number'
-                                  ? '0'
-                                  : arg.type === 'object'
-                                    ? '{"key":"value"}'
-                                    : arg.type === 'array'
-                                      ? '[]'
-                                      : ''
+                              type="checkbox"
+                              checked={arg.hasDefault}
+                              onChange={(e) =>
+                                updateArg(index, {
+                                  hasDefault: e.target.checked,
+                                  ...(e.target.checked
+                                    ? {}
+                                    : { defaultValue: '' }),
+                                })
                               }
-                              className="mt-1 w-full rounded-sm border border-border-secondary bg-bg-secondary px-2 py-1.5 font-mono text-xs text-text-primary"
+                              className="rounded-sm"
                             />
+                            {t('actions.commandArgHasDefault')}
+                          </label>
+                          {arg.hasDefault && (
+                            <label className="block text-[11px] text-text-secondary">
+                              {t('actions.commandArgDefault')}
+                              {arg.type === 'boolean' ? (
+                                <select
+                                  value={arg.defaultValue || 'false'}
+                                  onChange={(e) =>
+                                    updateArg(index, {
+                                      hasDefault: true,
+                                      defaultValue: e.target.value,
+                                    })
+                                  }
+                                  className="mt-1 w-full rounded-sm border border-border-secondary bg-bg-secondary px-2 py-1.5 font-mono text-xs text-text-primary"
+                                >
+                                  <option value="true">true</option>
+                                  <option value="false">false</option>
+                                </select>
+                              ) : (
+                                <input
+                                  value={arg.defaultValue}
+                                  onChange={(e) =>
+                                    updateArg(index, {
+                                      hasDefault: true,
+                                      defaultValue: e.target.value,
+                                    })
+                                  }
+                                  placeholder={
+                                    arg.type === 'number'
+                                      ? '0'
+                                      : arg.type === 'object'
+                                        ? '{"key":"value"}'
+                                        : arg.type === 'array'
+                                          ? '[]'
+                                          : t('actions.commandArgDefaultEmptyString')
+                                  }
+                                  className="mt-1 w-full rounded-sm border border-border-secondary bg-bg-secondary px-2 py-1.5 font-mono text-xs text-text-primary"
+                                />
+                              )}
+                              <span className="mt-0.5 block text-[10px] text-text-tertiary">
+                                {t('actions.commandArgDefaultHint')}
+                              </span>
+                            </label>
                           )}
-                          <span className="mt-0.5 block text-[10px] text-text-tertiary">
-                            {t('actions.commandArgDefaultHint')}
-                          </span>
-                        </label>
+                        </div>
                         <label className="inline-flex items-center gap-2 text-[11px] text-text-secondary cursor-pointer">
                           <input
                             type="checkbox"

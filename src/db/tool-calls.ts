@@ -20,7 +20,13 @@ export type ToolCallFinish = {
 
 export type ToolCallListOptions = {
 	limit?: number;
-	/** Exclusive upper bound on started_at (for "load older" pagination). */
+	/**
+	 * Composite "load older" cursor: rows strictly before
+	 * `(beforeStartedAt, beforeId)` in `(started_at DESC, id DESC)` order.
+	 */
+	beforeStartedAt?: number | null;
+	beforeId?: string | null;
+	/** @deprecated Prefer beforeStartedAt + beforeId. Kept for older clients. */
 	before?: number | null;
 };
 
@@ -106,26 +112,44 @@ export class ToolCallsRepo {
 				TOOL_CALLS_PAGE_SIZE_MAX,
 			),
 		);
-		const before = options.before ?? null;
+		const beforeStartedAt =
+			options.beforeStartedAt ?? options.before ?? null;
+		const beforeId = options.beforeId ?? null;
 
 		const calls = (
-			before == null
+			beforeStartedAt == null
 				? this.db
 						.query(
 							`SELECT * FROM tool_calls
              WHERE project_id = ?
-             ORDER BY started_at DESC
+             ORDER BY started_at DESC, id DESC
              LIMIT ?`,
 						)
 						.all(projectId, limit + 1)
-				: this.db
-						.query(
-							`SELECT * FROM tool_calls
-             WHERE project_id = ? AND started_at < ?
-             ORDER BY started_at DESC
+				: beforeId
+					? this.db
+							.query(
+								`SELECT * FROM tool_calls
+             WHERE project_id = ?
+               AND (started_at < ? OR (started_at = ? AND id < ?))
+             ORDER BY started_at DESC, id DESC
              LIMIT ?`,
-						)
-						.all(projectId, before, limit + 1)
+							)
+							.all(
+								projectId,
+								beforeStartedAt,
+								beforeStartedAt,
+								beforeId,
+								limit + 1,
+							)
+					: this.db
+							.query(
+								`SELECT * FROM tool_calls
+             WHERE project_id = ? AND started_at < ?
+             ORDER BY started_at DESC, id DESC
+             LIMIT ?`,
+							)
+							.all(projectId, beforeStartedAt, limit + 1)
 		) as ToolCallRecord[];
 
 		const hasMore = calls.length > limit;
@@ -224,17 +248,19 @@ export class ToolCallsRepo {
 		const excess = countRow.n - cap;
 		if (excess <= 0) return 0;
 
-		this.db.run(
+		// Prefer deleting finished rows so in-flight traces can still be finalized.
+		// If only running rows remain beyond the cap, leave them until they finish.
+		const result = this.db.run(
 			`DELETE FROM tool_calls
        WHERE id IN (
          SELECT id FROM tool_calls
-         WHERE project_id = ?
-         ORDER BY started_at ASC
+         WHERE project_id = ? AND status <> 'running'
+         ORDER BY started_at ASC, id ASC
          LIMIT ?
        )`,
 			[projectId, excess],
 		);
-		return excess;
+		return Number(result.changes ?? 0);
 	}
 
 	deleteForProject(projectId: string): void {

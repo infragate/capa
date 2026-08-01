@@ -486,6 +486,7 @@ class CapaServer {
 				activityMatch[1],
 				url.searchParams.get("limit"),
 				url.searchParams.get("before"),
+				url.searchParams.get("beforeId"),
 			);
 		}
 

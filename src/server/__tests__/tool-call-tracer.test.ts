@@ -106,7 +106,7 @@ describe("ToolCallsRepo prune", () => {
 		expect(rows.hasMore).toBe(false);
 	});
 
-	it("pages older rows with before cursor", () => {
+	it("pages older rows with composite before cursor", () => {
 		for (let i = 0; i < 6; i++) {
 			repo.insert({
 				id: `page-${i}`,
@@ -130,11 +130,93 @@ describe("ToolCallsRepo prune", () => {
 		const first = repo.listRecent("proj-1", { limit: 2 });
 		expect(first.calls.map((c) => c.id)).toEqual(["page-5", "page-4"]);
 		expect(first.hasMore).toBe(true);
+		const oldest = first.calls[1]!;
 		const next = repo.listRecent("proj-1", {
 			limit: 2,
-			before: first.calls[1].started_at,
+			beforeStartedAt: oldest.started_at,
+			beforeId: oldest.id,
 		});
 		expect(next.calls.map((c) => c.id)).toEqual(["page-3", "page-2"]);
+	});
+
+	it("does not skip same-ms ties at a page boundary", () => {
+		const ts = 5000;
+		for (const id of ["a", "b", "c", "d"]) {
+			repo.insert({
+				id,
+				project_id: "proj-1",
+				session_id: null,
+				started_at: ts,
+				duration_ms: null,
+				status: "ok",
+				source: "mcp",
+				kind: "tool",
+				tool_name: id,
+				meta_tool: null,
+				args_json: null,
+				result_preview: null,
+				result_bytes: null,
+				result_tokens: null,
+				error_message: null,
+				agent_id: null,
+			});
+		}
+		const first = repo.listRecent("proj-1", { limit: 2 });
+		expect(first.calls.map((c) => c.id)).toEqual(["d", "c"]);
+		const oldest = first.calls[1]!;
+		const next = repo.listRecent("proj-1", {
+			limit: 2,
+			beforeStartedAt: oldest.started_at,
+			beforeId: oldest.id,
+		});
+		expect(next.calls.map((c) => c.id)).toEqual(["b", "a"]);
+	});
+
+	it("does not prune running traces while under pressure", () => {
+		for (let i = 0; i < 4; i++) {
+			repo.insert({
+				id: `done-${i}`,
+				project_id: "proj-1",
+				session_id: null,
+				started_at: 1000 + i,
+				duration_ms: 1,
+				status: "ok",
+				source: "mcp",
+				kind: "tool",
+				tool_name: `done-${i}`,
+				meta_tool: null,
+				args_json: null,
+				result_preview: null,
+				result_bytes: null,
+				result_tokens: null,
+				error_message: null,
+				agent_id: null,
+			});
+		}
+		repo.insert({
+			id: "running-old",
+			project_id: "proj-1",
+			session_id: null,
+			started_at: 500,
+			duration_ms: null,
+			status: "running",
+			source: "mcp",
+			kind: "tool",
+			tool_name: "slow",
+			meta_tool: null,
+			args_json: null,
+			result_preview: null,
+			result_bytes: null,
+			result_tokens: null,
+			error_message: null,
+			agent_id: null,
+		});
+
+		repo.prune("proj-1", 3);
+		expect(repo.get("running-old")).not.toBeNull();
+		const remaining = repo.listRecent("proj-1", { limit: 20 });
+		expect(remaining.calls.some((c) => c.id === "running-old")).toBe(true);
+		expect(remaining.total).toBeLessThanOrEqual(4);
 	});
 });
 
