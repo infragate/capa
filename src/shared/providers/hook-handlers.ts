@@ -14,8 +14,8 @@
 import { join } from "path";
 import type { Hook } from "../../types/hooks";
 import type {
-  HooksIntegration,
-  ProviderEventMapping,
+	HooksIntegration,
+	ProviderEventMapping,
 } from "../../types/providers";
 
 /**
@@ -25,16 +25,16 @@ import type {
  * string when the user passed `command:` inline.
  */
 export interface HookEntryInput {
-  hook: Hook;
-  /** Shell command to execute, or prompt text for prompt-type hooks. */
-  runReference: string;
-  /** The mapping picked from `HooksIntegration.eventMap`. */
-  mapping: ProviderEventMapping;
-  /**
-   * Prefix for the entry `name` tag. Default `'capa:'` (managed installs).
-   * Pass `''` for passthrough so `capa clean` does not claim the entry.
-   */
-  nameTagPrefix?: string;
+	hook: Hook;
+	/** Shell command to execute, or prompt text for prompt-type hooks. */
+	runReference: string;
+	/** The mapping picked from `HooksIntegration.eventMap`. */
+	mapping: ProviderEventMapping;
+	/**
+	 * Prefix for the entry `name` tag. Default `'capa:'` (managed installs).
+	 * Pass `''` for passthrough so `capa clean` does not claim the entry.
+	 */
+	nameTagPrefix?: string;
 }
 
 /**
@@ -50,23 +50,26 @@ export interface HookEntryInput {
  *                   exact entry on the next run.
  */
 export interface HookEntryOutput {
-  eventName: string;
-  entry: Record<string, unknown>;
-  matcher: string;
-  nameTag: string | null;
+	eventName: string;
+	entry: Record<string, unknown>;
+	matcher: string;
+	nameTag: string | null;
 }
 
 const NAME_TAG_PREFIX = "capa:";
 
-export function buildNameTag(hookId: string, prefix: string = NAME_TAG_PREFIX): string {
-  return `${prefix}${hookId}`;
+export function buildNameTag(
+	hookId: string,
+	prefix: string = NAME_TAG_PREFIX,
+): string {
+	return `${prefix}${hookId}`;
 }
 
 export function isCapaNameTag(value: unknown, hookId?: string): boolean {
-  if (typeof value !== "string") return false;
-  if (!value.startsWith(NAME_TAG_PREFIX)) return false;
-  if (hookId && value !== buildNameTag(hookId)) return false;
-  return true;
+	if (typeof value !== "string") return false;
+	if (!value.startsWith(NAME_TAG_PREFIX)) return false;
+	if (hookId && value !== buildNameTag(hookId)) return false;
+	return true;
 }
 
 /**
@@ -97,16 +100,16 @@ export function isCapaNameTag(value: unknown, hookId?: string): boolean {
  *  - neither                -> empty (shape decides)
  */
 function resolveMatcher(input: HookEntryInput): string {
-  const userMatcher =
-    input.hook.matcher && input.hook.matcher.length > 0
-      ? input.hook.matcher
-      : "";
-  const prefix =
-    "matcherPrefix" in input.mapping ? input.mapping.matcherPrefix : "";
-  if (prefix && userMatcher) {
-    return prefix === userMatcher ? prefix : `(?:${prefix})|(?:${userMatcher})`;
-  }
-  return userMatcher || prefix;
+	const userMatcher =
+		input.hook.matcher && input.hook.matcher.length > 0
+			? input.hook.matcher
+			: "";
+	const prefix =
+		"matcherPrefix" in input.mapping ? input.mapping.matcherPrefix : "";
+	if (prefix && userMatcher) {
+		return prefix === userMatcher ? prefix : `(?:${prefix})|(?:${userMatcher})`;
+	}
+	return userMatcher || prefix;
 }
 
 // ---------------------------------------------------------------------------
@@ -114,51 +117,51 @@ function resolveMatcher(input: HookEntryInput): string {
 // ---------------------------------------------------------------------------
 
 function buildClaudeLikeEntry(
-  input: HookEntryInput,
-  supportsName: boolean,
+	input: HookEntryInput,
+	supportsName: boolean,
 ): HookEntryOutput {
-  const { hook, mapping, runReference } = input;
-  const isPrompt = (hook.type ?? "command") === "prompt";
-  const entry: Record<string, unknown> = {
-    type: isPrompt ? "prompt" : "command",
-    [isPrompt ? "prompt" : "command"]: runReference,
-  };
-  if (hook.timeout !== undefined) entry.timeout = hook.timeout;
-  const prefix = input.nameTagPrefix ?? NAME_TAG_PREFIX;
-  const nameTag = supportsName ? buildNameTag(hook.id, prefix) : null;
-  if (nameTag) entry.name = nameTag;
-  return {
-    eventName: mapping.event,
-    entry,
-    matcher: resolveMatcher(input),
-    nameTag,
-  };
+	const { hook, mapping, runReference } = input;
+	const isPrompt = (hook.type ?? "command") === "prompt";
+	const entry: Record<string, unknown> = {
+		type: isPrompt ? "prompt" : "command",
+		[isPrompt ? "prompt" : "command"]: runReference,
+	};
+	if (hook.timeout !== undefined) entry.timeout = hook.timeout;
+	const prefix = input.nameTagPrefix ?? NAME_TAG_PREFIX;
+	const nameTag = supportsName ? buildNameTag(hook.id, prefix) : null;
+	if (nameTag) entry.name = nameTag;
+	return {
+		eventName: mapping.event,
+		entry,
+		matcher: resolveMatcher(input),
+		nameTag,
+	};
 }
 
 function buildCursorEntry(input: HookEntryInput): HookEntryOutput {
-  const { hook, mapping, runReference } = input;
-  // Cursor supports two execution types: command-based (default) and
-  // prompt-based (LLM-evaluated). A prompt entry uses `{ type: "prompt",
-  // prompt: <text> }`; a command entry uses a bare `{ command: <path> }`
-  // (no `type` field needed — command is Cursor's default).
-  // Docs: https://cursor.com/docs/agent/hooks
-  const isPrompt = (hook.type ?? "command") === "prompt";
-  const entry: Record<string, unknown> = isPrompt
-    ? { type: "prompt", prompt: runReference }
-    : { command: runReference };
-  const matcher = resolveMatcher(input);
-  if (matcher) entry.pattern = matcher;
-  if (hook.timeout !== undefined) entry.timeout = hook.timeout;
-  if (hook.failClosed) entry.failClosed = true;
-  const prefix = input.nameTagPrefix ?? NAME_TAG_PREFIX;
-  const nameTag = buildNameTag(hook.id, prefix);
-  entry.name = nameTag;
-  return {
-    eventName: mapping.event,
-    entry,
-    matcher: "",
-    nameTag,
-  };
+	const { hook, mapping, runReference } = input;
+	// Cursor supports two execution types: command-based (default) and
+	// prompt-based (LLM-evaluated). A prompt entry uses `{ type: "prompt",
+	// prompt: <text> }`; a command entry uses a bare `{ command: <path> }`
+	// (no `type` field needed — command is Cursor's default).
+	// Docs: https://cursor.com/docs/agent/hooks
+	const isPrompt = (hook.type ?? "command") === "prompt";
+	const entry: Record<string, unknown> = isPrompt
+		? { type: "prompt", prompt: runReference }
+		: { command: runReference };
+	const matcher = resolveMatcher(input);
+	if (matcher) entry.pattern = matcher;
+	if (hook.timeout !== undefined) entry.timeout = hook.timeout;
+	if (hook.failClosed) entry.failClosed = true;
+	const prefix = input.nameTagPrefix ?? NAME_TAG_PREFIX;
+	const nameTag = buildNameTag(hook.id, prefix);
+	entry.name = nameTag;
+	return {
+		eventName: mapping.event,
+		entry,
+		matcher: "",
+		nameTag,
+	};
 }
 
 /**
@@ -168,22 +171,22 @@ function buildCursorEntry(input: HookEntryInput): HookEntryOutput {
  * convert to a warning so install never fails on unknown shape).
  */
 export function buildHookEntry(
-  integration: HooksIntegration,
-  input: HookEntryInput,
+	integration: HooksIntegration,
+	input: HookEntryInput,
 ): HookEntryOutput {
-  switch (integration.shape) {
-    case "claude":
-    case "gemini":
-    case "antigravity":
-    case "windsurf":
-      return buildClaudeLikeEntry(input, integration.supportsNameTag);
-    case "cursor":
-      return buildCursorEntry(input);
-    default:
-      throw new Error(
-        `Unsupported hook shape: ${(integration as { shape: string }).shape}`,
-      );
-  }
+	switch (integration.shape) {
+		case "claude":
+		case "gemini":
+		case "antigravity":
+		case "windsurf":
+			return buildClaudeLikeEntry(input, integration.supportsNameTag);
+		case "cursor":
+			return buildCursorEntry(input);
+		default:
+			throw new Error(
+				`Unsupported hook shape: ${(integration as { shape: string }).shape}`,
+			);
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -220,59 +223,57 @@ export type HookLocator = (string | number)[];
  * Mutates `hooksRoot` in place and returns the locator to record in the DB.
  */
 export function upsertHookEntry(
-  integration: HooksIntegration,
-  hooksRoot: Record<string, unknown>,
-  output: HookEntryOutput,
+	integration: HooksIntegration,
+	hooksRoot: Record<string, unknown>,
+	output: HookEntryOutput,
 ): HookLocator {
-  switch (integration.shape) {
-    case "claude":
-    case "gemini":
-    case "antigravity":
-    case "windsurf": {
-      const { eventName, entry, matcher, nameTag } = output;
-      const events = ensureArray(hooksRoot, eventName);
-      // Each element is `{ matcher: string, hooks: [{ … }] }`.
-      let matcherIdx = events.findIndex(
-        (g) => isPlainObject(g) && (g.matcher ?? "") === matcher,
-      );
-      if (matcherIdx === -1) {
-        events.push({ matcher, hooks: [] });
-        matcherIdx = events.length - 1;
-      }
-      const group = events[matcherIdx] as { matcher: string; hooks: unknown[] };
-      if (!Array.isArray(group.hooks)) group.hooks = [];
-      // Replace only the entry tagged for *this* hook id; other capa entries
-      // for sibling hooks must coexist in the same matcher group.
-      const existingIdx = nameTag
-        ? group.hooks.findIndex(
-            (e) => isPlainObject(e) && e.name === nameTag,
-          )
-        : -1;
-      if (existingIdx >= 0) {
-        group.hooks[existingIdx] = entry;
-        return [eventName, matcherIdx, "hooks", existingIdx];
-      }
-      group.hooks.push(entry);
-      return [eventName, matcherIdx, "hooks", group.hooks.length - 1];
-    }
-    case "cursor": {
-      const { eventName, entry, nameTag } = output;
-      const events = ensureArray(hooksRoot, eventName);
-      const existingIdx = nameTag
-        ? events.findIndex((e) => isPlainObject(e) && e.name === nameTag)
-        : -1;
-      if (existingIdx >= 0) {
-        events[existingIdx] = entry;
-        return [eventName, existingIdx];
-      }
-      events.push(entry);
-      return [eventName, events.length - 1];
-    }
-    default:
-      throw new Error(
-        `Unsupported hook shape: ${(integration as { shape: string }).shape}`,
-      );
-  }
+	switch (integration.shape) {
+		case "claude":
+		case "gemini":
+		case "antigravity":
+		case "windsurf": {
+			const { eventName, entry, matcher, nameTag } = output;
+			const events = ensureArray(hooksRoot, eventName);
+			// Each element is `{ matcher: string, hooks: [{ … }] }`.
+			let matcherIdx = events.findIndex(
+				(g) => isPlainObject(g) && (g.matcher ?? "") === matcher,
+			);
+			if (matcherIdx === -1) {
+				events.push({ matcher, hooks: [] });
+				matcherIdx = events.length - 1;
+			}
+			const group = events[matcherIdx] as { matcher: string; hooks: unknown[] };
+			if (!Array.isArray(group.hooks)) group.hooks = [];
+			// Replace only the entry tagged for *this* hook id; other capa entries
+			// for sibling hooks must coexist in the same matcher group.
+			const existingIdx = nameTag
+				? group.hooks.findIndex((e) => isPlainObject(e) && e.name === nameTag)
+				: -1;
+			if (existingIdx >= 0) {
+				group.hooks[existingIdx] = entry;
+				return [eventName, matcherIdx, "hooks", existingIdx];
+			}
+			group.hooks.push(entry);
+			return [eventName, matcherIdx, "hooks", group.hooks.length - 1];
+		}
+		case "cursor": {
+			const { eventName, entry, nameTag } = output;
+			const events = ensureArray(hooksRoot, eventName);
+			const existingIdx = nameTag
+				? events.findIndex((e) => isPlainObject(e) && e.name === nameTag)
+				: -1;
+			if (existingIdx >= 0) {
+				events[existingIdx] = entry;
+				return [eventName, existingIdx];
+			}
+			events.push(entry);
+			return [eventName, events.length - 1];
+		}
+		default:
+			throw new Error(
+				`Unsupported hook shape: ${(integration as { shape: string }).shape}`,
+			);
+	}
 }
 
 /**
@@ -283,69 +284,69 @@ export function upsertHookEntry(
  * not leave stale skeletons behind.
  */
 export function removeHookEntryAt(
-  integration: HooksIntegration,
-  hooksRoot: Record<string, unknown>,
-  locator: HookLocator,
-  expectedHookId: string,
+	integration: HooksIntegration,
+	hooksRoot: Record<string, unknown>,
+	locator: HookLocator,
+	expectedHookId: string,
 ): boolean {
-  switch (integration.shape) {
-    case "claude":
-    case "gemini":
-    case "antigravity":
-    case "windsurf": {
-      // ['<event>', matcherIdx, 'hooks', entryIdx]
-      if (locator.length !== 4) return false;
-      const [eventName, matcherIdx, , entryIdx] = locator;
-      if (
-        typeof eventName !== "string" ||
-        typeof matcherIdx !== "number" ||
-        typeof entryIdx !== "number"
-      ) {
-        return false;
-      }
-      const events = hooksRoot[eventName];
-      if (
-        !Array.isArray(events) ||
-        matcherIdx < 0 ||
-        matcherIdx >= events.length
-      )
-        return false;
-      const group = events[matcherIdx];
-      if (!isPlainObject(group) || !Array.isArray(group.hooks)) return false;
-      if (entryIdx < 0 || entryIdx >= group.hooks.length) return false;
-      const candidate = group.hooks[entryIdx];
-      if (
-        !isPlainObject(candidate) ||
-        !isCapaNameTag(candidate.name, expectedHookId)
-      )
-        return false;
-      group.hooks.splice(entryIdx, 1);
-      if (group.hooks.length === 0) events.splice(matcherIdx, 1);
-      if (events.length === 0) delete hooksRoot[eventName];
-      return true;
-    }
-    case "cursor": {
-      // ['<event>', entryIdx]
-      if (locator.length !== 2) return false;
-      const [eventName, entryIdx] = locator;
-      if (typeof eventName !== "string" || typeof entryIdx !== "number")
-        return false;
-      const events = hooksRoot[eventName];
-      if (!Array.isArray(events) || entryIdx < 0 || entryIdx >= events.length)
-        return false;
-      const candidate = events[entryIdx];
-      if (
-        !isPlainObject(candidate) ||
-        !isCapaNameTag(candidate.name, expectedHookId)
-      )
-        return false;
-      events.splice(entryIdx, 1);
-      if (events.length === 0) delete hooksRoot[eventName];
-      return true;
-    }
-    default:
-      return false;
-  }
+	switch (integration.shape) {
+		case "claude":
+		case "gemini":
+		case "antigravity":
+		case "windsurf": {
+			// ['<event>', matcherIdx, 'hooks', entryIdx]
+			if (locator.length !== 4) return false;
+			const [eventName, matcherIdx, , entryIdx] = locator;
+			if (
+				typeof eventName !== "string" ||
+				typeof matcherIdx !== "number" ||
+				typeof entryIdx !== "number"
+			) {
+				return false;
+			}
+			const events = hooksRoot[eventName];
+			if (
+				!Array.isArray(events) ||
+				matcherIdx < 0 ||
+				matcherIdx >= events.length
+			)
+				return false;
+			const group = events[matcherIdx];
+			if (!isPlainObject(group) || !Array.isArray(group.hooks)) return false;
+			if (entryIdx < 0 || entryIdx >= group.hooks.length) return false;
+			const candidate = group.hooks[entryIdx];
+			if (
+				!isPlainObject(candidate) ||
+				!isCapaNameTag(candidate.name, expectedHookId)
+			)
+				return false;
+			group.hooks.splice(entryIdx, 1);
+			if (group.hooks.length === 0) events.splice(matcherIdx, 1);
+			if (events.length === 0) delete hooksRoot[eventName];
+			return true;
+		}
+		case "cursor": {
+			// ['<event>', entryIdx]
+			if (locator.length !== 2) return false;
+			const [eventName, entryIdx] = locator;
+			if (typeof eventName !== "string" || typeof entryIdx !== "number")
+				return false;
+			const events = hooksRoot[eventName];
+			if (!Array.isArray(events) || entryIdx < 0 || entryIdx >= events.length)
+				return false;
+			const candidate = events[entryIdx];
+			if (
+				!isPlainObject(candidate) ||
+				!isCapaNameTag(candidate.name, expectedHookId)
+			)
+				return false;
+			events.splice(entryIdx, 1);
+			if (events.length === 0) delete hooksRoot[eventName];
+			return true;
+		}
+		default:
+			return false;
+	}
 }
 
 /**
@@ -354,19 +355,19 @@ export function removeHookEntryAt(
  * for `directory` storage (callers handle that branch separately).
  */
 export function getHookConfigPath(
-  integration: HooksIntegration,
-  projectPath: string,
+	integration: HooksIntegration,
+	projectPath: string,
 ): string {
-  switch (integration.storage.kind) {
-    case "standalone":
-      return join(projectPath, integration.storage.configPath);
-    case "inline-config":
-      return join(projectPath, integration.storage.configPath);
-    case "directory":
-      throw new Error(
-        "directory-storage hooks resolve per-entry, not per-file",
-      );
-  }
+	switch (integration.storage.kind) {
+		case "standalone":
+			return join(projectPath, integration.storage.configPath);
+		case "inline-config":
+			return join(projectPath, integration.storage.configPath);
+		case "directory":
+			throw new Error(
+				"directory-storage hooks resolve per-entry, not per-file",
+			);
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -374,13 +375,13 @@ export function getHookConfigPath(
 // ---------------------------------------------------------------------------
 
 function ensureArray(obj: Record<string, unknown>, key: string): unknown[] {
-  const existing = obj[key];
-  if (Array.isArray(existing)) return existing;
-  const next: unknown[] = [];
-  obj[key] = next;
-  return next;
+	const existing = obj[key];
+	if (Array.isArray(existing)) return existing;
+	const next: unknown[] = [];
+	obj[key] = next;
+	return next;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+	return value !== null && typeof value === "object" && !Array.isArray(value);
 }

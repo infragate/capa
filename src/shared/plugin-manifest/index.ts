@@ -1,8 +1,8 @@
 export {
-  detectAndParseManifest,
-  discoverPluginEntries,
-  findPluginInDirectory,
-  type DiscoveredPluginEntry,
-} from './detect';
+	type DiscoveredPluginEntry,
+	detectAndParseManifest,
+	discoverPluginEntries,
+	findPluginInDirectory,
+} from "./detect";
 
-export { resolvePluginServerDef } from './mcp-parser';
+export { resolvePluginServerDef } from "./mcp-parser";

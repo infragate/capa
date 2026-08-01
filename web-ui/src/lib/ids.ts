@@ -25,3 +25,12 @@ export function capaIdIssue(id: string): CapaIdIssue | null {
   if (!CAPA_ID_PATTERN.test(trimmed)) return 'invalidChars';
   return null;
 }
+
+/** Localized validation message for capa entry ids, or null when valid. */
+export function capaIdErrorMessage(id: string, t: (key: string) => string): string | null {
+  const issue = capaIdIssue(id);
+  if (!issue) return null;
+  if (issue === 'empty') return t('actions.idInvalidEmpty');
+  if (issue === 'invalidStart') return t('actions.idInvalidStart');
+  return t('actions.idInvalidChars');
+}

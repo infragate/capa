@@ -36,6 +36,7 @@ export async function installCommand(
   let skipPrerequisites = false;
   let skipCredentialOpen = false;
   let passthrough = false;
+  let persistProviders = true;
   if (typeof envFileOrOptions === 'object' && envFileOrOptions !== null) {
     envFile = envFileOrOptions.envFile;
     flagProvider = envFileOrOptions.provider;
@@ -49,6 +50,7 @@ export async function installCommand(
     skipPrerequisites = !!envFileOrOptions.skipPrerequisites;
     skipCredentialOpen = !!envFileOrOptions.skipCredentialOpen;
     passthrough = !!envFileOrOptions.passthrough;
+    if (envFileOrOptions.persistProviders === false) persistProviders = false;
   } else {
     envFile = envFileOrOptions;
   }
@@ -77,6 +79,7 @@ export async function installCommand(
       exitProcess,
       skipPrerequisites,
       skipCredentialOpen,
+      persistProviders,
       // Only refuse wrap cwd when the caller did not pass an explicit projectPath
       // (wrap itself always passes one).
       refuseWrapCwd:
@@ -98,6 +101,7 @@ async function installCommandBody(opts: {
   exitProcess: boolean;
   skipPrerequisites: boolean;
   skipCredentialOpen: boolean;
+  persistProviders: boolean;
   refuseWrapCwd: boolean;
 }): Promise<void> {
   const {
@@ -107,6 +111,7 @@ async function installCommandBody(opts: {
     exitProcess,
     skipPrerequisites,
     skipCredentialOpen,
+    persistProviders,
     refuseWrapCwd,
   } = opts;
   const projectPath = opts.projectPath;
@@ -165,7 +170,12 @@ async function installCommandBody(opts: {
       projectId,
     });
     capabilities.providers = resolvedProviders;
-    db.setProjectProviders(projectId, resolvedProviders);
+    // Wrap installs into a shadow workspace under the real project identity.
+    // Do not overwrite the stored provider preference — otherwise
+    // `capa wrap claude` would make a later `capa install` target Claude.
+    if (persistProviders) {
+      db.setProjectProviders(projectId, resolvedProviders);
+    }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     error(message);
@@ -208,7 +218,15 @@ async function installCommandBody(opts: {
 
     for (const e of ctx.errors) error(e);
     for (const w of ctx.warnings) warn(w);
-    info(`MCP Endpoint: ${ctx.mcpUrl}`);
+    // Match register-mcp-server: only surface the endpoint when MCP wiring is active.
+    const toolExposure = ctx.capabilitiesToUse.options?.toolExposure;
+    const mcpRegistered =
+      toolExposure !== 'none' &&
+      (ctx.capabilitiesToUse.tools.length > 0 ||
+        (ctx.capabilitiesToUse.subagents ?? []).length > 0);
+    if (mcpRegistered) {
+      info(`MCP Endpoint: ${ctx.mcpUrl}`);
+    }
     summary({
       added: ctx.added,
       failed: ctx.failed,

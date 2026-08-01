@@ -27,34 +27,34 @@
  */
 
 /** How the right-hand side of a repo string should be resolved against a snapshot. */
-export type RepoTargetMode = 'search' | 'exact';
+export type RepoTargetMode = "search" | "exact";
 
 export interface ParsedRepo {
-  /** "owner/repo" or "group/.../subgroup/project". */
-  ownerRepo: string;
-  /**
-   * The right-hand side as written:
-   *   - `mode === 'search'` → a basename to look up recursively
-   *   - `mode === 'exact'`  → a path from the repo root
-   */
-  target: string;
-  /** Resolution strategy for `target`. */
-  mode: RepoTargetMode;
-  /** Pinned tag or branch (`:version` suffix). */
-  version?: string;
-  /** Pinned commit SHA (`#sha` suffix). */
-  sha?: string;
-  /**
-   * Back-compat alias for `target`. Older code referred to the right-hand
-   * side as `filepath` regardless of mode; new code should prefer `target`
-   * + `mode`. Kept as a non-enumerable accessor so JSON.stringify of a
-   * parsed value stays clean.
-   */
-  readonly filepath: string;
+	/** "owner/repo" or "group/.../subgroup/project". */
+	ownerRepo: string;
+	/**
+	 * The right-hand side as written:
+	 *   - `mode === 'search'` → a basename to look up recursively
+	 *   - `mode === 'exact'`  → a path from the repo root
+	 */
+	target: string;
+	/** Resolution strategy for `target`. */
+	mode: RepoTargetMode;
+	/** Pinned tag or branch (`:version` suffix). */
+	version?: string;
+	/** Pinned commit SHA (`#sha` suffix). */
+	sha?: string;
+	/**
+	 * Back-compat alias for `target`. Older code referred to the right-hand
+	 * side as `filepath` regardless of mode; new code should prefer `target`
+	 * + `mode`. Kept as a non-enumerable accessor so JSON.stringify of a
+	 * parsed value stays clean.
+	 */
+	readonly filepath: string;
 }
 
-const EXACT_SEPARATOR = '::';
-const SEARCH_SEPARATOR = '@';
+const EXACT_SEPARATOR = "::";
+const SEARCH_SEPARATOR = "@";
 
 /**
  * Parse a repo-string into its components.
@@ -63,92 +63,103 @@ const SEARCH_SEPARATOR = '@';
  *   `@`-form name, or empty target).
  */
 export function parseRepoString(repo: string): ParsedRepo {
-  // `::` is checked first — both `@` and `::` should never appear together
-  // in a valid string, but if they do the user almost certainly meant the
-  // exact-path form, so we honor it.
-  const exactIdx = repo.indexOf(EXACT_SEPARATOR);
-  const searchIdx = repo.indexOf(SEARCH_SEPARATOR);
+	// `::` is checked first — both `@` and `::` should never appear together
+	// in a valid string, but if they do the user almost certainly meant the
+	// exact-path form, so we honor it.
+	const exactIdx = repo.indexOf(EXACT_SEPARATOR);
+	const searchIdx = repo.indexOf(SEARCH_SEPARATOR);
 
-  let ownerRepo: string;
-  let rest: string;
-  let mode: RepoTargetMode;
+	let ownerRepo: string;
+	let rest: string;
+	let mode: RepoTargetMode;
 
-  if (exactIdx !== -1) {
-    ownerRepo = repo.slice(0, exactIdx);
-    rest = repo.slice(exactIdx + EXACT_SEPARATOR.length);
-    mode = 'exact';
-  } else if (searchIdx !== -1) {
-    ownerRepo = repo.slice(0, searchIdx);
-    rest = repo.slice(searchIdx + SEARCH_SEPARATOR.length);
-    mode = 'search';
-  } else {
-    throw new Error(
-      `Invalid repo format: "${repo}". Expected one of:\n` +
-      `    "owner/repo@<name>"      — recursive search by basename, or\n` +
-      `    "owner/repo::<path>"     — exact path inside the repo,\n` +
-      `  optionally followed by ":version" or "#sha".`
-    );
-  }
+	if (exactIdx !== -1) {
+		ownerRepo = repo.slice(0, exactIdx);
+		rest = repo.slice(exactIdx + EXACT_SEPARATOR.length);
+		mode = "exact";
+	} else if (searchIdx !== -1) {
+		ownerRepo = repo.slice(0, searchIdx);
+		rest = repo.slice(searchIdx + SEARCH_SEPARATOR.length);
+		mode = "search";
+	} else {
+		throw new Error(
+			`Invalid repo format: "${repo}". Expected one of:\n` +
+				`    "owner/repo@<name>"      — recursive search by basename, or\n` +
+				`    "owner/repo::<path>"     — exact path inside the repo,\n` +
+				`  optionally followed by ":version" or "#sha".`,
+		);
+	}
 
-  if (!ownerRepo) {
-    throw new Error(`Invalid repo format: "${repo}". Missing "owner/repo" before separator.`);
-  }
+	if (!ownerRepo) {
+		throw new Error(
+			`Invalid repo format: "${repo}". Missing "owner/repo" before separator.`,
+		);
+	}
 
-  let target = rest;
-  let version: string | undefined;
-  let sha: string | undefined;
+	let target = rest;
+	let version: string | undefined;
+	let sha: string | undefined;
 
-  const shaIdx = target.lastIndexOf('#');
-  if (shaIdx !== -1) {
-    sha = target.slice(shaIdx + 1);
-    target = target.slice(0, shaIdx);
-    // An empty SHA produces broken raw URLs (`/<owner>/<repo>//path`) and
-    // confuses the snapshot resolver — reject it loudly with a hint.
-    if (!sha) {
-      throw new Error(
-        `Invalid repo format: "${repo}". Empty SHA after "#" — drop the "#" or pin to a real commit.`
-      );
-    }
-  } else {
-    const colonIdx = target.lastIndexOf(':');
-    if (colonIdx !== -1) {
-      version = target.slice(colonIdx + 1);
-      target = target.slice(0, colonIdx);
-      // Same problem as the empty-SHA case above.
-      if (!version) {
-        throw new Error(
-          `Invalid repo format: "${repo}". Empty version after ":" — drop the ":" or pin to a real tag/branch.`
-        );
-      }
-    }
-  }
+	const shaIdx = target.lastIndexOf("#");
+	if (shaIdx !== -1) {
+		sha = target.slice(shaIdx + 1);
+		target = target.slice(0, shaIdx);
+		// An empty SHA produces broken raw URLs (`/<owner>/<repo>//path`) and
+		// confuses the snapshot resolver — reject it loudly with a hint.
+		if (!sha) {
+			throw new Error(
+				`Invalid repo format: "${repo}". Empty SHA after "#" — drop the "#" or pin to a real commit.`,
+			);
+		}
+	} else {
+		const colonIdx = target.lastIndexOf(":");
+		if (colonIdx !== -1) {
+			version = target.slice(colonIdx + 1);
+			target = target.slice(0, colonIdx);
+			// Same problem as the empty-SHA case above.
+			if (!version) {
+				throw new Error(
+					`Invalid repo format: "${repo}". Empty version after ":" — drop the ":" or pin to a real tag/branch.`,
+				);
+			}
+		}
+	}
 
-  if (!target) {
-    throw new Error(
-      `Invalid repo format: "${repo}". Missing target after "${mode === 'exact' ? '::' : '@'}" separator.`
-    );
-  }
+	if (!target) {
+		throw new Error(
+			`Invalid repo format: "${repo}". Missing target after "${mode === "exact" ? "::" : "@"}" separator.`,
+		);
+	}
 
-  if (mode === 'search' && target.includes('/')) {
-    throw new Error(
-      `Invalid repo format: "${repo}".\n` +
-      `    The "@" separator expects a basename (no slashes); got "${target}".\n` +
-      `    To reference an exact path inside the repo, use "::" instead:\n` +
-      `        ${ownerRepo}::${target}${suffixFor(version, sha)}`
-    );
-  }
+	if (mode === "search" && target.includes("/")) {
+		throw new Error(
+			`Invalid repo format: "${repo}".\n` +
+				`    The "@" separator expects a basename (no slashes); got "${target}".\n` +
+				`    To reference an exact path inside the repo, use "::" instead:\n` +
+				`        ${ownerRepo}::${target}${suffixFor(version, sha)}`,
+		);
+	}
 
-  return Object.defineProperty(
-    { ownerRepo, target, mode, version, sha } as ParsedRepo,
-    'filepath',
-    { get() { return this.target; }, enumerable: false, configurable: false }
-  );
+	return Object.defineProperty(
+		{ ownerRepo, target, mode, version, sha } as ParsedRepo,
+		"filepath",
+		{
+			get() {
+				return this.target;
+			},
+			enumerable: false,
+			configurable: false,
+		},
+	);
 }
 
-function suffixFor(version: string | undefined, sha: string | undefined): string {
-  if (sha) return `#${sha}`;
-  if (version) return `:${version}`;
-  return '';
+function suffixFor(
+	version: string | undefined,
+	sha: string | undefined,
+): string {
+	if (sha) return `#${sha}`;
+	if (version) return `:${version}`;
+	return "";
 }
 
 /**
@@ -166,16 +177,19 @@ function suffixFor(version: string | undefined, sha: string | undefined): string
  * source repository may be private — it goes through the cache + git-clone
  * path and uses stored OAuth tokens transparently.
  */
-export function buildRawUrl(platform: 'github' | 'gitlab', parsed: ParsedRepo): string {
-  if (parsed.mode !== 'exact') {
-    throw new Error(
-      `buildRawUrl requires an exact-path repo reference; got a search-form ` +
-      `reference for "${parsed.ownerRepo}@${parsed.target}".`
-    );
-  }
-  const ref = parsed.sha ?? parsed.version ?? 'HEAD';
-  if (platform === 'github') {
-    return `https://raw.githubusercontent.com/${parsed.ownerRepo}/${ref}/${parsed.target}`;
-  }
-  return `https://gitlab.com/${parsed.ownerRepo}/-/raw/${ref}/${parsed.target}`;
+export function buildRawUrl(
+	platform: "github" | "gitlab",
+	parsed: ParsedRepo,
+): string {
+	if (parsed.mode !== "exact") {
+		throw new Error(
+			`buildRawUrl requires an exact-path repo reference; got a search-form ` +
+				`reference for "${parsed.ownerRepo}@${parsed.target}".`,
+		);
+	}
+	const ref = parsed.sha ?? parsed.version ?? "HEAD";
+	if (platform === "github") {
+		return `https://raw.githubusercontent.com/${parsed.ownerRepo}/${ref}/${parsed.target}`;
+	}
+	return `https://gitlab.com/${parsed.ownerRepo}/-/raw/${ref}/${parsed.target}`;
 }

@@ -750,6 +750,12 @@ describe('parsePluginSource', () => {
       expect(result.def.subpath).toBeUndefined();
       expect(result.idHint).toBe('path');
     });
+
+    it('rejects gitlab ::subpaths with ".." segments', () => {
+      expect(() => parsePluginSource('gitlab:group/project::plugins/../escape')).toThrow(
+        /Invalid subpath/,
+      );
+    });
   });
 
   describe('GitHub URL', () => {
@@ -886,6 +892,16 @@ describe('parsePluginSource', () => {
 
     it('rejects invalid source', () => {
       expect(() => parsePluginSource('just-a-word')).toThrow(/Unable to parse plugin source/);
+    });
+
+    it('rejects GitHub ::subpaths with ".." segments', () => {
+      expect(() => parsePluginSource('owner/repo::plugins/../escape')).toThrow(/Invalid subpath/);
+    });
+
+    it('rejects URL-derived plugin subpaths with ".." segments', () => {
+      expect(() =>
+        parsePluginSource('https://github.com/owner/repo/tree/main/plugins/../escape'),
+      ).toThrow(/Invalid subpath/);
     });
   });
 });

@@ -5,6 +5,7 @@ import { detectCapabilitiesFile } from '../../shared/paths';
 import { parseCapabilitiesFile } from '../../shared/capabilities';
 import { getLockfilePath } from '../../shared/lockfile';
 import { resolveProvidersForClean } from '../../shared/providers/resolve';
+import { getAllProviders } from '../../shared/providers';
 import type { CapaDatabase } from '../../db/database';
 import type { Capabilities } from '../../types/capabilities';
 import { unregisterMCPServer, unregisterSubAgentMCPServer } from '../utils/mcp-client-manager';
@@ -27,6 +28,18 @@ export interface CleanProjectResult {
   wrapSessionsStopped: number;
   workspacesPruned: number;
   managedFilesRemoved: number;
+}
+
+/**
+ * When capabilities.yaml omits `providers:` and the DB row is already gone,
+ * still sweep every provider that owns on-disk agent/rule artifacts so clean
+ * can remove leftover files from a previous install.
+ */
+function providersForOnDiskCleanup(resolved: string[]): string[] {
+  if (resolved.length > 0) return resolved;
+  return getAllProviders()
+    .filter((p) => p.subagents || p.rules || p.instructions || p.mcp)
+    .map((p) => p.id);
 }
 
 /**
@@ -58,11 +71,12 @@ export async function cleanProject(opts: CleanProjectOptions): Promise<CleanProj
     }
   }
 
-  const providers: string[] = resolveProvidersForClean({
+  const resolvedProviders: string[] = resolveProvidersForClean({
     capabilitiesProviders: capabilities?.providers,
     db,
     projectId,
   });
+  const providers = providersForOnDiskCleanup(resolvedProviders);
 
   const managedFiles = db.getManagedFiles(projectId);
   let managedFilesRemoved = 0;
@@ -112,21 +126,31 @@ export async function cleanProject(opts: CleanProjectOptions): Promise<CleanProj
     }
   }
 
-  if (providers.length > 0) {
-    const installedSubAgents = db.getSubAgents(projectId);
-    for (const { agent_id } of installedSubAgents) {
+  // Sub-agent files live under provider dirs (e.g. `.cursor/agents`) and are
+  // not tracked as managed_files. Remove by id from the DB *and* from the
+  // capabilities file so a clean still works when the DB row was already wiped
+  // or capabilities.yaml omits `providers:`.
+  const agentIds = new Set<string>([
+    ...db.getSubAgents(projectId).map((row) => row.agent_id),
+    ...(capabilities?.subagents ?? []).map((a) => a.id),
+  ]);
+
+  if (providers.length > 0 && agentIds.size > 0) {
+    for (const agentId of agentIds) {
       try {
-        await unregisterSubAgentMCPServer(projectPath, agent_id, providers);
-        removeSubAgentInstructions(projectPath, agent_id, providers);
+        await unregisterSubAgentMCPServer(projectPath, agentId, providers);
+        removeSubAgentInstructions(projectPath, agentId, providers);
       } catch (err) {
         warnings.push(
-          `Failed to unregister sub-agent ${agent_id}: ${
+          `Failed to unregister sub-agent ${agentId}: ${
             err instanceof Error ? err.message : String(err)
           }`,
         );
       }
     }
+  }
 
+  if (providers.length > 0) {
     try {
       await unregisterMCPServer(projectPath, projectId, providers);
     } catch (err) {

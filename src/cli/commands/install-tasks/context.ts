@@ -71,6 +71,13 @@ export interface InstallOptions {
    * the capa server or registering a capa MCP proxy entry.
    */
   passthrough?: boolean;
+  /**
+   * When false, resolve providers for this install run but do not overwrite
+   * `db.setProjectProviders` for the project identity. Wrap uses this so
+   * `capa wrap claude` does not change what a later `capa install` targets.
+   * Default true.
+   */
+  persistProviders?: boolean;
 }
 
 export type GetRepoSnapshotFn = (

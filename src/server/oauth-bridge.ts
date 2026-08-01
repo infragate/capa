@@ -18,13 +18,13 @@
  * Module-level pure function so it's trivially unit-testable and doesn't pull
  * `CapaServer` into the test graph.
  */
-export type GitOAuthPlatform = 'github' | 'gitlab';
+export type GitOAuthPlatform = "github" | "gitlab";
 
 export function buildOAuthBridgeHtml(platform: GitOAuthPlatform): string {
-  const callbackPath = `/api/integrations/${platform}/oauth/callback`;
-  const uiPath = '/ui/integrations';
-  const displayName = platform === 'github' ? 'GitHub' : 'GitLab';
-  return `<!DOCTYPE html>
+	const callbackPath = `/api/integrations/${platform}/oauth/callback`;
+	const uiPath = "/ui/integrations";
+	const displayName = platform === "github" ? "GitHub" : "GitLab";
+	return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -89,12 +89,12 @@ export function buildOAuthBridgeHtml(platform: GitOAuthPlatform): string {
 }
 
 export function oauthBridgeResponse(platform: GitOAuthPlatform): Response {
-  return new Response(buildOAuthBridgeHtml(platform), {
-    status: 200,
-    headers: {
-      'Content-Type': 'text/html; charset=utf-8',
-      'Cache-Control': 'no-store',
-      'Referrer-Policy': 'no-referrer',
-    },
-  });
+	return new Response(buildOAuthBridgeHtml(platform), {
+		status: 200,
+		headers: {
+			"Content-Type": "text/html; charset=utf-8",
+			"Cache-Control": "no-store",
+			"Referrer-Policy": "no-referrer",
+		},
+	});
 }

@@ -110,7 +110,9 @@ export async function wrapCommand(
   info(
     prepared.cold
       ? `Created wrap workspace for ${provider.displayName}`
-      : `Reusing wrap workspace for ${provider.displayName}`,
+      : prepared.installed
+        ? `Updated wrap workspace for ${provider.displayName} (capabilities changed)`
+        : `Reusing wrap workspace for ${provider.displayName}`,
   );
   info(prepared.workspacePath);
 
