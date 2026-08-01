@@ -27,12 +27,12 @@ export function ActivityFeed({
   }
 
   return (
-    <div className="rounded-sm border border-border-secondary bg-bg-secondary">
+    <div className="max-h-[520px] overflow-y-auto rounded-sm border border-border-secondary bg-bg-secondary">
       {calls.map((call) => (
         <ActivityRow key={call.id} call={call} />
       ))}
       {hasMore && (
-        <div className="border-t border-border-tertiary px-3 py-2.5 text-center">
+        <div className="sticky bottom-0 border-t border-border-tertiary bg-bg-secondary px-3 py-2.5 text-center">
           <button
             type="button"
             onClick={onLoadMore}

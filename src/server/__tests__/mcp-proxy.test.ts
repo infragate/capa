@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+import { fileURLToPath } from 'node:url';
 import { MCPProxy } from '../mcp-proxy';
 import { shouldSkipTlsVerify } from '../../shared/tls-skip-verify';
 import type { CapaDatabase } from '../../db/database';
@@ -202,6 +203,63 @@ describe('mcp-proxy', () => {
       expect(result.success).toBe(false);
       expect(result.error).toMatch(/Authentication failed for "atlassian"\. Please reconnect OAuth2/);
       expect(result.error).not.toMatch(/Failed to connect/);
+    });
+  });
+
+  describe('stdio crash fail-fast', () => {
+    it('executeTool fails within 2s when the child exits mid tools/call', async () => {
+      const proxy = new MCPProxy(makeMockDb(), 'proj-crash', process.cwd());
+      const fixturePath = fileURLToPath(
+        new URL('./fixtures/crash-on-call-mcp.ts', import.meta.url),
+      );
+      const serverDef: MCPServerDefinition = {
+        cmd: process.execPath,
+        args: [fixturePath],
+      };
+
+      const started = Date.now();
+      const result = await proxy.executeTool(
+        'crash.boom',
+        { server: 'crash', tool: 'boom' },
+        serverDef,
+        {},
+      );
+      const elapsed = Date.now() - started;
+
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/exited unexpectedly|connection closed|panicked/i);
+      expect(result.error).toMatch(/crash/);
+      expect(result.error).toMatch(/boom/);
+      expect(elapsed).toBeLessThan(2000);
+
+      // Cached client must be dropped so a later call can respawn.
+      expect((proxy as any).clients.has('crash')).toBe(false);
+    });
+
+    it('executeTool fails within 2s when child panics on stderr but stays alive', async () => {
+      const proxy = new MCPProxy(makeMockDb(), 'proj-hang-panic', process.cwd());
+      const fixturePath = fileURLToPath(
+        new URL('./fixtures/hang-after-panic-mcp.ts', import.meta.url),
+      );
+      const serverDef: MCPServerDefinition = {
+        cmd: process.execPath,
+        args: [fixturePath],
+      };
+
+      const started = Date.now();
+      const result = await proxy.executeTool(
+        'hang.boom',
+        { server: 'hang', tool: 'boom' },
+        serverDef,
+        {},
+      );
+      const elapsed = Date.now() - started;
+
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/panicked|exited unexpectedly|connection closed/i);
+      expect(result.error).toMatch(/hang/);
+      expect(elapsed).toBeLessThan(2000);
+      expect((proxy as any).clients.has('hang')).toBe(false);
     });
   });
 });

@@ -39,6 +39,8 @@ export class MCPProxy {
 	private projectPath: string;
 	private oauth2Manager: OAuth2Manager;
 	private clients = new Map<string, Client>();
+	/** Last unexpected stdio exit reason per server (from transport onerror). */
+	private stdioExitReasons = new Map<string, string>();
 	private logger = logger.child("MCPProxy");
 
 	constructor(db: CapaDatabase, projectId: string, projectPath: string) {
@@ -151,15 +153,18 @@ export class MCPProxy {
 					);
 					return {
 						success: false,
-						error:
-							retryError.message || "Tool execution failed after reconnect",
+						error: this.formatToolCallError(
+							serverId,
+							definition.tool,
+							retryError,
+						),
 					};
 				}
 			}
 			this.logger.failure(`Tool call failed: ${error.message}`);
 			return {
 				success: false,
-				error: error.message || "Tool execution failed",
+				error: this.formatToolCallError(serverId, definition.tool, error),
 			};
 		}
 	}
@@ -365,6 +370,16 @@ export class MCPProxy {
 				cwd: serverDefinition.cwd ?? this.projectPath,
 			});
 
+			// Capture exit metadata before connect() wraps transport.onerror.
+			this.stdioExitReasons.delete(serverId);
+			transport.onerror = (error) => {
+				const msg = error.message || String(error);
+				if (/exited unexpectedly|panicked/i.test(msg)) {
+					this.stdioExitReasons.set(serverId, msg);
+				}
+				this.logger.failure(`Stdio transport error for ${serverId}: ${msg}`);
+			};
+
 			const client = new Client(
 				{
 					name: `capa-proxy-${serverId}`,
@@ -393,6 +408,37 @@ export class MCPProxy {
 			);
 			return null;
 		}
+	}
+
+	/**
+	 * Prefer a descriptive stdio-exit reason over the SDK's generic
+	 * "Connection closed" when the child died mid-request.
+	 */
+	private formatToolCallError(
+		serverId: string,
+		toolName: string,
+		error: { message?: string; code?: number } | null | undefined,
+	): string {
+		const message = error?.message || "Tool execution failed";
+		const exitReason = this.stdioExitReasons.get(serverId);
+		const closed =
+			error?.code === -32000 || // ErrorCode.ConnectionClosed in MCP SDK
+			/connection closed/i.test(message);
+
+		if (exitReason) {
+			this.stdioExitReasons.delete(serverId);
+			return `MCP server \`${serverId}\` exited unexpectedly while handling \`${toolName}\`: ${exitReason}`;
+		}
+		if (closed) {
+			return `MCP server \`${serverId}\` connection closed while handling \`${toolName}\``;
+		}
+		if (
+			error?.code === -32001 || // ErrorCode.RequestTimeout
+			/timed out|timeout/i.test(message)
+		) {
+			return `MCP server \`${serverId}\` timed out while handling \`${toolName}\``;
+		}
+		return message;
 	}
 
 	/**
