@@ -1,7 +1,7 @@
 import { resolve } from 'path';
 import {
-  getWrappableProvider,
-  getWrappableProviders,
+  formatWrappableProviderList,
+  resolveWrapTarget,
 } from '../../shared/providers';
 import { prepareWorkspace, pruneWorkspaces } from '../utils/wrap/workspace';
 import { startWrapWatchers } from '../utils/wrap/watch-project';
@@ -72,20 +72,14 @@ export async function wrapCommand(
   }
 
   if (!providerArg) {
-    const available = getWrappableProviders()
-      .map((p) => p.id)
-      .sort()
-      .join(', ');
+    const available = formatWrappableProviderList();
     error(`Missing provider. Wrappable providers: ${available || '(none)'}`);
     process.exit(1);
   }
 
-  const provider = getWrappableProvider(providerArg);
-  if (!provider || !provider.wrap) {
-    const available = getWrappableProviders()
-      .map((p) => `${p.id}${p.pluginProviderId ? ` (alias: ${p.pluginProviderId})` : ''}`)
-      .sort()
-      .join(', ');
+  const target = resolveWrapTarget(providerArg);
+  if (!target) {
+    const available = formatWrappableProviderList();
     error(
       `Unknown or non-wrappable provider "${providerArg}".\n` +
         `  Available: ${available || '(none)'}`,
@@ -93,6 +87,7 @@ export async function wrapCommand(
     process.exit(1);
   }
 
+  const { provider, wrap } = target;
   const realProjectPath = resolve(options.project ?? process.cwd());
 
   let prepared;
@@ -124,7 +119,7 @@ export async function wrapCommand(
     console.warn('⚠ Could not write wrap session file; clean/delete may not stop this session.');
   }
 
-  if (provider.wrap.kind === 'gui') {
+  if (wrap.kind === 'gui') {
     const watchers = startWrapWatchers({
       realProjectPath: prepared.realProjectPath,
       workspacePath: prepared.workspacePath,
@@ -154,15 +149,15 @@ export async function wrapCommand(
     }
 
     info(
-      `Launching ${provider.wrap.binary} (wrap stops when the window closes, or Ctrl+C / q)`,
+      `Launching ${wrap.binary} (wrap stops when the window closes, or Ctrl+C / q)`,
     );
     let launch;
     try {
-      launch = await launchProvider(provider, prepared.workspacePath, args);
+      launch = await launchProvider(wrap, prepared.workspacePath, args);
     } catch (err) {
       cleanup();
       error(
-        `Failed to launch ${provider.wrap.binary}: ${
+        `Failed to launch ${wrap.binary}: ${
           err instanceof Error ? err.message : String(err)
         }`,
       );
@@ -221,7 +216,7 @@ export async function wrapCommand(
   }
 
   try {
-    const result = await launchProvider(provider, prepared.workspacePath, args);
+    const result = await launchProvider(wrap, prepared.workspacePath, args);
     cleanupCli();
     if (result.exitCode != null && result.exitCode !== 0) {
       process.exit(result.exitCode);
@@ -229,7 +224,7 @@ export async function wrapCommand(
   } catch (err) {
     cleanupCli();
     error(
-      `Failed to launch ${provider.wrap.binary}: ${
+      `Failed to launch ${wrap.binary}: ${
         err instanceof Error ? err.message : String(err)
       }`,
     );

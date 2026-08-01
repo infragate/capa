@@ -120,6 +120,7 @@ export const partialIntegrationProviders: Record<string, ProviderIntegration> =
 				supportsSubAgentEntries: true,
 			},
 			instructions: { filename: "AGENTS.md" },
+			wrap: { binary: "iflow", kind: "cli" },
 		},
 		junie: {
 			id: "junie",
@@ -196,6 +197,7 @@ export const partialIntegrationProviders: Record<string, ProviderIntegration> =
 				extension: ".md",
 				frontmatter: "none",
 			},
+			wrap: { binary: "kiro-cli", kind: "cli" },
 		},
 		kode: {
 			id: "kode",
@@ -308,6 +310,7 @@ export const partialIntegrationProviders: Record<string, ProviderIntegration> =
 				extension: ".md",
 				format: "markdown-frontmatter",
 			},
+			wrap: { binary: "qwen", kind: "cli" },
 		},
 		roo: {
 			id: "roo",

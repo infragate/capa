@@ -49,10 +49,9 @@ export interface McpIntegration {
 }
 
 /**
- * How `capa wrap <provider>` launches this provider from a shadow workspace.
- * Undefined when the provider is not wrappable.
+ * Launch config for a single `capa wrap` invocation (binary + kind + args).
  */
-export interface WrapIntegration {
+export interface WrapLaunchConfig {
   /** Executable to spawn (must be on PATH). */
   binary: string;
   /** CLI = blocking foreground; GUI = wait for app window (or interrupt). */
@@ -63,6 +62,18 @@ export interface WrapIntegration {
    * CLI: inserted before user passthrough args.
    */
   args?: string[];
+}
+
+/**
+ * How `capa wrap <provider>` launches this provider from a shadow workspace.
+ * Undefined when the provider is not wrappable.
+ */
+export interface WrapIntegration extends WrapLaunchConfig {
+  /**
+   * Extra tokens accepted by `capa wrap <token>` that launch this provider
+   * with an alternate binary/kind (e.g. Cursor GUI vs `agent` CLI).
+   */
+  aliases?: Record<string, WrapLaunchConfig>;
 }
 
 /**

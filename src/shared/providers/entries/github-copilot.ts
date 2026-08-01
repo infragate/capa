@@ -32,4 +32,11 @@ export const githubCopilot: ProviderIntegration = {
 		extension: ".md",
 		format: "markdown-frontmatter",
 	},
+	wrap: {
+		binary: "copilot",
+		kind: "cli",
+		aliases: {
+			copilot: { binary: "copilot", kind: "cli" },
+		},
+	},
 };

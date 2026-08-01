@@ -74,5 +74,12 @@ export const cursor: ProviderIntegration = {
 			stop: { event: "stop" },
 		},
 	},
-	wrap: { binary: "cursor", kind: "gui", args: ["--new-window", "--wait"] },
+	wrap: {
+		binary: "cursor",
+		kind: "gui",
+		args: ["--new-window", "--wait"],
+		aliases: {
+			agent: { binary: "agent", kind: "cli" },
+		},
+	},
 };

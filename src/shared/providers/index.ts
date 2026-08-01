@@ -1,5 +1,19 @@
-import type { ProviderIntegration } from "../../types/providers";
+import type {
+	ProviderIntegration,
+	WrapLaunchConfig,
+} from "../../types/providers";
 import { providers } from "./registry";
+
+/**
+ * Resolved target for `capa wrap <token>`: provider entry plus the launch
+ * config to use (primary wrap or a wrap.aliases entry).
+ */
+export interface WrapTarget {
+	provider: ProviderIntegration;
+	wrap: WrapLaunchConfig;
+	/** Token the user passed (registry id, pluginProviderId, or wrap alias). */
+	token: string;
+}
 
 /**
  * Get a provider by id. Returns undefined for unknown providers.
@@ -51,6 +65,7 @@ export function getWrappableProviders(): ProviderIntegration[] {
 /**
  * Resolve a wrappable provider by registry id or pluginProviderId alias
  * (e.g. `claude` → `claude-code`). Returns undefined if unknown or not wrappable.
+ * Does not resolve `wrap.aliases` tokens — use {@link resolveWrapTarget} for that.
  */
 export function getWrappableProvider(
 	id: string,
@@ -61,6 +76,76 @@ export function getWrappableProvider(
 	const byPlugin = getProviderByPluginProviderId(needle);
 	if (byPlugin?.wrap) return byPlugin;
 	return undefined;
+}
+
+function primaryWrapLaunch(wrap: NonNullable<ProviderIntegration["wrap"]>): WrapLaunchConfig {
+	return {
+		binary: wrap.binary,
+		kind: wrap.kind,
+		...(wrap.args ? { args: wrap.args } : {}),
+	};
+}
+
+/**
+ * Resolve `capa wrap <token>` to a provider + launch config.
+ * Matches registry id, pluginProviderId, or a `wrap.aliases` key.
+ */
+export function resolveWrapTarget(token: string): WrapTarget | undefined {
+	const needle = token.trim().toLowerCase();
+	if (!needle) return undefined;
+
+	const byId = getProvider(needle);
+	if (byId?.wrap) {
+		return {
+			provider: byId,
+			wrap: primaryWrapLaunch(byId.wrap),
+			token: needle,
+		};
+	}
+
+	const byPlugin = getProviderByPluginProviderId(needle);
+	if (byPlugin?.wrap) {
+		return {
+			provider: byPlugin,
+			wrap: primaryWrapLaunch(byPlugin.wrap),
+			token: needle,
+		};
+	}
+
+	for (const provider of getWrappableProviders()) {
+		const aliases = provider.wrap?.aliases;
+		if (!aliases) continue;
+		for (const [alias, launch] of Object.entries(aliases)) {
+			if (alias.toLowerCase() === needle) {
+				return { provider, wrap: launch, token: needle };
+			}
+		}
+	}
+
+	return undefined;
+}
+
+/**
+ * Human-readable list of wrappable provider ids plus short aliases
+ * (pluginProviderId and wrap.aliases keys, excluding the registry id itself).
+ */
+export function formatWrappableProviderList(): string {
+	return getWrappableProviders()
+		.map((p) => {
+			const extras = new Set<string>();
+			if (p.pluginProviderId) {
+				extras.add(p.pluginProviderId.toLowerCase());
+			}
+			for (const alias of Object.keys(p.wrap?.aliases ?? {})) {
+				extras.add(alias.toLowerCase());
+			}
+			extras.delete(p.id.toLowerCase());
+			const sorted = [...extras].sort();
+			if (sorted.length === 0) return p.id;
+			return `${p.id} (alias: ${sorted.join(", ")})`;
+		})
+		.sort()
+		.join(", ");
 }
 
 /**
@@ -152,4 +237,5 @@ export type {
 	RulesIntegration,
 	SubagentsIntegration,
 	WrapIntegration,
+	WrapLaunchConfig,
 } from "../../types/providers";

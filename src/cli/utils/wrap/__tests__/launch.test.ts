@@ -13,13 +13,10 @@ mock.module('node:child_process', () => ({
 }));
 
 import { launchProvider } from '../launch';
-import type { ProviderIntegration } from '../../../../types/providers';
+import type { WrapLaunchConfig } from '../../../../types/providers';
 
-const claude: ProviderIntegration = {
-  id: 'claude-code',
-  displayName: 'Claude Code',
-  wrap: { binary: 'claude', kind: 'cli' },
-} as ProviderIntegration;
+const claudeWrap: WrapLaunchConfig = { binary: 'claude', kind: 'cli' };
+const agentWrap: WrapLaunchConfig = { binary: 'agent', kind: 'cli' };
 
 describe('launchProvider CLI', () => {
   beforeEach(() => {
@@ -31,7 +28,7 @@ describe('launchProvider CLI', () => {
   });
 
   test('uses spawnSync with inherited stdio for a real TTY', async () => {
-    const result = await launchProvider(claude, 'C:\\ws\\proj', ['--help']);
+    const result = await launchProvider(claudeWrap, 'C:\\ws\\proj', ['--help']);
     expect(result.exitCode).toBe(0);
     expect(spawnSyncCalls).toHaveLength(1);
     expect(spawnSyncCalls[0]?.cmd).toBe('claude');
@@ -40,5 +37,12 @@ describe('launchProvider CLI', () => {
     expect(spawnSyncCalls[0]?.opts.cwd).toBe('C:\\ws\\proj');
     expect(spawnSyncCalls[0]?.opts.windowsHide).toBe(false);
     expect(spawnSyncCalls[0]?.opts.shell).toBe(false);
+  });
+
+  test('launches cursor agent CLI binary from wrap config', async () => {
+    const result = await launchProvider(agentWrap, '/tmp/ws', []);
+    expect(result.exitCode).toBe(0);
+    expect(spawnSyncCalls[0]?.cmd).toBe('agent');
+    expect(spawnSyncCalls[0]?.args).toEqual([]);
   });
 });
