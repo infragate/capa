@@ -513,10 +513,14 @@ export async function resolvePlugins(
         hookEntry.matcher,
       );
       const command = hookEntry.command
-        ? resolvePluginRootInString(hookEntry.command, pluginStablePath)
+        ? resolvePluginRootInString(hookEntry.command, pluginStablePath, {
+            shellQuote: true,
+          })
         : undefined;
       const prompt = hookEntry.prompt
-        ? resolvePluginRootInString(hookEntry.prompt, pluginStablePath)
+        ? resolvePluginRootInString(hookEntry.prompt, pluginStablePath, {
+            shellQuote: true,
+          })
         : undefined;
 
       // Sibling Claude/Cursor manifests often declare the same hook twice.

@@ -240,6 +240,7 @@ describe("plugin full unpack parsers", () => {
 		const resolved = resolvePluginRootInString(
 			'"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd" session-start',
 			pluginRoot,
+			{ shellQuote: true },
 		);
 		expect(resolved).toBe(
 			`"${pluginRoot}/hooks/run-hook.cmd" session-start`,
@@ -250,9 +251,21 @@ describe("plugin full unpack parsers", () => {
 		const resolved = resolvePluginRootInString(
 			'"${CLAUDE_PLUGIN_ROOT}/hooks/run-hook.cmd" session-start',
 			"C:\\Users\\Tony Zaitoun\\.capa\\plugins\\meta\\superpowers",
+			{ shellQuote: true },
 		);
 		expect(resolved).toBe(
 			'"C:/Users/Tony Zaitoun/.capa/plugins/meta/superpowers/hooks/run-hook.cmd" session-start',
+		);
+	});
+
+	it("shell-quotes unquoted CLAUDE_PLUGIN_ROOT paths that contain spaces", () => {
+		const resolved = resolvePluginRootInString(
+			"${CLAUDE_PLUGIN_ROOT}/hooks/prevent-destructive-commands.py",
+			"C:\\Users\\Tony Zaitoun\\.capa\\plugins\\ontology-builder-a6a5\\developer-kit",
+			{ shellQuote: true },
+		);
+		expect(resolved).toBe(
+			'"C:/Users/Tony Zaitoun/.capa/plugins/ontology-builder-a6a5/developer-kit/hooks/prevent-destructive-commands.py"',
 		);
 	});
 
@@ -260,6 +273,7 @@ describe("plugin full unpack parsers", () => {
 		const resolved = resolvePluginRootInString(
 			"./hooks/run-hook.cmd session-start",
 			"C:\\Users\\Tony Zaitoun\\.capa\\plugins\\meta\\superpowers",
+			{ shellQuote: true },
 		);
 		expect(resolved).toBe(
 			'"C:/Users/Tony Zaitoun/.capa/plugins/meta/superpowers/hooks/run-hook.cmd" session-start',

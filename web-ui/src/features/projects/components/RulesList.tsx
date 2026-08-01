@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { Trash2, X, Loader2, Lock } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -8,6 +8,7 @@ import { capaIdErrorMessage, sanitizeCapaIdInput } from '../../../lib/ids';
 import { ReorderableList } from '../../../components/common/ReorderableList';
 import { SourceBadge } from '../../../components/common/ServerBadge';
 import { sourceTypeBadgeClasses } from './sourceTypeColors';
+import { renderMarkdown } from './registry-browse/markdown';
 import { LocalPathPicker } from './LocalPathPicker';
 import { useAppendCapability, useDeleteCapability, useReorderCapability, useUpdateCapability } from '../hooks';
 import { authoredReorderKeys, isPluginSourced } from '../lib/reorderKeys';
@@ -26,6 +27,7 @@ export function RulesList({ rules, search, projectId, addOpen, onAddOpenChange }
   const reorderMutation = useReorderCapability(projectId);
   const updateMutation = useUpdateCapability(projectId);
   const [editing, setEditing] = useState<Rule | null>(null);
+  const [viewing, setViewing] = useState<Rule | null>(null);
   const searching = !!search.trim();
   const visible = rules.filter((r) => matchesSearch([r.id, r.description, r.content, r.path], search));
 
@@ -54,11 +56,14 @@ export function RulesList({ rules, search, projectId, addOpen, onAddOpenChange }
               {handle}
               <button
                 type="button"
-                className={`min-w-0 flex-1 p-3 text-left ${locked ? 'cursor-default' : 'cursor-pointer ui-row-hover hover:bg-hover-bg'}`}
-                onClick={() =>
-                  !locked && (rule.type === 'inline' || rule.type === 'local') && setEditing(rule)
-                }
-                disabled={locked}
+                className="min-w-0 flex-1 p-3 text-left cursor-pointer ui-row-hover hover:bg-hover-bg"
+                onClick={() => {
+                  if (locked) {
+                    setViewing(rule);
+                    return;
+                  }
+                  if (rule.type === 'inline' || rule.type === 'local') setEditing(rule);
+                }}
               >
                 <div className="flex items-center gap-2">
                   <span className="font-mono text-[13px] font-medium text-text-primary">{rule.id}</span>
@@ -134,7 +139,111 @@ export function RulesList({ rules, search, projectId, addOpen, onAddOpenChange }
         projectId={projectId}
         isEdit={!!editing && !editing.sourcePlugin}
       />
+
+      <RuleViewDialog
+        rule={viewing}
+        open={!!viewing}
+        onOpenChange={(open) => {
+          if (!open) setViewing(null);
+        }}
+      />
     </div>
+  );
+}
+
+function RuleViewDialog({
+  rule,
+  open,
+  onOpenChange,
+}: {
+  rule: Rule | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const { t } = useTranslation('projects');
+  const contentHtml = useMemo(
+    () => (rule?.content ? renderMarkdown(rule.content) : ''),
+    [rule?.content],
+  );
+
+  return (
+    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="ui-overlay fixed inset-0 z-50 bg-black/50" />
+        <Dialog.Content className="ui-dialog fixed z-50 flex max-h-[90vh] w-[min(90vw,720px)] flex-col overflow-hidden rounded-lg border border-border-primary bg-bg-secondary shadow-lg">
+          <div className="flex items-start justify-between border-b border-border-secondary px-6 py-4">
+            <div className="min-w-0 flex-1 pr-4">
+              <Dialog.Title className="truncate font-mono text-lg font-medium text-text-primary">
+                {rule?.id ?? t('rules.viewTitle')}
+              </Dialog.Title>
+              {rule && (
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <span
+                    className={`shrink-0 rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase ${sourceTypeBadgeClasses('plugin')}`}
+                  >
+                    plugin
+                  </span>
+                  {rule.sourcePlugin?.name && (
+                    <SourceBadge name={rule.sourcePlugin.name} kind="plugin" />
+                  )}
+                </div>
+              )}
+              <Dialog.Description className="sr-only">
+                {t('rules.viewTitle')}
+              </Dialog.Description>
+            </div>
+            <Dialog.Close
+              className="rounded-sm p-1 text-text-secondary transition-colors hover:bg-hover-bg cursor-pointer"
+              aria-label="Close"
+            >
+              <X className="h-4 w-4" />
+            </Dialog.Close>
+          </div>
+
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-5">
+            {rule?.description && (
+              <p className="text-sm text-text-secondary">{rule.description}</p>
+            )}
+
+            {(rule?.appliesTo.length ?? 0) > 0 && (
+              <div>
+                <div className="mb-1.5 text-xs font-medium text-text-tertiary">
+                  {t('rules.appliesTo')}
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {rule!.appliesTo.map((glob) => (
+                    <span
+                      key={glob}
+                      className="rounded-sm bg-bg-secondary px-1.5 py-0.5 font-mono text-[10px] text-text-tertiary"
+                    >
+                      {glob}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {rule?.alwaysApply && (
+              <div className="text-xs text-text-tertiary">{t('rules.alwaysApply')}</div>
+            )}
+
+            <div>
+              <div className="mb-1.5 text-xs font-medium text-text-tertiary">
+                {t('rules.content')}
+              </div>
+              {contentHtml ? (
+                <div
+                  className="registry-markdown overflow-hidden text-sm text-text-secondary"
+                  dangerouslySetInnerHTML={{ __html: contentHtml }}
+                />
+              ) : (
+                <p className="text-xs text-text-tertiary">{t('rules.noContent')}</p>
+              )}
+            </div>
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }
 
