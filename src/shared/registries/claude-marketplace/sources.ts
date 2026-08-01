@@ -110,16 +110,13 @@ export function sourceToInstallCoords(
 	}
 }
 
-export function buildRepoString(
-	coords: InstallCoords,
-	pluginName: string,
-): string {
+/**
+ * Prefer exact `owner/repo::subpath` over `owner/repo@name` so install
+ * resolution never depends on first-match basename/manifest search.
+ */
+export function buildRepoString(coords: InstallCoords): string {
 	const { ownerRepo, subpath } = coords;
 	if (!subpath) return ownerRepo;
-	const leaf = subpath.replace(/\/+$/, "").split("/").pop() ?? subpath;
-	if (leaf === pluginName) {
-		return `${ownerRepo}@${pluginName}`;
-	}
 	return `${ownerRepo}::${subpath}`;
 }
 
@@ -140,7 +137,7 @@ export function buildPluginInstallSnippet(
 	if (!coords) return null;
 
 	const def: Plugin["def"] = {
-		repo: buildRepoString(coords, plugin.name),
+		repo: buildRepoString(coords),
 	};
 	if (coords.sha) def.ref = coords.sha;
 	else if (coords.ref) def.version = coords.ref;

@@ -102,7 +102,7 @@ describe("claude-marketplace parse", () => {
 });
 
 describe("claude-marketplace source mapping", () => {
-	it("maps matching basename to @ form", () => {
+	it("maps matching basename to exact :: form", () => {
 		const catalog = parseMarketplaceJson(DEVELOPER_KIT_FIXTURE);
 		const ts = catalog.plugins.find((p) => p.name === "developer-kit-typescript")!;
 		const snippet = buildPluginInstallSnippet(ts, catalog, ORIGIN);
@@ -110,7 +110,7 @@ describe("claude-marketplace source mapping", () => {
 			id: "developer-kit-typescript",
 			type: "github",
 			def: {
-				repo: "giuseppe-trisciuoglio/developer-kit@developer-kit-typescript",
+				repo: "giuseppe-trisciuoglio/developer-kit::plugins/developer-kit-typescript",
 				description: ts.description,
 			},
 		});
@@ -148,19 +148,24 @@ describe("claude-marketplace source mapping", () => {
 		expect(snippet).toBeNull();
 	});
 
-	it("buildRepoString prefers @ when leaf matches plugin name", () => {
+	it("buildRepoString always uses :: when subpath is present", () => {
 		expect(
-			buildRepoString(
-				{ host: "github", ownerRepo: "a/b", subpath: "plugins/foo" },
-				"foo",
-			),
-		).toBe("a/b@foo");
+			buildRepoString({
+				host: "github",
+				ownerRepo: "a/b",
+				subpath: "plugins/foo",
+			}),
+		).toBe("a/b::plugins/foo");
 		expect(
-			buildRepoString(
-				{ host: "github", ownerRepo: "a/b", subpath: "plugins/bar" },
-				"foo",
-			),
+			buildRepoString({
+				host: "github",
+				ownerRepo: "a/b",
+				subpath: "plugins/bar",
+			}),
 		).toBe("a/b::plugins/bar");
+		expect(
+			buildRepoString({ host: "github", ownerRepo: "a/b" }),
+		).toBe("a/b");
 	});
 });
 
@@ -181,6 +186,25 @@ describe("parseClaudeMarketplaceSource", () => {
 			kind: "git",
 			ref: "v3.1.0",
 			locator: "giuseppe-trisciuoglio/developer-kit",
+		});
+	});
+
+	it("allows slashes in owner/repo@ref", () => {
+		expect(
+			parseClaudeMarketplaceSource("acme/marketplace@feature/foo"),
+		).toMatchObject({
+			kind: "git",
+			locator: "acme/marketplace",
+			ref: "feature/foo",
+			origin: {
+				ownerRepo: "acme/marketplace",
+				ref: "feature/foo",
+			},
+		});
+		expect(
+			parseClaudeMarketplaceSource("acme/marketplace@release/v1"),
+		).toMatchObject({
+			ref: "release/v1",
 		});
 	});
 
@@ -275,8 +299,8 @@ describe("createClaudeMarketplaceAdapter", () => {
 			id: "developer-kit-typescript",
 			type: "github",
 		});
-		expect((detail.installSnippet as { def: { repo: string } }).def.repo).toContain(
-			"@developer-kit-typescript",
+		expect((detail.installSnippet as { def: { repo: string } }).def.repo).toBe(
+			"giuseppe-trisciuoglio/developer-kit::plugins/developer-kit-typescript",
 		);
 	});
 

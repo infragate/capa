@@ -3,6 +3,7 @@ import type { CapaDatabase } from "../../db/database";
 import type { RegistryAdapter } from "../../types/registry";
 import { logger } from "../logger";
 import {
+	getInstalledMarketplaceMetaPath,
 	getInstalledMarketplacePath,
 	loadClaudeMarketplaceAdapter,
 } from "./claude-marketplace";
@@ -12,6 +13,8 @@ interface LoadedRegistry {
 	adapter: RegistryAdapter;
 	slug: string;
 	mtime: number;
+	/** marketplace.meta.json mtime; only set for Claude marketplaces. */
+	metaMtime?: number;
 	updatedAt: number;
 }
 
@@ -185,13 +188,24 @@ export class RegistryLoader {
 			return;
 		}
 
+		const metaPath = getInstalledMarketplaceMetaPath(record.slug);
+		if (!metaPath) {
+			failures.push({
+				slug: record.slug,
+				error: `No marketplace.meta.json for slug "${record.slug}"; run \`capa registry refresh ${record.slug}\`.`,
+			});
+			return;
+		}
+
 		let mtime: number;
+		let metaMtime: number;
 		try {
 			mtime = statSync(jsonPath).mtimeMs;
+			metaMtime = statSync(metaPath).mtimeMs;
 		} catch (err: any) {
 			failures.push({
 				slug: record.slug,
-				error: `Cannot stat ${jsonPath}: ${err?.message ?? err}`,
+				error: `Cannot stat marketplace files for "${record.slug}": ${err?.message ?? err}`,
 			});
 			return;
 		}
@@ -200,6 +214,7 @@ export class RegistryLoader {
 		if (
 			cached &&
 			cached.mtime === mtime &&
+			cached.metaMtime === metaMtime &&
 			cached.updatedAt === record.updatedAt
 		) {
 			const id = cached.adapter.manifest.id;
@@ -236,6 +251,7 @@ export class RegistryLoader {
 				adapter,
 				slug: record.slug,
 				mtime,
+				metaMtime,
 				updatedAt: record.updatedAt,
 			});
 			adapters.set(id, adapter);

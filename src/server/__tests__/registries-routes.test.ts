@@ -521,7 +521,7 @@ describe('registries-routes', () => {
         id: 'developer-kit-typescript',
         type: 'github',
         def: {
-          repo: 'giuseppe-trisciuoglio/developer-kit@developer-kit-typescript',
+          repo: 'giuseppe-trisciuoglio/developer-kit::plugins/developer-kit-typescript',
         },
       });
 

@@ -133,11 +133,6 @@ export function parseClaudeMarketplaceSource(
 				`Invalid marketplace source "${trimmed}". Empty ref after "@".`,
 			);
 		}
-		if (ref.includes("/")) {
-			throw new Error(
-				`Invalid marketplace source "${trimmed}". Ref after "@" must be a branch or tag (no slashes).`,
-			);
-		}
 	}
 
 	if (!/^[^/\s]+\/[^/\s]+$/.test(ownerRepo)) {
