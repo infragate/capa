@@ -116,6 +116,16 @@ describe('CapaDatabase — registry operations', () => {
     ).toThrow();
   });
 
+  it('accepts claude-marketplace as a valid type', () => {
+    const row = db.upsertRegistry({
+      slug: 'dk',
+      type: 'claude-marketplace',
+      source: 'owner/repo',
+      status: 'installed',
+    });
+    expect(row.type).toBe('claude-marketplace');
+  });
+
   it('rejects an invalid status via CHECK constraint', () => {
     expect(() =>
       db.upsertRegistry({

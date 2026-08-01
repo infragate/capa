@@ -354,6 +354,8 @@
     "blockedPhrases": "Blocked Phrases",
     "allowedCharacters": "Allowed Characters",
     "requiredCommands": "Required Commands",
-    "noSecurityConfig": "No security configuration"
+    "noSecurityConfig": "No security configuration",
+    "dangerZone": "Danger zone",
+    "dangerZoneDescription": "Remove this project from capa. The capabilities file on disk is kept."
   }
 }

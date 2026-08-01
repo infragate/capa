@@ -2,12 +2,13 @@
   "title": "Registries",
   "subtitle": "Browse and install skills and plugins from third-party registries",
   "manageLink": "Manage registries",
+  "registryList": "Registries",
   "nav": {
     "registries": "Registries"
   },
   "empty": {
     "title": "No registries configured",
-    "description": "Add a registry from GitHub, GitLab, or an HTTPS URL to browse third-party skills and plugins.",
+    "description": "Add a registry adapter or a Claude marketplace to browse third-party skills and plugins.",
     "manageLink": "Manage registries"
   },
   "tabs": {
@@ -42,13 +43,13 @@
   },
   "settings": {
     "title": "Registry settings",
-    "subtitle": "Manage the third-party registries that supply skills and plugins.",
+    "subtitle": "Manage registry adapters and Claude marketplaces that supply skills and plugins.",
     "browseLink": "Back to browse",
     "addButton": "Add registry",
     "noneTitle": "No registries yet",
-    "noneDescription": "Add your first registry to start browsing skills and plugins.",
-    "warningTitle": "Trust before adding",
-    "warningBody": "Registry adapters are executable TypeScript — only install them from sources you trust.",
+    "noneDescription": "Add your first registry adapter or Claude marketplace to start browsing.",
+    "warningTitle": "Trust before adding adapters",
+    "warningBody": "Registry adapters are executable TypeScript — only install them from sources you trust. Claude marketplaces are JSON catalogs and do not run adapter code.",
     "table": {
       "name": "Registry",
       "type": "Type",
@@ -82,6 +83,7 @@
   "editDialog": {
     "title": "Edit registry \"{{slug}}\"",
     "description": "Repoint this slug at a different source. The new adapter is downloaded and validated before it replaces the existing one.",
+    "descriptionMarketplace": "Repoint this slug at a different Claude marketplace. The marketplace.json catalog is re-fetched before it replaces the existing one.",
     "slugImmutable": "The slug is the registry's identity and cannot be renamed. Remove and re-add to change it.",
     "noChanges": "No changes — Save closes the dialog.",
     "submit": "Save changes"
@@ -89,28 +91,40 @@
   "addDialog": {
     "title": "Add registry",
     "description": "Fetch an adapter from a Git repository or HTTPS URL. The file is downloaded and validated before it is enabled.",
+    "descriptionMarketplace": "Add a Claude Code marketplace by owner/repo. Capa fetches .claude-plugin/marketplace.json and lists its plugins.",
+    "marketplaceHint": "Claude marketplaces are JSON catalogs — no executable adapter code.",
     "fields": {
+      "mode": "What to add",
       "type": "Source type",
       "source": "Source",
       "slug": "Slug",
       "slugHint": "URL-safe identifier; auto-derived from the source if left blank."
     },
+    "modes": {
+      "adapter": "Registry adapter",
+      "claude-marketplace": "Claude marketplace"
+    },
     "typeOptions": {
       "github": "GitHub",
       "gitlab": "GitLab",
-      "url": "HTTPS URL"
+      "url": "HTTPS URL",
+      "claude-marketplace": "Claude marketplace"
     },
     "sourcePlaceholders": {
       "github": "owner/repo@adapter-name  or  owner/repo::path/to/adapter-name",
       "gitlab": "group/project@adapter-name  or  group/project::path/to/adapter-name",
-      "url": "https://example.com/path/to/adapter.ts"
+      "url": "https://example.com/path/to/adapter.ts",
+      "claude-marketplace": "owner/repo  or  owner/repo@ref"
     },
     "preview": {
       "button": "Preview",
       "loading": "Fetching adapter...",
       "title": "Adapter source",
+      "titleMarketplace": "Marketplace catalog",
       "emptyHint": "Press Preview to fetch the adapter file and inspect it before installing.",
-      "resolvedRef": "Resolved ref: {{ref}}"
+      "emptyHintMarketplace": "Press Preview to fetch marketplace.json and inspect the plugin catalog.",
+      "resolvedRef": "Resolved ref: {{ref}}",
+      "pluginCount": "{{count}} plugin(s)"
     },
     "trust": "I have reviewed the adapter source and trust this code.",
     "submit": "Add registry",
@@ -118,7 +132,8 @@
     "errors": {
       "missingType": "Source type is required.",
       "missingSource": "Source is required.",
-      "previewBeforeAdd": "Preview the adapter source and confirm trust before adding."
+      "previewBeforeAdd": "Preview the adapter source and confirm trust before adding.",
+      "previewBeforeAddMarketplace": "Preview the marketplace catalog before adding."
     }
   }
 }

@@ -1,8 +1,10 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Settings, Plus, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { CapabilitiesOptions, RequiredCommand } from '../../../types/api';
-import { usePatchOptions } from '../hooks';
+import { projectDisplayName } from '../../../lib/utils';
+import { useDeleteProject, usePatchOptions, useProject } from '../hooks';
 
 interface OptionsSectionProps {
   projectId: string;
@@ -13,12 +15,23 @@ const EXPOSURE_MODES = ['on-demand', 'expose-all', 'none'] as const;
 
 export function OptionsSection({ projectId, options }: OptionsSectionProps) {
   const { t } = useTranslation('projects');
+  const navigate = useNavigate();
+  const { data: project } = useProject(projectId);
   const patchMutation = usePatchOptions(projectId);
+  const deleteProject = useDeleteProject();
   const [cli, setCli] = useState('');
   const [cliDesc, setCliDesc] = useState('');
 
   const toolExposure = options?.toolExposure || 'on-demand';
   const requiresCommands: RequiredCommand[] = options?.requiresCommands || [];
+  const displayName = projectDisplayName(project?.path, projectId);
+
+  const handleDeleteProject = () => {
+    if (!confirm(t('actions.confirmDeleteProject', { name: displayName }))) return;
+    deleteProject.mutate(projectId, {
+      onSuccess: () => navigate('/'),
+    });
+  };
 
   return (
     <div className="mb-6 rounded-lg border border-border-primary bg-bg-secondary p-6">
@@ -149,6 +162,20 @@ export function OptionsSection({ projectId, options }: OptionsSectionProps) {
             </div>
           </div>
         )}
+
+        <div className="border-t border-border-secondary pt-5">
+          <h3 className="mb-1 text-xs font-medium text-error-text">{t('options.dangerZone')}</h3>
+          <p className="mb-3 text-xs text-text-tertiary">{t('options.dangerZoneDescription')}</p>
+          <button
+            type="button"
+            onClick={handleDeleteProject}
+            disabled={deleteProject.isPending}
+            className="inline-flex items-center gap-1.5 rounded-sm bg-error-btn px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-error-btn-hover cursor-pointer disabled:opacity-50"
+          >
+            <Trash2 size={14} />
+            {t('actions.deleteProject')}
+          </button>
+        </div>
       </div>
     </div>
   );

@@ -23,6 +23,15 @@ function detectType(source: string, explicit?: RegistrySourceType): RegistrySour
   return 'github';
 }
 
+/** Types accepted by `capa registry add --type`. */
+export const REGISTRY_SOURCE_TYPES: RegistrySourceType[] = [
+  'github',
+  'gitlab',
+  'url',
+  'claude-marketplace',
+];
+
+
 export async function registryListCommand(): Promise<void> {
   const settings = await loadSettings();
   const db = new CapaDatabase(getDatabasePath(settings));
@@ -129,7 +138,9 @@ export async function registryAddCommand(
           task.output =
             ctx.type === 'url'
               ? `downloading ${ctx.source}`
-              : `cloning ${ctx.source} from ${ctx.type}`;
+              : ctx.type === 'claude-marketplace'
+                ? `fetching marketplace ${ctx.source}`
+                : `cloning ${ctx.source} from ${ctx.type}`;
           const authFetch = createAuthenticatedFetch(ctx.db);
           const result = await installRegistry(
             { slug: ctx.slug, type: ctx.type, source: ctx.source },

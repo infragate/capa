@@ -126,7 +126,7 @@ export interface OAuthFlowStateRow {
   created_at: number;
 }
 
-export type RegistrySourceType = 'github' | 'gitlab' | 'url';
+export type RegistrySourceType = 'github' | 'gitlab' | 'url' | 'claude-marketplace';
 export type RegistryStatus = 'pending' | 'installed' | 'failed' | 'disabled';
 
 export interface RegistryRow {

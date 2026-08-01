@@ -17,6 +17,14 @@ import { getManagedRegistriesDir } from "../config";
 import { getGitProvider } from "../git-providers/registry";
 import { assertSafeRepoPath } from "../repo-file";
 import { parseRepoString } from "../repo-string";
+import {
+	createClaudeMarketplaceAdapter,
+	fetchClaudeMarketplace,
+	MARKETPLACE_JSON_FILENAME,
+	MARKETPLACE_META_FILENAME,
+	parseClaudeMarketplaceSource,
+	marketplaceNameToSlug,
+} from "./claude-marketplace";
 
 const ADAPTER_EXTENSIONS = [".ts", ".js", ".mjs"] as const;
 const ADAPTER_BASENAMES = ADAPTER_EXTENSIONS.map((ext) => `adapter${ext}`);
@@ -28,6 +36,19 @@ export function isValidSlug(slug: string): boolean {
 }
 
 export function deriveSlug(source: string, type: RegistrySourceType): string {
+	if (type === "claude-marketplace") {
+		try {
+			const parsed = parseClaudeMarketplaceSource(source);
+			if (parsed.kind === "json-url") {
+				const base = basename(new URL(parsed.locator).pathname);
+				const name = base.replace(/\.json$/i, "") || "marketplace";
+				return name === "marketplace" ? "marketplace" : name;
+			}
+			return basename(parsed.locator);
+		} catch {
+			return "marketplace";
+		}
+	}
 	if (type === "url") {
 		let u: URL;
 		try {
@@ -55,13 +76,15 @@ export interface RegistryInstallResult {
 	resolvedRef: string | null;
 	adapterPath: string;
 	manifest: RegistryManifest;
+	/** Preferred slug from marketplace.json `name` (claude-marketplace only). */
+	preferredSlug?: string;
 }
 
 /**
- * Fetches the adapter from the configured source, materializes it under
- * `<managed dir>/<slug>/adapter.{ts,js,mjs}`, and validates the file is a
- * well-formed RegistryAdapter by dynamic-importing it. Throws with a short,
- * actionable message on any failure and cleans up the partial managed dir.
+ * Fetches the adapter (or Claude marketplace catalog) from the configured
+ * source, materializes it under `<managed dir>/<slug>/`, and validates it.
+ * Throws with a short, actionable message on any failure and cleans up the
+ * partial managed dir.
  */
 export async function installRegistry(
 	input: RegistryInstallInput,
@@ -82,6 +105,10 @@ export async function installRegistry(
 			rmSync(targetDir, { recursive: true, force: true });
 		}
 		mkdirSync(targetDir, { recursive: true });
+
+		if (input.type === "claude-marketplace") {
+			return await installClaudeMarketplace(input, authFetch, targetDir, opts);
+		}
 
 		let adapterPath: string;
 		let resolvedRef: string | null = null;
@@ -116,16 +143,55 @@ export async function installRegistry(
 	}
 }
 
+async function installClaudeMarketplace(
+	input: RegistryInstallInput,
+	authFetch: AuthenticatedFetch,
+	targetDir: string,
+	opts: { noCache?: boolean },
+): Promise<RegistryInstallResult> {
+	const result = await fetchClaudeMarketplace(input.source, authFetch, opts);
+	const jsonPath = join(targetDir, MARKETPLACE_JSON_FILENAME);
+	const metaPath = join(targetDir, MARKETPLACE_META_FILENAME);
+	writeFileSync(jsonPath, JSON.stringify(result.catalog.raw, null, 2), "utf-8");
+	writeFileSync(metaPath, JSON.stringify(result.meta, null, 2), "utf-8");
+
+	const adapter = createClaudeMarketplaceAdapter({
+		slug: input.slug,
+		catalog: result.catalog,
+		origin: result.origin,
+	});
+
+	return {
+		resolvedRef: result.resolvedRef,
+		adapterPath: jsonPath,
+		manifest: adapter.manifest,
+		preferredSlug: result.preferredSlug,
+	};
+}
+
 /**
- * Returns the raw adapter source for preview purposes without persisting
- * anything to disk. Used by `GET /api/registries/preview` to populate the
- * "I trust this code" confirmation dialog in the UI.
+ * Returns the raw adapter source (or marketplace JSON) for preview purposes
+ * without persisting anything to disk.
  */
 export async function fetchAdapterSource(
 	input: Pick<RegistryInstallInput, "type" | "source">,
 	authFetch: AuthenticatedFetch,
 	opts: { noCache?: boolean } = {},
-): Promise<{ content: string; resolvedRef: string | null }> {
+): Promise<{
+	content: string;
+	resolvedRef: string | null;
+	preferredSlug?: string;
+	pluginCount?: number;
+}> {
+	if (input.type === "claude-marketplace") {
+		const result = await fetchClaudeMarketplace(input.source, authFetch, opts);
+		return {
+			content: JSON.stringify(result.catalog.raw, null, 2),
+			resolvedRef: result.resolvedRef,
+			preferredSlug: result.preferredSlug,
+			pluginCount: result.catalog.plugins.length,
+		};
+	}
 	if (input.type === "github" || input.type === "gitlab") {
 		const { adapterFile, resolvedSha } = await fetchAdapterFromRepo(
 			input.type,
@@ -145,7 +211,8 @@ export async function fetchAdapterSource(
 /**
  * Path of the materialized adapter file for a given slug, or null if no
  * adapter has been written yet. Iterates the known extensions in priority
- * order — first match wins.
+ * order — first match wins. Does not include Claude marketplace catalogs
+ * (see `getInstalledMarketplacePath`).
  */
 export function getInstalledAdapterPath(slug: string): string | null {
 	const dir = join(getManagedRegistriesDir(), slug);
@@ -162,6 +229,11 @@ export function removeInstalledAdapter(slug: string): void {
 		rmSync(dir, { recursive: true, force: true });
 	}
 }
+
+// Re-export for callers that need marketplace name → slug without importing
+// the whole marketplace module.
+export { marketplaceNameToSlug };
+
 
 async function fetchAdapterFromRepo(
 	platform: "github" | "gitlab",
