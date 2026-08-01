@@ -9,6 +9,14 @@ export interface ParsedPluginSource {
   idHint: string;
 }
 
+function assertValidPluginSource(result: ParsedPluginSource): ParsedPluginSource {
+  const validation = validatePluginDef({ type: result.type, def: result.def });
+  if ('error' in validation) {
+    throw new Error(validation.error);
+  }
+  return result;
+}
+
 export function buildPluginSourceFromRepoUrl(
   providerId: 'github' | 'gitlab',
   parsed: { owner: string; repo: string; ref?: string; path?: string }
@@ -24,11 +32,11 @@ export function buildPluginSourceFromRepoUrl(
   const idHint = parsed.path
     ? basename(parsed.path)
     : (providerId === 'gitlab' ? parsed.owner.split('/').pop()! : parsed.repo);
-  return {
+  return assertValidPluginSource({
     type: providerId,
     def,
     idHint,
-  };
+  });
 }
 
 /**
@@ -64,7 +72,7 @@ export function parsePluginSource(source: string): ParsedPluginSource {
     const def: PluginDefinition = { repo: `${repoPath}@${searchName}` };
     if (version) def.version = version;
     if (ref) def.ref = ref;
-    return { type: 'gitlab', def, idHint: searchName };
+    return assertValidPluginSource({ type: 'gitlab', def, idHint: searchName });
   }
 
   // GitLab prefix (exact / root): gitlab:group/sub/project[::subpath][:version][#sha]
@@ -79,11 +87,11 @@ export function parsePluginSource(source: string): ParsedPluginSource {
     if (version) def.version = version;
     if (ref) def.ref = ref;
     const repoSegments = repoPath.split('/');
-    return {
+    return assertValidPluginSource({
       type: 'gitlab',
       def,
       idHint: subpath ? basename(subpath) : repoSegments[repoSegments.length - 1],
-    };
+    });
   }
 
   // GitHub `@name` search: owner/repo@plugin-name[:version|#sha]
@@ -95,10 +103,7 @@ export function parsePluginSource(source: string): ParsedPluginSource {
     const def: PluginDefinition = { repo: `${repoPath}@${searchName}` };
     if (version) def.version = version;
     if (ref) def.ref = ref;
-    const result: ParsedPluginSource = { type: 'github', def, idHint: searchName };
-    const validation = validatePluginDef({ type: result.type, def: result.def });
-    if ('error' in validation) throw new Error(validation.error);
-    return result;
+    return assertValidPluginSource({ type: 'github', def, idHint: searchName });
   }
 
   // GitHub shorthand (exact / root): owner/repo[::subpath][:version][#sha]
@@ -113,17 +118,11 @@ export function parsePluginSource(source: string): ParsedPluginSource {
     if (version) def.version = version;
     if (ref) def.ref = ref;
 
-    const result: ParsedPluginSource = {
+    return assertValidPluginSource({
       type: 'github',
       def,
       idHint: subpath ? basename(subpath) : repoPath.split('/')[1],
-    };
-
-    const validation = validatePluginDef({ type: result.type, def: result.def });
-    if ('error' in validation) {
-      throw new Error(validation.error);
-    }
-    return result;
+    });
   }
 
   throw new Error(
