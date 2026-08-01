@@ -318,7 +318,9 @@
     "skills": "Skills",
     "tools": "Tools",
     "instructions": "Instructions",
-    "noDescription": "No description"
+    "noDescription": "No description",
+    "viewTitle": "Sub-agent",
+    "noInstructions": "No instructions"
   },
   "rules": {
     "title": "Rules",

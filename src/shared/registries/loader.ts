@@ -230,7 +230,9 @@ export class RegistryLoader {
 		}
 
 		try {
-			const adapter = loadClaudeMarketplaceAdapter(record.slug);
+			const adapter = loadClaudeMarketplaceAdapter(record.slug, {
+				db: this.db,
+			});
 			if (!isValidAdapter(adapter)) {
 				const msg = `Claude marketplace for slug "${record.slug}" produced an invalid RegistryAdapter.`;
 				registryLogger.warn(msg);

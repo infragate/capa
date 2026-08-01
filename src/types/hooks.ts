@@ -7,6 +7,8 @@
  * (e.g. `.claude/settings.json`) without disturbing user-authored entries.
  */
 
+import type { SourcePlugin } from './plugin';
+
 /**
  * Repo locator for `source: { type: 'github' | 'gitlab' }`.
  *
@@ -132,4 +134,7 @@ export interface Hook {
 
   /** Optional alternate body source (overrides `command`/`prompt`). */
   source?: HookSource;
+
+  /** Set when this hook was unpacked from a plugin. */
+  sourcePlugin?: SourcePlugin;
 }

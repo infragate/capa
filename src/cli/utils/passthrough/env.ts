@@ -1,12 +1,9 @@
-import { join, resolve } from 'path';
+import { resolve } from 'path';
 import { existsSync } from 'fs';
 import { resolveProviders } from '../../../shared/providers/resolve';
 import { loadSettings, getDatabasePath } from '../../../shared/config';
 import { CapaDatabase } from '../../../db/database';
 import type { Capabilities } from '../../../types/capabilities';
-
-/** Project-local unpack root for plugins wired to providers without a native installer. */
-export const PASSTHROUGH_PLUGINS_DIR = join('.capa', 'plugins');
 
 export function expandEnvInRecord(
   record: Record<string, string> | undefined,

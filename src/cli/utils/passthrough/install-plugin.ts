@@ -6,7 +6,10 @@ import { resolvePlugins } from '../../commands/plugin-install';
 import { getProvider } from '../../../shared/providers';
 import { upsertNativeMcpServer } from './native-mcp';
 import { runNativePluginInstall, type NativePluginInstall } from './native-plugin-install';
-import { expandEnvInRecord, emptyCapabilities, PASSTHROUGH_PLUGINS_DIR } from './env';
+import { expandEnvInRecord, emptyCapabilities } from './env';
+import { installRules } from '../rules-installer';
+import { installHooks } from '../hooks-installer';
+import { installSubAgentInstructions } from '../agents-file';
 import type { CapaDatabase } from '../../../db/database';
 import type { Plugin } from '../../../types/capabilities';
 
@@ -59,7 +62,7 @@ export async function passthroughInstallPlugin(opts: {
   caps.plugins = [plugin];
   const authFetch = createAuthenticatedFetch(db);
   const lockBuilder = new LockfileBuilder(null);
-  const pluginsBaseDir = join(projectPath, PASSTHROUGH_PLUGINS_DIR);
+  const capabilitiesFilePath = join(projectPath, 'capabilities.yaml');
   const result = await resolvePlugins(
     caps,
     projectPath,
@@ -67,19 +70,21 @@ export async function passthroughInstallPlugin(opts: {
     authFetch,
     db,
     getRepoSnapshot,
-    join(projectPath, 'capabilities.yaml'),
+    capabilitiesFilePath,
     lockBuilder,
-    { noCache, trackManaged: false, pluginsBaseDir },
+    { noCache, trackManaged: false },
   );
   warnings.push(...result.warnings);
-  for (const skill of result.mergedCapabilities.skills ?? []) {
+  const merged = result.mergedCapabilities;
+
+  for (const skill of merged.skills ?? []) {
     if (skill.type !== 'plugin' && skill.type !== 'installed') continue;
     for (const pid of unpackProviders) {
       const prov = getProvider(pid);
       if (prov) written.push(join(projectPath, prov.skillsDir, skill.id));
     }
   }
-  for (const server of result.mergedCapabilities.servers ?? []) {
+  for (const server of merged.servers ?? []) {
     if (server.type !== 'mcp') continue;
     const def = {
       ...server.def,
@@ -95,5 +100,41 @@ export async function passthroughInstallPlugin(opts: {
       );
     }
   }
+
+  const pluginRules = (merged.rules ?? []).filter((r) => r.sourcePlugin);
+  if (pluginRules.length > 0) {
+    const bodies = new Map<string, string>();
+    for (const rule of pluginRules) {
+      if (rule.content) bodies.set(rule.id, rule.content);
+    }
+    installRules(projectPath, pluginRules, unpackProviders, bodies);
+    for (const rule of pluginRules) written.push(`rule:${rule.id}`);
+  }
+
+  const pluginHooks = (merged.hooks ?? []).filter((h) => h.sourcePlugin);
+  if (pluginHooks.length > 0) {
+    const hookResult = await installHooks({
+      projectPath,
+      projectId,
+      capabilitiesFilePath,
+      hooks: pluginHooks,
+      providers: unpackProviders,
+      db,
+      authFetch,
+      getRepoSnapshot,
+      noCache,
+      trackManaged: false,
+      nameTagPrefix: '',
+    });
+    warnings.push(...hookResult.warnings);
+    for (const h of pluginHooks) written.push(`hook:${h.id}`);
+  }
+
+  const pluginSubagents = (merged.subagents ?? []).filter((a) => a.sourcePlugin);
+  for (const agent of pluginSubagents) {
+    installSubAgentInstructions(projectPath, agent, merged, unpackProviders);
+    written.push(`subagent:${agent.id}`);
+  }
+
   console.log(`✓ Passthrough: installed plugin "${plugin.id}"`);
 }

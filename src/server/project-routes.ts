@@ -235,6 +235,7 @@ export async function handleGetProject(
 							skills: sa.skills,
 							tools: sa.tools,
 							instructions: sa.instructions || null,
+							sourcePlugin: sa.sourcePlugin || null,
 						})),
 						rules: (capabilities.rules || []).map((r) => ({
 							id: r.id,
@@ -247,6 +248,7 @@ export async function handleGetProject(
 							url: r.url || null,
 							path: r.path || null,
 							def: r.def || null,
+							sourcePlugin: r.sourcePlugin || null,
 						})),
 						hooks: (capabilities.hooks || []).map((h) => ({
 							id: h.id,
@@ -267,6 +269,7 @@ export async function handleGetProject(
 									? (h.source as { content: string }).content
 									: null,
 							installed: installedHooksByHookId.get(h.id) ?? [],
+							sourcePlugin: h.sourcePlugin || null,
 						})),
 						plugins: (capabilities.plugins || []).map((p) => ({
 							id: p.id || null,

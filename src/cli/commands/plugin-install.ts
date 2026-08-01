@@ -1,8 +1,9 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync, cpSync } from 'fs';
-import { tmpdir } from 'os';
 import { join, resolve } from 'path';
-import type { Capabilities, Skill, MCPServer, SourcePlugin, ResolvedPluginInfo, OAuth2Config } from '../../types/capabilities';
+import type { Capabilities, Skill, MCPServer, SourcePlugin, ResolvedPluginInfo, OAuth2Config, SubAgent } from '../../types/capabilities';
 import type { UnifiedPluginManifest } from '../../types/plugin';
+import type { Rule } from '../../types/rules';
+import type { Hook } from '../../types/hooks';
 import type { CapaDatabase } from '../../db/database';
 import type { AuthenticatedFetch } from '../../shared/authenticated-fetch';
 import { validatePluginDef, getPluginInstallId } from '../../shared/plugin-source';
@@ -11,9 +12,14 @@ import {
   discoverPluginEntries,
   findPluginInDirectory,
   resolvePluginServerDef,
+  resolvePluginRootInString,
+  materializeCommandAsSkill,
 } from '../../shared/plugin-manifest';
+import { getProjectPluginsDir } from '../../shared/plugin-paths';
 import { getProvider } from '../../shared/providers';
 import { getGitProvider } from '../../shared/git-providers/registry';
+import { toCanonicalOrScopedHookOn } from '../utils/hooks/provider-map';
+import { coalescePluginHook } from '../utils/hooks/plugin-hook-merge';
 import {
   loadBlockedPhrases,
   checkBlockedPhrases,
@@ -29,9 +35,9 @@ import type { LockfileBuilder } from '../../shared/lockfile';
 import type { LockPluginEntry } from '../../types/lockfile';
 import { copySkillTree } from '../../shared/skill-copy';
 
-/** Base under system temp for extracted plugin content (MCP cwd). Per-project so projects don't clash. */
-function getPluginsTempBase(projectId: string): string {
-  return join(tmpdir(), 'capa-plugins', projectId);
+/** Map plugin provider id to capa provider id for hook scoping. */
+function pluginProviderToCapaId(provider: 'claude' | 'cursor'): string {
+  return provider === 'claude' ? 'claude-code' : 'cursor';
 }
 
 function copyPluginToStable(tempDir: string, pluginStablePath: string): void {
@@ -137,6 +143,11 @@ export async function resolvePlugins(
   // Preserve all explicitly defined servers from the capabilities file; never drop them when merging plugin servers
   const mergedServers: MCPServer[] = Array.isArray(capabilities.servers) ? [...capabilities.servers] : [];
   const mergedTools = Array.isArray(capabilities.tools) ? [...capabilities.tools] : [];
+  const mergedSubagents: SubAgent[] = Array.isArray(capabilities.subagents)
+    ? [...capabilities.subagents]
+    : [];
+  const mergedHooks: Hook[] = Array.isArray(capabilities.hooks) ? [...capabilities.hooks] : [];
+  const mergedRules: Rule[] = Array.isArray(capabilities.rules) ? [...capabilities.rules] : [];
   const resolvedPlugins: ResolvedPluginInfo[] = [];
   const tempDirs: string[] = [];
   const providers = capabilities.providers;
@@ -144,11 +155,15 @@ export async function resolvePlugins(
     throw new Error('No providers configured. Resolve providers before calling resolvePlugins.');
   }
 
-  const pluginsBase = options.pluginsBaseDir ?? getPluginsTempBase(projectId);
+  // Same unpack root for install, wrap, and passthrough: ~/.capa/plugins/<projectId>/
+  const pluginsBase = options.pluginsBaseDir ?? getProjectPluginsDir(projectId);
   const currentPluginIds = new Set<string>();
   const warnings: string[] = [];
 
   const registeredServerIds = new Set(mergedServers.map(s => s.id));
+  const registeredSubagentIds = new Set(mergedSubagents.map((a) => a.id));
+  const registeredHookIds = new Set(mergedHooks.map((h) => h.id));
+  const registeredRuleIds = new Set(mergedRules.map((r) => r.id));
 
   // Map of user-declared `type: plugin` skills by id. We attach `sourcePlugin`
   // to these when a matching plugin manifest skill is found, and avoid auto-adding
@@ -159,6 +174,59 @@ export async function resolvePlugins(
       userPluginSkills.set(skill.id, skill);
     }
   }
+
+  function installSkillTree(entryId: string, srcSkillDir: string, pluginName: string): void {
+    if (!existsSync(join(srcSkillDir, 'SKILL.md'))) return;
+
+    for (const client of providers) {
+      const providerEntry = getProvider(client);
+      if (!providerEntry) continue;
+      const skillsBaseDir = join(projectPath, providerEntry.skillsDir);
+      const destSkillDir = join(skillsBaseDir, entryId);
+      try {
+        if (existsSync(destSkillDir)) {
+          if (!trackManaged) {
+            warnings.push(
+              `Skill "${entryId}" for ${client}: directory already exists at ${destSkillDir}; ` +
+                `passthrough will not overwrite it. Delete it manually and retry.`,
+            );
+            continue;
+          }
+          rmSync(destSkillDir, { recursive: true, force: true });
+        }
+        mkdirSync(resolve(destSkillDir, '..'), { recursive: true });
+        if (hasSecurity) {
+          copySkillDirWithSecurity(
+            srcSkillDir,
+            destSkillDir,
+            entryId,
+            blockedPhrases,
+            allowedCharacters,
+            pluginName,
+          );
+        } else {
+          try {
+            cpSync(srcSkillDir, destSkillDir, { recursive: true });
+          } catch {
+            copySkillTree({ src: srcSkillDir, dst: destSkillDir });
+          }
+        }
+        if (trackManaged) {
+          db.addManagedFile(projectId, destSkillDir);
+        }
+      } catch (err: any) {
+        if (err instanceof BlockedPhraseError) {
+          throw err;
+        }
+        warnings.push(`Failed to install skill "${entryId}" for ${client}: ${err.message}`);
+      }
+    }
+  }
+
+  // Security flags are per-plugin (options are global); set inside the loop.
+  let hasSecurity = false;
+  let blockedPhrases: string[] = [];
+  let allowedCharacters: string | null = null;
 
   for (const pluginRef of plugins) {
     if (!getGitProvider(pluginRef.type)) continue;
@@ -247,7 +315,7 @@ export async function resolvePlugins(
     const pluginInstallId = getPluginInstallId(pluginRef.id ?? manifest.name);
     currentPluginIds.add(pluginInstallId);
 
-    const pluginStablePath = join(pluginsBase, pluginInstallId);
+    const pluginStablePath = resolve(join(pluginsBase, pluginInstallId));
     try {
       if (existsSync(pluginStablePath)) rmSync(pluginStablePath, { recursive: true, force: true });
       copyPluginToStable(manifestRoot, pluginStablePath);
@@ -285,6 +353,9 @@ export async function resolvePlugins(
     };
     const pluginSkillIds: string[] = [];
     const pluginServerIds: string[] = [];
+    const pluginSubagentIds: string[] = [];
+    const pluginHookIds: string[] = [];
+    const pluginRuleIds: string[] = [];
     const resolvedPluginInfo: ResolvedPluginInfo = {
       id: pluginInstallId,
       name: manifest.name,
@@ -293,81 +364,60 @@ export async function resolvePlugins(
       repository,
       skills: pluginSkillIds,
       serverIds: pluginServerIds,
+      subagentIds: pluginSubagentIds,
+      hookIds: pluginHookIds,
+      ruleIds: pluginRuleIds,
     };
     resolvedPlugins.push(resolvedPluginInfo);
 
     const security = capabilities.options?.security;
     const blockPhrasesEnabled = isBlockedPhrasesEnabled(security);
     const sanitizeEnabled = isCharacterSanitizationEnabled(security);
-    const hasSecurity = blockPhrasesEnabled || sanitizeEnabled;
-    const blockedPhrases = blockPhrasesEnabled ? loadBlockedPhrases(security, capabilitiesFilePath) : [];
-    const allowedCharacters = sanitizeEnabled ? getAllowedCharacters(security) : null;
+    hasSecurity = blockPhrasesEnabled || sanitizeEnabled;
+    blockedPhrases = blockPhrasesEnabled ? loadBlockedPhrases(security, capabilitiesFilePath) : [];
+    allowedCharacters = sanitizeEnabled ? getAllowedCharacters(security) : null;
 
-    for (const entry of manifest.skillEntries) {
+    if (manifest.skippedArtifacts?.length) {
+      warnings.push(
+        `Plugin "${manifest.name}" contains unsupported artifacts that were skipped: ${manifest.skippedArtifacts.join(', ')}`,
+      );
+    }
+
+    // Materialize legacy commands/ into skill dirs on the stable plugin copy
+    const commandSkillEntries: { id: string; relativePath: string }[] = [];
+    for (const cmd of manifest.commandEntries ?? []) {
+      const destRel = join('.capa-commands', cmd.id);
+      const destDir = join(pluginStablePath, destRel);
+      if (materializeCommandAsSkill(pluginStablePath, cmd, destDir)) {
+        commandSkillEntries.push({ id: cmd.id, relativePath: destRel });
+      }
+    }
+
+    const allSkillEntries = [
+      ...(manifest.skillEntries ?? []),
+      ...commandSkillEntries,
+    ];
+
+    for (const entry of allSkillEntries) {
       const srcSkillDir = join(pluginStablePath, entry.relativePath);
       if (!existsSync(join(srcSkillDir, 'SKILL.md'))) continue;
 
       pluginSkillIds.push(entry.id);
+      installSkillTree(entry.id, srcSkillDir, manifest.name);
 
-      for (const client of providers) {
-        const providerEntry = getProvider(client);
-        if (!providerEntry) continue;
-        const skillsBaseDir = join(projectPath, providerEntry.skillsDir);
-        const destSkillDir = join(skillsBaseDir, entry.id);
-        try {
-          if (existsSync(destSkillDir)) {
-            if (!trackManaged) {
-              warnings.push(
-                `Skill "${entry.id}" for ${client}: directory already exists at ${destSkillDir}; ` +
-                  `passthrough will not overwrite it. Delete it manually and retry.`,
-              );
-              continue;
-            }
-            rmSync(destSkillDir, { recursive: true, force: true });
-          }
-          mkdirSync(resolve(destSkillDir, '..'), { recursive: true });
-          if (hasSecurity) {
-            copySkillDirWithSecurity(
-              srcSkillDir,
-              destSkillDir,
-              entry.id,
-              blockedPhrases,
-              allowedCharacters,
-              manifest.name
-            );
-          } else {
-            try {
-              cpSync(srcSkillDir, destSkillDir, { recursive: true });
-            } catch {
-              copySkillTree({ src: srcSkillDir, dst: destSkillDir });
-            }
-          }
-          if (trackManaged) {
-            db.addManagedFile(projectId, destSkillDir);
-          }
-        } catch (err: any) {
-          if (err instanceof BlockedPhraseError) {
-            throw err;
-          }
-          // Non-fatal: the skill may still install for other clients. Surfaced
-          // post-tree via the `warnings` array so the user sees it.
-          warnings.push(`Failed to install skill "${entry.id}" for ${client}: ${err.message}`);
-        }
-      }
-
-      // If the user has declared a `type: plugin` skill with this id, attach the
-      // sourcePlugin attribution to their entry and skip the auto-merge.
       const userEntry = userPluginSkills.get(entry.id);
       if (userEntry) {
         userEntry.sourcePlugin = sourcePlugin;
         continue;
       }
 
-      // Auto-merge: the plugin contributed this skill and the user didn't
-      // declare it explicitly. We still surface it as `type: plugin` so the
-      // UI and any downstream tooling can tell where it came from. No
-      // `requires` are inferred — declare a `type: plugin` entry in
-      // capabilities.yaml to bind tools to the skill.
+      if (mergedSkills.some((s) => s.id === entry.id)) {
+        warnings.push(
+          `Plugin skill id "${entry.id}" collides with an existing skill; skipping auto-merge.`,
+        );
+        continue;
+      }
+
       mergedSkills.push({
         id: entry.id,
         type: 'plugin',
@@ -421,6 +471,113 @@ export async function resolvePlugins(
       }
     }
 
+    const capaProviderId = pluginProviderToCapaId(manifest.provider);
+    const pluginSkillIdSet = new Set(pluginSkillIds);
+
+    for (const agent of manifest.agentEntries ?? []) {
+      if (registeredSubagentIds.has(agent.id)) {
+        warnings.push(
+          `Plugin subagent id "${agent.id}" collides with an existing subagent; skipping.`,
+        );
+        continue;
+      }
+      if (agent.droppedFrontmatterKeys.length > 0) {
+        warnings.push(
+          `Plugin agent "${agent.id}": frontmatter fields not mapped into capa subagents: ${agent.droppedFrontmatterKeys.join(', ')}`,
+        );
+      }
+      registeredSubagentIds.add(agent.id);
+      pluginSubagentIds.push(agent.id);
+      const skillIds = agent.skillIds.filter((id) => pluginSkillIdSet.has(id));
+      mergedSubagents.push({
+        id: agent.id,
+        description: agent.description,
+        skills: skillIds,
+        tools: [],
+        instructions: agent.instructions || undefined,
+        sourcePlugin,
+      });
+    }
+
+    let hookIndex = 0;
+    for (const hookEntry of manifest.hookEntries ?? []) {
+      const targetProvider = hookEntry.targetProvider ?? capaProviderId;
+      const indexHint = hookEntry.idHint || hookIndex;
+      hookIndex++;
+
+      // Prefer capa canonical events (SessionStart → sessionStart) so install
+      // fans out via eventMap. Keep provider-scoped form only when unmapped.
+      const on = toCanonicalOrScopedHookOn(
+        targetProvider,
+        hookEntry.event,
+        hookEntry.matcher,
+      );
+      const command = hookEntry.command
+        ? resolvePluginRootInString(hookEntry.command, pluginStablePath)
+        : undefined;
+      const prompt = hookEntry.prompt
+        ? resolvePluginRootInString(hookEntry.prompt, pluginStablePath)
+        : undefined;
+
+      // Sibling Claude/Cursor manifests often declare the same hook twice.
+      // When rewritten bodies match, coalesce into one cross-provider entry.
+      const candidate: Hook = {
+        id: `plugin-${pluginInstallId}-${indexHint}`,
+        on,
+        type: hookEntry.type,
+        command,
+        prompt,
+        matcher: hookEntry.matcher,
+        timeout: hookEntry.timeout,
+        failClosed: hookEntry.failClosed,
+        sequential: hookEntry.sequential,
+        providers: [targetProvider],
+        sourcePlugin,
+      };
+      if (coalescePluginHook(mergedHooks, pluginInstallId, candidate, targetProvider)) {
+        continue;
+      }
+
+      let hookId = candidate.id;
+      if (registeredHookIds.has(hookId)) {
+        hookId = `plugin-${pluginInstallId}-${targetProvider}-${indexHint}`;
+        if (registeredHookIds.has(hookId)) {
+          warnings.push(`Plugin hook id "${hookId}" collides with an existing hook; skipping.`);
+          continue;
+        }
+        candidate.id = hookId;
+      }
+      if (hookEntry.matcher && /mcp__plugin_/i.test(hookEntry.matcher)) {
+        warnings.push(
+          `Plugin hook "${hookId}": matcher references plugin-scoped MCP tools (${hookEntry.matcher}); ` +
+            `it may not fire after capa proxies MCP under its own server id.`,
+        );
+      }
+      registeredHookIds.add(hookId);
+      pluginHookIds.push(hookId);
+      mergedHooks.push(candidate);
+    }
+
+    for (const ruleEntry of manifest.ruleEntries ?? []) {
+      if (registeredRuleIds.has(ruleEntry.id)) {
+        warnings.push(
+          `Plugin rule id "${ruleEntry.id}" collides with an existing rule; skipping.`,
+        );
+        continue;
+      }
+      registeredRuleIds.add(ruleEntry.id);
+      pluginRuleIds.push(ruleEntry.id);
+      mergedRules.push({
+        id: ruleEntry.id,
+        type: 'inline',
+        content: ruleEntry.content,
+        description: ruleEntry.description,
+        appliesTo: ruleEntry.appliesTo,
+        alwaysApply: ruleEntry.alwaysApply,
+        sourcePlugin,
+      });
+    }
+
     if (pluginRef.servers) {
       const manifestKeys = Object.keys(manifest.mcpServers);
       for (const configKey of Object.keys(pluginRef.servers)) {
@@ -462,6 +619,9 @@ export async function resolvePlugins(
     skills: mergedSkills,
     servers: mergedServers,
     tools: mergedTools,
+    subagents: mergedSubagents.length > 0 ? mergedSubagents : capabilities.subagents,
+    hooks: mergedHooks.length > 0 ? mergedHooks : capabilities.hooks,
+    rules: mergedRules.length > 0 ? mergedRules : capabilities.rules,
     resolvedPlugins,
   };
 

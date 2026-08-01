@@ -243,6 +243,8 @@ export interface SubAgent {
    * Use this for role-specific instructions, scope constraints, or rules.
    */
   instructions?: string;
+  /** Set when this sub-agent was unpacked from a plugin. */
+  sourcePlugin?: SourcePlugin;
 }
 
 export interface Capabilities {

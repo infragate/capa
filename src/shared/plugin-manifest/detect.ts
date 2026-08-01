@@ -11,10 +11,15 @@ import {
 	getProvider,
 	getProviderByPluginProviderId,
 } from "../providers";
+import { parseAgentEntries } from "./agents-parser";
 import { parseClaudeManifest } from "./claude-parser";
+import { discoverDefaultCommands } from "./commands-parser";
 import { parseCursorManifest } from "./cursor-parser";
+import { discoverDefaultHooks } from "./hooks-parser";
 import { normalizeMcpServerEntry } from "./mcp-parser";
-import { getSkillEntriesFromPath, isPlainObject } from "./types-helpers";
+import { discoverDefaultRules } from "./rules-parser";
+import { detectSkippedArtifacts } from "./skipped-artifacts";
+import { getSkillEntriesFromPath } from "./types-helpers";
 
 /** Map capabilities provider names to plugin provider (manifest) names */
 function toPluginProvider(provider: string): PluginProvider | null {
@@ -104,6 +109,11 @@ function getManifestSearchOrder(
 /**
  * Detect and parse the first available plugin manifest in the repo.
  * preferredProviders: e.g. capabilities.providers (['cursor', 'claude-code']).
+ *
+ * Dual-manifest plugins (both `.claude-plugin` and `.cursor-plugin`) contribute
+ * hooks from the sibling manifest as well — e.g. Cursor's
+ * `hooks: "./hooks/hooks-cursor.json"` — so preferring Claude for MCP/OAuth
+ * does not drop Cursor-declared hooks.
  */
 export function detectAndParseManifest(
 	repoRoot: string,
@@ -121,24 +131,31 @@ export function detectAndParseManifest(
 			const reg =
 				getProvider(provider) ?? getProviderByPluginProviderId(provider);
 			const manifestDir = posix.dirname(path.split(/[/\\]/).join("/")) || ".";
+			let manifest: UnifiedPluginManifest | null = null;
 			if (reg?.parsePluginManifest) {
-				return reg.parsePluginManifest(
+				manifest = reg.parsePluginManifest(
 					repoRoot,
 					data,
 					manifestDir,
 				) as UnifiedPluginManifest;
+			} else if (provider === "cursor") {
+				manifest = parseCursorManifest(repoRoot, data, manifestDir);
+			} else if (provider === "claude") {
+				manifest = parseClaudeManifest(repoRoot, data, manifestDir);
 			}
-			if (provider === "cursor")
-				return parseCursorManifest(repoRoot, data, manifestDir);
-			if (provider === "claude")
-				return parseClaudeManifest(repoRoot, data, manifestDir);
+			if (manifest) {
+				return mergeSiblingProviderHooks(repoRoot, manifest);
+			}
 		} catch {
 			// skip invalid manifest
 		}
 	}
 
-	// Fallback: no manifest — discover skills/ and .mcp.json as claude-style
+	// Fallback: no manifest — discover skills/, commands/, agents/, hooks/, rules/, .mcp.json
 	const skillEntries = getSkillEntriesFromPath(repoRoot, "skills");
+	if (skillEntries.length === 0 && existsSync(join(repoRoot, "SKILL.md"))) {
+		skillEntries.push({ id: "skill", relativePath: "." });
+	}
 	const defaultMcpRel =
 		getProvider("claude-code")?.mcp?.defaultMcpFallbackPath ??
 		getProviderByPluginProviderId("claude")?.mcp?.defaultMcpFallbackPath ??
@@ -161,16 +178,106 @@ export function detectAndParseManifest(
 		}
 	}
 
-	if (skillEntries.length > 0 || Object.keys(mcpServers).length > 0) {
+	const commandEntries = discoverDefaultCommands(repoRoot);
+	const knownSkillIds = new Set([
+		...skillEntries.map((s) => s.id),
+		...commandEntries.map((c) => c.id),
+	]);
+	const agentEntries = parseAgentEntries(repoRoot, {}, knownSkillIds);
+	const hookEntries = discoverDefaultHooks(repoRoot);
+	const ruleEntries = discoverDefaultRules(repoRoot);
+	const skippedArtifacts = detectSkippedArtifacts(repoRoot);
+
+	if (
+		skillEntries.length > 0 ||
+		commandEntries.length > 0 ||
+		agentEntries.length > 0 ||
+		hookEntries.length > 0 ||
+		ruleEntries.length > 0 ||
+		Object.keys(mcpServers).length > 0
+	) {
 		return {
 			name: "discovered",
 			provider: "claude",
 			skillEntries,
+			commandEntries,
+			agentEntries,
+			hookEntries,
+			ruleEntries,
 			mcpServers,
+			skippedArtifacts:
+				skippedArtifacts.length > 0 ? skippedArtifacts : undefined,
 		};
 	}
 
 	return null;
+}
+
+/**
+ * When the winning manifest is Claude, also absorb hooks declared by a
+ * sibling `.cursor-plugin/plugin.json` (and vice versa). Dual-shipped plugins
+ * like Superpowers keep provider-specific hook files behind each manifest's
+ * `hooks` field.
+ */
+function mergeSiblingProviderHooks(
+	repoRoot: string,
+	primary: UnifiedPluginManifest,
+): UnifiedPluginManifest {
+	const siblings: {
+		provider: "claude" | "cursor";
+		path: string;
+		dir: string;
+		parse: typeof parseClaudeManifest;
+		target: "claude-code" | "cursor";
+	}[] = [];
+
+	if (primary.provider === "claude") {
+		siblings.push({
+			provider: "cursor",
+			path: join(repoRoot, ".cursor-plugin", "plugin.json"),
+			dir: ".cursor-plugin",
+			parse: parseCursorManifest,
+			target: "cursor",
+		});
+	} else if (primary.provider === "cursor") {
+		siblings.push({
+			provider: "claude",
+			path: join(repoRoot, ".claude-plugin", "plugin.json"),
+			dir: ".claude-plugin",
+			parse: parseClaudeManifest,
+			target: "claude-code",
+		});
+	}
+
+	let hookEntries = [...(primary.hookEntries ?? [])];
+	for (const sib of siblings) {
+		if (!existsSync(sib.path)) continue;
+		try {
+			const data = JSON.parse(readFileSync(sib.path, "utf-8"));
+			const sibling = sib.parse(repoRoot, data, sib.dir);
+			for (const h of sibling.hookEntries ?? []) {
+				const tagged = {
+					...h,
+					targetProvider: h.targetProvider ?? sib.target,
+				};
+				const dup = hookEntries.some(
+					(e) =>
+						e.event === tagged.event &&
+						e.command === tagged.command &&
+						e.prompt === tagged.prompt &&
+						(e.targetProvider ?? sib.target) === tagged.targetProvider,
+				);
+				if (!dup) hookEntries.push(tagged);
+			}
+		} catch {
+			// sibling manifest unreadable — keep primary only
+		}
+	}
+
+	if (hookEntries.length === (primary.hookEntries ?? []).length) {
+		return primary;
+	}
+	return { ...primary, hookEntries };
 }
 
 /**

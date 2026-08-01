@@ -1,13 +1,17 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
-import { Trash2, X, Loader2 } from 'lucide-react';
+import { Trash2, X, Loader2, Lock } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { Skill, SubAgent, Tool } from '../../../types/api';
 import { matchesSearch } from '../../../lib/utils';
 import { capaIdErrorMessage, sanitizeCapaIdInput } from '../../../lib/ids';
 import { refMatchesTool, skillRequiresRef } from '../../../lib/toolRefs';
 import { ReorderableList } from '../../../components/common/ReorderableList';
+import { SourceBadge } from '../../../components/common/ServerBadge';
+import { sourceTypeBadgeClasses } from './sourceTypeColors';
+import { renderMarkdown } from './registry-browse/markdown';
 import { useAppendCapability, useDeleteCapability, useReorderCapability, useUpdateCapability } from '../hooks';
+import { authoredReorderKeys, isPluginSourced } from '../lib/reorderKeys';
 
 interface SubagentsListProps {
   subagents: SubAgent[];
@@ -33,6 +37,7 @@ export function SubagentsList({
   const reorderMutation = useReorderCapability(projectId);
   const updateMutation = useUpdateCapability(projectId);
   const [editing, setEditing] = useState<SubAgent | null>(null);
+  const [viewing, setViewing] = useState<SubAgent | null>(null);
   const searching = !!search.trim();
   const visible = subagents.filter((s) =>
     matchesSearch([s.id, s.description, s.instructions, ...s.skills, ...s.tools], search),
@@ -48,19 +53,35 @@ export function SubagentsList({
         <ReorderableList
           items={visible}
           getId={(a) => a.id}
+          isLocked={(a) => isPluginSourced(a)}
           disabled={searching}
           handleLabel={t('actions.dragToReorder')}
           className="space-y-2"
-          onReorder={(ids) => reorderMutation.mutate({ section: 'subagents', ids })}
-          renderItem={(agent, { handle }) => (
-            <div className="flex items-start gap-1 rounded-sm border border-border-tertiary bg-bg-tertiary p-3 pl-1">
+          onReorder={(ids) =>
+            reorderMutation.mutate({
+              section: 'subagents',
+              ids: authoredReorderKeys(subagents, ids, (a) => a.id),
+            })
+          }
+          renderItem={(agent, { handle, locked }) => (
+            <div className="flex w-full items-stretch gap-1 rounded-sm border border-border-tertiary bg-bg-tertiary pl-1">
               {handle}
               <button
                 type="button"
-                className="min-w-0 flex-1 text-left cursor-pointer"
-                onClick={() => setEditing(agent)}
+                className="min-w-0 flex-1 p-3 text-left cursor-pointer ui-row-hover hover:bg-hover-bg"
+                onClick={() => {
+                  if (locked) setViewing(agent);
+                  else setEditing(agent);
+                }}
               >
-                <div className="font-mono text-[13px] font-medium text-text-primary">{agent.id}</div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-mono text-[13px] font-medium text-text-primary">{agent.id}</span>
+                  {locked && (
+                    <span className={`rounded-sm px-1.5 py-0.5 text-[10px] uppercase ${sourceTypeBadgeClasses('plugin')}`}>
+                      plugin
+                    </span>
+                  )}
+                </div>
                 {agent.description && (
                   <p className="mt-1 text-xs text-text-secondary">{agent.description}</p>
                 )}
@@ -76,28 +97,42 @@ export function SubagentsList({
                     </span>
                   ))}
                 </div>
+                {agent.sourcePlugin?.name && (
+                  <div className="mt-2 flex items-center gap-1.5 text-[11px] text-text-tertiary">
+                    <span>from</span>
+                    <SourceBadge name={agent.sourcePlugin.name} kind="plugin" />
+                  </div>
+                )}
               </button>
-              <button
-                type="button"
-                title={t('actions.delete')}
-                disabled={deleteMutation.isPending}
-                onClick={() => {
-                  if (confirm(t('actions.confirmDeleteSubagent', { id: agent.id }))) {
-                    deleteMutation.mutate({ section: 'subagents', entryId: agent.id });
-                  }
-                }}
-                className="rounded-sm p-2 text-text-tertiary hover:bg-error-bg hover:text-error-text cursor-pointer"
-              >
-                <Trash2 size={14} />
-              </button>
+              <div className="flex items-center pr-2">
+                {locked ? (
+                  <span title={t('actions.pluginLocked')} className="p-2 text-text-tertiary">
+                    <Lock size={14} />
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    title={t('actions.delete')}
+                    disabled={deleteMutation.isPending}
+                    onClick={() => {
+                      if (confirm(t('actions.confirmDeleteSubagent', { id: agent.id }))) {
+                        deleteMutation.mutate({ section: 'subagents', entryId: agent.id });
+                      }
+                    }}
+                    className="rounded-sm p-2 text-text-tertiary hover:bg-error-bg hover:text-error-text cursor-pointer"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                )}
+              </div>
             </div>
           )}
         />
       )}
 
       <SubagentDialog
-        open={addOpen || !!editing}
-        initial={editing}
+        open={addOpen || (!!editing && !editing.sourcePlugin)}
+        initial={editing?.sourcePlugin ? null : editing}
         skills={skills}
         tools={tools}
         projectId={projectId}
@@ -109,10 +144,129 @@ export function SubagentsList({
           }
         }}
         onUpdate={async (entryId, patch) => {
+          if (editing?.sourcePlugin) return;
           await updateMutation.mutateAsync({ section: 'subagents', entryId, patch });
         }}
       />
+
+      <SubagentViewDialog
+        agent={viewing}
+        open={!!viewing}
+        onOpenChange={(open) => {
+          if (!open) setViewing(null);
+        }}
+      />
     </div>
+  );
+}
+
+function SubagentViewDialog({
+  agent,
+  open,
+  onOpenChange,
+}: {
+  agent: SubAgent | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const { t } = useTranslation('projects');
+  const instructionsHtml = useMemo(
+    () => (agent?.instructions ? renderMarkdown(agent.instructions) : ''),
+    [agent?.instructions],
+  );
+
+  return (
+    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="ui-overlay fixed inset-0 z-50 bg-black/50" />
+        <Dialog.Content className="ui-dialog fixed z-50 flex max-h-[90vh] w-[min(90vw,720px)] flex-col overflow-hidden rounded-lg border border-border-primary bg-bg-secondary shadow-lg">
+          <div className="flex items-start justify-between border-b border-border-secondary px-6 py-4">
+            <div className="min-w-0 flex-1 pr-4">
+              <Dialog.Title className="truncate font-mono text-lg font-medium text-text-primary">
+                {agent?.id ?? t('subagents.viewTitle')}
+              </Dialog.Title>
+              {agent && (
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <span
+                    className={`shrink-0 rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase ${sourceTypeBadgeClasses('plugin')}`}
+                  >
+                    plugin
+                  </span>
+                  {agent.sourcePlugin?.name && (
+                    <SourceBadge name={agent.sourcePlugin.name} kind="plugin" />
+                  )}
+                </div>
+              )}
+              <Dialog.Description className="sr-only">
+                {t('subagents.viewTitle')}
+              </Dialog.Description>
+            </div>
+            <Dialog.Close
+              className="rounded-sm p-1 text-text-secondary transition-colors hover:bg-hover-bg cursor-pointer"
+              aria-label="Close"
+            >
+              <X className="h-4 w-4" />
+            </Dialog.Close>
+          </div>
+
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-5">
+            {agent?.description && (
+              <p className="text-sm text-text-secondary">{agent.description}</p>
+            )}
+
+            {(agent?.skills.length ?? 0) > 0 && (
+              <div>
+                <div className="mb-1.5 text-xs font-medium text-text-tertiary">
+                  {t('subagents.skills')}
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {agent!.skills.map((s) => (
+                    <span
+                      key={s}
+                      className="rounded-sm bg-accent-primary/10 px-1.5 py-0.5 font-mono text-[10px] text-accent-primary"
+                    >
+                      {s}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {(agent?.tools.length ?? 0) > 0 && (
+              <div>
+                <div className="mb-1.5 text-xs font-medium text-text-tertiary">
+                  {t('subagents.tools')}
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {agent!.tools.map((toolId) => (
+                    <span
+                      key={toolId}
+                      className="rounded-sm bg-bg-secondary px-1.5 py-0.5 font-mono text-[10px] text-text-tertiary"
+                    >
+                      {toolId}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div>
+              <div className="mb-1.5 text-xs font-medium text-text-tertiary">
+                {t('subagents.instructions')}
+              </div>
+              {instructionsHtml ? (
+                <div
+                  className="registry-markdown overflow-hidden text-sm text-text-secondary"
+                  dangerouslySetInnerHTML={{ __html: instructionsHtml }}
+                />
+              ) : (
+                <p className="text-xs text-text-tertiary">{t('subagents.noInstructions')}</p>
+              )}
+            </div>
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }
 

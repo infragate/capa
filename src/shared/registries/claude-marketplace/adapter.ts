@@ -6,10 +6,17 @@ import type {
 	RegistryManifest,
 } from "../../../types/registry";
 import {
+	formatPluginContentsMarkdown,
+	pluginContentsToFiles,
+	type PluginContentsSummary,
+} from "./plugin-contents";
+import {
 	buildPluginInstallSnippet,
+	sourceToInstallCoords,
 	unsupportedSourceReason,
 } from "./sources";
 import type {
+	InstallCoords,
 	MarketplaceOrigin,
 	MarketplacePluginEntry,
 	ParsedMarketplace,
@@ -20,6 +27,14 @@ export interface CreateClaudeMarketplaceAdapterOptions {
 	slug: string;
 	catalog: ParsedMarketplace;
 	origin: MarketplaceOrigin;
+	/**
+	 * Optional: fetch + parse the plugin tree so the preview can list what
+	 * capa will unpack (skills, agents, hooks, rules, MCP). Failures are
+	 * ignored and the preview falls back to marketplace metadata only.
+	 */
+	inspectPlugin?: (
+		coords: InstallCoords,
+	) => Promise<PluginContentsSummary | null>;
 }
 
 function homepageFor(origin: MarketplaceOrigin): string | undefined {
@@ -69,12 +84,13 @@ function toSummary(
 	};
 }
 
-function buildPreview(
+export function buildPreview(
 	plugin: MarketplacePluginEntry,
 	catalog: ParsedMarketplace,
 	origin: MarketplaceOrigin,
 	snippet: Plugin | null,
 	slug: string,
+	contents?: PluginContentsSummary | null,
 ): string {
 	const parts: string[] = [];
 	parts.push(`# ${plugin.name}`);
@@ -101,6 +117,10 @@ function buildPreview(
 	}
 	parts.push(meta.join("  \n"));
 	parts.push("");
+
+	if (contents) {
+		parts.push(formatPluginContentsMarkdown(contents));
+	}
 
 	parts.push("## Install");
 	parts.push("");
@@ -178,8 +198,9 @@ export function marketplaceIcon(origin: MarketplaceOrigin): string {
 export function createClaudeMarketplaceAdapter(
 	opts: CreateClaudeMarketplaceAdapterOptions,
 ): RegistryAdapter {
-	const { slug, catalog, origin } = opts;
+	const { slug, catalog, origin, inspectPlugin } = opts;
 	const byName = new Map(catalog.plugins.map((p) => [p.name, p]));
+	const contentsCache = new Map<string, PluginContentsSummary | null>();
 
 	const displayName = catalog.name;
 	const description =
@@ -242,16 +263,52 @@ export function createClaudeMarketplaceAdapter(
 				);
 			}
 
+			const coords = sourceToInstallCoords(
+				plugin.source,
+				origin,
+				catalog.pluginRoot,
+			);
+
+			let contents: PluginContentsSummary | null = null;
+			if (inspectPlugin && coords) {
+				if (contentsCache.has(plugin.name)) {
+					contents = contentsCache.get(plugin.name) ?? null;
+				} else {
+					try {
+						// Bound inspect so a slow first clone doesn't fail the whole view.
+						contents = await Promise.race([
+							inspectPlugin(coords),
+							new Promise<null>((resolve) =>
+								setTimeout(() => resolve(null), 12_000),
+							),
+						]);
+					} catch {
+						contents = null;
+					}
+					contentsCache.set(plugin.name, contents);
+				}
+			}
+
 			const summary = toSummary(plugin, true);
 			summary.homepage =
 				plugin.homepage ??
-				browsePluginUrl(origin, plugin, undefined) ??
+				browsePluginUrl(origin, plugin, coords?.subpath) ??
 				summary.homepage;
+
+			const files = contents ? pluginContentsToFiles(contents) : undefined;
 
 			return {
 				...summary,
-				preview: buildPreview(plugin, catalog, origin, snippet, slug),
+				preview: buildPreview(
+					plugin,
+					catalog,
+					origin,
+					snippet,
+					slug,
+					contents,
+				),
 				installSnippet: snippet,
+				files: files && files.length > 0 ? files : undefined,
 			};
 		},
 	};

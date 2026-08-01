@@ -304,6 +304,38 @@ describe("createClaudeMarketplaceAdapter", () => {
 		);
 	});
 
+	it("includes plugin contents in preview when inspectPlugin is provided", async () => {
+		const catalog = parseMarketplaceJson(DEVELOPER_KIT_FIXTURE);
+		const adapter = createClaudeMarketplaceAdapter({
+			slug: "developer-kit",
+			catalog,
+			origin: ORIGIN,
+			inspectPlugin: async () => ({
+				skills: ["code-review"],
+				commands: [],
+				agents: ["security-analyst"],
+				hooks: [],
+				rules: [],
+				mcpServers: ["docs"],
+				skippedArtifacts: [],
+			}),
+		});
+
+		const detail = await adapter.view({
+			capability: "plugins",
+			id: "developer-kit-typescript",
+		});
+		expect(detail.preview).toContain("## Contents");
+		expect(detail.preview).toContain("`security-analyst`");
+		expect(detail.preview).toContain("`code-review`");
+		expect(detail.preview).toContain("`docs`");
+		expect(detail.files).toEqual([
+			"skills/code-review/",
+			"agents/security-analyst.md",
+			"mcp/docs",
+		]);
+	});
+
 	it("lists unsupported plugins in search but rejects view install", async () => {
 		const catalog = parseMarketplaceJson({
 			name: "mixed",
