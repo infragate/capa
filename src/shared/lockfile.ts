@@ -197,7 +197,33 @@ export async function loadLockfile(
 }
 
 /**
+ * Semantic identity of a lockfile for equality / wrap fingerprinting.
+ * Excludes `generatedAt` so timestamp-only rewrites do not invalidate caches.
+ */
+export function lockfileSemanticPayload(lockfile: Lockfile): unknown {
+	return {
+		version: lockfile.version,
+		generator: lockfile.generator,
+		skills: lockfile.skills,
+		plugins: lockfile.plugins,
+		hooks: lockfile.hooks ?? [],
+	};
+}
+
+export function lockfileSemanticKey(lockfile: Lockfile): string {
+	return JSON.stringify(lockfileSemanticPayload(lockfile));
+}
+
+/**
+ * True when pins / generator match, ignoring `generatedAt`.
+ */
+export function lockfilesSemanticallyEqual(a: Lockfile, b: Lockfile): boolean {
+	return lockfileSemanticKey(a) === lockfileSemanticKey(b);
+}
+
+/**
  * Serialize and write the lockfile for a project.
+ * Skips the write when an existing lockfile already has the same semantic pins.
  */
 export async function saveLockfile(
 	projectPath: string,
@@ -206,23 +232,30 @@ export async function saveLockfile(
 ): Promise<void> {
 	const path = getLockfilePath(projectPath);
 	const fmt = format ?? detectLockfileFormat(projectPath);
+	try {
+		const existing = await loadLockfile(projectPath);
+		if (existing && lockfilesSemanticallyEqual(existing, lockfile)) {
+			return;
+		}
+	} catch {
+		// Malformed on-disk lock — fall through and overwrite.
+	}
 	const content = serializeLockfile(lockfile, fmt);
 	await Bun.write(path, content);
 }
 
 /**
  * Serialize a lockfile to a string. Exposed for testing.
+ * Uses the lockfile's `generatedAt` as-is (callers bump it only when pins change).
  */
 export function serializeLockfile(
 	lockfile: Lockfile,
 	format: LockfileFormat,
 ): string {
-	// Always refresh the timestamp so it reflects the actual write time.
-	const out: Lockfile = { ...lockfile, generatedAt: new Date().toISOString() };
 	if (format === "json") {
-		return JSON.stringify(out, null, 2) + "\n";
+		return JSON.stringify(lockfile, null, 2) + "\n";
 	}
-	return yaml.dump(out, { indent: 2, lineWidth: 120, noRefs: true });
+	return yaml.dump(lockfile, { indent: 2, lineWidth: 120, noRefs: true });
 }
 
 /**
@@ -240,10 +273,13 @@ export class LockfileBuilder {
 	private hooks: Map<string, LockHookEntry> = new Map();
 	private generator: string;
 	private generatedAt: string;
+	/** Semantic key of the lockfile this builder was hydrated from (if any). */
+	private initialSemanticKey: string | null;
 
 	constructor(initial: Lockfile | null = null) {
 		this.generator = initial?.generator ?? `capa@${VERSION}`;
 		this.generatedAt = initial?.generatedAt ?? new Date().toISOString();
+		this.initialSemanticKey = initial ? lockfileSemanticKey(initial) : null;
 		if (initial) {
 			for (const skill of initial.skills) this.skills.set(skill.id, skill);
 			for (const plugin of initial.plugins) this.plugins.set(plugin.id, plugin);
@@ -368,14 +404,22 @@ export class LockfileBuilder {
 		const hooks = [...this.hooks.values()].sort((a, b) =>
 			a.id.localeCompare(b.id),
 		);
-		return {
+		const lockfile: Lockfile = {
 			version: 1,
 			generator: this.generator,
-			generatedAt: new Date().toISOString(),
+			generatedAt: this.generatedAt,
 			skills,
 			plugins,
 			hooks,
 		};
+		// Only bump generatedAt when pins/generator actually changed.
+		if (
+			this.initialSemanticKey === null ||
+			lockfileSemanticKey(lockfile) !== this.initialSemanticKey
+		) {
+			lockfile.generatedAt = new Date().toISOString();
+		}
+		return lockfile;
 	}
 }
 

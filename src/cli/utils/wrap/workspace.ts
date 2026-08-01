@@ -2,8 +2,13 @@ import { createHash } from 'crypto';
 import { basename, join, resolve } from 'path';
 import { existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'fs';
 import { rm } from 'fs/promises';
+import * as yaml from 'js-yaml';
 import { detectCapabilitiesFile, generateProjectId } from '../../../shared/paths';
-import { LOCKFILE_NAME } from '../../../shared/lockfile';
+import {
+  LOCKFILE_NAME,
+  lockfileSemanticPayload,
+  type Lockfile,
+} from '../../../shared/lockfile';
 import { loadSettings, getDatabasePath, ensureCapaDir } from '../../../shared/config';
 import { CapaDatabase } from '../../../db/database';
 import {
@@ -18,7 +23,7 @@ import { installCommand } from '../../commands/install';
 import type { ProviderIntegration } from '../../../types/providers';
 
 export interface PreparedWorkspace {
-  /** Fingerprinted cache root under ~/.capa/workspaces/<slug>/. */
+  /** Cache root under ~/.capa/workspaces/<project>-<provider>/. */
   cachePath: string;
   /**
    * Nested dir named after the real project basename — what IDEs/agents open
@@ -32,7 +37,10 @@ export interface PreparedWorkspace {
    * wrap target + capabilities.providers.
    */
   exclusionProviderIds: string[];
+  /** True when the cache layout was created or fully rebuilt. */
   cold: boolean;
+  /** True when install ran (cold create or capabilities/lock changed). */
+  installed: boolean;
 }
 
 function sanitizeName(name: string): string {
@@ -43,8 +51,18 @@ function sanitizeName(name: string): string {
     .replace(/^-|-$/g, '') || 'project';
 }
 
+function pathsEqual(a: string, b: string): boolean {
+  const left = resolve(a);
+  const right = resolve(b);
+  return process.platform === 'win32'
+    ? left.toLowerCase() === right.toLowerCase()
+    : left === right;
+}
+
 /**
- * Short fingerprint of capabilities.yaml + capabilities.lock for workspace cache keys.
+ * Fingerprint of capabilities.yaml + semantic capabilities.lock.
+ * Used only to decide whether an existing wrap workspace needs reinstall —
+ * not as part of the workspace directory name.
  */
 export async function computeCapabilitiesFingerprint(realProjectPath: string): Promise<string> {
   const caps = await detectCapabilitiesFile(realProjectPath);
@@ -61,7 +79,8 @@ export async function computeCapabilitiesFingerprint(realProjectPath: string): P
   const lockPath = join(realProjectPath, LOCKFILE_NAME);
   if (existsSync(lockPath)) {
     try {
-      parts.push(await Bun.file(lockPath).text());
+      const raw = await Bun.file(lockPath).text();
+      parts.push(fingerprintLockfileText(raw));
     } catch {
       parts.push('nolock');
     }
@@ -71,14 +90,31 @@ export async function computeCapabilitiesFingerprint(realProjectPath: string): P
   return createHash('sha256').update(parts.join('\0')).digest('hex').slice(0, 12);
 }
 
-export function workspaceDirName(
-  realProjectPath: string,
-  providerId: string,
-  fingerprint: string,
-): string {
-  const projectName = sanitizeName(basename(resolve(realProjectPath)));
+/** Hash lock pins only — drop generatedAt (and tolerate yaml/json). */
+export function fingerprintLockfileText(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return 'nolock';
+  try {
+    const parsed =
+      trimmed.startsWith('{')
+        ? (JSON.parse(trimmed) as Lockfile)
+        : (yaml.load(trimmed) as Lockfile);
+    if (!parsed || typeof parsed !== 'object') return raw;
+    return JSON.stringify(lockfileSemanticPayload(parsed));
+  } catch {
+    return raw;
+  }
+}
+
+/**
+ * Stable wrap cache slug: one workspace per real project id + wrap provider.
+ * Example: `capa-490f-claude-code`
+ * Lockfile / capabilities changes reinstall in place; they do not create a new folder.
+ */
+export function workspaceDirName(realProjectPath: string, providerId: string): string {
+  const projectId = generateProjectId(realProjectPath);
   const provider = sanitizeName(providerId);
-  return `${projectName}-${provider}-${fingerprint}`;
+  return `${projectId}-${provider}`;
 }
 
 /** Original project folder name preserved for the nested working directory. */
@@ -91,6 +127,7 @@ async function writeMarker(
   realProjectPath: string,
   providerId: string,
   workingDir: string,
+  capabilitiesFingerprint: string,
 ): Promise<void> {
   const marker: WorkspaceMarker = {
     realProjectPath: resolve(realProjectPath),
@@ -98,29 +135,34 @@ async function writeMarker(
     createdAt: new Date().toISOString(),
     cachePath: resolve(cachePath),
     workingDir,
+    capabilitiesFingerprint,
   };
   writeFileSync(join(cachePath, WORKSPACE_MARKER), JSON.stringify(marker, null, 2) + '\n');
 }
 
-async function markerValid(
+async function readMarker(cachePath: string): Promise<WorkspaceMarker | null> {
+  const markerPath = join(cachePath, WORKSPACE_MARKER);
+  if (!existsSync(markerPath)) return null;
+  try {
+    return (await Bun.file(markerPath).json()) as WorkspaceMarker;
+  } catch {
+    return null;
+  }
+}
+
+async function markerMatchesWorkspace(
   cachePath: string,
   realProjectPath: string,
   providerId: string,
   workingDir: string,
-): Promise<boolean> {
-  const markerPath = join(cachePath, WORKSPACE_MARKER);
-  if (!existsSync(markerPath)) return false;
-  try {
-    const data = (await Bun.file(markerPath).json()) as WorkspaceMarker;
-    // Reject legacy flat layouts (marker without workingDir, or project files at cache root).
-    if (!data.workingDir || data.workingDir !== workingDir) return false;
-    return (
-      data.providerId === providerId &&
-      resolve(data.realProjectPath) === resolve(realProjectPath)
-    );
-  } catch {
-    return false;
-  }
+): Promise<WorkspaceMarker | null> {
+  const data = await readMarker(cachePath);
+  if (!data) return null;
+  // Reject legacy flat layouts (marker without workingDir).
+  if (!data.workingDir || data.workingDir !== workingDir) return null;
+  if (data.providerId !== providerId) return null;
+  if (!pathsEqual(data.realProjectPath, realProjectPath)) return null;
+  return data;
 }
 
 /**
@@ -138,7 +180,6 @@ function isLegacyFlatCache(cachePath: string, workingDir: string): boolean {
     existsSync(join(cachePath, 'capabilities.json'))
   );
 }
-
 
 async function dbHasProject(realProjectPath: string): Promise<boolean> {
   try {
@@ -160,9 +201,27 @@ function cacheLooksLikeWrap(cachePath: string): boolean {
   return existsSync(join(cachePath, WORKSPACE_MARKER));
 }
 
+async function runWrapInstall(
+  workspacePath: string,
+  realProjectPath: string,
+  providerId: string,
+): Promise<void> {
+  await installCommand({
+    projectPath: workspacePath,
+    identityPath: realProjectPath,
+    provider: providerId,
+    // Keep the real project's stored install providers unchanged.
+    persistProviders: false,
+  });
+}
+
 /**
- * Resolve/create the persistent wrap workspace. Cold = rebuild + install;
- * warm = sync symlinks only (skip install).
+ * Resolve/create the persistent wrap workspace.
+ *
+ * - Cache path is stable: `~/.capa/workspaces/<project>-<provider>/`
+ * - Warm (same capabilities fingerprint): sync symlinks only
+ * - Capabilities/lock changed: reinstall in the same workspace
+ * - Missing/legacy/invalid: rebuild layout + install
  *
  * Layout:
  *   ~/.capa/workspaces/<slug>/           ← cache identity + .capa-workspace.json
@@ -184,7 +243,7 @@ export async function prepareWorkspace(
   mkdirSync(workspacesDir, { recursive: true });
 
   const fingerprint = await computeCapabilitiesFingerprint(real);
-  const dirName = workspaceDirName(real, provider.id, fingerprint);
+  const dirName = workspaceDirName(real, provider.id);
   const cachePath = join(workspacesDir, dirName);
   const workName = workingDirName(real);
   const workspacePath = join(cachePath, workName);
@@ -195,13 +254,19 @@ export async function prepareWorkspace(
     capabilities.providers,
   );
 
-  const warm =
-    !isLegacyFlatCache(cachePath, workName) &&
-    existsSync(workspacePath) &&
-    (await markerValid(cachePath, real, provider.id, workName)) &&
-    (await dbHasProject(real));
+  const legacy = isLegacyFlatCache(cachePath, workName);
+  const marker = !legacy
+    ? await markerMatchesWorkspace(cachePath, real, provider.id, workName)
+    : null;
+  const workspaceReady = !!marker && existsSync(workspacePath);
+  const projectKnown = await dbHasProject(real);
 
-  if (warm) {
+  // Warm: same layout + same capabilities/lock pins → symlink sync only.
+  if (
+    workspaceReady &&
+    projectKnown &&
+    marker!.capabilitiesFingerprint === fingerprint
+  ) {
     syncTopLevelSymlinks(real, workspacePath, exclusionProviderIds);
     return {
       cachePath,
@@ -210,6 +275,23 @@ export async function prepareWorkspace(
       capabilitiesPath: caps.path,
       exclusionProviderIds,
       cold: false,
+      installed: false,
+    };
+  }
+
+  // Existing workspace, capabilities/lock changed → reinstall in place.
+  if (workspaceReady) {
+    syncTopLevelSymlinks(real, workspacePath, exclusionProviderIds);
+    await runWrapInstall(workspacePath, real, provider.id);
+    await writeMarker(cachePath, real, provider.id, workName, fingerprint);
+    return {
+      cachePath,
+      workspacePath,
+      realProjectPath: real,
+      capabilitiesPath: caps.path,
+      exclusionProviderIds,
+      cold: false,
+      installed: true,
     };
   }
 
@@ -219,13 +301,8 @@ export async function prepareWorkspace(
   }
   mkdirSync(workspacePath, { recursive: true });
   buildSymlinkWorkspace(real, workspacePath, exclusionProviderIds);
-  await writeMarker(cachePath, real, provider.id, workName);
-
-  await installCommand({
-    projectPath: workspacePath,
-    identityPath: real,
-    provider: provider.id,
-  });
+  await writeMarker(cachePath, real, provider.id, workName, fingerprint);
+  await runWrapInstall(workspacePath, real, provider.id);
 
   return {
     cachePath,
@@ -234,6 +311,7 @@ export async function prepareWorkspace(
     capabilitiesPath: caps.path,
     exclusionProviderIds,
     cold: true,
+    installed: true,
   };
 }
 
@@ -280,11 +358,7 @@ export async function pruneWorkspacesForProject(realProjectPath: string): Promis
       if (!existsSync(markerPath)) continue;
       const data = (await Bun.file(markerPath).json()) as WorkspaceMarker;
       if (!data?.realProjectPath) continue;
-      const same =
-        process.platform === 'win32'
-          ? resolve(data.realProjectPath).toLowerCase() === real.toLowerCase()
-          : resolve(data.realProjectPath) === real;
-      if (!same) continue;
+      if (!pathsEqual(data.realProjectPath, real)) continue;
       await rm(full, { recursive: true, force: true });
       removed++;
     } catch {

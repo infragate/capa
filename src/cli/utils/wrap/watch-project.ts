@@ -255,6 +255,8 @@ export function startWrapWatchers(opts: WatchOpts): WrapWatchers {
         // focus with a credentials browser either.
         skipPrerequisites: true,
         skipCredentialOpen: true,
+        // Same as cold wrap: never clobber the real project's install providers.
+        persistProviders: false,
       });
       try {
         const linked = syncTopLevelSymlinks(realRoot, wsRoot, providerIds);

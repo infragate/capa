@@ -30,4 +30,9 @@ export interface WorkspaceMarker {
 	cachePath?: string;
 	/** Nested working directory name under the cache root (IDE/agent cwd). */
 	workingDir?: string;
+	/**
+	 * Hash of capabilities.yaml + semantic lock pins at last wrap install.
+	 * Used to decide whether to reinstall in-place; not part of the cache path.
+	 */
+	capabilitiesFingerprint?: string;
 }
