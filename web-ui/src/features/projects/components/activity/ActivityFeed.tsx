@@ -313,8 +313,8 @@ export function ActivityFeed({
         <span className="w-12 shrink-0 text-right">{t('activity.colLatency')}</span>
         <span className="hidden w-14 shrink-0 text-right sm:block">{t('activity.colTime')}</span>
       </div>
-      {runs.map((run, i) => (
-        <RunGroup key={run.id} run={run} maxMs={maxMs} defaultOpen={i === 0} />
+      {runs.map((run) => (
+        <RunGroup key={run.id} run={run} maxMs={maxMs} defaultOpen={false} />
       ))}
       {hasMore && (
         <div className="sticky bottom-0 border-t border-border-secondary bg-bg-secondary/95 px-3 py-2.5 text-center backdrop-blur-sm">
