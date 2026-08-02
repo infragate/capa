@@ -1,9 +1,13 @@
 import { describe, it, expect } from 'bun:test';
+import { mkdtempSync, mkdirSync, rmSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
 import {
   getWrappableProvider,
   getWrappableProviders,
   getProviderOwnedTopLevelNames,
   collectWrapExclusionProviderIds,
+  detectProviderIdsFromProjectTree,
   resolveWrapTarget,
   formatWrappableProviderList,
 } from '../index';
@@ -101,6 +105,23 @@ describe('wrap provider helpers', () => {
       'cursor',
     ]);
     expect(collectWrapExclusionProviderIds('cursor', undefined)).toEqual(['cursor']);
+  });
+
+  it('collectWrapExclusionProviderIds merges extraProviderIds (DB / on-disk)', () => {
+    expect(
+      collectWrapExclusionProviderIds('claude-code', undefined, ['cursor']).sort(),
+    ).toEqual(['claude-code', 'cursor']);
+  });
+
+  it('detectProviderIdsFromProjectTree finds cursor when .cursor exists', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'capa-detect-prov-'));
+    try {
+      mkdirSync(join(dir, '.cursor'));
+      expect(detectProviderIdsFromProjectTree(dir)).toContain('cursor');
+      expect(detectProviderIdsFromProjectTree(dir)).not.toContain('claude-code');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('getProviderOwnedTopLevelNames is scoped to the given providers', () => {

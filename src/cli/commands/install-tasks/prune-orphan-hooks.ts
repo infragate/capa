@@ -12,6 +12,10 @@ import type { InstallCtx } from './context';
  * `capabilities.hooks` (plus capa system activity hooks when enabled)
  * or whose provider is no longer in the active set.
  *
+ * Skipped entirely on wrap shadow installs — wrap must only *add* provider
+ * config under the shadow workspace and must never prune shared project
+ * identity state (e.g. Cursor hooks on the real project).
+ *
  * Runs *before* `install-hooks` so installs always converge on the
  * requested state — a hook moved from `cursor` to `claude-code` results
  * in a removal on cursor and an install on claude-code in the same run.
@@ -19,7 +23,9 @@ import type { InstallCtx } from './context';
 export function pruneOrphanHooksTask(): Task<InstallCtx> {
   return {
     title: 'Pruning orphan hooks',
-    enabled: (ctx) => (ctx.capabilitiesToUse.providers ?? ctx.resolvedProviders).length > 0,
+    enabled: (ctx) =>
+      !ctx.isWrapInstall &&
+      (ctx.capabilitiesToUse.providers ?? ctx.resolvedProviders).length > 0,
     task: async (ctx) => {
       const providers = ctx.capabilitiesToUse.providers ?? ctx.resolvedProviders;
       const rawHooks = ctx.capabilitiesToUse.hooks ?? [];

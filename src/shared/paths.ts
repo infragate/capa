@@ -1,5 +1,5 @@
 import { createHash } from "crypto";
-import { basename, resolve } from "path";
+import { basename, relative, resolve, sep } from "path";
 
 /**
  * Generate a project ID from a directory path.
@@ -23,6 +23,17 @@ export function generateProjectId(projectPath: string): string {
 		.replace(/^-|-$/g, "");
 
 	return `${sanitizedName}-${hash}`;
+}
+
+/**
+ * True when `child` is `parent` or a path under it.
+ * Uses path.relative so Windows drive-letter case is handled.
+ */
+export function isPathInside(child: string, parent: string): boolean {
+	const rel = relative(resolve(parent), resolve(child));
+	return (
+		rel === "" || (!rel.startsWith("..") && !rel.startsWith(`..${sep}`))
+	);
 }
 
 /**
