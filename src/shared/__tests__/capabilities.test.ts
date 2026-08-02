@@ -618,11 +618,10 @@ describe('capabilities', () => {
       ]);
       const parsed = await parseCapabilitiesFile(filePath, 'json');
       expect(
-        parsed.tools.map((t: { id: string; def: { server: string; tool: string } }) => [
-          t.id,
-          t.def.server,
-          t.def.tool,
-        ]),
+        parsed.tools.map((t) => {
+          const def = t.def as { server: string; tool: string };
+          return [t.id, def.server, def.tool];
+        }),
       ).toEqual([
         ['search', '@other', 'search'],
         ['ping', '@owl', 'ping'],

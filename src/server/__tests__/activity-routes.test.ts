@@ -41,7 +41,7 @@ describe("handlePostProjectActivityEvent", () => {
 			db,
 			sessionManager,
 			oauth2Manager: {} as OAuth2Manager,
-			capsWatcher: { watchProject: async () => {} } as CapabilitiesFileWatcher,
+			capsWatcher: { watchProject: async () => {} } as unknown as CapabilitiesFileWatcher,
 			effectiveCapsCache: new Map(),
 			projectEventClients: new Map(),
 			configureDeps: {} as ConfigureRouteDeps,

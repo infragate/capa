@@ -1,12 +1,28 @@
 import { createHash } from "crypto";
+import { existsSync, realpathSync } from "fs";
 import { basename, relative, resolve, sep } from "path";
+
+/**
+ * Resolve to an absolute path, preferring the realpath when the target exists.
+ * Avoids macOS `/var` vs `/private/var` (and similar symlink) ID mismatches
+ * between `process.cwd()` and paths from `mkdtempSync` / `tmpdir()`.
+ */
+export function canonicalizePath(projectPath: string): string {
+	const absPath = resolve(projectPath);
+	try {
+		if (existsSync(absPath)) return realpathSync(absPath);
+	} catch {
+		// Fall through to resolve() when realpath fails (dangling link, race, etc.).
+	}
+	return absPath;
+}
 
 /**
  * Generate a project ID from a directory path.
  * Format: {directory-name}-{4-char-hash}
  */
 export function generateProjectId(projectPath: string): string {
-	const absPath = resolve(projectPath);
+	const absPath = canonicalizePath(projectPath);
 	const dirName = basename(absPath);
 
 	// Create hash of full path

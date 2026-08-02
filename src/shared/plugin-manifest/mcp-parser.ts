@@ -1,5 +1,10 @@
 import { existsSync, readFileSync } from "fs";
 import { isAbsolute, join, relative, resolve } from "path";
+import {
+	isAbsolute as isWinAbsolute,
+	resolve as winResolve,
+} from "path/win32";
+import { resolve as posixResolve } from "path/posix";
 import type { NormalizedPluginMCPServerDef } from "../../types/plugin";
 import { asParsedMcpServerEntry, isPlainObject } from "./types-helpers";
 
@@ -246,6 +251,20 @@ export function parseMcpServers(
  * Pass `shellQuote: true` for hook commands run via a shell (Claude/Cursor → Git Bash).
  * Without it, MCP argv/env values keep bare paths so Node spawn does not see literal quotes.
  */
+/**
+ * Resolve `relPath` against a plugin root using the root's path style.
+ * Windows drive roots must stay absolute even when capa runs on Unix (tests
+ * and cross-platform installs), so `path.resolve` alone is not safe.
+ */
+function resolveUnderPluginRoot(pluginRoot: string, relPath: string): string {
+	const root = pluginRoot.replace(/\\/g, "/");
+	const rel = relPath.replace(/\\/g, "/");
+	if (isWinAbsolute(root)) {
+		return winResolve(root, rel).replace(/\\/g, "/");
+	}
+	return posixResolve(root, rel);
+}
+
 export function resolvePluginRootInString(
 	value: string,
 	pluginRoot: string,
@@ -269,13 +288,13 @@ export function resolvePluginRootInString(
 	// "./path/to/cmd args..." or "../path args..." — resolve path token only.
 	const relWithArgs = value.match(/^(\.[/\\][^\s]+|\.\.[/\\][^\s]+)(\s+[\s\S]*)?$/);
 	if (relWithArgs) {
-		const abs = resolve(pluginRoot, relWithArgs[1]).replace(/\\/g, "/");
+		const abs = resolveUnderPluginRoot(pluginRoot, relWithArgs[1]);
 		const quoted = shellQuote && /\s/.test(abs) ? `"${abs}"` : abs;
 		return `${quoted}${relWithArgs[2] ?? ""}`;
 	}
 
 	if (value === "." || value.startsWith("./") || value.startsWith("../")) {
-		const abs = resolve(pluginRoot, value).replace(/\\/g, "/");
+		const abs = resolveUnderPluginRoot(pluginRoot, value);
 		return shellQuote && /\s/.test(abs) ? `"${abs}"` : abs;
 	}
 	return value;

@@ -93,18 +93,20 @@ describe("plugin full unpack parsers", () => {
 			version: "1.0.0",
 		});
 		expect(manifest.skillEntries.map((s) => s.id)).toContain("hello");
-		expect(manifest.commandEntries.map((c) => c.id)).toEqual(["deploy"]);
+		expect(manifest.commandEntries?.map((c) => c.id)).toEqual(["deploy"]);
 		expect(manifest.agentEntries).toHaveLength(1);
-		expect(manifest.agentEntries[0].id).toBe("reviewer");
-		expect(manifest.agentEntries[0].description).toBe("Reviews code");
-		expect(manifest.agentEntries[0].instructions).toContain("Be thorough");
-		expect(manifest.agentEntries[0].skillIds).toEqual(["hello"]);
-		expect(manifest.agentEntries[0].droppedFrontmatterKeys).toContain("model");
+		const agent = manifest.agentEntries![0]!;
+		expect(agent.id).toBe("reviewer");
+		expect(agent.description).toBe("Reviews code");
+		expect(agent.instructions).toContain("Be thorough");
+		expect(agent.skillIds).toEqual(["hello"]);
+		expect(agent.droppedFrontmatterKeys).toContain("model");
 		expect(manifest.hookEntries).toHaveLength(1);
-		expect(manifest.hookEntries[0].event).toBe("PreToolUse");
-		expect(manifest.hookEntries[0].matcher).toBe("Write");
-		expect(manifest.hookEntries[0].command).toContain("${CLAUDE_PLUGIN_ROOT}");
-		expect(manifest.hookEntries[0].targetProvider).toBe("claude-code");
+		const hook = manifest.hookEntries![0]!;
+		expect(hook.event).toBe("PreToolUse");
+		expect(hook.matcher).toBe("Write");
+		expect(hook.command).toContain("${CLAUDE_PLUGIN_ROOT}");
+		expect(hook.targetProvider).toBe("claude-code");
 	});
 
 	it("parses Cursor manifest hooks path (hooks-cursor.json)", () => {
@@ -131,9 +133,10 @@ describe("plugin full unpack parsers", () => {
 			hooks: "./hooks/hooks-cursor.json",
 		});
 		expect(manifest.hookEntries).toHaveLength(1);
-		expect(manifest.hookEntries[0].event).toBe("sessionStart");
-		expect(manifest.hookEntries[0].targetProvider).toBe("cursor");
-		expect(manifest.hookEntries[0].command).toBe(
+		const cursorHook = manifest.hookEntries![0]!;
+		expect(cursorHook.event).toBe("sessionStart");
+		expect(cursorHook.targetProvider).toBe("cursor");
+		expect(cursorHook.command).toBe(
 			"./hooks/run-hook.cmd session-start",
 		);
 	});
@@ -183,7 +186,7 @@ describe("plugin full unpack parsers", () => {
 		const manifest = detectAndParseManifest(root, ["claude-code", "cursor"]);
 		expect(manifest).not.toBeNull();
 		expect(manifest!.provider).toBe("claude");
-		const events = manifest!.hookEntries.map((h) => `${h.targetProvider}:${h.event}`);
+		const events = (manifest!.hookEntries ?? []).map((h) => `${h.targetProvider}:${h.event}`);
 		expect(events).toContain("claude-code:SessionStart");
 		expect(events).toContain("cursor:sessionStart");
 	});
@@ -215,11 +218,12 @@ describe("plugin full unpack parsers", () => {
 		);
 		const manifest = parseCursorManifest(root, { name: "cursor-demo" });
 		expect(manifest.ruleEntries).toHaveLength(1);
-		expect(manifest.ruleEntries[0].id).toBe("style");
-		expect(manifest.ruleEntries[0].description).toBe("Style guide");
-		expect(manifest.ruleEntries[0].alwaysApply).toBe(true);
-		expect(manifest.ruleEntries[0].appliesTo).toEqual(["**/*.ts"]);
-		expect(manifest.ruleEntries[0].content).toContain("consistent style");
+		const rule = manifest.ruleEntries![0]!;
+		expect(rule.id).toBe("style");
+		expect(rule.description).toBe("Style guide");
+		expect(rule.alwaysApply).toBe(true);
+		expect(rule.appliesTo).toEqual(["**/*.ts"]);
+		expect(rule.content).toContain("consistent style");
 	});
 
 	it("materializes commands as SKILL.md trees", () => {
@@ -299,8 +303,8 @@ describe("plugin full unpack parsers", () => {
 		);
 		const manifest = detectAndParseManifest(root, ["claude-code"]);
 		expect(manifest).not.toBeNull();
-		expect(manifest!.agentEntries.map((a) => a.id)).toContain("helper");
-		expect(manifest!.hookEntries.some((h) => h.event === "Stop")).toBe(true);
+		expect((manifest!.agentEntries ?? []).map((a) => a.id)).toContain("helper");
+		expect((manifest!.hookEntries ?? []).some((h) => h.event === "Stop")).toBe(true);
 	});
 
 	it("discover-mode reads root SKILL.md frontmatter name", () => {
@@ -329,10 +333,11 @@ describe("plugin full unpack parsers", () => {
 			"---\nname: ../escape-hatch\ndescription: Bad\n---\n\nNope.\n",
 		);
 		const manifest = parseClaudeManifest(root, { name: "demo" });
-		expect(manifest.agentEntries).toHaveLength(1);
-		expect(manifest.agentEntries[0].id).toBe("escape-hatch");
-		expect(manifest.agentEntries[0].id).not.toContain("..");
-		expect(manifest.agentEntries[0].id).not.toContain("/");
+		const agents = manifest.agentEntries ?? [];
+		expect(agents).toHaveLength(1);
+		expect(agents[0]!.id).toBe("escape-hatch");
+		expect(agents[0]!.id).not.toContain("..");
+		expect(agents[0]!.id).not.toContain("/");
 	});
 
 	it("keeps unique idHints when hook actions share a name", () => {

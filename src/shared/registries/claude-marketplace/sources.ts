@@ -1,7 +1,6 @@
 import type { Plugin } from "../../../types/plugin";
 import type {
 	InstallCoords,
-	MarketplaceHost,
 	MarketplaceOrigin,
 	MarketplacePluginEntry,
 	MarketplaceSource,
@@ -10,7 +9,7 @@ import type {
 
 export function parseGithubOrGitlabUrl(
 	url: string,
-): { host: MarketplaceHost; ownerRepo: string } | null {
+): { host: "github" | "gitlab"; ownerRepo: string } | null {
 	const trimmed = url.trim().replace(/\.git$/, "");
 
 	const ghHttps = trimmed.match(
@@ -64,6 +63,7 @@ export function sourceToInstallCoords(
 	switch (src.kind) {
 		case "monorepo-local": {
 			if (!origin.ownerRepo) return null;
+			if (origin.host !== "github" && origin.host !== "gitlab") return null;
 			return {
 				host: origin.host,
 				ownerRepo: origin.ownerRepo,

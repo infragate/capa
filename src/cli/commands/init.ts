@@ -2,6 +2,7 @@ import { existsSync } from 'fs';
 import { resolve } from 'path';
 import {
   detectCapabilitiesFile,
+  canonicalizePath,
   generateProjectId,
   getCapabilitiesPath,
 } from '../../shared/paths';
@@ -23,7 +24,7 @@ async function registerProject(
   capabilities: Capabilities,
   serverUrl: string,
 ): Promise<string> {
-  const identityPath = resolve(projectPath);
+  const identityPath = canonicalizePath(projectPath);
   if (isUnderWrapWorkspacesDir(identityPath)) {
     throw new Error(
       `Refusing to register wrap workspace path as a project: ${identityPath}`,

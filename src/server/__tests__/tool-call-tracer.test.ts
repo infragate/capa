@@ -472,6 +472,10 @@ describe("notifyToolCall SSE framing", () => {
 			result_tokens: 1,
 			error_message: null,
 			agent_id: null,
+			input_tokens: null,
+			output_tokens: null,
+			cache_read_tokens: null,
+			cache_write_tokens: null,
 		};
 
 		notifyToolCall(clients, "proj-1", record);

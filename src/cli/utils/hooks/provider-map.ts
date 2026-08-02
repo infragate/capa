@@ -73,7 +73,7 @@ export function toCanonicalOrScopedHookOn(
     ProviderEventMapping | undefined,
   ][]) {
     if (!mapping || mapping.event !== nativeEvent) continue;
-    if (mapping.matcherPrefix) {
+    if ('matcherPrefix' in mapping && mapping.matcherPrefix) {
       if (!matcher || !matcherMatchesPrefix(matcher, mapping.matcherPrefix)) {
         continue;
       }

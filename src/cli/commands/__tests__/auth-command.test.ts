@@ -152,7 +152,7 @@ describe('authCommand', () => {
         new Response(fetchOk ? JSON.stringify({ login: 'u' }) : 'Unauthorized', {
           status: fetchOk ? 200 : 401,
           headers: { 'Content-Type': 'application/json' },
-        })) as typeof fetch;
+        })) as unknown as typeof fetch;
     });
 
     afterEach(() => {

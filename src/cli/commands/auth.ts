@@ -378,7 +378,7 @@ function formatIntegrationLabel(integration: GitIntegration): {
 } {
   const gp = getGitProvider(integration.platform);
   if (gp && !integration.host) {
-    return { emoji: gp.emoji, label: gp.host };
+    return { emoji: gp.emoji ?? '🔗', label: gp.host };
   }
 
   if (integration.platform === 'github-enterprise') {

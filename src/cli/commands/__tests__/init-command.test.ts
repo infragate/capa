@@ -7,7 +7,7 @@ import {
   parseCapabilitiesFile,
   writeCapabilitiesFile,
 } from '../../../shared/capabilities';
-import { generateProjectId } from '../../../shared/paths';
+import { generateProjectId, canonicalizePath } from '../../../shared/paths';
 import { getDatabasePath, loadSettings } from '../../../shared/config';
 import { CapaDatabase } from '../../../db/database';
 
@@ -103,7 +103,7 @@ describe('initCommand', () => {
     try {
       const project = db.getProject(projectId);
       expect(project).not.toBeNull();
-      expect(project!.path).toBe(projectDir);
+      expect(project!.path).toBe(canonicalizePath(projectDir));
     } finally {
       db.close();
     }

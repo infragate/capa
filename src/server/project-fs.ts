@@ -35,8 +35,20 @@ export function toProjectRelative(
 	projectRoot: string,
 	absolutePath: string,
 ): string {
-	const root = resolve(projectRoot);
-	const abs = resolve(absolutePath);
+	// Prefer realpath so macOS `/var` vs `/private/var` (and other symlink
+	// roots) do not look like escapes after mkdirInsideProject canonicalizes.
+	let root = resolve(projectRoot);
+	let abs = resolve(absolutePath);
+	try {
+		if (existsSync(root)) root = realpathSync(root);
+	} catch {
+		/* keep resolve() */
+	}
+	try {
+		if (existsSync(abs)) abs = realpathSync(abs);
+	} catch {
+		/* keep resolve() */
+	}
 	const rel = relative(root, abs);
 	if (rel.startsWith("..") || rel === "") {
 		// '' means the root itself
