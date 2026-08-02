@@ -32,11 +32,8 @@ export const githubCopilot: ProviderIntegration = {
 		extension: ".md",
 		format: "markdown-frontmatter",
 	},
-	wrap: {
-		binary: "copilot",
-		kind: "cli",
-		aliases: {
-			copilot: { binary: "copilot", kind: "cli" },
-		},
-	},
+	// No wrap: owned paths live under shared project dirs (`.github`, `.vscode`).
+	// Wrap's exclusion model is top-level only, so enabling wrap would omit those
+	// entire trees from the shadow workspace. Revisit when wrap supports
+	// subpath-level exclusions/overlays.
 };

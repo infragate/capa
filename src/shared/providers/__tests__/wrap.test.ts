@@ -16,11 +16,12 @@ describe('wrap provider helpers', () => {
     expect(ids).toContain('cursor');
     expect(ids).toContain('gemini-cli');
     expect(ids).toContain('opencode');
-    expect(ids).toContain('github-copilot');
     expect(ids).toContain('qwen-code');
     expect(ids).toContain('kiro-cli');
     expect(ids).toContain('iflow-cli');
     expect(ids).toContain('kimi-cli');
+    // Shared top-level dirs (.github / .vscode) — not wrappable until subpath exclusions exist.
+    expect(ids).not.toContain('github-copilot');
   });
 
   it('resolves by registry id', () => {
@@ -39,6 +40,8 @@ describe('wrap provider helpers', () => {
   it('returns undefined for non-wrappable providers', () => {
     expect(getWrappableProvider('amp')).toBeUndefined();
     expect(getWrappableProvider('not-a-provider')).toBeUndefined();
+    expect(getWrappableProvider('github-copilot')).toBeUndefined();
+    expect(resolveWrapTarget('copilot')).toBeUndefined();
   });
 
   it('cursor wrap is gui with wait-until-close args', () => {
@@ -72,12 +75,6 @@ describe('wrap provider helpers', () => {
       binary: 'opencode',
       kind: 'cli',
     });
-    expect(resolveWrapTarget('github-copilot')?.wrap).toEqual({
-      binary: 'copilot',
-      kind: 'cli',
-    });
-    expect(resolveWrapTarget('copilot')?.provider.id).toBe('github-copilot');
-    expect(resolveWrapTarget('copilot')?.wrap.binary).toBe('copilot');
     expect(resolveWrapTarget('qwen-code')?.wrap.binary).toBe('qwen');
     expect(resolveWrapTarget('kiro-cli')?.wrap.binary).toBe('kiro-cli');
     expect(resolveWrapTarget('iflow-cli')?.wrap.binary).toBe('iflow');
@@ -87,8 +84,14 @@ describe('wrap provider helpers', () => {
   it('formatWrappableProviderList includes wrap aliases', () => {
     const list = formatWrappableProviderList();
     expect(list).toContain('cursor (alias: agent)');
-    expect(list).toContain('github-copilot (alias: copilot)');
+    expect(list).not.toContain('github-copilot');
     expect(list).toContain('claude-code (alias: claude)');
+  });
+
+  it('github-copilot owns shared top-level dirs that wrap cannot safely exclude', () => {
+    const owned = getProviderOwnedTopLevelNames(['github-copilot']);
+    expect(owned.has('.github')).toBe(true);
+    expect(owned.has('.vscode')).toBe(true);
   });
 
   it('collectWrapExclusionProviderIds unions wrap target with capabilities providers', () => {
