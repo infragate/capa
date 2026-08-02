@@ -6,7 +6,7 @@
   </picture>
 </p>
 
-<h3 align="center">The package manager for AI coding agents</h3>
+<h3 align="center">The package manager and MCP gateway for AI coding agents</h3>
 
 <p align="center">
   <a href="https://github.com/infragate/capa/releases/latest"><img src="https://img.shields.io/github/v/release/infragate/capa?style=flat-square&label=latest&color=6366f1" alt="Latest Release"></a>
@@ -26,7 +26,7 @@
   <a href="#documentation">Docs</a>
 </p>
 
-Declare skills, tools, rules, sub-agents, MCP servers, hooks, and plugins once in `capabilities.yaml`. Run `capa install`. CAPA writes them into Cursor, Claude Code, Codex, Windsurf, GitHub Copilot, and 35+ other agents — native formats, pinned SHAs, zero manual sync.
+Declare skills, tools, rules, sub-agents, MCP servers, hooks, and plugins once in `capabilities.yaml`. Run `capa install`. CAPA writes them into Cursor, Claude Code, Codex, Windsurf, GitHub Copilot, and 35+ other agents — native formats, pinned SHAs, zero manual sync. At runtime it is also the **MCP gateway**: every agent talks to one local endpoint; CAPA proxies upstream servers, lazy-loads tools, and scopes what each sub-agent can call.
 
 https://github.com/user-attachments/assets/98442d19-44c9-43e6-b2c2-88156b189d5e
 
@@ -34,18 +34,19 @@ https://github.com/user-attachments/assets/98442d19-44c9-43e6-b2c2-88156b189d5e
 
 Agent config today is scattered across `CLAUDE.md`, `.cursor/rules/`, `AGENTS.md`, MCP JSON, hooks, and skill folders. No two teammates match. Nothing is pinned. Cloning the repo does not clone the agent setup.
 
-CAPA collapses that into one version-controlled file next to your code:
+CAPA collapses that into one version-controlled file next to your code — and a local MCP gateway in front of every tool:
 
 - **`capabilities.yaml`** — source of truth for every capability
 - **`capabilities.lock`** — SHA pins so tomorrow's clone gets the same bytes
 - **Marker blocks** — surgical writes that leave hand-edited content alone
-- **One MCP endpoint** — agents talk to CAPA; CAPA proxies upstream servers on demand
+- **MCP gateway** — one endpoint per project; CAPA proxies stdio / HTTP / SSE servers, applies formatters, and records activity
 
 The teammate who clones tomorrow gets the exact setup you have today.
 
 ## Features
 
 - **One file → 35+ agents** — write once; CAPA fans out to each provider's native layout (`.cursor/rules/`, `.claude/agents/`, `AGENTS.md`, …)
+- **MCP gateway** — one local endpoint per agent; CAPA proxies upstream MCP servers, lazy-loads tools on demand, and filters tools per sub-agent
 - **Cheaper inference, same quality** — on-demand tool loading instead of front-loading the whole catalog (**19–40%** fewer tokens across 150 trials on claude-opus-4-8)
 - **`capa wrap`** — run Cursor, Claude, Codex, and more from a shadow workspace so provider dirs never touch your real repo
 - **Local Web UI** — interactive capabilities editor with live YAML sync, registry browse, OAuth setup, and drag-to-reorder
@@ -192,7 +193,7 @@ capabilities.yaml  ──►  capa install  ──►  provider files (.cursor/,
         │
         └──► Web UI editor ◄──► file watcher ◄──► disk
 
-Agent ──MCP──► capa server (:5912) ──proxy──► upstream MCP (stdio / HTTP / SSE)
+Agent ──MCP──► capa gateway (:5912) ──proxy──► upstream MCP (stdio / HTTP / SSE)
                      │
                      ├── on-demand tools (setup_tools / call_tool)
                      ├── per-sub-agent filtered endpoints
