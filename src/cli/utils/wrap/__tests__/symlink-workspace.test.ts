@@ -95,6 +95,31 @@ describe('symlink-workspace', () => {
     }
   });
 
+  it('sync prunes stale provider links when exclusion set grows', () => {
+    buildSymlinkWorkspace(realDir, wsDir, CURSOR_ONLY);
+    expect(existsSync(join(wsDir, '.claude'))).toBe(true);
+    expect(existsSync(join(wsDir, 'CLAUDE.md'))).toBe(true);
+
+    syncTopLevelSymlinks(realDir, wsDir, CURSOR_AND_CLAUDE);
+
+    expect(existsSync(join(wsDir, '.claude'))).toBe(false);
+    expect(existsSync(join(wsDir, 'CLAUDE.md'))).toBe(false);
+    // Unrelated links stay
+    expect(existsSync(join(wsDir, 'src'))).toBe(true);
+    expect(existsSync(join(wsDir, 'skills'))).toBe(true);
+  });
+
+  it('sync does not prune capa-materialized provider dirs', () => {
+    buildSymlinkWorkspace(realDir, wsDir, CURSOR_ONLY);
+    mkdirSync(join(wsDir, '.cursor'), { recursive: true });
+    writeFileSync(join(wsDir, '.cursor', 'mcp.json'), '{}');
+
+    syncTopLevelSymlinks(realDir, wsDir, CURSOR_ONLY);
+
+    expect(existsSync(join(wsDir, '.cursor', 'mcp.json'))).toBe(true);
+    expect(lstatSync(join(wsDir, '.cursor')).isSymbolicLink()).toBe(false);
+  });
+
   it('skips .claude when capabilities also lists claude-code', () => {
     buildSymlinkWorkspace(realDir, wsDir, CURSOR_AND_CLAUDE);
     expect(existsSync(join(wsDir, '.cursor'))).toBe(false);

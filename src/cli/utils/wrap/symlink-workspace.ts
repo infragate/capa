@@ -79,7 +79,48 @@ export function createWorkspaceSymlink(targetPath: string, linkPath: string): vo
 }
 
 /**
+ * Drop workspace top-level entries that are now provider-excluded **and** still
+ * linked to the real project (symlink / junction / hardlink).
+ *
+ * Leaves capa-materialized trees alone (e.g. shadow `.cursor` written by install).
+ * Never touches ALWAYS_EXCLUDE internals (`.git`, lockfile, marker, `.capa`).
+ */
+export function pruneExcludedWorkspaceLinks(
+  realProjectPath: string,
+  workspacePath: string,
+  providerIds: Iterable<string>,
+): string[] {
+  const excluded = getWrapExclusionSet(providerIds);
+  const wsRoot = resolve(workspacePath);
+  const removed: string[] = [];
+
+  let wsEntries: string[];
+  try {
+    wsEntries = readdirSync(wsRoot);
+  } catch {
+    return removed;
+  }
+
+  for (const name of wsEntries) {
+    if (!excluded.has(name) || ALWAYS_EXCLUDE.has(name)) continue;
+    try {
+      const st = lstatSync(join(wsRoot, name));
+      const linked =
+        st.isSymbolicLink() || isLinkedToReal(realProjectPath, workspacePath, name);
+      if (!linked) continue;
+    } catch {
+      continue;
+    }
+    removeTopLevelEntry(wsRoot, name);
+    removed.push(name);
+  }
+
+  return removed;
+}
+
+/**
  * Build (or refresh) top-level symlinks from real project → workspace.
+ * Prunes stale provider links that are now excluded, then creates missing links.
  * Skips excluded names and entries that already exist in the workspace.
  */
 export function syncTopLevelSymlinks(
@@ -91,6 +132,8 @@ export function syncTopLevelSymlinks(
   const realRoot = resolve(realProjectPath);
   const wsRoot = resolve(workspacePath);
   mkdirSync(wsRoot, { recursive: true });
+
+  pruneExcludedWorkspaceLinks(realProjectPath, workspacePath, providerIds);
 
   const linked: string[] = [];
   let entries: string[];
