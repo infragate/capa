@@ -4,11 +4,7 @@ import { detectCapabilitiesFile } from "../shared/paths";
 import type { Capabilities } from "../types/capabilities";
 import type { CapaMCPServer, ShellToolInfo } from "./mcp-handler";
 import type { SessionManager } from "./session-manager";
-import {
-	resolveSkillContentById,
-	resolveSkillDescription,
-	resolveSkillSourceUrl,
-} from "./skill-content";
+import { resolveSkillContentById } from "./skill-content";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 

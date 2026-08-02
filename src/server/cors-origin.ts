@@ -8,9 +8,12 @@ export function isAllowedOrigin(origin: string | null): {
 
 	try {
 		const parsed = new URL(origin);
+		const hostname = stripIpv6Brackets(parsed.hostname);
 		if (
 			parsed.protocol === "http:" &&
-			(parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1")
+			(hostname === "localhost" ||
+				hostname === "127.0.0.1" ||
+				hostname === "::1")
 		) {
 			return { allowed: true, origin };
 		}
@@ -27,4 +30,10 @@ export function isAllowedOrigin(origin: string | null): {
 	}
 
 	return { allowed: false };
+}
+
+function stripIpv6Brackets(hostname: string): string {
+	return hostname.startsWith("[") && hostname.endsWith("]")
+		? hostname.slice(1, -1)
+		: hostname;
 }

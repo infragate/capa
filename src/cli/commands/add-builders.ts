@@ -3,7 +3,7 @@
  * Exported for unit tests.
  */
 
-import { basename, resolve, relative, join } from 'path';
+import { basename, resolve, relative } from 'path';
 import { access } from 'fs/promises';
 import { constants } from 'fs';
 import { CANONICAL_HOOK_EVENTS, type CanonicalHookEvent, type Hook, type HookSource } from '../../types/hooks';
