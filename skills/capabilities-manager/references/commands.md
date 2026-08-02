@@ -169,12 +169,18 @@ capa status             # Check server health and uptime
 ## Authentication
 
 ```bash
-capa auth               # Authenticate with the default Git provider
-capa auth github.com    # Authenticate with GitHub
-capa auth gitlab.com    # Authenticate with GitLab
+capa auth               # List connected providers and usage
+capa auth github.com    # OAuth with GitHub (opens browser)
+capa auth gitlab.com    # OAuth with GitLab (opens browser)
+capa auth github.com --access-token <token>   # Headless GitHub PAT
+capa auth gitlab.com --access-token <token>   # Headless GitLab PAT
+capa auth git.corp.com --access-token <token> --type github-enterprise
+capa auth git.corp.com --access-token <token> --type gitlab-self-managed
 ```
 
 Authenticates with Git providers for accessing private repositories (skills, plugins, agent snippets). Credentials are stored securely in the capa database.
+
+`--access-token` skips the browser OAuth flow (for CI / headless environments) and overwrites any existing credential for that host. Self-hosted hosts require `--type github-enterprise` or `--type gitlab-self-managed`.
 
 **When to use**: When you need to access private GitHub or GitLab repositories for skills or plugins.
 

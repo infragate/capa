@@ -244,9 +244,22 @@ if (process.argv[2] === '__server__') {
     program
       .command('auth [provider]')
       .description('Authenticate with Git providers (github.com, gitlab.com, etc.)')
-      .action(async (provider?: string) => {
-        await authCommand(provider);
-      });
+      .option(
+        '--access-token <token>',
+        'Authenticate with a Personal Access Token (headless / CI)',
+      )
+      .option(
+        '--type <type>',
+        'Self-hosted platform: github-enterprise or gitlab-self-managed',
+      )
+      .action(
+        async (
+          provider?: string,
+          options?: { accessToken?: string; type?: string },
+        ) => {
+          await authCommand(provider, options);
+        },
+      );
 
     program
       .command('upgrade')
