@@ -1,18 +1,16 @@
-import { existsSync, rmSync, statSync } from 'fs';
 import { detectCapabilitiesFile, generateProjectId } from '../../shared/paths';
 import { loadSettings, getDatabasePath } from '../../shared/config';
 import { CapaDatabase } from '../../db/database';
 import { parseCapabilitiesFile } from '../../shared/capabilities';
-import { unregisterMCPServer, unregisterSubAgentMCPServer } from '../utils/mcp-client-manager';
-import { cleanAgentsFile, removeSubAgentInstructions } from '../utils/agents-file';
-import { cleanRules } from '../utils/rules-installer';
-import { cleanHooks } from '../utils/hooks-installer';
-import { getLockfilePath } from '../../shared/lockfile';
-import { resolveProvidersForClean } from '../../shared/providers/resolve';
-import { header, footer, info, warn, error, runTasks } from '../ui';
-import type { Task } from '../ui';
+import { header, footer, info, warn, error } from '../ui';
+import { refuseIfWrapWorkspace } from '../utils/wrap/marker';
+import { cleanProject } from './clean-project';
 
 export async function cleanCommand(): Promise<void> {
+  if (await refuseIfWrapWorkspace('clean')) {
+    process.exit(1);
+  }
+
   const projectPath = process.cwd();
 
   header('Clean project');
@@ -35,124 +33,41 @@ export async function cleanCommand(): Promise<void> {
   const dbPath = getDatabasePath(settings);
   const db = new CapaDatabase(dbPath);
 
-  const providers = resolveProvidersForClean({
-    capabilitiesProviders: capabilities.providers,
-    db,
-    projectId,
-  });
-  if (providers.length === 0) {
-    warn('No providers found. Skipping provider-specific cleanup.');
-  }
-
-  const managedFiles = db.getManagedFiles(projectId);
-
-  // Collected from inside tasks; flushed after the spinner clears.
-  const deferredErrors: string[] = [];
-
-  const tasks: Task[] = [
-    {
-      title: 'Remove managed files',
-      task: async (_, task) => {
-        if (managedFiles.length === 0) {
-          task.skip('No files to clean.');
-          return;
-        }
-        const total = managedFiles.length;
-        for (let i = 0; i < total; i++) {
-          const filePath = managedFiles[i];
-          task.output = `[${i + 1}/${total}] ${filePath}`;
-          if (existsSync(filePath)) {
-            try {
-              const stats = statSync(filePath);
-              if (stats.isDirectory()) {
-                rmSync(filePath, { recursive: true, force: true });
-              } else {
-                rmSync(filePath);
-              }
-            } catch (err) {
-              deferredErrors.push(`Failed to remove ${filePath}: ${err}`);
-            }
-          }
-          db.removeManagedFile(projectId, filePath);
-        }
-        task.title = `Removed ${total} managed file${total === 1 ? '' : 's'}`;
-      },
-    },
-    {
-      // Sub-agent integrations write capa snippets independently of the top-level
-      // `agents:` block, so gate only on providers — not on `capabilities.agents`.
-      title: 'Clean agent instructions',
-      enabled: () => providers.length > 0,
-      task: async () => {
-        cleanAgentsFile(projectPath, providers);
-      },
-    },
-    {
-      title: 'Clean rules',
-      enabled: () => providers.length > 0,
-      task: async () => {
-        const ruleIds = (capabilities.rules ?? []).map((r) => r.id);
-        cleanRules(projectPath, providers, ruleIds);
-      },
-    },
-    {
-      title: 'Clean hooks',
-      enabled: () => db.getManagedHooks(projectId).length > 0,
-      task: async (_, task) => {
-        const { removed, warnings } = cleanHooks(projectPath, projectId, db);
-        for (const w of warnings) deferredErrors.push(w);
-        task.title = removed > 0
-          ? `Removed ${removed} hook entr${removed === 1 ? 'y' : 'ies'}`
-          : 'No hooks to clean';
-      },
-    },
-    {
-      title: 'Remove lockfile',
-      task: async () => {
-        const lockfilePath = getLockfilePath(projectPath);
-        if (existsSync(lockfilePath)) {
-          try {
-            rmSync(lockfilePath, { force: true });
-          } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            deferredErrors.push(`Failed to remove lockfile ${lockfilePath}: ${message}`);
-          }
-        }
-      },
-    },
-    {
-      title: 'Unregister sub-agents',
-      enabled: () => providers.length > 0 && db.getSubAgents(projectId).length > 0,
-      task: async (_, task) => {
-        const installedSubAgents = db.getSubAgents(projectId);
-        const total = installedSubAgents.length;
-        for (let i = 0; i < total; i++) {
-          const { agent_id } = installedSubAgents[i];
-          task.output = `[${i + 1}/${total}] ${agent_id}`;
-          await unregisterSubAgentMCPServer(projectPath, agent_id, providers);
-          removeSubAgentInstructions(projectPath, agent_id, providers);
-        }
-        task.title = `Unregistered ${total} sub-agent${total === 1 ? '' : 's'}`;
-      },
-    },
-    {
-      title: 'Unregister MCP server from clients',
-      enabled: () => providers.length > 0,
-      task: async () => {
-        await unregisterMCPServer(projectPath, projectId, providers);
-      },
-    },
-    {
-      title: 'Remove project data',
-      task: async () => {
-        db.deleteProject(projectId);
-      },
-    },
-  ];
-
   try {
-    await runTasks(tasks);
-    for (const e of deferredErrors) error(e);
+    const result = await cleanProject({
+      projectPath,
+      projectId,
+      db,
+      capabilities,
+    });
+
+    if (result.wrapSessionsStopped > 0) {
+      info(
+        `Stopped ${result.wrapSessionsStopped} wrap session process${
+          result.wrapSessionsStopped === 1 ? '' : 'es'
+        }`,
+      );
+    }
+    if (result.managedFilesRemoved > 0) {
+      info(
+        `Removed ${result.managedFilesRemoved} managed file${
+          result.managedFilesRemoved === 1 ? '' : 's'
+        }`,
+      );
+    }
+    if (result.workspacesPruned > 0) {
+      info(
+        `Pruned ${result.workspacesPruned} wrap workspace${
+          result.workspacesPruned === 1 ? '' : 's'
+        }`,
+      );
+    }
+    if (result.warnings.length === 0 && result.managedFilesRemoved === 0) {
+      // Providers may still have been cleaned; keep messaging light.
+    }
+    for (const w of result.warnings) {
+      warn(w);
+    }
     footer('Cleanup complete!');
   } finally {
     db.close();

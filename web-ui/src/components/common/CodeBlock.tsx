@@ -1,16 +1,17 @@
 import { useMemo } from 'react';
 import hljsCore from 'highlight.js/lib/core';
+import json from 'highlight.js/lib/languages/json';
 import typescript from 'highlight.js/lib/languages/typescript';
 import { cn } from '../../lib/utils';
 
-// Register grammars lazily on first import. We only ship the TS grammar
-// because every adapter file is a `.ts` module; this keeps the bundle
-// far smaller than pulling in the default `highlight.js` build.
+// Register grammars lazily on first import. We only ship the grammars we
+// actually use so the bundle stays smaller than the default hljs build.
 let registered = false;
 function ensureRegistered() {
   if (registered) return;
   hljsCore.registerLanguage('typescript', typescript);
   hljsCore.registerAliases(['ts', 'tsx'], { languageName: 'typescript' });
+  hljsCore.registerLanguage('json', json);
   registered = true;
 }
 

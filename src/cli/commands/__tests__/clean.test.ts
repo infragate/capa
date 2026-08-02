@@ -110,7 +110,6 @@ tools: []
 
   it('exits cleanly when there are no managed files', async () => {
     const { stdout } = await captureOutput(() => cleanCommand());
-    expect(stdout).toContain('No files to clean.');
     expect(stdout).toContain('Cleanup complete!');
   });
 

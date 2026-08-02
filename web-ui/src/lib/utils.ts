@@ -52,8 +52,15 @@ export function formatDate(dateStr: string): string {
 }
 
 export function formatTokenCount(n: number): string {
-  if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
-  return String(n);
+  if (!Number.isFinite(n) || n < 0) return '0';
+  const v = Math.floor(n);
+  if (v >= 1_000_000) {
+    return (v / 1_000_000).toFixed(1).replace(/\.0$/, '') + 'M';
+  }
+  if (v >= 1000) {
+    return (v / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
+  }
+  return String(v);
 }
 
 export function highlightText(text: string, query: string): string {
@@ -71,6 +78,14 @@ export function matchesSearch(texts: (string | null | undefined)[], query: strin
   if (!query) return true;
   const q = query.toLowerCase();
   return texts.some((t) => t != null && t.toLowerCase().includes(q));
+}
+
+/** True when Space/Enter should type into a field, not activate a parent role=button. */
+export function isFormFieldTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+  return target.isContentEditable;
 }
 
 const BADGE_HUES = [

@@ -124,6 +124,10 @@ const MARKETPLACE_REPO = 'anthropics/claude-plugins-official';
 const MARKETPLACE_JSON_URL = `https://raw.githubusercontent.com/${MARKETPLACE_REPO}/main/.claude-plugin/marketplace.json`;
 const MARKETPLACE_CACHE_TTL_MS = 10 * 60 * 1000;
 
+/* =========================================================================
+ * HTML utilities — entity decoding, tag stripping, and formatting helpers
+ * ========================================================================= */
+
 /* ---- HTTP helpers ---- */
 
 async function fetchWithTimeout(url: string, timeoutMs: number): Promise<Response> {
@@ -201,6 +205,10 @@ function truncate(s: string, max: number): string {
   if (s.length <= max) return s;
   return s.slice(0, max).trimEnd() + '…';
 }
+
+/* =========================================================================
+ * Listing scrape — parse the /plugins index and paginate through Webflow
+ * ========================================================================= */
 
 /* ---- Listing parser ---- */
 
@@ -396,6 +404,10 @@ async function fetchListingPage(token?: string, page?: number): Promise<string> 
     throw err;
   }
 }
+
+/* =========================================================================
+ * marketplace.json — resolve plugin sources via the official manifest
+ * ========================================================================= */
 
 /* ---- Marketplace manifest (anthropics/claude-plugins-official) ---- */
 
@@ -601,6 +613,10 @@ function githubBrowseUrl(c: GithubCoords): string {
   }
   return `https://github.com/${c.ownerRepo}/tree/${refish}`;
 }
+
+/* =========================================================================
+ * Detail & install — parse individual plugin pages and build install snippets
+ * ========================================================================= */
 
 /* ---- Detail parser ---- */
 
@@ -946,6 +962,10 @@ function buildInstallSnippet(
     def,
   };
 }
+
+/* =========================================================================
+ * Adapter object — RegistryAdapter implementation exported to capa
+ * ========================================================================= */
 
 /* ---- Adapter object ---- */
 

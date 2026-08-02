@@ -1,4 +1,5 @@
 import type { AgentSnippetDef } from './capabilities';
+import type { SourcePlugin } from './plugin';
 
 /**
  * A rule to install across providers.
@@ -32,4 +33,6 @@ export interface Rule {
   path?: string;
   /** Repository + file definition (required when type is 'github' or 'gitlab'). */
   def?: AgentSnippetDef;
+  /** Set when this rule was unpacked from a plugin. */
+  sourcePlugin?: SourcePlugin;
 }

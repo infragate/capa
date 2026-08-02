@@ -1,13 +1,13 @@
-import { exec } from 'child_process';
+import * as childProcess from 'child_process';
 import { promisify } from 'util';
 import { getGitProvider } from '../../../../shared/git-providers/registry';
 import type { CachePlatform } from '../../../../shared/cache';
 
-const execAsync = promisify(exec);
-
 export async function checkGitInstalled(): Promise<boolean> {
   try {
-    await execAsync('git --version');
+    // Promisify per call so test spies on childProcess.execFile are observed.
+    const execFileAsync = promisify(childProcess.execFile);
+    await execFileAsync('git', ['--version'], { windowsHide: true });
     return true;
   } catch {
     return false;

@@ -3,7 +3,7 @@ import { CAPA_CLOUD_OAUTH_URL, CAPA_DOCS_URL, projectUiPath, projectUiUrl } from
 
 describe('ui-urls', () => {
   it('CAPA_DOCS_URL points to capa docs site', () => {
-    expect(CAPA_DOCS_URL).toBe('https://capa.infragate.ai');
+    expect(CAPA_DOCS_URL).toBe('https://capa.infragate.ai/getting-started/introduction/');
   });
 
   it('CAPA_CLOUD_OAUTH_URL points to cloud OAuth endpoint', () => {

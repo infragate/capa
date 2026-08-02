@@ -1,298 +1,326 @@
-import { spawn, ChildProcess } from 'child_process';
-import { createHash } from 'crypto';
-import type { CapaDatabase } from '../db/database';
-import type { MCPServerDefinition } from '../types/capabilities';
-import { logger } from '../shared/logger';
+import { ChildProcess, spawn } from "child_process";
+import { createHash } from "crypto";
+import type { CapaDatabase } from "../db/database";
+import { logger } from "../shared/logger";
+import type { MCPServerDefinition } from "../types/capabilities";
 
 export interface MCPSubprocessInfo {
-  id: string;
-  process: ChildProcess | null;
-  port: number | null;
-  url: string | null;
-  status: 'starting' | 'running' | 'crashed' | 'stopped';
-  restartCount?: number;
-  lastRestartTime?: number;
+	id: string;
+	process: ChildProcess | null;
+	port: number | null;
+	url: string | null;
+	status: "starting" | "running" | "crashed" | "stopped";
+	restartCount?: number;
+	lastRestartTime?: number;
 }
 
 export class SubprocessManager {
-  private subprocesses = new Map<string, MCPSubprocessInfo>();
-  private inFlight = new Map<string, Promise<MCPSubprocessInfo>>();
-  private db: CapaDatabase;
-  private readonly MAX_RESTART_ATTEMPTS = 3;
-  private readonly RESTART_WINDOW_MS = 60000; // 1 minute
-  private readonly BASE_RESTART_DELAY_MS = 1000;
-  private logger = logger.child('SubprocessManager');
+	private subprocesses = new Map<string, MCPSubprocessInfo>();
+	private inFlight = new Map<string, Promise<MCPSubprocessInfo>>();
+	private db: CapaDatabase;
+	private readonly MAX_RESTART_ATTEMPTS = 3;
+	private readonly RESTART_WINDOW_MS = 60000; // 1 minute
+	private readonly BASE_RESTART_DELAY_MS = 1000;
+	private logger = logger.child("SubprocessManager");
 
-  constructor(db: CapaDatabase) {
-    this.db = db;
-    this.loadExistingSubprocesses();
-  }
+	constructor(db: CapaDatabase) {
+		this.db = db;
+		this.loadExistingSubprocesses();
+	}
 
-  private loadExistingSubprocesses(): void {
-    const all = this.db.getAllMCPSubprocesses();
-    for (const sp of all) {
-      // Check if process is still running
-      if (sp.pid && this.isProcessRunning(sp.pid)) {
-        this.subprocesses.set(sp.id, {
-          id: sp.id,
-          process: null, // We don't have the ChildProcess handle
-          port: sp.port,
-          url: sp.port ? `http://127.0.0.1:${sp.port}` : null,
-          status: 'running',
-        });
-      } else {
-        // Process is dead, clean up
-        this.db.deleteMCPSubprocess(sp.id);
-      }
-    }
-  }
+	private loadExistingSubprocesses(): void {
+		const all = this.db.getAllMCPSubprocesses();
+		for (const sp of all) {
+			// Check if process is still running
+			if (sp.pid && this.isProcessRunning(sp.pid)) {
+				this.subprocesses.set(sp.id, {
+					id: sp.id,
+					process: null, // We don't have the ChildProcess handle
+					port: sp.port,
+					url: sp.port ? `http://127.0.0.1:${sp.port}` : null,
+					status: "running",
+				});
+			} else {
+				// Process is dead, clean up
+				this.db.deleteMCPSubprocess(sp.id);
+			}
+		}
+	}
 
-  /**
-   * Get or create a subprocess for an MCP server
-   */
-  async getOrCreateSubprocess(
-    serverId: string,
-    definition: MCPServerDefinition,
-    projectPath: string
-  ): Promise<MCPSubprocessInfo> {
-    this.logger.info(`Getting/creating subprocess for: ${serverId}`);
-    
-    // Generate hash of server configuration
-    const configHash = this.hashConfig(definition);
+	/**
+	 * Get or create a subprocess for an MCP server
+	 */
+	async getOrCreateSubprocess(
+		serverId: string,
+		definition: MCPServerDefinition,
+		projectPath: string,
+	): Promise<MCPSubprocessInfo> {
+		this.logger.info(`Getting/creating subprocess for: ${serverId}`);
 
-    // Check if subprocess already exists
-    const existing = this.db.getMCPSubprocessByHash(configHash);
-    if (existing && existing.pid && this.isProcessRunning(existing.pid)) {
-      this.logger.debug(`Found existing subprocess (PID: ${existing.pid})`);
-      let info = this.subprocesses.get(existing.id);
-      if (!info) {
-        info = {
-          id: existing.id,
-          process: null,
-          port: existing.port,
-          url: existing.port ? `http://127.0.0.1:${existing.port}` : null,
-          status: 'running',
-        };
-        this.subprocesses.set(existing.id, info);
-      }
-      return info;
-    }
+		// Generate hash of server configuration
+		const configHash = this.hashConfig(definition);
 
-    const existingInFlight = this.inFlight.get(configHash);
-    if (existingInFlight) {
-      this.logger.debug('Subprocess spawn already in flight, awaiting existing promise');
-      return existingInFlight;
-    }
+		// Check if subprocess already exists
+		const existing = this.db.getMCPSubprocessByHash(configHash);
+		if (existing && existing.pid && this.isProcessRunning(existing.pid)) {
+			this.logger.debug(`Found existing subprocess (PID: ${existing.pid})`);
+			let info = this.subprocesses.get(existing.id);
+			if (!info) {
+				info = {
+					id: existing.id,
+					process: null,
+					port: existing.port,
+					url: existing.port ? `http://127.0.0.1:${existing.port}` : null,
+					status: "running",
+				};
+				this.subprocesses.set(existing.id, info);
+			}
+			return info;
+		}
 
-    this.logger.info('Creating new subprocess...');
-    const promise = this.createSubprocess(serverId, definition, configHash, projectPath).finally(
-      () => this.inFlight.delete(configHash)
-    );
-    this.inFlight.set(configHash, promise);
-    return promise;
-  }
+		const existingInFlight = this.inFlight.get(configHash);
+		if (existingInFlight) {
+			this.logger.debug(
+				"Subprocess spawn already in flight, awaiting existing promise",
+			);
+			return existingInFlight;
+		}
 
-  private async createSubprocess(
-    serverId: string,
-    definition: MCPServerDefinition,
-    configHash: string,
-    projectPath: string
-  ): Promise<MCPSubprocessInfo> {
-    if (!definition.cmd) {
-      throw new Error(`Server ${serverId} is remote and cannot be spawned as subprocess`);
-    }
+		this.logger.info("Creating new subprocess...");
+		const promise = this.createSubprocess(
+			serverId,
+			definition,
+			configHash,
+			projectPath,
+		).finally(() => this.inFlight.delete(configHash));
+		this.inFlight.set(configHash, promise);
+		return promise;
+	}
 
-    this.logger.debug(`Spawning subprocess: ${definition.cmd} ${(definition.args || []).join(' ')}`);
+	private async createSubprocess(
+		serverId: string,
+		definition: MCPServerDefinition,
+		configHash: string,
+		projectPath: string,
+	): Promise<MCPSubprocessInfo> {
+		if (!definition.cmd) {
+			throw new Error(
+				`Server ${serverId} is remote and cannot be spawned as subprocess`,
+			);
+		}
 
-    const info: MCPSubprocessInfo = {
-      id: serverId,
-      process: null,
-      port: null,
-      url: null,
-      status: 'starting',
-      restartCount: 0,
-      lastRestartTime: Date.now(),
-    };
+		this.logger.debug(
+			`Spawning subprocess: ${definition.cmd} ${(definition.args || []).join(" ")}`,
+		);
 
-    this.subprocesses.set(serverId, info);
+		const info: MCPSubprocessInfo = {
+			id: serverId,
+			process: null,
+			port: null,
+			url: null,
+			status: "starting",
+			restartCount: 0,
+			lastRestartTime: Date.now(),
+		};
 
-    // Parse command
-    const args = definition.args || [];
-    const env = { ...process.env, ...definition.env };
-    const cwd = definition.cwd ?? projectPath;
+		this.subprocesses.set(serverId, info);
 
-    this.logger.debug(`Working directory: ${cwd}`);
+		// Parse command
+		const args = definition.args || [];
+		const env = { ...process.env, ...definition.env };
+		const cwd = definition.cwd ?? projectPath;
 
-    // Spawn process from the project directory (or plugin cwd when set)
-    const proc = spawn(definition.cmd, args, {
-      env,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      detached: false,
-      cwd,
-      windowsHide: true,
-    });
+		this.logger.debug(`Working directory: ${cwd}`);
 
-    info.process = proc;
-    this.logger.debug(`Subprocess started with PID: ${proc.pid}`);
+		// Spawn process from the project directory (or plugin cwd when set)
+		const proc = spawn(definition.cmd, args, {
+			env,
+			stdio: ["pipe", "pipe", "pipe"],
+			detached: false,
+			cwd,
+			windowsHide: true,
+		});
 
-    // Store in database
-    this.db.upsertMCPSubprocess({
-      id: serverId,
-      config_hash: configHash,
-      pid: proc.pid || null,
-      port: null,
-      status: 'running',
-    });
+		info.process = proc;
+		this.logger.debug(`Subprocess started with PID: ${proc.pid}`);
 
-    // Set up event handlers
-    proc.on('error', (error) => {
-      this.logger.failure(`MCP subprocess ${serverId} error:`, error);
-      info.status = 'crashed';
-      this.db.upsertMCPSubprocess({
-        id: serverId,
-        config_hash: configHash,
-        pid: null,
-        port: null,
-        status: 'crashed',
-      });
-    });
+		// Store in database
+		this.db.upsertMCPSubprocess({
+			id: serverId,
+			config_hash: configHash,
+			pid: proc.pid || null,
+			port: null,
+			status: "running",
+		});
 
-    proc.on('exit', (code, signal) => {
-      this.logger.info(`MCP subprocess ${serverId} exited with code ${code}, signal ${signal}`);
-      info.status = 'stopped';
-      
-      // Auto-restart on crash (not on clean exit)
-      if (code !== 0 && code !== null) {
-        // Initialize restart tracking if needed
-        if (!info.restartCount) {
-          info.restartCount = 0;
-          info.lastRestartTime = Date.now();
-        }
+		// Set up event handlers
+		proc.on("error", (error) => {
+			this.logger.failure(`MCP subprocess ${serverId} error:`, error);
+			info.status = "crashed";
+			this.db.upsertMCPSubprocess({
+				id: serverId,
+				config_hash: configHash,
+				pid: null,
+				port: null,
+				status: "crashed",
+			});
+		});
 
-        // Reset restart count if outside the restart window
-        const now = Date.now();
-        if (info.lastRestartTime && (now - info.lastRestartTime) > this.RESTART_WINDOW_MS) {
-          this.logger.debug('Restart window elapsed, resetting restart count');
-          info.restartCount = 0;
-        }
+		proc.on("exit", (code, signal) => {
+			this.logger.info(
+				`MCP subprocess ${serverId} exited with code ${code}, signal ${signal}`,
+			);
+			info.status = "stopped";
 
-        // Check if we've exceeded max restart attempts
-        if (info.restartCount >= this.MAX_RESTART_ATTEMPTS) {
-          this.logger.failure(`Max restart attempts (${this.MAX_RESTART_ATTEMPTS}) reached for ${serverId}`);
-          this.logger.failure('Subprocess will not be restarted. Please check configuration and try again.');
-          info.status = 'crashed';
-          this.db.upsertMCPSubprocess({
-            id: serverId,
-            config_hash: configHash,
-            pid: null,
-            port: null,
-            status: 'crashed',
-          });
-          return;
-        }
+			// Auto-restart on crash (not on clean exit)
+			if (code !== 0 && code !== null) {
+				// Initialize restart tracking if needed
+				if (!info.restartCount) {
+					info.restartCount = 0;
+					info.lastRestartTime = Date.now();
+				}
 
-        // Increment restart count and attempt restart with exponential backoff
-        info.restartCount++;
-        info.lastRestartTime = now;
-        const delay = this.BASE_RESTART_DELAY_MS * Math.pow(2, info.restartCount - 1);
-        
-        this.logger.info(`Auto-restarting ${serverId} (attempt ${info.restartCount}/${this.MAX_RESTART_ATTEMPTS}) in ${delay}ms...`);
-        setTimeout(() => {
-          this.createSubprocess(serverId, definition, configHash, projectPath).catch((error) => {
-            this.logger.failure(`Failed to restart ${serverId}:`, error);
-          });
-        }, delay);
-      } else {
-        this.db.deleteMCPSubprocess(serverId);
-        this.subprocesses.delete(serverId);
-      }
-    });
+				// Reset restart count if outside the restart window
+				const now = Date.now();
+				if (
+					info.lastRestartTime &&
+					now - info.lastRestartTime > this.RESTART_WINDOW_MS
+				) {
+					this.logger.debug("Restart window elapsed, resetting restart count");
+					info.restartCount = 0;
+				}
 
-    // Capture stdout/stderr for logging
-    proc.stdout?.on('data', (data) => {
-      this.logger.debug(`[${serverId} stdout] ${data.toString().trim()}`);
-    });
+				// Check if we've exceeded max restart attempts
+				if (info.restartCount >= this.MAX_RESTART_ATTEMPTS) {
+					this.logger.failure(
+						`Max restart attempts (${this.MAX_RESTART_ATTEMPTS}) reached for ${serverId}`,
+					);
+					this.logger.failure(
+						"Subprocess will not be restarted. Please check configuration and try again.",
+					);
+					info.status = "crashed";
+					this.db.upsertMCPSubprocess({
+						id: serverId,
+						config_hash: configHash,
+						pid: null,
+						port: null,
+						status: "crashed",
+					});
+					return;
+				}
 
-    proc.stderr?.on('data', (data) => {
-      this.logger.debug(`[${serverId} stderr] ${data.toString().trim()}`);
-    });
+				// Increment restart count and attempt restart with exponential backoff
+				info.restartCount++;
+				info.lastRestartTime = now;
+				const delay =
+					this.BASE_RESTART_DELAY_MS * Math.pow(2, info.restartCount - 1);
 
-    // For stdio transport, the subprocess is ready immediately
-    info.status = 'running';
-    this.db.upsertMCPSubprocess({
-      id: serverId,
-      config_hash: configHash,
-      pid: proc.pid || null,
-      port: null,
-      status: 'running',
-    });
+				this.logger.info(
+					`Auto-restarting ${serverId} (attempt ${info.restartCount}/${this.MAX_RESTART_ATTEMPTS}) in ${delay}ms...`,
+				);
+				setTimeout(() => {
+					this.createSubprocess(
+						serverId,
+						definition,
+						configHash,
+						projectPath,
+					).catch((error) => {
+						this.logger.failure(`Failed to restart ${serverId}:`, error);
+					});
+				}, delay);
+			} else {
+				this.db.deleteMCPSubprocess(serverId);
+				this.subprocesses.delete(serverId);
+			}
+		});
 
-    this.logger.success(`Subprocess ready (status: ${info.status})`);
-    return info;
-  }
+		// Capture stdout/stderr for logging
+		proc.stdout?.on("data", (data) => {
+			this.logger.debug(`[${serverId} stdout] ${data.toString().trim()}`);
+		});
 
-  /**
-   * Stop a subprocess
-   */
-  stopSubprocess(serverId: string): void {
-    const info = this.subprocesses.get(serverId);
-    if (!info || !info.process) {
-      return;
-    }
+		proc.stderr?.on("data", (data) => {
+			this.logger.debug(`[${serverId} stderr] ${data.toString().trim()}`);
+		});
 
-    info.process.kill('SIGTERM');
-    
-    // Force kill after timeout
-    setTimeout(() => {
-      if (info.process && !info.process.killed) {
-        info.process.kill('SIGKILL');
-      }
-    }, 5000);
+		// For stdio transport, the subprocess is ready immediately
+		info.status = "running";
+		this.db.upsertMCPSubprocess({
+			id: serverId,
+			config_hash: configHash,
+			pid: proc.pid || null,
+			port: null,
+			status: "running",
+		});
 
-    this.subprocesses.delete(serverId);
-    this.db.deleteMCPSubprocess(serverId);
-  }
+		this.logger.success(`Subprocess ready (status: ${info.status})`);
+		return info;
+	}
 
-  /**
-   * Reset a crashed subprocess (clears restart count, allowing manual retry)
-   */
-  resetSubprocess(serverId: string): void {
-    const info = this.subprocesses.get(serverId);
-    if (info) {
-      info.restartCount = 0;
-      info.lastRestartTime = Date.now();
-      info.status = 'stopped';
-      this.logger.info(`Reset subprocess ${serverId} - ready for manual restart`);
-    }
-  }
+	/**
+	 * Stop a subprocess
+	 */
+	stopSubprocess(serverId: string): void {
+		const info = this.subprocesses.get(serverId);
+		if (!info || !info.process) {
+			return;
+		}
 
-  /**
-   * Stop all subprocesses
-   */
-  stopAll(): void {
-    for (const [serverId] of this.subprocesses) {
-      this.stopSubprocess(serverId);
-    }
-  }
+		info.process.kill("SIGTERM");
 
-  /**
-   * Get subprocess info
-   */
-  getSubprocess(serverId: string): MCPSubprocessInfo | null {
-    return this.subprocesses.get(serverId) || null;
-  }
+		// Force kill after timeout
+		setTimeout(() => {
+			if (info.process && !info.process.killed) {
+				info.process.kill("SIGKILL");
+			}
+		}, 5000);
 
-  private hashConfig(definition: MCPServerDefinition): string {
-    const configStr = JSON.stringify(definition);
-    return createHash('sha256').update(configStr).digest('hex');
-  }
+		this.subprocesses.delete(serverId);
+		this.db.deleteMCPSubprocess(serverId);
+	}
 
-  private isProcessRunning(pid: number): boolean {
-    try {
-      process.kill(pid, 0);
-      return true;
-    } catch (error: any) {
-      return error.code === 'EPERM';
-    }
-  }
+	/**
+	 * Reset a crashed subprocess (clears restart count, allowing manual retry)
+	 */
+	resetSubprocess(serverId: string): void {
+		const info = this.subprocesses.get(serverId);
+		if (info) {
+			info.restartCount = 0;
+			info.lastRestartTime = Date.now();
+			info.status = "stopped";
+			this.logger.info(
+				`Reset subprocess ${serverId} - ready for manual restart`,
+			);
+		}
+	}
+
+	/**
+	 * Stop all subprocesses
+	 */
+	stopAll(): void {
+		for (const [serverId] of this.subprocesses) {
+			this.stopSubprocess(serverId);
+		}
+	}
+
+	/**
+	 * Get subprocess info
+	 */
+	getSubprocess(serverId: string): MCPSubprocessInfo | null {
+		return this.subprocesses.get(serverId) || null;
+	}
+
+	private hashConfig(definition: MCPServerDefinition): string {
+		const configStr = JSON.stringify(definition);
+		return createHash("sha256").update(configStr).digest("hex");
+	}
+
+	private isProcessRunning(pid: number): boolean {
+		try {
+			process.kill(pid, 0);
+			return true;
+		} catch (error: any) {
+			return error.code === "EPERM";
+		}
+	}
 }

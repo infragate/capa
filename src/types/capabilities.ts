@@ -87,6 +87,12 @@ export interface CapabilitiesOptions {
    */
   toolExposure?: ToolExposureMode;
   /**
+   * When true (default), capa injects provider hooks that report agent
+   * lifecycle activity into the project Activity feed. Set false to opt out.
+   * @default true
+   */
+  agentActivity?: boolean;
+  /**
    * Security options for skill installation (blocked phrases, character sanitization)
    */
   security?: SecurityOptions;
@@ -126,19 +132,25 @@ export interface AgentSnippetDef {
  *   - remote  : content fetched from a raw URL at install time
  *   - github  : file fetched from a GitHub repository (see AgentSnippetDef for repo string format)
  *   - gitlab  : file fetched from a GitLab repository (see AgentSnippetDef for repo string format)
+ *   - local   : content read from a local markdown file at install time
  */
 export interface AgentSnippet {
   /**
    * Unique identifier used as the capa marker id in the file.
    * Optional for github/gitlab — derived from the filepath if omitted.
-   * Required for inline and remote types.
+   * Required for inline, remote, and local types.
    */
   id?: string;
-  type: 'inline' | 'remote' | 'github' | 'gitlab';
+  type: 'inline' | 'remote' | 'github' | 'gitlab' | 'local';
   /** Literal markdown text (required when type is 'inline'). */
   content?: string;
   /** Raw URL of a markdown file to fetch (required when type is 'remote'). */
   url?: string;
+  /**
+   * Path to a local markdown file (required when type is 'local').
+   * Relative paths are resolved from the directory containing the capabilities file.
+   */
+  path?: string;
   /** Repository + file definition (required when type is 'github' or 'gitlab'). */
   def?: AgentSnippetDef;
 }
@@ -237,6 +249,8 @@ export interface SubAgent {
    * Use this for role-specific instructions, scope constraints, or rules.
    */
   instructions?: string;
+  /** Set when this sub-agent was unpacked from a plugin. */
+  sourcePlugin?: SourcePlugin;
 }
 
 export interface Capabilities {

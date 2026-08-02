@@ -16,7 +16,7 @@ mock.module('../../utils/server-manager', () => ({
   restartServer: mock(async () => {}),
 }));
 
-const { authCommand } = await import('../auth');
+const { authCommand, normalizeProviderHost } = await import('../auth');
 
 function isolateHome(): { restore: () => void } {
   const home = mkdtempSync(join(tmpdir(), 'capa-auth-home-'));
@@ -102,6 +102,30 @@ describe('authCommand', () => {
     expect(ensureServerMock).toHaveBeenCalled();
   });
 
+  it('lists self-hosted integrations alongside cloud providers', async () => {
+    const { loadSettings, getDatabasePath } = await import('../../../shared/config');
+    const { CapaDatabase } = await import('../../../db/database');
+    const settings = await loadSettings();
+    const db = new CapaDatabase(getDatabasePath(settings));
+    try {
+      db.setGitIntegration('github', {
+        access_token: 'gh',
+        token_type: 'token',
+      });
+      db.setGitIntegration('github-enterprise', {
+        host: 'git.corp.com',
+        access_token: 'ghe',
+        token_type: 'token',
+      });
+    } finally {
+      db.close();
+    }
+
+    const { stdout } = await captureOutput(() => authCommand());
+    expect(stdout).toContain('github.com');
+    expect(stdout).toContain('GitHub Enterprise (git.corp.com)');
+  });
+
   it('exits with a clear error for an invalid provider format', async () => {
     const exitSpy = spyOn(process, 'exit').mockImplementation((() => {}) as typeof process.exit);
     const { stdout } = await captureOutput(() => authCommand('not-a-valid-domain'));
@@ -116,6 +140,143 @@ describe('authCommand', () => {
     expect(stdout).toContain('Unknown git provider: example.com');
     expect(exitSpy).toHaveBeenCalledWith(1);
     exitSpy.mockRestore();
+  });
+
+  describe('normalizeProviderHost', () => {
+    it('accepts DNS hosts, localhost, IPs, and optional ports', () => {
+      expect(normalizeProviderHost('github.com')).toBe('github.com');
+      expect(normalizeProviderHost('git.corp.com:8443')).toBe('git.corp.com:8443');
+      expect(normalizeProviderHost('localhost')).toBe('localhost');
+      expect(normalizeProviderHost('localhost:3000')).toBe('localhost:3000');
+      expect(normalizeProviderHost('192.168.1.10')).toBe('192.168.1.10');
+      expect(normalizeProviderHost('192.168.1.10:8080')).toBe('192.168.1.10:8080');
+      expect(normalizeProviderHost('::1')).toBe('[::1]');
+      expect(normalizeProviderHost('[::1]:8443')).toBe('[::1]:8443');
+    });
+
+    it('rejects schemes and path segments', () => {
+      expect(normalizeProviderHost('https://github.com')).toBeNull();
+      expect(normalizeProviderHost('github.com/org')).toBeNull();
+      expect(normalizeProviderHost('')).toBeNull();
+    });
+  });
+
+  describe('access-token path', () => {
+    const originalFetch = globalThis.fetch;
+    let fetchOk = true;
+
+    beforeEach(() => {
+      fetchOk = true;
+      globalThis.fetch = (async () =>
+        new Response(fetchOk ? JSON.stringify({ login: 'u' }) : 'Unauthorized', {
+          status: fetchOk ? 200 : 401,
+          headers: { 'Content-Type': 'application/json' },
+        })) as unknown as typeof fetch;
+    });
+
+    afterEach(() => {
+      globalThis.fetch = originalFetch;
+    });
+
+    it('stores a cloud GitHub token without starting the server', async () => {
+      const { stdout } = await captureOutput(() =>
+        authCommand('github.com', { accessToken: 'ghp_test' }),
+      );
+
+      expect(ensureServerMock).not.toHaveBeenCalled();
+      expect(stdout).toContain('Authenticated with github.com using access token');
+
+      const { loadSettings, getDatabasePath } = await import('../../../shared/config');
+      const { CapaDatabase } = await import('../../../db/database');
+      const settings = await loadSettings();
+      const db = new CapaDatabase(getDatabasePath(settings));
+      try {
+        const stored = db.getGitIntegration('github');
+        expect(stored?.access_token).toBe('ghp_test');
+        expect(stored?.host).toBeNull();
+      } finally {
+        db.close();
+      }
+    });
+
+    it('stores a self-hosted token when --type is provided', async () => {
+      const { stdout } = await captureOutput(() =>
+        authCommand('git.corp.com', {
+          accessToken: 'ghe_test',
+          type: 'github-enterprise',
+        }),
+      );
+
+      expect(ensureServerMock).not.toHaveBeenCalled();
+      expect(stdout).toContain('Authenticated with git.corp.com using access token');
+
+      const { loadSettings, getDatabasePath } = await import('../../../shared/config');
+      const { CapaDatabase } = await import('../../../db/database');
+      const settings = await loadSettings();
+      const db = new CapaDatabase(getDatabasePath(settings));
+      try {
+        const stored = db.getGitIntegration('github-enterprise', 'git.corp.com');
+        expect(stored?.access_token).toBe('ghe_test');
+      } finally {
+        db.close();
+      }
+    });
+
+    it('stores a self-hosted token for localhost with a port', async () => {
+      const { stdout } = await captureOutput(() =>
+        authCommand('localhost:8443', {
+          accessToken: 'ghe_local',
+          type: 'github-enterprise',
+        }),
+      );
+
+      expect(stdout).toContain('Authenticated with localhost:8443 using access token');
+
+      const { loadSettings, getDatabasePath } = await import('../../../shared/config');
+      const { CapaDatabase } = await import('../../../db/database');
+      const settings = await loadSettings();
+      const db = new CapaDatabase(getDatabasePath(settings));
+      try {
+        const stored = db.getGitIntegration('github-enterprise', 'localhost:8443');
+        expect(stored?.access_token).toBe('ghe_local');
+      } finally {
+        db.close();
+      }
+    });
+
+    it('requires --type for unknown self-hosted hosts', async () => {
+      const exitSpy = spyOn(process, 'exit').mockImplementation((() => {}) as typeof process.exit);
+      const { stdout } = await captureOutput(() =>
+        authCommand('git.corp.com', { accessToken: 'tok' }),
+      );
+      expect(stdout).toContain('--type');
+      expect(exitSpy).toHaveBeenCalledWith(1);
+      exitSpy.mockRestore();
+    });
+
+    it('rejects --type on cloud hosts', async () => {
+      const exitSpy = spyOn(process, 'exit').mockImplementation((() => {}) as typeof process.exit);
+      const { stdout } = await captureOutput(() =>
+        authCommand('github.com', {
+          accessToken: 'tok',
+          type: 'github-enterprise',
+        }),
+      );
+      expect(stdout).toContain('--type is not needed');
+      expect(exitSpy).toHaveBeenCalledWith(1);
+      exitSpy.mockRestore();
+    });
+
+    it('exits when the token is invalid', async () => {
+      fetchOk = false;
+      const exitSpy = spyOn(process, 'exit').mockImplementation((() => {}) as typeof process.exit);
+      const { stdout } = await captureOutput(() =>
+        authCommand('github.com', { accessToken: 'bad' }),
+      );
+      expect(stdout).toContain('Invalid Personal Access Token');
+      expect(exitSpy).toHaveBeenCalledWith(1);
+      exitSpy.mockRestore();
+    });
   });
 
   afterAll(() => {

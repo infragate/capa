@@ -1,6 +1,6 @@
 ---
 name: capabilities-manager
-description: Manage capa CLI configuration — `capabilities.yaml` / `capabilities.json`, skills, MCP servers, tools, hooks, sub-agents, rules, plugins, AGENTS.md / CLAUDE.md, security options, and tool exposure modes. Use whenever the user edits the capabilities file, runs any `capa` command (init, install, add, clean, sh, start/stop/restart/status, auth, upgrade, cache, registry), wires up an MCP server, adds a skill from GitHub / GitLab / a registry / a remote URL / a local path, configures secrets via `${VarName}` placeholders, installs lifecycle hooks, defines sub-agents, or troubleshoots a failed install. Use even when the user only names a fragment ("add a skill", "wire up brave search", "block this phrase in skills") without saying "capa" — if a `capabilities.yaml` or `capabilities.json` lives at the project root, this is almost certainly the right skill. If the project does NOT yet have a capabilities file, point at the `bootstrap` skill instead.
+description: Manage capa CLI configuration — `capabilities.yaml` / `capabilities.json`, skills, MCP servers, tools, hooks, sub-agents, rules, plugins, AGENTS.md / CLAUDE.md, security options, tool exposure modes, `capa wrap` shadow workspaces, `--passthrough` native writes, registries (including Claude marketplaces), activity traces, and the local Web UI. Use whenever the user edits the capabilities file, runs any `capa` command (init, install, add, wrap, clean, sh, start/stop/restart/status, auth, upgrade, cache, registry), wires up an MCP server, adds a skill from GitHub / GitLab / a registry / a remote URL / a local path, configures secrets via `${VarName}` placeholders, installs lifecycle hooks, defines sub-agents, or troubleshoots a failed install. Use even when the user only names a fragment ("add a skill", "wire up brave search", "wrap cursor", "block this phrase in skills") without saying "capa" — if a `capabilities.yaml` or `capabilities.json` lives at the project root, this is almost certainly the right skill. If the project does NOT yet have a capabilities file, point at the `bootstrap` skill instead.
 ---
 
 # Capabilities Manager
@@ -12,19 +12,20 @@ This skill is the routing layer for that loop. The actual command reference, sch
 ## How capa works (one screen)
 
 1. **The file is the source of truth.** `capabilities.yaml` declares what gets installed. Capa never auto-discovers anything from `.claude/`, `.cursor/`, etc. — if it's not in the file, capa won't manage it. (Onboarding an already-configured project is the `bootstrap` skill's job.)
-2. **`capa install` writes everything.** Skill directories under each provider, MCP client config (`.mcp.json`, `.cursor/mcp.json`, etc.), `AGENTS.md` / `CLAUDE.md` blocks, hook entries, rules — all rewritten from the file. Anything labeled `name: capa:<id>` is capa's; entries the user authored by hand are left alone.
-3. **`capa clean` removes only what capa wrote.** Safe to run; doesn't touch user-authored files or settings entries.
-4. **A background server at `localhost:5912`** handles credential prompts, tool execution (`capa sh`), and the MCP endpoints providers connect to. Started by `capa install`; lifecycle is `capa start | stop | restart | status`.
+2. **`capa install` writes everything.** Skill directories under each provider, MCP client config (`.mcp.json`, `.cursor/mcp.json`, etc.), `AGENTS.md` / `CLAUDE.md` blocks, hook entries, rules — all rewritten from the file. Anything labeled `name: capa:<id>` is capa's; entries the user authored by hand are left alone. Plugins unpack into the same primitives (skills, servers, rules, sub-agents, hooks).
+3. **`capa clean` removes only what capa wrote.** Safe to run; doesn't touch user-authored files or settings entries. Passthrough writes (`capa add --passthrough` / `capa install --passthrough`) are **not** managed — `capa clean` will not remove them.
+4. **A background server at `localhost:5912`** handles credential prompts, tool execution (`capa sh`), MCP endpoints, the Web UI capabilities editor, registries, and the Activity feed. Started by `capa init` / `capa install`; lifecycle is `capa start | stop | restart | status`.
 5. **Secrets are `${VarName}` placeholders** anywhere in the file. Capa prompts for them via web UI on install, or loads from `.env` with `capa install -e`.
+6. **`capa wrap <provider>`** runs the agent from a shadow workspace under `~/.capa/workspaces/` so provider dirs never pollute the real repo. Mutating commands refuse to run inside a wrap workspace — always edit/install from the real project path.
 
 ## Routing — load the reference that matches the task
 
 | If the user is… | Read first | Then |
 |---|---|---|
-| Running a CLI command (init/install/add/clean/sh/server/auth/cache/registry/upgrade) or asking what flags exist | `references/commands.md` | Run the command and report results |
-| Editing the file — adding a skill, server, tool, hook, sub-agent, rule, plugin, agents block, security setting | `references/capabilities-schema.md` | Edit `capabilities.yaml`; run `capa install` |
-| Asking how to wire up a common pattern (web search, file ops, on-demand mode, plugins, etc.) | `references/workflows-and-examples.md` | Adapt the closest example |
-| Hitting an install error, credential prompt issue, server crash, missing tools, stale cache, TLS error, blocked phrase | `references/troubleshooting.md` | Apply the diagnostic flow listed for that symptom |
+| Running a CLI command (init/install/add/wrap/clean/sh/server/auth/cache/registry/upgrade) or asking what flags exist | `references/commands.md` | Run the command and report results |
+| Editing the file — adding a skill, server, tool, hook, sub-agent, rule, plugin, agents block, security / activity setting | `references/capabilities-schema.md` | Edit `capabilities.yaml`; run `capa install` |
+| Asking how to wire up a common pattern (web search, wrap, passthrough, on-demand mode, plugins, registries, etc.) | `references/workflows-and-examples.md` | Adapt the closest example |
+| Hitting an install error, wrap failure, credential prompt issue, server crash, missing tools, stale cache, TLS error, blocked phrase | `references/troubleshooting.md` | Apply the diagnostic flow listed for that symptom |
 
 The references are sized for selective reads (each ≤ ~600 lines, with table-of-contents at the top of the larger ones). Don't load all four if only one applies.
 
@@ -57,11 +58,15 @@ When binding tools to skills via `requires:`, mismatching the `@` prefix is the 
 
 `options.toolExposure` has three values and they change what `capa install` writes:
 
-- `expose-all` (default): every tool any active skill requires shows up in the MCP `tools/list`. Simplest.
-- `on-demand`: only `setup_tools` and `call_tool` are exposed at startup; the agent activates skills on demand. Keeps the active toolset small for long contexts.
+- `expose-all`: every tool any active skill requires shows up in the MCP `tools/list`. Simplest.
+- `on-demand` (what `capa init` writes by default): only `setup_tools` and `call_tool` are exposed at startup; the agent activates skills on demand. Keeps the active toolset small for long contexts.
 - `none`: capa writes **no** project-local MCP config files at all. The agent is expected to invoke tools via `capa sh <group> <tool>` instead. Useful when policy forbids per-project `.mcp.json` edits.
 
 Pick deliberately — switching modes later cleans up old entries on the next install but the choice colours the install output.
+
+### Activity traces are on by default
+
+`options.agentActivity` defaults to **enabled** (omit or `true`). Capa injects system hooks that report tool calls and agent lifecycle events into the project Activity feed in the Web UI. Set `options.agentActivity: false` to opt out. System activity hooks are managed and hidden from the Hooks editor — don't try to declare them yourself.
 
 ## Conventions that prevent surprises
 
@@ -86,9 +91,9 @@ If an install fails or behaves unexpectedly, jump directly to `references/troubl
 
 | Need | File | Notes |
 |---|---|---|
-| Every `capa` command and flag, with concrete invocations | `references/commands.md` | Includes `.env` flow, provider resolution rules, registry adapters |
-| Field-by-field schema for skills / servers / tools / hooks / sub-agents / rules / plugins / security / `agents` | `references/capabilities-schema.md` | Includes the `@` vs `::` table and the tool exposure matrix |
-| End-to-end YAML examples for the most common patterns | `references/workflows-and-examples.md` | Web research, file ops, on-demand loading, plugins, optional providers |
-| Symptoms → diagnoses for install / server / credential / tool failures | `references/troubleshooting.md` | Indexed by the error message the user sees |
+| Every `capa` command and flag, with concrete invocations | `references/commands.md` | Includes wrap, passthrough, `.env` flow, provider resolution, registry adapters + Claude marketplaces |
+| Field-by-field schema for skills / servers / tools / hooks / sub-agents / rules / plugins / security / activity / `agents` | `references/capabilities-schema.md` | Includes the `@` vs `::` table, tool exposure matrix, plugin unpack |
+| End-to-end YAML examples for the most common patterns | `references/workflows-and-examples.md` | Web research, wrap, passthrough, on-demand loading, plugins, registries |
+| Symptoms → diagnoses for install / wrap / server / credential / tool failures | `references/troubleshooting.md` | Indexed by the error message the user sees |
 
 External: [CAPA on GitHub](https://github.com/infragate/capa) · [skills.sh registry](https://skills.sh) · [MCP protocol](https://modelcontextprotocol.io)

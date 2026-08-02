@@ -25,7 +25,7 @@ export function NavLinks() {
         <span>{t('nav.integrations')}</span>
       </Link>
       <a
-        href="https://capa.infragate.ai"
+        href="https://capa.infragate.ai/getting-started/introduction/"
         target="_blank"
         rel="noopener noreferrer"
         className="flex items-center gap-2 rounded-sm px-3 py-2 text-[13px] text-text-secondary no-underline transition-colors hover:bg-hover-bg"

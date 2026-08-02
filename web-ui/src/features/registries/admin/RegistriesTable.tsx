@@ -74,7 +74,7 @@ export function RegistriesTable({
                 </td>
                 <td className="px-4 py-3 align-top">
                   <span className="rounded-sm border border-border-secondary bg-bg-tertiary px-2 py-0.5 text-xs uppercase tracking-wide text-text-secondary">
-                    {r.type}
+                    {t(`addDialog.typeOptions.${r.type}`, { defaultValue: r.type })}
                   </span>
                 </td>
                 <td className="px-4 py-3 align-top">

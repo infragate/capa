@@ -34,7 +34,8 @@ export function loadEnvTask(): Task<InstallCtx> {
         throw new Error(`Failed to parse env file: ${error.message}`);
       }
 
-      const requiredVars = extractAllVariables(ctx.capabilitiesToUse);
+      // Authored file only — plugin-merged content must not invent credentials.
+      const requiredVars = extractAllVariables(ctx.capabilities);
       for (const varName of requiredVars) {
         if (envVariables[varName]) {
           ctx.db.setVariable(ctx.projectId, varName, envVariables[varName]);

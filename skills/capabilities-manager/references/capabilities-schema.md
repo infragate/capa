@@ -1,6 +1,6 @@
 # Capabilities File Schema
 
-Full reference for `capabilities.yaml` / `capabilities.json` structure: basic layout, skills (all seven types), servers, tools, rules, plugins, security, `requiresCommands`, the `agents` section, and sub-agents.
+Full reference for `capabilities.yaml` / `capabilities.json` structure: basic layout, skills (all seven types), servers, tools, rules (including `type: local`), plugins (full unpack), security, `agentActivity`, `requiresCommands`, the `agents` section, and sub-agents.
 
 ## Basic Structure (YAML)
 
@@ -12,7 +12,8 @@ providers:
   - claude-code
 
 options:
-  toolExposure: expose-all  # 'expose-all' | 'on-demand' | 'none' (see notes below)
+  toolExposure: on-demand  # 'expose-all' | 'on-demand' | 'none' (see notes below)
+  # agentActivity: true     # default on — inject system hooks for the Activity feed; set false to opt out
   # security: { blockedPhrases, allowedCharacters }
   # requiresCommands: [ { cli, description? } ]
 
@@ -33,9 +34,10 @@ tools:
     type: mcp|command
     def: { ... }
 
-# rules: [ { id, type, content?, url?, def?, providers?, appliesTo?, alwaysApply?, description? } ]
+# rules: [ { id, type, content?, url?, path?, def?, providers?, appliesTo?, alwaysApply?, description? } ]
 
 # plugins: [ { id?, type: github|gitlab, def: { repo, subpath?, version?, ref?, description? }, servers?: { <manifestKey>: { as?: <serverId> } } } ]
+# Plugins unpack into skills + servers + rules + sub-agents + hooks (Claude/Cursor manifests).
 # `def.repo` mirrors the skill grammar:
 #   - `owner/repo`                    — manifest at the repo root
 #   - `owner/repo@plugin-name`        — recursive search by basename / manifest name
@@ -85,14 +87,28 @@ Controls how capa exposes skill tools to the MCP client. Three modes:
 
 | Mode | `tools/list` returns | Per-install MCP file writes | Agent invocation path |
 |------|----------------------|------------------------------|------------------------|
-| `'expose-all'` (default) | Every tool required by any active skill, with full input schemas | Yes — main `capa` entry + sub-agent `capa-<id>` entries | Direct MCP `tools/call` |
-| `'on-demand'` | Only the meta-tools `setup_tools` and `call_tool` | Yes — same as expose-all | Agent calls `setup_tools(['<skill>'])` (returns compact `name(required, optional?)` signature list), then `call_tool(name, data)`. If the call is invalid the full schema is returned in the error so the agent can self-correct without re-running setup. |
+| `'expose-all'` | Every tool required by any active skill, with full input schemas | Yes — main `capa` entry + sub-agent `capa-<id>` entries | Direct MCP `tools/call` |
+| `'on-demand'` (what `capa init` writes) | Only the meta-tools `setup_tools` and `call_tool` | Yes — same as expose-all | Agent calls `setup_tools(['<skill>'])` (returns compact `name(required, optional?)` signature list), then `call_tool(name, data)`. If the call is invalid the full schema is returned in the error so the agent can self-correct without re-running setup. |
 | `'none'` | Empty list | **No** — capa skips all project-local MCP config files (`.mcp.json`, `.cursor/mcp.json`, `.codex/config.toml` `mcp_servers.capa`, sub-agent `capa-<id>` entries). Any previously-written entries are removed on install. | The agent must use `capa sh <group> <tool> [--args]` (see [`commands.md`](./commands.md)). Sub-agent instruction files are still installed for documentation but their tools are not reachable over MCP. |
 
 Notes on `'none'`:
 - The capa HTTP server still runs and the project endpoints stay live; `tools/list` returns empty so MCP-aware agents don't try to discover tools through capa's MCP endpoint. `tools/call` is **not** gated — that's the path `capa sh` uses to execute tools, and gating it would mean rejecting `capa sh` itself.
 - Useful when the user prefers to keep `.mcp.json` clean or has policy restrictions against writing per-project MCP configs.
 - Switching to `'none'` on a project that previously installed under another mode cleans up the old entries on the next `capa install`.
+
+## Agent Activity (`options.agentActivity`)
+
+When enabled (default — omit the field or set `true`), capa injects **system hooks** (`capa-sys-activity-*`) at install time. Those hooks POST lifecycle and tool events into the project's Activity feed in the Web UI. The MCP proxy also records tool calls (with secret redaction).
+
+- Set `agentActivity: false` to opt out; the next `capa install` removes the system hooks.
+- System hooks are managed and **hidden** from the Hooks editor — do not declare them in `hooks:`.
+- Activity only installs events the target provider actually maps (avoids skip warnings on wrap).
+
+```yaml
+options:
+  toolExposure: on-demand
+  agentActivity: true   # default; set false to disable the Activity feed
+```
 
 ## Security Options (`options.security`)
 
@@ -177,13 +193,14 @@ Defines rules installed into each provider's rules directory or instructions fil
 
 **Fields:**
 - `id` (required): Unique identifier, used as filename stem and capa marker id.
-- `type` (required): `inline`, `remote`, `github`, or `gitlab`.
+- `type` (required): `inline`, `remote`, `github`, `gitlab`, or `local`.
 - `providers` (optional): Restrict this rule to specific providers. When omitted, applies to all.
 - `appliesTo` (optional): Glob patterns for auto-attached rules (maps to Cursor `globs`).
 - `alwaysApply` (optional): When `true`, the rule is always loaded regardless of file context.
 - `description` (optional): Human-readable description used in frontmatter.
 - `content` (inline only): Literal rule content.
 - `url` (remote only): Raw URL to fetch (for private repos prefer `type: github`/`gitlab` so capa uses your OAuth token instead of hitting the raw URL).
+- `path` (local only): Path to a local markdown file, relative to the capabilities file. Re-read on each install.
 - `def.repo` (github/gitlab only): Repository reference using the [repo string format](#repo-string-format--vs-). Use `::` for an exact file path (the common case for rules) or `@<basename>` to let capa search recursively.
 
 ```yaml
@@ -195,6 +212,11 @@ rules:
     content: |
       Use TypeScript strict mode. Prefer const over let.
       Always use explicit return types on exported functions.
+
+  - id: local-conventions
+    type: local
+    path: ./rules/conventions.md
+    alwaysApply: true
 
   - id: test-patterns
     type: inline
@@ -227,7 +249,7 @@ rules:
       repo: my-org/standards@style.md
 ```
 
-`capa clean` removes all capa-installed rules. Rules can be scoped per-provider and support the same source types as skills.
+`capa clean` removes all capa-installed rules. Rules can be scoped per-provider and support the same source types as skills (including `type: local`).
 
 ## Hooks Section
 
@@ -323,7 +345,11 @@ Providers without a hooks integration (most of the rest of the registry) emit a 
 
 ## Plugins Section
 
-Remote plugin packages that bundle skills, servers, and tools from a provider manifest. Plugin tools and skills are NOT auto-exposed — declare the tools you want under the top-level `tools` section and the skills you want under `skills` with `type: plugin`.
+Remote plugin packages that capa **unpacks** into the same primitives as everything else: skills, servers/tools, rules, sub-agents, and hooks. Capa does **not** install plugins as opaque units.
+
+Supported manifests today: **Claude** (`.claude-plugin/`) and **Cursor** (`.cursor-plugin/`). If no manifest is found, discover-mode still scans `skills/`, `commands/`, `agents/`, `hooks/`, `rules/`, and `.mcp.json`. Unsupported artifacts (LSP, themes, monitors, …) produce install warnings and are skipped.
+
+Plugin tools and skills are NOT auto-exposed to the agent — declare the tools you want under the top-level `tools` section and the skills you want under `skills` with `type: plugin`. Plugin-sourced rules / hooks / sub-agents flow through the normal install tasks (shown locked/badged in the Web UI).
 
 **Fields:**
 - `id` (optional): Stable identifier; derived from the `@`/`::` suffix in `def.repo` or from the last repo segment when absent.
@@ -386,7 +412,7 @@ plugins:
       version: v1.0.1
 ```
 
-Plugins are resolved during `capa install`. The plugin manifest is fetched from the repository, skill files are copied onto disk for each provider, and the MCP servers it declares are registered under capa. Plugin tools must be declared explicitly in the top-level `tools` section using `@server-id` references; plugin skills are activated via `type: plugin` skill entries (capa warns when a `type: plugin` skill id does not match any plugin manifest skill).
+Plugins are resolved during `capa install`. The plugin manifest is fetched from the repository; skill files are copied onto disk for each provider; MCP servers are registered; rules / sub-agents / hooks from the plugin are merged into the install pipeline (`${CLAUDE_PLUGIN_ROOT}` in hook scripts is rewritten to the stable plugin copy under `~/.capa/plugins/<projectId>/`). Plugin tools must be declared explicitly in the top-level `tools` section using `@server-id` references; plugin skills are activated via `type: plugin` skill entries (capa warns when a `type: plugin` skill id does not match any plugin manifest skill).
 
 The `servers` field lets you rename plugin servers so skills can `requires:`-bind to plugin tools via stable aliases:
 

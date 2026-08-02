@@ -1,2329 +1,1802 @@
-import { writeFileSync, existsSync } from 'fs';
-import { createServer, Server as HttpServer } from 'http';
-import { loadSettings, getDatabasePath, getPidFilePath, ensureCapaDir } from '../shared/config';
-import { CapaDatabase } from '../db/database';
-import { SessionManager } from './session-manager';
-import { SubprocessManager } from './subprocess-manager';
-import { CapaMCPServer } from './mcp-handler';
-import type { ShellToolInfo, ValidationProgressEvent } from './mcp-handler';
-import { OAuth2Manager } from './oauth-manager';
-import { GitIntegrationManager } from './git-integration-manager';
-import { TokenRefreshScheduler } from './token-refresh-scheduler';
-import type { Capabilities, MCPServer, ToolMCPDefinition, ToolCommandDefinition } from '../types/capabilities';
-import type { OAuth2Config } from '../types/oauth';
-import { extractAllVariables } from '../shared/variable-resolver';
-import { RegistryManager } from '../shared/registries/manager';
-import { seedDefaultRegistries } from '../shared/registries/seed';
-import {
-  listRegistriesHandler,
-  createRegistryHandler,
-  deleteRegistryHandler,
-  patchRegistryHandler,
-  refreshRegistryHandler,
-  previewRegistryHandler,
-} from './registries-routes';
-import type { RegistryCapability } from '../types/registry';
-import { VERSION } from '../version';
-import { logger } from '../shared/logger';
-import { projectUiUrl } from '../shared/ui-urls';
-import { initAuth, requireAuth, isLoopbackHost } from './auth-middleware';
-import { oauthBridgeResponse } from './oauth-bridge';
-import { resolveSkillContentById, resolveSkillDescription, resolveSkillSourceUrl } from './skill-content';
-
+import { existsSync, writeFileSync } from "fs";
+import { createServer, Server as HttpServer } from "http";
 // Import the React SPA bundle as text at compile time - this bundles it into the binary
-import spaHtml from '../../web-ui/dist/index.html' with { type: 'text' };
+import spaHtml from "../../web-ui/dist/index.html" with { type: "text" };
+import { CapaDatabase } from "../db/database";
+import {
+	ensureCapaDir,
+	getDatabasePath,
+	getPidFilePath,
+	loadSettings,
+} from "../shared/config";
+import { logger } from "../shared/logger";
+import { RegistryManager } from "../shared/registries/manager";
+import { seedDefaultRegistries } from "../shared/registries/seed";
+import { projectUiUrl } from "../shared/ui-urls";
+import { isUnderWrapWorkspacesDir } from "../shared/workspaces/paths";
+import type { Capabilities, MCPServer } from "../types/capabilities";
+import type { OAuth2Config } from "../types/oauth";
+import type { RegistryCapability } from "../types/registry";
+import { VERSION } from "../version";
+import { initAuth, isLoopbackHost, requireAuth } from "./auth-middleware";
+import { handleCapabilitiesMutation } from "./capabilities-routes";
+import { CapabilitiesFileWatcher } from "./capabilities-watcher";
+import {
+	type ConfigureRouteDeps,
+	applyProjectCapabilitiesOnly,
+	handleProjectConfigure,
+	runProjectConfigure,
+} from "./configure-routes";
+import { isAllowedOrigin } from "./cors-origin";
+import { GitIntegrationManager } from "./git-integration-manager";
+import {
+	type GitIntegrationsRouteDeps,
+	handleDisconnectIntegration,
+	handleGetIntegrations,
+	handleGitHubEnterprisePAT,
+	handleGitHubOAuthCallback,
+	handleGitHubOAuthStart,
+	handleGitLabOAuthCallback,
+	handleGitLabOAuthStart,
+	handleGitLabSelfManagedPAT,
+	handleGitTokenRefresh,
+} from "./git-integrations-routes";
+import { CapaMCPServer } from "./mcp-handler";
+import {
+	handleGetServerTools,
+	handleGetShellToolSchema,
+	handleGetShellTools,
+	handleGetSkillContent,
+	type McpMetaRouteDeps,
+} from "./mcp-meta-routes";
+import { OAuth2Manager } from "./oauth-manager";
+import {
+	handleDeleteProject,
+	handleGetProject,
+	handleGetProjectActivity,
+	handleGetProjectActivityStats,
+	handleGetProjects,
+	handleProjectEvents,
+	handleProjectFsList,
+	handleProjectFsUpload,
+	notifyProjectChanged,
+	notifyToolCall,
+	type ProjectRouteDeps,
+	reloadProjectCapabilitiesFromDisk,
+} from "./project-routes";
+import {
+	handlePostProjectActivityEvent,
+	handleSyncActivityHooks,
+} from "./activity-routes";
+import {
+	createRegistryHandler,
+	deleteRegistryHandler,
+	listRegistriesHandler,
+	patchRegistryHandler,
+	previewRegistryHandler,
+	refreshRegistryHandler,
+} from "./registries-routes";
+import { type EffectiveCapsCacheEntry } from "./resolve-effective-capabilities";
+import { SessionManager } from "./session-manager";
+import { SubprocessManager } from "./subprocess-manager";
+import {
+	CAPA_CLIENT_HEADER,
+	CAPA_SHELL_CLIENT,
+	runWithMcpRequestClient,
+	ToolCallTracer,
+} from "./tool-call-tracer";
+import {
+	handleForceTokenRefresh,
+	handleTokenRefreshStatus,
+	type TokenRefreshRouteDeps,
+} from "./token-refresh-routes";
+import { TokenRefreshScheduler } from "./token-refresh-scheduler";
+import {
+	handleDeleteVariable,
+	handleGetVariables,
+	handlePutVariable,
+	handleSetVariables,
+	type VariablesRouteDeps,
+} from "./variables-routes";
 
 function mcpHandlerHttpStatus(error: unknown): number {
-  if (error instanceof SyntaxError) {
-    return 400;
-  }
-  const status = (error as { status?: number; statusCode?: number })?.status
-    ?? (error as { status?: number; statusCode?: number })?.statusCode;
-  if (typeof status === 'number' && status >= 400 && status < 500) {
-    return status;
-  }
-  return 500;
-}
-
-function isAllowedOrigin(origin: string | null): { allowed: boolean; origin?: string } {
-  if (!origin) {
-    return { allowed: false };
-  }
-
-  try {
-    const parsed = new URL(origin);
-    if (
-      parsed.protocol === 'http:' &&
-      (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1')
-    ) {
-      return { allowed: true, origin };
-    }
-  } catch {
-    // fall through to env allow-list
-  }
-
-  const extras =
-    process.env.CAPA_ALLOWED_ORIGINS?.split(',')
-      .map((o) => o.trim())
-      .filter(Boolean) ?? [];
-  if (extras.includes(origin)) {
-    return { allowed: true, origin };
-  }
-
-  return { allowed: false };
+	if (error instanceof SyntaxError) {
+		return 400;
+	}
+	const status =
+		(error as { status?: number; statusCode?: number })?.status ??
+		(error as { status?: number; statusCode?: number })?.statusCode;
+	if (typeof status === "number" && status >= 400 && status < 500) {
+		return status;
+	}
+	return 500;
 }
 
 class CapaServer {
-  private db!: CapaDatabase;
-  private sessionManager!: SessionManager;
-  private subprocessManager!: SubprocessManager;
-  private oauth2Manager!: OAuth2Manager;
-  private gitIntegrationManager!: GitIntegrationManager;
-  private tokenRefreshScheduler!: TokenRefreshScheduler;
-  private httpServer!: HttpServer;
-  private settings: any;
-  private mcpServers = new Map<string, CapaMCPServer>();
-  /** Claude-style OAuth callback servers: port -> { server, idleTimer }; closed after completion or 5 min idle */
-  private oauthCallbackServers = new Map<number, { server: HttpServer; idleTimer: ReturnType<typeof setTimeout> }>();
-  private registryManager!: RegistryManager;
-  private startTime: number = Date.now();
-  private logger = logger.child('CapaServer');
-
-  async start() {
-    this.logger.info('Starting CAPA server...');
-
-    // Load settings
-    this.settings = await loadSettings();
-
-    // Ensure .capa directory exists
-    await ensureCapaDir();
-
-    // Initialize database
-    const dbPath = getDatabasePath(this.settings);
-    this.db = new CapaDatabase(dbPath);
-
-    // Cleanup projects whose directories no longer exist
-    await this.cleanupMissingProjects();
-
-    // Initialize managers
-    this.registryManager = new RegistryManager(this.db);
-
-    // First-run seeding of the bundled example registries. This runs in the
-    // background — a slow or unauthenticated GitHub fetch must not block
-    // server startup, and any per-seed failure is persisted as a `failed`
-    // row that the user can see and retry from the UI.
-    void seedDefaultRegistries(this.db, this.registryManager, {
-      log: {
-        info: (m) => this.logger.info(m),
-        warn: (m) => this.logger.warn(m),
-        success: (m) => this.logger.success(m),
-      },
-    }).catch((err) => {
-      this.logger.warn(`Default registry seeding failed: ${err?.message ?? err}`);
-    });
-
-    this.sessionManager = new SessionManager(this.db);
-    this.subprocessManager = new SubprocessManager(this.db);
-    this.oauth2Manager = new OAuth2Manager(this.db);
-    this.gitIntegrationManager = new GitIntegrationManager(this.db);
-    
-    // Connect OAuth2Manager with SessionManager for capabilities access
-    this.oauth2Manager.setCapabilitiesProvider(() => this.sessionManager.getAllProjectCapabilities());
-
-    // Initialize and start token refresh scheduler
-    const checkInterval = (this.settings.token_refresh?.check_interval_seconds ?? 60) * 1000;
-    const refreshThreshold = (this.settings.token_refresh?.refresh_threshold_seconds ?? 600) * 1000;
-    
-    this.tokenRefreshScheduler = new TokenRefreshScheduler(
-      this.db,
-      this.oauth2Manager,
-      {
-        checkInterval,
-        refreshThreshold,
-      }
-    );
-    this.tokenRefreshScheduler.setCapabilitiesProvider(() => this.sessionManager.getAllProjectCapabilities());
-    this.tokenRefreshScheduler.setGitIntegrationManager(this.gitIntegrationManager);
-    this.tokenRefreshScheduler.start();
-    this.logger.success('Token refresh scheduler started');
-
-    // Start HTTP server
-    await this.startHttpServer();
-
-    // Note: OAuth redirect server is started on-demand during OAuth flows
-
-    // Write PID file
-    this.writePidFile();
-
-    this.logger.success(`CAPA server running at http://${this.settings.server.host}:${this.settings.server.port}`);
-    this.logger.info(`OAuth redirect server will start on-demand at http://${this.settings.server.host}:${this.settings.oauth_redirect_port || 3100}`);
-    this.logger.info(`Version: ${VERSION}`);
-  }
-
-  private async cleanupMissingProjects(): Promise<void> {
-    const projects = this.db.getAllProjects();
-    let removed = 0;
-    for (const project of projects) {
-      if (!existsSync(project.path)) {
-        this.logger.warn(`Project directory not found, removing project "${project.id}" at path: ${project.path}`);
-        this.db.deleteProject(project.id);
-        removed++;
-      }
-    }
-    if (removed > 0) {
-      this.logger.info(`Removed ${removed} project(s) with missing directories`);
-    } else {
-      this.logger.debug('All configured projects have valid directories');
-    }
-  }
-
-  private authFailureResponse(request: Request, reason: string, status: number): Response {
-    const requestOrigin = request.headers.get('Origin');
-    const originCheck = isAllowedOrigin(requestOrigin);
-    const headers: Record<string, string> = {};
-    if (originCheck.origin) {
-      headers['Access-Control-Allow-Origin'] = originCheck.origin;
-    }
-    return new Response(reason, { status, headers });
-  }
-
-  private async startHttpServer() {
-    const { host, port } = this.settings.server;
-    const self = this;
-
-    const authToken = initAuth(host);
-    if (authToken && !isLoopbackHost(host)) {
-      process.stderr.write(`capa: auth token = ${authToken}\n`);
-      process.stderr.write(
-        'capa: clients must send `Authorization: Bearer <token>` to /api/* and the MCP route\n'
-      );
-    }
-
-    const server = Bun.serve({
-      hostname: host,
-      port: port,
-      async fetch(request, server) {
-        return await self.handleRequest(request, server);
-      },
-    });
-
-    this.logger.info(`HTTP server listening on ${host}:${port}`);
-  }
-
-
-  private async handleRequest(request: Request, server: any): Promise<Response> {
-    try {
-      return await this._handleRequest(request, server);
-    } catch (error: any) {
-      this.logger.failure(`Unhandled error in request handler: ${error?.message ?? error}`);
-      return new Response(
-        JSON.stringify({ error: 'Internal server error' }),
-        { status: 500, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-  }
-
-  private async _handleRequest(request: Request, server: any): Promise<Response> {
-    const url = new URL(request.url);
-    const path = url.pathname;
-
-    this.logger.http(request.method, path);
-
-    // Health check
-    if (path === '/health') {
-      this.logger.debug('Health check');
-      const uptime = (Date.now() - this.startTime) / 1000; // uptime in seconds
-      return new Response(
-        JSON.stringify({ 
-          status: 'ok', 
-          version: VERSION,
-          uptime: uptime
-        }),
-        { headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-
-
-    // SPA routes: home page and all /ui/* paths
-    if (path === '/' || path === '/ui' || path.startsWith('/ui/')) {
-      this.logger.debug('SPA');
-      return this.handleSpa();
-    }
-
-    // API endpoints
-    if (path.startsWith('/api/')) {
-      this.logger.debug('API endpoint');
-      const auth = requireAuth(request, this.settings.server.host);
-      if (!auth.ok) {
-        return this.authFailureResponse(request, auth.reason, auth.status);
-      }
-      return this.handleAPI(request);
-    }
-
-    // Sub-agent MCP endpoints: /{projectId}/agents/{agentId}/mcp
-    const agentMcpMatch = path.match(/^\/([^/]+)\/agents\/([^/]+)\/mcp$/);
-    if (agentMcpMatch) {
-      const projectId = agentMcpMatch[1];
-      const agentId = agentMcpMatch[2];
-      this.logger.debug(`MCP endpoint for project: ${projectId}, sub-agent: ${agentId}`);
-      const auth = requireAuth(request, this.settings.server.host);
-      if (!auth.ok) {
-        return this.authFailureResponse(request, auth.reason, auth.status);
-      }
-      return this.handleMCP(request, projectId, agentId);
-    }
-
-    // Main MCP endpoints: /{projectId}/mcp
-    const mcpMatch = path.match(/^\/([^/]+)\/mcp$/);
-    if (mcpMatch) {
-      const projectId = mcpMatch[1];
-      this.logger.debug(`MCP endpoint for project: ${projectId}`);
-      const auth = requireAuth(request, this.settings.server.host);
-      if (!auth.ok) {
-        return this.authFailureResponse(request, auth.reason, auth.status);
-      }
-      return this.handleMCP(request, projectId);
-    }
-
-    this.logger.debug('404 Not Found');
-    return new Response('Not Found', { status: 404 });
-  }
-
-  private async handleSpa(): Promise<Response> {
-    return new Response(spaHtml as unknown as string, {
-      headers: { 'Content-Type': 'text/html' },
-    });
-  }
-
-  private async handleAPI(request: Request): Promise<Response> {
-    const url = new URL(request.url);
-    const path = url.pathname;
-
-    // Get all projects
-    if (path === '/api/projects' && request.method === 'GET') {
-      return this.handleGetProjects();
-    }
-
-    // Get project details
-    const projectGetMatch = path.match(/^\/api\/projects\/([^/]+)$/);
-    if (projectGetMatch && request.method === 'GET') {
-      const projectId = projectGetMatch[1];
-      return this.handleGetProject(projectId);
-    }
-
-    // Configure project
-    const configMatch = path.match(/^\/api\/projects\/([^/]+)\/configure$/);
-    if (configMatch && request.method === 'POST') {
-      const projectId = configMatch[1];
-      return this.handleProjectConfigure(projectId, request);
-    }
-
-    // Get required variables
-    const varsGetMatch = path.match(/^\/api\/projects\/([^/]+)\/variables$/);
-    if (varsGetMatch && request.method === 'GET') {
-      const projectId = varsGetMatch[1];
-      return this.handleGetVariables(projectId);
-    }
-
-    // Set variables
-    if (varsGetMatch && request.method === 'POST') {
-      const projectId = varsGetMatch[1];
-      return this.handleSetVariables(projectId, request);
-    }
-
-    // Get OAuth2 servers
-    const oauth2ServersMatch = path.match(/^\/api\/projects\/([^/]+)\/oauth-servers$/);
-    if (oauth2ServersMatch && request.method === 'GET') {
-      const projectId = oauth2ServersMatch[1];
-      return this.handleGetOAuth2Servers(projectId);
-    }
-
-    // Start OAuth2 flow
-    const oauth2StartMatch = path.match(/^\/api\/projects\/([^/]+)\/oauth\/start$/);
-    if (oauth2StartMatch && request.method === 'POST') {
-      const projectId = oauth2StartMatch[1];
-      return this.handleOAuth2Start(projectId, request);
-    }
-
-    // OAuth2 callback
-    const oauth2CallbackMatch = path.match(/^\/api\/projects\/([^/]+)\/oauth\/callback$/);
-    if (oauth2CallbackMatch && request.method === 'GET') {
-      const projectId = oauth2CallbackMatch[1];
-      return this.handleOAuth2Callback(projectId, request);
-    }
-
-    // List tools for a specific server
-    const serverToolsMatch = path.match(/^\/api\/projects\/([^/]+)\/servers\/([^/]+)\/tools$/);
-    if (serverToolsMatch && request.method === 'GET') {
-      const projectId = serverToolsMatch[1];
-      const serverId = serverToolsMatch[2];
-      return this.handleGetServerTools(projectId, serverId);
-    }
-
-    // Skill SKILL.md content for the project-detail UI
-    const skillContentMatch = path.match(/^\/api\/projects\/([^/]+)\/skills\/([^/]+)\/content$/);
-    if (skillContentMatch && request.method === 'GET') {
-      const projectId = skillContentMatch[1];
-      const skillId = decodeURIComponent(skillContentMatch[2]);
-      return this.handleGetSkillContent(projectId, skillId);
-    }
-
-    // Shell tools endpoint — tool metadata for the capa shell, regardless of exposure mode
-    const shellToolsMatch = path.match(/^\/api\/projects\/([^/]+)\/shell-tools$/);
-    if (shellToolsMatch && request.method === 'GET') {
-      const projectId = shellToolsMatch[1];
-      return this.handleGetShellTools(projectId);
-    }
-
-    // On-demand schema for a single shell tool (?tool=<qualified-id>)
-    const shellToolSchemaMatch = path.match(/^\/api\/projects\/([^/]+)\/shell-tool-schema$/);
-    if (shellToolSchemaMatch && request.method === 'GET') {
-      const projectId = shellToolSchemaMatch[1];
-      const toolId = url.searchParams.get('tool') || '';
-      return this.handleGetShellToolSchema(projectId, toolId);
-    }
-
-    // Disconnect OAuth2
-    const oauth2DisconnectMatch = path.match(/^\/api\/projects\/([^/]+)\/oauth\/([^/]+)$/);
-    if (oauth2DisconnectMatch && request.method === 'DELETE') {
-      const projectId = oauth2DisconnectMatch[1];
-      const serverId = oauth2DisconnectMatch[2];
-      return this.handleOAuth2Disconnect(projectId, serverId);
-    }
-
-    // Token refresh scheduler status
-    if (path === '/api/token-refresh/status' && request.method === 'GET') {
-      return this.handleTokenRefreshStatus();
-    }
-
-    // Force token refresh check
-    if (path === '/api/token-refresh/check' && request.method === 'POST') {
-      return this.handleForceTokenRefresh();
-    }
-
-    // Git integrations endpoints
-    if (path === '/api/integrations' && request.method === 'GET') {
-      return this.handleGetIntegrations();
-    }
-
-    // GitHub OAuth flow
-    const githubOAuthStartMatch = path.match(/^\/api\/integrations\/github\/oauth\/start$/);
-    if (githubOAuthStartMatch && request.method === 'POST') {
-      return this.handleGitHubOAuthStart(request);
-    }
-    
-    const githubOAuthCallbackMatch = path.match(/^\/api\/integrations\/github\/oauth\/callback$/);
-    if (githubOAuthCallbackMatch && (request.method === 'POST' || request.method === 'GET')) {
-      return this.handleGitHubOAuthCallback(request);
-    }
-
-    // GitLab OAuth flow
-    const gitlabOAuthStartMatch = path.match(/^\/api\/integrations\/gitlab\/oauth\/start$/);
-    if (gitlabOAuthStartMatch && request.method === 'POST') {
-      return this.handleGitLabOAuthStart(request);
-    }
-
-    const gitlabOAuthCallbackMatch = path.match(/^\/api\/integrations\/gitlab\/oauth\/callback$/);
-    if (gitlabOAuthCallbackMatch && (request.method === 'POST' || request.method === 'GET')) {
-      return this.handleGitLabOAuthCallback(request);
-    }
-
-    // Git integration token refresh
-    const gitTokenRefreshMatch = path.match(/^\/api\/integrations\/(github|gitlab)\/refresh$/);
-    if (gitTokenRefreshMatch) {
-      if (request.method === 'GET') {
-        return new Response(
-          JSON.stringify({ error: 'Method not allowed. Use POST.' }),
-          { status: 405, headers: { 'Content-Type': 'application/json' } }
-        );
-      }
-      if (request.method === 'POST') {
-        const platform = gitTokenRefreshMatch[1] as 'github' | 'gitlab';
-        return this.handleGitTokenRefresh(platform);
-      }
-    }
-
-    // GitHub Enterprise PAT
-    if (path === '/api/integrations/github-enterprise' && request.method === 'POST') {
-      return this.handleGitHubEnterprisePAT(request);
-    }
-
-    // GitLab Self-Managed PAT
-    if (path === '/api/integrations/gitlab-self-managed' && request.method === 'POST') {
-      return this.handleGitLabSelfManagedPAT(request);
-    }
-
-    // Disconnect integration
-    const disconnectMatch = path.match(/^\/api\/integrations\/([^/]+)(?:\/([^/]+))?$/);
-    if (disconnectMatch && request.method === 'DELETE') {
-      const platform = disconnectMatch[1];
-      const host = disconnectMatch[2];
-      return this.handleDisconnectIntegration(platform, host);
-    }
-
-    // --- Registry endpoints ---
-
-    if (path === '/api/registries' && request.method === 'GET') {
-      return this.handleGetRegistries();
-    }
-
-    if (path === '/api/registries' && request.method === 'POST') {
-      return this.handleCreateRegistry(request);
-    }
-
-    if (path === '/api/registries/preview' && request.method === 'GET') {
-      return this.handlePreviewRegistry(url);
-    }
-
-    const registrySearchMatch = path.match(/^\/api\/registries\/([^/]+)\/search$/);
-    if (registrySearchMatch && request.method === 'GET') {
-      const registryId = decodeURIComponent(registrySearchMatch[1]);
-      return this.handleRegistrySearch(registryId, url);
-    }
-
-    // view uses a wildcard tail so item IDs containing slashes work (e.g. "owner/repo/slug")
-    const registryViewMatch = path.match(/^\/api\/registries\/([^/]+)\/view\/(.+)$/);
-    if (registryViewMatch && request.method === 'GET') {
-      const registryId = decodeURIComponent(registryViewMatch[1]);
-      const itemId = decodeURIComponent(registryViewMatch[2]);
-      return this.handleRegistryView(registryId, itemId, url);
-    }
-
-    const registryRefreshMatch = path.match(/^\/api\/registries\/([^/]+)\/refresh$/);
-    if (registryRefreshMatch && request.method === 'POST') {
-      const slug = decodeURIComponent(registryRefreshMatch[1]);
-      return this.handleRefreshRegistry(slug);
-    }
-
-    const registryItemMatch = path.match(/^\/api\/registries\/([^/]+)$/);
-    if (registryItemMatch && request.method === 'DELETE') {
-      const slug = decodeURIComponent(registryItemMatch[1]);
-      return this.handleDeleteRegistry(slug);
-    }
-    if (registryItemMatch && request.method === 'PATCH') {
-      const slug = decodeURIComponent(registryItemMatch[1]);
-      return this.handlePatchRegistry(slug, request);
-    }
-
-    return new Response('Not Found', { status: 404 });
-  }
-
-  private async handleGetProjects(): Promise<Response> {
-    const apiLogger = this.logger.child('API');
-    apiLogger.info('Get all projects');
-    try {
-      const projects = this.db.getAllProjects();
-      
-      // Enrich projects with additional data
-      const enrichedProjects = projects.map((project) => {
-        const capabilities = this.sessionManager.getProjectCapabilities(project.id);
-        return {
-          id: project.id,
-          path: project.path,
-          created_at: project.created_at,
-          updated_at: project.updated_at,
-          skills_count: capabilities?.skills?.length || 0,
-          tools_count: capabilities?.tools?.length || 0,
-          servers_count: capabilities?.servers?.length || 0,
-        };
-      });
-
-      apiLogger.info(`Found ${enrichedProjects.length} project(s)`);
-      return new Response(
-        JSON.stringify({ projects: enrichedProjects }),
-        { headers: { 'Content-Type': 'application/json' } }
-      );
-    } catch (error: any) {
-      apiLogger.failure(`Error: ${error.message}`);
-      return new Response(
-        JSON.stringify({ error: error.message }),
-        { status: 500, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-  }
-
-  private async handleGetProject(projectId: string): Promise<Response> {
-    const apiLogger = this.logger.child('API');
-    apiLogger.info(`Get project: ${projectId}`);
-    try {
-      const project = this.db.getProject(projectId);
-      if (!project) {
-        return new Response(
-          JSON.stringify({ error: 'Project not found' }),
-          { status: 404, headers: { 'Content-Type': 'application/json' } }
-        );
-      }
-
-      const capabilities = this.sessionManager.getProjectCapabilities(projectId);
-
-      // Pre-fetch managed hooks once and group by hookId so the per-hook
-      // map below stays O(n) instead of issuing one DB query per hook.
-      const installedHooksByHookId = new Map<string, { providerId: string; configPath: string; scriptPath: string | null }[]>();
-      if (capabilities && (capabilities.hooks || []).length > 0) {
-        for (const m of this.db.getManagedHooks(projectId)) {
-          const list = installedHooksByHookId.get(m.hookId);
-          const entry = { providerId: m.providerId, configPath: m.configPath, scriptPath: m.scriptPath };
-          if (list) list.push(entry);
-          else installedHooksByHookId.set(m.hookId, [entry]);
-        }
-      }
-
-      const projectDetails = {
-        id: project.id,
-        path: project.path,
-        created_at: project.created_at,
-        updated_at: project.updated_at,
-        capabilities: capabilities ? {
-          skills: capabilities.skills.map(s => {
-            const { description, descriptionSource } = resolveSkillDescription(
-              project.path,
-              s,
-              capabilities.providers || [],
-            );
-            return {
-              id: s.id,
-              type: s.type,
-              description,
-              descriptionSource,
-              requires: s.def?.requires || [],
-              sourcePlugin: s.sourcePlugin || null,
-              sourceUrl: resolveSkillSourceUrl(s, capabilities.resolvedPlugins),
-            };
-          }),
-          tools: capabilities.tools.map(t => {
-            const base: Record<string, any> = {
-              id: t.id,
-              type: t.type,
-              sourcePlugin: t.sourcePlugin || null,
-            };
-            if (t.type === 'mcp') {
-              const mcpDef = t.def as ToolMCPDefinition;
-              base.mcpServer = mcpDef.server;
-              base.mcpTool = mcpDef.tool;
-            } else if (t.type === 'command') {
-              const cmdDef = t.def as ToolCommandDefinition;
-              base.command = cmdDef.run.cmd;
-              base.commandArgs = cmdDef.run.args || [];
-              if (t.group) base.group = t.group;
-            }
-            return base;
-          }),
-          servers: capabilities.servers.map(s => {
-            const requiresOAuth = !!s.def?.oauth2;
-            const isConnected = requiresOAuth
-              ? this.oauth2Manager.isServerConnected(projectId, s.id)
-              : null; // null = no auth needed, not applicable
-            return {
-              id: s.id,
-              type: s.type,
-              url: s.def?.url || null,
-              cmd: s.def?.cmd || null,
-              args: s.def?.args || null,
-              sourcePlugin: s.sourcePlugin || null,
-              displayName: s.displayName || null,
-              requiresOAuth,
-              isConnected,
-            };
-          }),
-          resolvedPlugins: capabilities.resolvedPlugins || null,
-          providers: capabilities.providers || [],
-          subagents: (capabilities.subagents || []).map(sa => ({
-            id: sa.id,
-            description: sa.description || null,
-            skills: sa.skills,
-            tools: sa.tools,
-            instructions: sa.instructions || null,
-          })),
-          rules: (capabilities.rules || []).map(r => ({
-            id: r.id,
-            type: r.type,
-            description: r.description || null,
-            providers: r.providers || [],
-            appliesTo: r.appliesTo || [],
-            alwaysApply: r.alwaysApply || false,
-          })),
-          hooks: (capabilities.hooks || []).map(h => ({
-            id: h.id,
-            description: h.description || null,
-            on: h.on,
-            type: h.type || 'command',
-            providers: h.providers || [],
-            matcher: h.matcher || null,
-            timeout: h.timeout ?? null,
-            failClosed: h.failClosed ?? false,
-            sequential: h.sequential ?? false,
-            sourceType: h.source?.type || null,
-            command: h.command ?? null,
-            prompt: h.prompt ?? null,
-            installed: installedHooksByHookId.get(h.id) ?? [],
-          })),
-          options: capabilities.options ? {
-            toolExposure: capabilities.options.toolExposure || null,
-            security: capabilities.options.security ? {
-              blockedPhrases: capabilities.options.security.blockedPhrases || [],
-              allowedCharacters: capabilities.options.security.allowedCharacters || null,
-            } : null,
-            requiresCommands: (capabilities.options.requiresCommands || []).map(c => ({
-              cli: c.cli,
-              description: c.description || null,
-            })),
-          } : null,
-        } : null,
-      };
-
-      apiLogger.success('Project found');
-      return new Response(
-        JSON.stringify(projectDetails),
-        { headers: { 'Content-Type': 'application/json' } }
-      );
-    } catch (error: any) {
-      apiLogger.failure(`Error: ${error.message}`);
-      return new Response(
-        JSON.stringify({ error: error.message }),
-        { status: 500, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-  }
-
-  private getOrCreateMCPServer(projectId: string, agentId?: string): CapaMCPServer | null {
-    const cacheKey = agentId ? `${projectId}:${agentId}` : projectId;
-    let mcpServer = this.mcpServers.get(cacheKey);
-    if (mcpServer) return mcpServer;
-
-    const project = this.db.getProject(projectId);
-    if (!project) return null;
-
-    mcpServer = new CapaMCPServer(
-      this.db,
-      this.sessionManager,
-      projectId,
-      project.path,
-      agentId
-    );
-    this.mcpServers.set(cacheKey, mcpServer);
-    return mcpServer;
-  }
-
-  private async handleGetServerTools(projectId: string, serverId: string): Promise<Response> {
-    const apiLogger = this.logger.child('API');
-    apiLogger.info(`List tools for server: ${serverId} in project: ${projectId}`);
-    try {
-      const capabilities = this.sessionManager.getProjectCapabilities(projectId);
-      if (!capabilities) {
-        return new Response(
-          JSON.stringify({ error: 'Project not configured' }),
-          { status: 404, headers: { 'Content-Type': 'application/json' } }
-        );
-      }
-
-      const server = capabilities.servers.find(s => s.id === serverId);
-      if (!server) {
-        return new Response(
-          JSON.stringify({ error: 'Server not found' }),
-          { status: 404, headers: { 'Content-Type': 'application/json' } }
-        );
-      }
-
-      const mcpServer = this.getOrCreateMCPServer(projectId);
-      if (!mcpServer) {
-        return new Response(
-          JSON.stringify({ error: 'Project not found' }),
-          { status: 404, headers: { 'Content-Type': 'application/json' } }
-        );
-      }
-
-      // throwOnError surfaces connection/auth failures instead of silently
-      // returning an empty list, so the UI can distinguish "server has no tools"
-      // (200 + []) from "server unreachable" (502 + error).
-      const tools = await mcpServer.listServerTools(serverId, capabilities, { throwOnError: true });
-      apiLogger.success(`Found ${tools.length} tools for server ${serverId}`);
-      return new Response(
-        JSON.stringify({ tools }),
-        { headers: { 'Content-Type': 'application/json' } }
-      );
-    } catch (error: any) {
-      const detail = error?.message ?? String(error);
-      apiLogger.failure(`Error listing tools for ${serverId}: ${detail}`);
-      // Return a controlled, sanitized message — never echo raw exception text
-      // (which CodeQL flags as potential stack-trace exposure) back to the
-      // client. Full detail is logged above. An OAuth-disconnected server is
-      // not "unreachable", so distinguish that case to prompt re-auth.
-      const needsAuth = /authentication failed|reconnect oauth2/i.test(detail);
-      const message = needsAuth
-        ? `Authentication required for "${serverId}". Please reconnect this server's OAuth2 connection.`
-        : `Server unreachable: "${serverId}" could not be contacted.`;
-      return new Response(
-        JSON.stringify({ error: message }),
-        { status: 502, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-  }
-
-  private async handleGetSkillContent(projectId: string, skillId: string): Promise<Response> {
-    const apiLogger = this.logger.child('API');
-    apiLogger.info(`Get skill content: ${skillId} in project: ${projectId}`);
-    try {
-      const project = this.db.getProject(projectId);
-      if (!project) {
-        return new Response(
-          JSON.stringify({ error: 'Project not found' }),
-          { status: 404, headers: { 'Content-Type': 'application/json' } }
-        );
-      }
-
-      const capabilities = this.sessionManager.getProjectCapabilities(projectId);
-      if (!capabilities) {
-        return new Response(
-          JSON.stringify({ error: 'Project not configured' }),
-          { status: 404, headers: { 'Content-Type': 'application/json' } }
-        );
-      }
-
-      const skill = (capabilities.skills ?? []).find((s) => s.id === skillId);
-      if (!skill) {
-        return new Response(
-          JSON.stringify({ error: 'Skill not found' }),
-          { status: 404, headers: { 'Content-Type': 'application/json' } }
-        );
-      }
-
-      const resolved = resolveSkillContentById(project.path, capabilities, skillId);
-      if (!resolved) {
-        return new Response(
-          JSON.stringify({ error: 'Skill content not available' }),
-          { status: 404, headers: { 'Content-Type': 'application/json' } }
-        );
-      }
-
-      return new Response(
-        JSON.stringify({
-          id: skillId,
-          content: resolved.content,
-          metadata: resolved.metadata,
-          files: resolved.files,
-        }),
-        { headers: { 'Content-Type': 'application/json' } }
-      );
-    } catch (error: any) {
-      apiLogger.failure(`Error: ${error.message}`);
-      return new Response(
-        JSON.stringify({ error: error.message }),
-        { status: 500, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-  }
-
-  private async handleGetShellTools(projectId: string): Promise<Response> {
-    const apiLogger = this.logger.child('API');
-    apiLogger.info(`Get shell tools for project: ${projectId}`);
-    try {
-      const capabilities = this.sessionManager.getProjectCapabilities(projectId);
-      if (!capabilities) {
-        return new Response(
-          JSON.stringify({ error: 'Project not configured' }),
-          { status: 404, headers: { 'Content-Type': 'application/json' } }
-        );
-      }
-
-      const mcpServer = this.getOrCreateMCPServer(projectId);
-      if (!mcpServer) {
-        return new Response(
-          JSON.stringify({ error: 'Project not found' }),
-          { status: 404, headers: { 'Content-Type': 'application/json' } }
-        );
-      }
-
-      const tools: ShellToolInfo[] = await mcpServer.getAllShellTools(capabilities);
-      apiLogger.success(`Found ${tools.length} shell tools for project ${projectId}`);
-      return new Response(
-        JSON.stringify({ tools }),
-        { headers: { 'Content-Type': 'application/json' } }
-      );
-    } catch (error: any) {
-      apiLogger.failure(`Error: ${error.message}`);
-      return new Response(
-        JSON.stringify({ error: error.message }),
-        { status: 500, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-  }
-
-  private async handleGetShellToolSchema(projectId: string, toolId: string): Promise<Response> {
-    const apiLogger = this.logger.child('API');
-    apiLogger.info(`Get shell tool schema for ${projectId}: ${toolId}`);
-    try {
-      if (!toolId) {
-        return new Response(
-          JSON.stringify({ error: 'Missing "tool" query parameter' }),
-          { status: 400, headers: { 'Content-Type': 'application/json' } }
-        );
-      }
-
-      const capabilities = this.sessionManager.getProjectCapabilities(projectId);
-      if (!capabilities) {
-        return new Response(
-          JSON.stringify({ error: 'Project not configured' }),
-          { status: 404, headers: { 'Content-Type': 'application/json' } }
-        );
-      }
-
-      const mcpServer = this.getOrCreateMCPServer(projectId);
-      if (!mcpServer) {
-        return new Response(
-          JSON.stringify({ error: 'Project not found' }),
-          { status: 404, headers: { 'Content-Type': 'application/json' } }
-        );
-      }
-
-      const schema = await mcpServer.getShellToolSchema(toolId, capabilities);
-      return new Response(
-        JSON.stringify(schema),
-        { headers: { 'Content-Type': 'application/json' } }
-      );
-    } catch (error: any) {
-      apiLogger.failure(`Error resolving schema for ${toolId}: ${error.message}`);
-      // 502: the failure is upstream (remote MCP server unreachable / tool missing),
-      // not a bug in this endpoint — let the shell surface it for this one tool.
-      return new Response(
-        JSON.stringify({ error: error.message }),
-        { status: 502, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-  }
-
-  private async handleProjectConfigure(projectId: string, request: Request): Promise<Response> {
-    const apiLogger = this.logger.child('API');
-    // Stream progress events as NDJSON when the client opts in. Large
-    // projects (e.g. 65 tools spread across many MCP servers) otherwise sit
-    // on a single static spinner for ~60 s while the server parallelizes
-    // OAuth2 detection and tool validation; streaming surfaces a live
-    // counter and the slowest server identity without changing the final
-    // response payload shape.
-    const wantsStream = (request.headers.get('accept') ?? '')
-      .toLowerCase()
-      .includes('application/x-ndjson');
-
-    let capabilities: Capabilities;
-    try {
-      capabilities = await request.json();
-    } catch (error: any) {
-      apiLogger.failure(`Error parsing capabilities: ${error.message}`);
-      return new Response(
-        JSON.stringify({ error: error.message }),
-        { status: 400, headers: { 'Content-Type': 'application/json' } },
-      );
-    }
-
-    if (!wantsStream) {
-      try {
-        const body = await this.runProjectConfigure(projectId, capabilities);
-        return new Response(JSON.stringify(body), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        });
-      } catch (error: any) {
-        apiLogger.failure(`Error: ${error.message}`);
-        return new Response(
-          JSON.stringify({ error: error.message }),
-          { status: 400, headers: { 'Content-Type': 'application/json' } },
-        );
-      }
-    }
-
-    const encoder = new TextEncoder();
-    // Buffer events that arrive before `start()` has wired the controller —
-    // synchronous emits from runProjectConfigure (e.g. `oauth2_init`) would
-    // otherwise be lost. Once `streamClosed` flips (client disconnect or
-    // terminal write), both the buffer and any further emits are dropped,
-    // so a client that hangs up partway through a long configure run can't
-    // grow `pending` unboundedly for the remainder of the work.
-    let controllerRef: ReadableStreamDefaultController<Uint8Array> | null = null;
-    let streamClosed = false;
-    let pending: string[] = [];
-
-    const writeLine = (line: string): void => {
-      if (streamClosed) return;
-      if (!controllerRef) {
-        pending.push(line);
-        return;
-      }
-      try {
-        controllerRef.enqueue(encoder.encode(line));
-      } catch {
-        // Stream already closed underneath us (e.g. client disconnected) —
-        // mark closed so subsequent emits short-circuit instead of throwing.
-        streamClosed = true;
-      }
-    };
-
-    const emit = (event: Record<string, unknown>) => {
-      writeLine(`${JSON.stringify(event)}\n`);
-    };
-
-    // Kick off the work eagerly so the actual server-side latency starts
-    // ticking before the stream is consumed. The `start` callback wires the
-    // controller and flushes any buffered events.
-    const work = this.runProjectConfigure(projectId, capabilities, emit).then(
-      (body) => ({ ok: true as const, body }),
-      (error: any) => ({ ok: false as const, error }),
-    );
-
-    const stream = new ReadableStream<Uint8Array>({
-      start: (controller) => {
-        controllerRef = controller;
-        const buffered = pending;
-        pending = [];
-        for (const line of buffered) writeLine(line);
-        work.then((outcome) => {
-          if (outcome.ok) {
-            writeLine(`${JSON.stringify({ type: 'result', ...outcome.body })}\n`);
-          } else {
-            apiLogger.failure(`Error: ${outcome.error?.message ?? outcome.error}`);
-            writeLine(
-              `${JSON.stringify({ type: 'error', error: outcome.error?.message ?? String(outcome.error) })}\n`,
-            );
-          }
-          if (!streamClosed) {
-            try {
-              controller.close();
-            } catch {
-              // Already closed — nothing to do.
-            }
-            streamClosed = true;
-          }
-        });
-      },
-      cancel: () => {
-        // Client disconnected. Drop the buffer and prevent any further
-        // emits from accumulating — `runProjectConfigure` may still be
-        // running for many seconds against slow MCP servers.
-        streamClosed = true;
-        controllerRef = null;
-        pending = [];
-      },
-    });
-
-    return new Response(stream, {
-      status: 200,
-      headers: {
-        'Content-Type': 'application/x-ndjson',
-        'Cache-Control': 'no-cache',
-      },
-    });
-  }
-
-  /**
-   * Configure a project: detect OAuth2 requirements per HTTP server, check
-   * required variables, and validate that the configured tools actually
-   * exist on their remote servers. Both the OAuth2 probe and the tool-list
-   * lookup are fanned out across servers with `Promise.all`, so wall time
-   * is dominated by the slowest server rather than the sum of all servers.
-   *
-   * The optional `onProgress` callback receives per-stage events that the
-   * NDJSON streaming branch forwards to the install CLI for live UI
-   * updates. Returns the same response body shape this endpoint has always
-   * returned, so the JSON fallback path stays bit-for-bit compatible.
-   */
-  private async runProjectConfigure(
-    projectId: string,
-    capabilities: Capabilities,
-    onProgress?: (event: Record<string, unknown>) => void,
-  ): Promise<Record<string, unknown>> {
-    const apiLogger = this.logger.child('API');
-    apiLogger.info(`Configure project: ${projectId}`);
-    apiLogger.info(`Skills: ${capabilities.skills.map(s => s.id).join(', ')}`);
-    apiLogger.info(`Tools: ${capabilities.tools.length}`);
-    apiLogger.info(`Servers: ${capabilities.servers.length}`);
-
-    this.sessionManager.setProjectCapabilities(projectId, capabilities);
-
-    const capabilitiesToUse = capabilities;
-
-    // -- OAuth2 detection (parallel) ------------------------------------
-    // Servers requiring OAuth2 detection: every HTTP-based server that
-    // does not already carry an explicit Authorization header. The probe
-    // mutates `server.def.oauth2` on success, but each iteration only
-    // touches its own server entry, so Promise.all is race-free.
-    const oauth2Candidates = capabilitiesToUse.servers.filter((server) => {
-      if (!server.def.url) return false;
-      const hasExplicitAuth =
-        server.def.headers &&
-        Object.keys(server.def.headers).some((k) => k.toLowerCase() === 'authorization');
-      if (hasExplicitAuth) {
-        apiLogger.debug(
-          `Skipping OAuth2 detection for ${server.id} (explicit auth header configured)`,
-        );
-        return false;
-      }
-      return true;
-    });
-
-    apiLogger.info(
-      `Detecting OAuth2 requirements across ${oauth2Candidates.length} server(s)...`,
-    );
-    onProgress?.({
-      type: 'oauth2_init',
-      totalServers: oauth2Candidates.length,
-    });
-
-    let oauth2Done = 0;
-    const oauth2Results = await Promise.all(
-      oauth2Candidates.map(async (server) => {
-        const existingOAuth = server.def.oauth2;
-        let entry: {
-          serverId: string;
-          serverUrl: string;
-          displayName: string;
-          isConnected: boolean;
-        } | null = null;
-        try {
-          apiLogger.debug(`Checking server: ${server.id}`);
-          const oauth2Config = await this.oauth2Manager.detectOAuth2Requirement(
-            server.def.url!,
-            { tlsSkipVerify: server.def.tlsSkipVerify },
-          );
-          if (oauth2Config) {
-            apiLogger.debug(`OAuth2 required for ${server.id}`);
-            let isConnected = this.oauth2Manager.isServerConnected(projectId, server.id);
-
-            // Validate existing connection by attempting to get a valid token.
-            // This will trigger token refresh if needed and delete invalid tokens.
-            if (isConnected) {
-              const accessToken = await this.oauth2Manager.getAccessToken(
-                projectId,
-                server.id,
-                oauth2Config,
-              );
-              isConnected = !!accessToken;
-              if (!isConnected) {
-                apiLogger.warn(`OAuth2 token invalid/expired for ${server.id}`);
-              }
-            }
-
-            // Merge: preserve every embedded field from the plugin/MCP config (e.g. Slack
-            // .mcp.json) and overlay the discovered endpoints on top. Embedded values for
-            // `client_id` and `callback_port` always win — auth servers register specific
-            // (client_id, redirect_uri) pairs and dropping either breaks the flow.
-            const merged: any = { ...(existingOAuth ?? {}), ...oauth2Config };
-            const embeddedClientId =
-              (existingOAuth as any)?.client_id ??
-              (existingOAuth as any)?.clientId ??
-              (existingOAuth as any)?.CLIENT_ID ??
-              (existingOAuth as any)?.oauth?.clientId ??
-              (existingOAuth as any)?.oauth?.client_id;
-            if (embeddedClientId) merged.client_id = embeddedClientId;
-            const embeddedCallbackPort =
-              (existingOAuth as any)?.callback_port ??
-              (existingOAuth as any)?.callbackPort ??
-              (existingOAuth as any)?.CALLBACK_PORT;
-            if (typeof embeddedCallbackPort === 'number' && embeddedCallbackPort > 0) {
-              merged.callback_port = embeddedCallbackPort;
-            } else if (typeof embeddedCallbackPort === 'string') {
-              const parsed = Number(embeddedCallbackPort);
-              if (Number.isFinite(parsed) && parsed > 0) merged.callback_port = parsed;
-            }
-            apiLogger.debug(
-              `OAuth2 merged for ${server.id}: client_id=${merged.client_id ? 'set' : 'missing'} callback_port=${merged.callback_port ?? 'missing'} registrationEndpoint=${merged.registrationEndpoint ? 'set' : 'missing'}`,
-            );
-            server.def.oauth2 = merged;
-            entry = {
-              serverId: server.id,
-              serverUrl: server.def.url!,
-              displayName: server.displayName ?? server.id,
-              isConnected,
-            };
-          }
-        } catch (error: any) {
-          apiLogger.warn(
-            `OAuth2 detection failed for ${server.id}: ${error.message ?? error}`,
-          );
-        } finally {
-          oauth2Done++;
-          onProgress?.({
-            type: 'oauth2_done',
-            serverId: server.id,
-            done: oauth2Done,
-            total: oauth2Candidates.length,
-            needsAuth: !!entry && !entry.isConnected,
-          });
-        }
-        return entry;
-      }),
-    );
-    const oauth2Servers = oauth2Results.filter((e): e is NonNullable<typeof e> => e !== null);
-
-    // Update stored capabilities with OAuth2 configs
-    if (oauth2Servers.length > 0) {
-      this.sessionManager.setProjectCapabilities(projectId, capabilitiesToUse);
-    }
-
-    // -- Required variables ---------------------------------------------
-    const requiredVars = extractAllVariables(capabilitiesToUse);
-    apiLogger.info(`Required variables: ${requiredVars.join(', ')}`);
-
-    const missingVars: string[] = [];
-    for (const varName of requiredVars) {
-      const value = this.db.getVariable(projectId, varName);
-      if (!value) {
-        missingVars.push(varName);
-      }
-    }
-
-    const needsOAuth2Connection = oauth2Servers.some((s) => !s.isConnected);
-
-    // -- Tool validation (parallel per server) --------------------------
-    apiLogger.info('Validating tools...');
-    let toolValidationResults: any[] = [];
-    try {
-      const mcpServer = this.getOrCreateMCPServer(projectId);
-      if (mcpServer) {
-        toolValidationResults = await mcpServer.validateTools(
-          capabilitiesToUse,
-          onProgress
-            ? (event: ValidationProgressEvent) =>
-                onProgress(event as unknown as Record<string, unknown>)
-            : undefined,
-        );
-      }
-
-      // Filter out validation failures for OAuth2 servers that need connection.
-      const oauth2ServerIds = new Set(
-        oauth2Servers.filter((s) => !s.isConnected).map((s) => s.serverId),
-      );
-      const nonOAuth2ValidationResults = toolValidationResults.filter(
-        (r) => !oauth2ServerIds.has(r.serverId),
-      );
-      const oauth2PendingResults = toolValidationResults.filter((r) =>
-        oauth2ServerIds.has(r.serverId),
-      );
-
-      if (oauth2PendingResults.length > 0) {
-        apiLogger.info(
-          `${oauth2PendingResults.length} tool(s) skipped validation (OAuth2 authentication required)`,
-        );
-        // Mark OAuth2 tools as pending authentication
-        for (const pending of oauth2PendingResults) {
-          pending.success = true; // Don't mark as failed
-          pending.pendingAuth = true;
-          pending.error = undefined;
-        }
-      }
-
-      const failedTools = nonOAuth2ValidationResults.filter((r) => !r.success);
-      if (failedTools.length > 0) {
-        apiLogger.warn(`${failedTools.length} tool(s) failed validation`);
-        for (const failed of failedTools) {
-          apiLogger.debug(`  ${failed.toolId}: ${failed.error}`);
-        }
-      } else if (nonOAuth2ValidationResults.length > 0) {
-        apiLogger.success(
-          `All ${nonOAuth2ValidationResults.length} non-OAuth2 tool(s) validated successfully`,
-        );
-      }
-    } catch (error: any) {
-      apiLogger.failure(`Tool validation error: ${error.message}`);
-      // Continue even if validation fails - this is informational.
-    }
-
-    if (missingVars.length > 0 || needsOAuth2Connection) {
-      apiLogger.warn(`Missing variables: ${missingVars.join(', ')}`);
-      if (needsOAuth2Connection) {
-        apiLogger.warn(
-          `OAuth2 connections needed: ${oauth2Servers
-            .filter((s) => !s.isConnected)
-            .map((s) => s.serverId)
-            .join(', ')}`,
-        );
-      }
-      const credentialsUrl = projectUiUrl(this.uiOrigin(), projectId);
-      return {
-        success: false,
-        needsCredentials: true,
-        missingVariables: missingVars,
-        oauth2Servers,
-        credentialsUrl,
-        toolValidation: toolValidationResults,
-      };
-    }
-
-    apiLogger.success('Project configured successfully');
-    return {
-      success: true,
-      needsCredentials: false,
-      toolValidation: toolValidationResults,
-    };
-  }
-
-  private async handleGetVariables(projectId: string): Promise<Response> {
-    const apiLogger = this.logger.child('API');
-    apiLogger.info(`Get variables for project: ${projectId}`);
-    const capabilities = this.sessionManager.getProjectCapabilities(projectId);
-    if (!capabilities) {
-      apiLogger.warn('Project not configured');
-      return new Response(
-        JSON.stringify({ error: 'Project not configured' }),
-        { status: 404, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-
-    const requiredVars = extractAllVariables(capabilities);
-    const values = this.db.getAllVariables(projectId);
-    apiLogger.info(`Required: ${requiredVars.length}, Set: ${Object.keys(values).length}`);
-
-    return new Response(
-      JSON.stringify({
-        required: requiredVars,
-        values,
-      }),
-      { headers: { 'Content-Type': 'application/json' } }
-    );
-  }
-
-  private async handleSetVariables(projectId: string, request: Request): Promise<Response> {
-    const apiLogger = this.logger.child('API');
-    try {
-      apiLogger.info(`Set variables for project: ${projectId}`);
-      const variables: Record<string, string> = await request.json();
-
-      for (const [key, value] of Object.entries(variables)) {
-        apiLogger.debug(`Setting: ${key} = ${value.substring(0, 20)}${value.length > 20 ? '...' : ''}`);
-        this.db.setVariable(projectId, key, value);
-      }
-
-      apiLogger.success(`Set ${Object.keys(variables).length} variable(s)`);
-      return new Response(
-        JSON.stringify({ success: true }),
-        { headers: { 'Content-Type': 'application/json' } }
-      );
-    } catch (error: any) {
-      apiLogger.failure(`Error: ${error.message}`);
-      return new Response(
-        JSON.stringify({ error: error.message }),
-        {
-          status: 400,
-          headers: { 'Content-Type': 'application/json' },
-        }
-      );
-    }
-  }
-
-  private async handleGetOAuth2Servers(projectId: string): Promise<Response> {
-    const apiLogger = this.logger.child('API');
-    apiLogger.info(`Get OAuth2 servers for project: ${projectId}`);
-    try {
-      const capabilities = this.sessionManager.getProjectCapabilities(projectId);
-      if (!capabilities) {
-        return new Response(
-          JSON.stringify({ error: 'Project not configured' }),
-          { status: 404, headers: { 'Content-Type': 'application/json' } }
-        );
-      }
-
-      // Ensure URL-based servers that require OAuth have def.oauth2 set (on-demand detection)
-      let capabilitiesUpdated = false;
-      for (const server of capabilities.servers) {
-        const hasExplicitAuthOnDemand = server.def.headers &&
-          Object.keys(server.def.headers).some(k => k.toLowerCase() === 'authorization');
-        if (server.def.url && !server.def.oauth2 && !hasExplicitAuthOnDemand) {
-          try {
-            const oauth2Config = await this.oauth2Manager.detectOAuth2Requirement(server.def.url, { tlsSkipVerify: server.def.tlsSkipVerify });
-            if (oauth2Config) {
-              apiLogger.debug(`OAuth2 detected for ${server.id} (on-demand)`);
-              server.def.oauth2 = oauth2Config;
-              capabilitiesUpdated = true;
-            }
-          } catch (detectionError: any) {
-            apiLogger.warn(`OAuth2 detection failed for ${server.id}: ${detectionError?.message ?? detectionError}`);
-          }
-        }
-      }
-      if (capabilitiesUpdated) {
-        this.sessionManager.setProjectCapabilities(projectId, capabilities);
-      }
-
-      const oauth2Servers = capabilities.servers
-        .filter((s: any) => s.def.oauth2)
-        .map((s: MCPServer) => {
-          const isConnected = this.oauth2Manager.isServerConnected(projectId, s.id);
-          let expiresAt: number | undefined;
-
-          if (isConnected) {
-            const tokenData = this.db.getOAuthToken(projectId, s.id);
-            expiresAt = tokenData?.expires_at ?? undefined;
-          }
-
-          return {
-            serverId: s.id,
-            serverUrl: s.def.url,
-            displayName: s.displayName ?? s.id,
-            isConnected: isConnected,
-            expiresAt: expiresAt,
-            oauth2Config: s.def.oauth2,
-          };
-        });
-
-      return new Response(
-        JSON.stringify({ servers: oauth2Servers }),
-        { headers: { 'Content-Type': 'application/json' } }
-      );
-    } catch (error: any) {
-      // Log full detail server-side, but return a generic message so raw
-      // exception text (stack-trace exposure) never reaches the client.
-      apiLogger.failure(`Error getting OAuth2 servers: ${error?.message ?? error}`);
-      return new Response(
-        JSON.stringify({ error: 'Failed to load OAuth2 servers' }),
-        { status: 500, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-  }
-
-  private uiOrigin(): string {
-    return `http://${this.settings.server.host}:${this.settings.server.port}`;
-  }
-
-  /** Close and remove the callback server for a port (after completion or idle timeout). */
-  private closeOAuthCallbackServer(port: number): void {
-    const entry = this.oauthCallbackServers.get(port);
-    if (!entry) return;
-    clearTimeout(entry.idleTimer);
-    entry.server.close();
-    this.oauthCallbackServers.delete(port);
-    this.logger.debug(`OAuth callback server on port ${port} closed`);
-  }
-
-  /**
-   * Ensure a Claude-style OAuth callback server is listening on the given port.
-   * Serves GET /callback?code=...&state=... and redirects to main UI after token exchange.
-   * Closed after completion or after 5 minutes idle. Used when a plugin provides client_id + callbackPort in .mcp.json (e.g. Slack).
-   * Binds directly and retries on EADDRINUSE (no separate port-availability check).
-   */
-  private async ensureOAuthCallbackServer(startPort: number, maxAttempts = 10): Promise<number> {
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      const port = startPort + attempt;
-      if (this.oauthCallbackServers.has(port)) {
-        return port;
-      }
-      try {
-        await this.bindOAuthCallbackServer(port);
-        return port;
-      } catch (err: any) {
-        if (err?.code === 'EADDRINUSE') {
-          this.logger.warn(`OAuth callback port ${port} in use, trying ${port + 1}`);
-          continue;
-        }
-        throw err;
-      }
-    }
-    throw new Error(
-      `Could not bind OAuth callback server after ${maxAttempts} attempts starting at ${startPort}`,
-    );
-  }
-
-  private bindOAuthCallbackServer(port: number): Promise<void> {
-    const self = this;
-    const IDLE_MS = 5 * 60 * 1000; // 5 minutes
-    const mainBase = this.uiOrigin();
-
-    return new Promise((resolve, reject) => {
-      const server = createServer((req, res) => {
-        if (req.method !== 'GET' || !req.url) {
-          res.writeHead(405);
-          res.end();
-          return;
-        }
-        const reqUrl = new URL(req.url, `http://127.0.0.1:${port}`);
-        if (reqUrl.pathname !== '/callback') {
-          res.writeHead(404);
-          res.end();
-          return;
-        }
-        const entry = self.oauthCallbackServers.get(port);
-        if (entry) clearTimeout(entry.idleTimer);
-        const closeWhenDone = () => {
-          res.on('finish', () => self.closeOAuthCallbackServer(port));
-        };
-
-        const code = reqUrl.searchParams.get('code');
-        const state = reqUrl.searchParams.get('state');
-        const error = reqUrl.searchParams.get('error');
-        const apiLogger = self.logger.child('API');
-
-        const redirectToUi = (
-          projectId: string | undefined,
-          success: boolean,
-          message?: string,
-          serverId?: string
-        ) => {
-          closeWhenDone();
-          const loc = projectId
-            ? projectUiUrl(mainBase, projectId, {
-                ...(success
-                  ? { oauth_success: message ?? 'true' }
-                  : { oauth_error: message ?? 'Unknown error' }),
-                ...(serverId ? { server: serverId } : {}),
-              })
-            : `${mainBase}/`;
-          res.writeHead(302, { Location: loc });
-          res.end();
-        };
-
-        if (error) {
-          apiLogger.error(`OAuth2 callback error: ${error}`);
-          let projectId: string | undefined;
-          if (state) {
-            const flow = self.db.getFlowState(state);
-            projectId = flow?.project_id;
-          }
-          redirectToUi(projectId, false, error);
-          return;
-        }
-
-        if (!code || !state) {
-          redirectToUi(undefined, false, 'Missing code or state');
-          return;
-        }
-
-        apiLogger.info('OAuth2 callback (Claude-style) received');
-        self.oauth2Manager.handleCallback(code, state).then((result) => {
-          if (!result.success) {
-            apiLogger.failure(`Callback failed: ${result.error}`);
-            redirectToUi(result.projectId, false, result.error ?? 'Token exchange failed');
-            return;
-          }
-          apiLogger.success(`OAuth2 flow completed for server: ${result.serverId}`);
-          redirectToUi(result.projectId, true, 'true', result.serverId);
-        }).catch((err: any) => {
-          apiLogger.failure(`Callback error: ${err.message}`);
-          redirectToUi(undefined, false, err.message ?? 'Token exchange failed');
-        });
-      });
-
-      server.once('error', reject);
-      server.listen(port, '127.0.0.1', () => {
-        self.logger.info(`OAuth callback server (Claude-style) listening on http://localhost:${port}/callback`);
-        const idleTimer = setTimeout(() => {
-          self.logger.debug(`OAuth callback server on port ${port} idle for 5 min, closing`);
-          self.closeOAuthCallbackServer(port);
-        }, IDLE_MS);
-        self.oauthCallbackServers.set(port, { server, idleTimer });
-        server.on('error', (err: any) => {
-          self.logger.failure(`OAuth callback server on port ${port}: ${err.message}`);
-          self.closeOAuthCallbackServer(port);
-        });
-        resolve();
-      });
-    });
-  }
-
-  private async handleOAuth2Start(projectId: string, request: Request): Promise<Response> {
-    const apiLogger = this.logger.child('API');
-    try {
-      const url = new URL(request.url);
-      const serverId = url.searchParams.get('server');
-      
-      if (!serverId) {
-        return new Response(
-          JSON.stringify({ error: 'Missing server parameter' }),
-          { status: 400, headers: { 'Content-Type': 'application/json' } }
-        );
-      }
-
-      apiLogger.info(`Start OAuth2 flow for server: ${serverId}`);
-      
-      const capabilities = this.sessionManager.getProjectCapabilities(projectId);
-      if (!capabilities) {
-        return new Response(
-          JSON.stringify({ error: 'Project not configured' }),
-          { status: 404, headers: { 'Content-Type': 'application/json' } }
-        );
-      }
-
-      const server = capabilities.servers.find((s: any) => s.id === serverId);
-      if (!server || !server.def.oauth2) {
-        return new Response(
-          JSON.stringify({ error: 'Server not found or does not require OAuth2' }),
-          { status: 404, headers: { 'Content-Type': 'application/json' } }
-        );
-      }
-
-      const oauth2 = server.def.oauth2 as {
-        client_id?: string; clientId?: string; CLIENT_ID?: string;
-        callback_port?: number | string; callbackPort?: number | string; CALLBACK_PORT?: number | string;
-        registrationEndpoint?: string;
-        [k: string]: any;
-      };
-      // Read embedded values with the same fallbacks the configure-handler accepts —
-      // older capabilities stored in the DB (pre-normalization) may still use camelCase
-      // or uppercase snake_case keys. Without this we silently fall back to the capa
-      // server callback URL, which auth servers reject as an unregistered redirect.
-      const effectiveClientId =
-        oauth2.client_id ??
-        oauth2.clientId ??
-        oauth2.CLIENT_ID ??
-        (oauth2 as any).oauth?.clientId ??
-        (oauth2 as any).oauth?.client_id;
-      const callbackPortRaw =
-        oauth2.callback_port ?? oauth2.callbackPort ?? oauth2.CALLBACK_PORT;
-      let effectiveCallbackPort: number | undefined;
-      if (typeof callbackPortRaw === 'number' && callbackPortRaw > 0) {
-        effectiveCallbackPort = callbackPortRaw;
-      } else if (typeof callbackPortRaw === 'string') {
-        const parsed = Number(callbackPortRaw);
-        if (Number.isFinite(parsed) && parsed > 0) effectiveCallbackPort = parsed;
-      }
-      // Claude-style only when dynamic client registration is not supported and .mcp.json
-      // provides client_id + callbackPort (e.g. Slack). Auth servers register specific
-      // (client_id, redirect_uri) pairs; falling back to the capa-server URL when the
-      // plugin embedded a callbackPort causes the auth server to reject the request.
-      const useClaudeCallback =
-        !!effectiveClientId &&
-        effectiveCallbackPort != null &&
-        !oauth2.registrationEndpoint;
-      let callbackPort = effectiveCallbackPort;
-      if (useClaudeCallback && callbackPort != null) {
-        callbackPort = await this.ensureOAuthCallbackServer(callbackPort);
-      }
-      const redirectUri = useClaudeCallback
-        ? `http://localhost:${callbackPort}/callback`
-        : `http://${this.settings.server.host}:${this.settings.server.port}/api/projects/${projectId}/oauth/callback`;
-      apiLogger.debug(
-        `OAuth2 redirect for ${serverId}: ${redirectUri} (useClaudeCallback=${useClaudeCallback}, client_id=${effectiveClientId ? 'set' : 'missing'}, callback_port=${effectiveCallbackPort ?? 'missing'}, registrationEndpoint=${oauth2.registrationEndpoint ? 'set' : 'missing'})`,
-      );
-
-      // Ensure the OAuth2Config we hand to the manager has the canonical snake_case
-      // client_id populated so generateAuthorizationUrl emits the embedded app id.
-      const configForFlow: OAuth2Config = {
-        ...(server.def.oauth2 as OAuth2Config),
-        ...(effectiveClientId ? { client_id: effectiveClientId } : {}),
-      };
-
-      const { url: authUrl, state } = await this.oauth2Manager.generateAuthorizationUrl(
-        projectId,
-        serverId,
-        configForFlow,
-        redirectUri
-      );
-
-      apiLogger.success('Authorization URL generated');
-      return new Response(
-        JSON.stringify({ authorizationUrl: authUrl, state }),
-        { headers: { 'Content-Type': 'application/json' } }
-      );
-    } catch (error: any) {
-      apiLogger.failure(`Error: ${error.message}`);
-      return new Response(
-        JSON.stringify({ error: error.message }),
-        { status: 500, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-  }
-
-  private async handleOAuth2Callback(projectId: string, request: Request): Promise<Response> {
-    const apiLogger = this.logger.child('API');
-    try {
-      const url = new URL(request.url);
-      const code = url.searchParams.get('code');
-      const state = url.searchParams.get('state');
-      const error = url.searchParams.get('error');
-
-      if (error) {
-        apiLogger.error(`OAuth2 callback error: ${error}`);
-        const redirectUrl = projectUiUrl(this.uiOrigin(), projectId, { oauth_error: error });
-        return new Response(null, {
-          status: 302,
-          headers: { Location: redirectUrl },
-        });
-      }
-
-      if (!code || !state) {
-        return new Response(
-          JSON.stringify({ error: 'Missing code or state parameter' }),
-          { status: 400, headers: { 'Content-Type': 'application/json' } }
-        );
-      }
-
-      apiLogger.info(`OAuth2 callback for project: ${projectId}`);
-      
-      const result = await this.oauth2Manager.handleCallback(code, state);
-      
-      if (!result.success) {
-        apiLogger.failure(`Callback failed: ${result.error}`);
-        const redirectUrl = projectUiUrl(this.uiOrigin(), projectId, {
-          oauth_error: result.error || 'Unknown error',
-        });
-        return new Response(null, {
-          status: 302,
-          headers: { Location: redirectUrl },
-        });
-      }
-
-      apiLogger.success(`OAuth2 flow completed for server: ${result.serverId}`);
-
-      const redirectUrl = projectUiUrl(this.uiOrigin(), projectId, {
-        oauth_success: 'true',
-        ...(result.serverId ? { server: result.serverId } : {}),
-      });
-      return new Response(null, {
-        status: 302,
-        headers: { Location: redirectUrl },
-      });
-    } catch (error: any) {
-      const apiLogger = this.logger.child('API');
-      apiLogger.failure(`Error: ${error.message}`);
-      const redirectUrl = projectUiUrl(this.uiOrigin(), projectId, {
-        oauth_error: error.message,
-      });
-      return new Response(null, {
-        status: 302,
-        headers: { Location: redirectUrl },
-      });
-    }
-  }
-
-  private async handleOAuth2Disconnect(projectId: string, serverId: string): Promise<Response> {
-    const apiLogger = this.logger.child('API');
-    apiLogger.info(`Disconnect OAuth2 for server: ${serverId}`);
-    try {
-      this.oauth2Manager.disconnect(projectId, serverId);
-      return new Response(
-        JSON.stringify({ success: true }),
-        { headers: { 'Content-Type': 'application/json' } }
-      );
-    } catch (error: any) {
-      apiLogger.failure(`Error: ${error.message}`);
-      return new Response(
-        JSON.stringify({ error: error.message }),
-        { status: 500, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-  }
-
-  private async handleTokenRefreshStatus(): Promise<Response> {
-    const apiLogger = this.logger.child('API');
-    apiLogger.info('Get token refresh scheduler status');
-    try {
-      const status = this.tokenRefreshScheduler.getStatus();
-      return new Response(
-        JSON.stringify(status),
-        { headers: { 'Content-Type': 'application/json' } }
-      );
-    } catch (error: any) {
-      apiLogger.failure(`Error: ${error.message}`);
-      return new Response(
-        JSON.stringify({ error: error.message }),
-        { status: 500, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-  }
-
-  private async handleForceTokenRefresh(): Promise<Response> {
-    const apiLogger = this.logger.child('API');
-    apiLogger.info('Force token refresh check');
-    try {
-      await this.tokenRefreshScheduler.forceCheck();
-      return new Response(
-        JSON.stringify({ success: true, message: 'Token refresh check completed' }),
-        { headers: { 'Content-Type': 'application/json' } }
-      );
-    } catch (error: any) {
-      apiLogger.failure(`Error: ${error.message}`);
-      return new Response(
-        JSON.stringify({ error: error.message }),
-        { status: 500, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-  }
-
-  // Git Integration handlers
-
-  private async handleGetIntegrations(): Promise<Response> {
-    const apiLogger = this.logger.child('API');
-    apiLogger.info('Get all integrations');
-    try {
-      const integrations = this.gitIntegrationManager.getAllIntegrations();
-      return new Response(
-        JSON.stringify({ integrations }),
-        { headers: { 'Content-Type': 'application/json' } }
-      );
-    } catch (error: any) {
-      apiLogger.failure(`Error: ${error.message}`);
-      return new Response(
-        JSON.stringify({ error: error.message }),
-        { status: 500, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-  }
-
-  private async handleGitHubOAuthStart(request: Request): Promise<Response> {
-    const apiLogger = this.logger.child('API');
-    apiLogger.info('Start GitHub OAuth flow');
-    try {
-      // Cloud OAuth endpoint will handle the entire OAuth flow
-      // and redirect back to our local callback with the access token
-      const localCallbackUri = `http://${this.settings.server.host}:${this.settings.server.port}/api/integrations/github/oauth/callback`;
-      
-      const { url: authUrl, flowId } = await this.gitIntegrationManager.generateAuthorizationUrl(
-        'github',
-        localCallbackUri
-      );
-
-      apiLogger.success('GitHub authorization URL generated (via cloud)');
-      return new Response(
-        JSON.stringify({ authorizationUrl: authUrl, flowId }),
-        { headers: { 'Content-Type': 'application/json' } }
-      );
-    } catch (error: any) {
-      apiLogger.failure(`Error: ${error.message}`);
-      return new Response(
-        JSON.stringify({ error: error.message }),
-        { status: 500, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-  }
-
-  /**
-   * GitHub OAuth callback. Tokens must be sent via POST JSON body, not URL query strings.
-   *
-   * POST /api/integrations/github/oauth/callback
-   * Body: { "access_token": "...", "refresh_token": "...", "expires_in": 3600 }
-   *
-   * GET is only supported for error redirects without tokens (?error=...).
-   */
-  private async handleGitHubOAuthCallback(request: Request): Promise<Response> {
-    const apiLogger = this.logger.child('API');
-    try {
-      let accessToken: string | null = null;
-      let refreshToken: string | undefined;
-      let expiresIn: number | undefined;
-      let error: string | null = null;
-
-      if (request.method === 'POST') {
-        const body = await request.json() as Record<string, unknown>;
-        accessToken = typeof body.access_token === 'string' ? body.access_token : null;
-        refreshToken = typeof body.refresh_token === 'string' ? body.refresh_token : undefined;
-        if (body.expires_in != null) {
-          expiresIn = parseInt(String(body.expires_in), 10);
-        }
-        error = typeof body.error === 'string' ? body.error : null;
-      } else {
-        const url = new URL(request.url);
-        // Cloud OAuth provider redirects via GET with tokens in the query string. Serve
-        // a tiny HTML+JS bridge that strips tokens from the URL and re-issues the
-        // callback as a POST.
-        if (
-          url.searchParams.has('access_token') ||
-          url.searchParams.has('refresh_token') ||
-          url.searchParams.has('token')
-        ) {
-          apiLogger.info('GitHub OAuth callback (cloud GET redirect) — serving bridge');
-          return oauthBridgeResponse('github');
-        }
-        error = url.searchParams.get('error');
-      }
-
-      if (error) {
-        apiLogger.error(`GitHub OAuth callback error: ${error}`);
-        const redirectUrl = `http://${this.settings.server.host}:${this.settings.server.port}/ui/integrations?error=${encodeURIComponent(error)}`;
-        return new Response(null, {
-          status: 302,
-          headers: { Location: redirectUrl },
-        });
-      }
-
-      if (!accessToken) {
-        return new Response(
-          JSON.stringify({ error: 'Missing access_token parameter' }),
-          { status: 400, headers: { 'Content-Type': 'application/json' } }
-        );
-      }
-
-      apiLogger.info('GitHub OAuth callback (from cloud)');
-      // Pass 'github' as the platform since this is the GitHub callback endpoint
-      const result = await this.gitIntegrationManager.handleCallback(
-        accessToken,
-        'github',
-        refreshToken,
-        expiresIn
-      );
-
-      if (!result.success) {
-        apiLogger.failure(`Callback failed: ${result.error}`);
-        const redirectUrl = `http://${this.settings.server.host}:${this.settings.server.port}/ui/integrations?error=${encodeURIComponent(result.error || 'Unknown error')}`;
-        return new Response(null, {
-          status: 302,
-          headers: { Location: redirectUrl },
-        });
-      }
-
-      apiLogger.success('GitHub OAuth flow completed');
-      const redirectUrl = `http://${this.settings.server.host}:${this.settings.server.port}/ui/integrations?success=github`;
-      return new Response(null, {
-        status: 302,
-        headers: { Location: redirectUrl },
-      });
-    } catch (error: any) {
-      apiLogger.failure(`Error: ${error.message}`);
-      const redirectUrl = `http://${this.settings.server.host}:${this.settings.server.port}/ui/integrations?error=${encodeURIComponent(error.message)}`;
-      return new Response(null, {
-        status: 302,
-        headers: { Location: redirectUrl },
-      });
-    }
-  }
-
-  private async handleGitLabOAuthStart(request: Request): Promise<Response> {
-    const apiLogger = this.logger.child('API');
-    apiLogger.info('Start GitLab OAuth flow');
-    try {
-      // Cloud OAuth endpoint will handle the entire OAuth flow
-      // and redirect back to our local callback with the access token
-      const localCallbackUri = `http://${this.settings.server.host}:${this.settings.server.port}/api/integrations/gitlab/oauth/callback`;
-      
-      const { url: authUrl, flowId } = await this.gitIntegrationManager.generateAuthorizationUrl(
-        'gitlab',
-        localCallbackUri
-      );
-
-      apiLogger.success('GitLab authorization URL generated (via cloud)');
-      return new Response(
-        JSON.stringify({ authorizationUrl: authUrl, flowId }),
-        { headers: { 'Content-Type': 'application/json' } }
-      );
-    } catch (error: any) {
-      apiLogger.failure(`Error: ${error.message}`);
-      return new Response(
-        JSON.stringify({ error: error.message }),
-        { status: 500, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-  }
-
-  /**
-   * GitLab OAuth callback. Tokens must be sent via POST JSON body, not URL query strings.
-   *
-   * POST /api/integrations/gitlab/oauth/callback
-   * Body: { "access_token": "...", "refresh_token": "...", "expires_in": 3600 }
-   *
-   * GET is only supported for error redirects without tokens (?error=...).
-   */
-  private async handleGitLabOAuthCallback(request: Request): Promise<Response> {
-    const apiLogger = this.logger.child('API');
-    try {
-      let accessToken: string | null = null;
-      let refreshToken: string | undefined;
-      let expiresIn: number | undefined;
-      let error: string | null = null;
-
-      if (request.method === 'POST') {
-        const body = await request.json() as Record<string, unknown>;
-        accessToken = typeof body.access_token === 'string' ? body.access_token : null;
-        refreshToken = typeof body.refresh_token === 'string' ? body.refresh_token : undefined;
-        if (body.expires_in != null) {
-          expiresIn = parseInt(String(body.expires_in), 10);
-        }
-        error = typeof body.error === 'string' ? body.error : null;
-      } else {
-        const url = new URL(request.url);
-        // Cloud OAuth provider redirects via GET with tokens in the query string. Serve
-        // a tiny HTML+JS bridge that strips tokens from the URL and re-issues the
-        // callback as a POST.
-        if (
-          url.searchParams.has('access_token') ||
-          url.searchParams.has('refresh_token') ||
-          url.searchParams.has('token')
-        ) {
-          apiLogger.info('GitLab OAuth callback (cloud GET redirect) — serving bridge');
-          return oauthBridgeResponse('gitlab');
-        }
-        error = url.searchParams.get('error');
-      }
-
-      if (error) {
-        apiLogger.error(`GitLab OAuth callback error: ${error}`);
-        const redirectUrl = `http://${this.settings.server.host}:${this.settings.server.port}/ui/integrations?error=${encodeURIComponent(error)}`;
-        return new Response(null, {
-          status: 302,
-          headers: { Location: redirectUrl },
-        });
-      }
-
-      if (!accessToken) {
-        return new Response(
-          JSON.stringify({ error: 'Missing access_token parameter' }),
-          { status: 400, headers: { 'Content-Type': 'application/json' } }
-        );
-      }
-
-      apiLogger.info('GitLab OAuth callback (from cloud)');
-      // Pass 'gitlab' as the platform since this is the GitLab callback endpoint
-      const result = await this.gitIntegrationManager.handleCallback(
-        accessToken,
-        'gitlab',
-        refreshToken,
-        expiresIn
-      );
-
-      if (!result.success) {
-        apiLogger.failure(`Callback failed: ${result.error}`);
-        const redirectUrl = `http://${this.settings.server.host}:${this.settings.server.port}/ui/integrations?error=${encodeURIComponent(result.error || 'Unknown error')}`;
-        return new Response(null, {
-          status: 302,
-          headers: { Location: redirectUrl },
-        });
-      }
-
-      apiLogger.success('GitLab OAuth flow completed');
-      const redirectUrl = `http://${this.settings.server.host}:${this.settings.server.port}/ui/integrations?success=gitlab`;
-      return new Response(null, {
-        status: 302,
-        headers: { Location: redirectUrl },
-      });
-    } catch (error: any) {
-      apiLogger.failure(`Error: ${error.message}`);
-      const redirectUrl = `http://${this.settings.server.host}:${this.settings.server.port}/ui/integrations?error=${encodeURIComponent(error.message)}`;
-      return new Response(null, {
-        status: 302,
-        headers: { Location: redirectUrl },
-      });
-    }
-  }
-
-  /**
-   * Refresh stored OAuth token for a git platform. Requires POST; tokens must not appear in URLs.
-   *
-   * curl -X POST http://localhost:3000/api/integrations/github/refresh
-   */
-  private async handleGitTokenRefresh(platform: 'github' | 'gitlab'): Promise<Response> {
-    const apiLogger = this.logger.child('API');
-    apiLogger.info(`Refresh ${platform} token`);
-    try {
-      const success = await this.gitIntegrationManager.refreshAccessToken(platform);
-
-      if (!success) {
-        apiLogger.failure('Token refresh failed');
-        return new Response(
-          JSON.stringify({ success: false, error: 'Token refresh failed. Re-authentication may be required.' }),
-          { status: 400, headers: { 'Content-Type': 'application/json' } }
-        );
-      }
-
-      apiLogger.success(`${platform} token refreshed successfully`);
-      return new Response(
-        JSON.stringify({ success: true }),
-        { headers: { 'Content-Type': 'application/json' } }
-      );
-    } catch (error: any) {
-      apiLogger.failure(`Error: ${error.message}`);
-      return new Response(
-        JSON.stringify({ success: false, error: error.message }),
-        { status: 500, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-  }
-
-  private async handleGitHubEnterprisePAT(request: Request): Promise<Response> {
-    const apiLogger = this.logger.child('API');
-    apiLogger.info('Store GitHub Enterprise PAT');
-    try {
-      const body = await request.json();
-      const { host, token } = body;
-
-      if (!host || !token) {
-        return new Response(
-          JSON.stringify({ error: 'Missing host or token' }),
-          { status: 400, headers: { 'Content-Type': 'application/json' } }
-        );
-      }
-
-      await this.gitIntegrationManager.storePAT({
-        platform: 'github-enterprise',
-        host,
-        token,
-      });
-
-      apiLogger.success(`GitHub Enterprise PAT stored for ${host}`);
-      return new Response(
-        JSON.stringify({ success: true }),
-        { headers: { 'Content-Type': 'application/json' } }
-      );
-    } catch (error: any) {
-      apiLogger.failure(`Error: ${error.message}`);
-      return new Response(
-        JSON.stringify({ error: error.message }),
-        { status: 400, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-  }
-
-  private async handleGitLabSelfManagedPAT(request: Request): Promise<Response> {
-    const apiLogger = this.logger.child('API');
-    apiLogger.info('Store GitLab Self-Managed PAT');
-    try {
-      const body = await request.json();
-      const { host, token } = body;
-
-      if (!host || !token) {
-        return new Response(
-          JSON.stringify({ error: 'Missing host or token' }),
-          { status: 400, headers: { 'Content-Type': 'application/json' } }
-        );
-      }
-
-      await this.gitIntegrationManager.storePAT({
-        platform: 'gitlab-self-managed',
-        host,
-        token,
-      });
-
-      apiLogger.success(`GitLab Self-Managed PAT stored for ${host}`);
-      return new Response(
-        JSON.stringify({ success: true }),
-        { headers: { 'Content-Type': 'application/json' } }
-      );
-    } catch (error: any) {
-      apiLogger.failure(`Error: ${error.message}`);
-      return new Response(
-        JSON.stringify({ error: error.message }),
-        { status: 400, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-  }
-
-  private async handleDisconnectIntegration(platform: string, host?: string): Promise<Response> {
-    const apiLogger = this.logger.child('API');
-    apiLogger.info(`Disconnect integration: ${platform}${host ? ` at ${host}` : ''}`);
-    try {
-      this.gitIntegrationManager.disconnect(platform as any, host);
-      return new Response(
-        JSON.stringify({ success: true }),
-        { headers: { 'Content-Type': 'application/json' } }
-      );
-    } catch (error: any) {
-      apiLogger.failure(`Error: ${error.message}`);
-      return new Response(
-        JSON.stringify({ error: error.message }),
-        { status: 500, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-  }
-
-  // --- Registry handlers ---
-
-  private async handleGetRegistries(): Promise<Response> {
-    this.logger.child('API').info('List registries');
-    return listRegistriesHandler(this.db, this.registryManager);
-  }
-
-  private async handleCreateRegistry(request: Request): Promise<Response> {
-    this.logger.child('API').info('Install registry');
-    return createRegistryHandler(this.db, this.registryManager, request);
-  }
-
-  private async handleDeleteRegistry(slug: string): Promise<Response> {
-    this.logger.child('API').info(`Delete registry: ${slug}`);
-    return deleteRegistryHandler(this.db, this.registryManager, slug);
-  }
-
-  private async handlePatchRegistry(slug: string, request: Request): Promise<Response> {
-    this.logger.child('API').info(`Patch registry: ${slug}`);
-    return patchRegistryHandler(this.db, this.registryManager, slug, request);
-  }
-
-  private async handleRefreshRegistry(slug: string): Promise<Response> {
-    this.logger.child('API').info(`Refresh registry: ${slug}`);
-    return refreshRegistryHandler(this.db, this.registryManager, slug);
-  }
-
-  private async handlePreviewRegistry(url: URL): Promise<Response> {
-    this.logger.child('API').info('Preview registry');
-    return previewRegistryHandler(this.db, url);
-  }
-
-  private async handleRegistrySearch(registryId: string, url: URL): Promise<Response> {
-    const apiLogger = this.logger.child('API');
-    apiLogger.info(`Registry search: ${registryId}`);
-    try {
-      const capability = (url.searchParams.get('capability') ?? 'skills') as RegistryCapability;
-      const query = url.searchParams.get('q') ?? undefined;
-      const limit = url.searchParams.has('limit') ? Number(url.searchParams.get('limit')) : undefined;
-      const cursor = url.searchParams.get('cursor') ?? undefined;
-
-      const result = await this.registryManager.search(registryId, { capability, query, limit, cursor });
-      return new Response(
-        JSON.stringify(result),
-        { headers: { 'Content-Type': 'application/json' } }
-      );
-    } catch (error: any) {
-      apiLogger.failure(`Registry search error: ${error.message}`);
-      const status = error.message.includes('not found') ? 404 : 502;
-      return new Response(
-        JSON.stringify({ error: error.message, registry: registryId }),
-        { status, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-  }
-
-  private async handleRegistryView(registryId: string, itemId: string, url: URL): Promise<Response> {
-    const apiLogger = this.logger.child('API');
-    apiLogger.info(`Registry view: ${registryId} / ${itemId}`);
-    try {
-      const capability = (url.searchParams.get('capability') ?? 'skills') as RegistryCapability;
-      const detail = await this.registryManager.view(registryId, { capability, id: itemId });
-      return new Response(
-        JSON.stringify(detail),
-        { headers: { 'Content-Type': 'application/json' } }
-      );
-    } catch (error: any) {
-      apiLogger.failure(`Registry view error: ${error.message}`);
-      const status = error.message.includes('not found') ? 404 : 502;
-      return new Response(
-        JSON.stringify({ error: error.message, registry: registryId }),
-        { status, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-  }
-
-  private async handleMCP(request: Request, projectId: string, agentId?: string): Promise<Response> {
-    const mcpLogger = this.logger.child('MCP');
-    const cacheKey = agentId ? `${projectId}:${agentId}` : projectId;
-
-    // Get or create MCP server for this project (or project+sub-agent)
-    let mcpServer = this.mcpServers.get(cacheKey);
-
-    if (!mcpServer) {
-      const label = agentId ? `project: ${projectId}, sub-agent: ${agentId}` : `project: ${projectId}`;
-      mcpLogger.info(`Creating new MCP server for ${label}`);
-      // Get project from database
-      const project = this.db.getProject(projectId);
-      if (!project) {
-        mcpLogger.warn('Project not found');
-        return new Response('Project not found', { status: 404 });
-      }
-
-      mcpServer = new CapaMCPServer(
-        this.db,
-        this.sessionManager,
-        projectId,
-        project.path,
-        agentId
-      );
-
-      this.mcpServers.set(cacheKey, mcpServer);
-      mcpLogger.success('MCP server created');
-    }
-
-    const requestOrigin = request.headers.get('Origin');
-    const originCheck = isAllowedOrigin(requestOrigin);
-    const corsHeaders: Record<string, string> = {
-      'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
-    };
-    if (originCheck.origin) {
-      corsHeaders['Access-Control-Allow-Origin'] = originCheck.origin;
-    }
-
-    // Handle MCP protocol via HTTP (simplified without SSE)
-    if (request.method === 'POST') {
-      if (requestOrigin && !originCheck.allowed) {
-        return new Response(
-          `Origin ${requestOrigin} not allowed. Set CAPA_ALLOWED_ORIGINS env var to include this origin.`,
-          { status: 403 }
-        );
-      }
-
-      try {
-        const message = await request.json();
-        mcpLogger.debug(`${message.method || 'notification'} (id: ${message.id || 'none'})`);
-        
-        // Handle JSON-RPC message
-        const result = await mcpServer.handleMessage(message);
-        
-        // Return simple JSON response (not SSE)
-        return new Response(
-          JSON.stringify(result),
-          {
-            status: 200,
-            headers: { 
-              'Content-Type': 'application/json',
-              ...corsHeaders,
-            },
-          }
-        );
-      } catch (error: any) {
-        mcpLogger.failure(`Error: ${error.message}`);
-        return new Response(
-          JSON.stringify({ 
-            jsonrpc: '2.0',
-            error: {
-              code: -32603,
-              message: error.message || 'Internal error'
-            },
-            id: null
-          }),
-          {
-            status: mcpHandlerHttpStatus(error),
-            headers: { 
-              'Content-Type': 'application/json',
-              ...corsHeaders,
-            },
-          }
-        );
-      }
-    }
-
-    // Handle OPTIONS for CORS
-    if (request.method === 'OPTIONS') {
-      if (requestOrigin && !originCheck.allowed) {
-        return new Response(
-          `Origin ${requestOrigin} not allowed. Set CAPA_ALLOWED_ORIGINS env var to include this origin.`,
-          { status: 403 }
-        );
-      }
-
-      return new Response(null, {
-        status: 204,
-        headers: corsHeaders,
-      });
-    }
-
-    return new Response('Method not allowed', { status: 405 });
-  }
-
-  private writePidFile() {
-    const pidFile = getPidFilePath();
-    const content = `${process.pid}:${VERSION}`;
-    writeFileSync(pidFile, content, 'utf-8');
-  }
-
-  async stop() {
-    this.logger.info('Stopping CAPA server...');
-
-    // Stop token refresh scheduler
-    this.tokenRefreshScheduler.stop();
-
-    // Close all MCP servers
-    for (const [projectId, mcpServer] of this.mcpServers) {
-      await mcpServer.close();
-    }
-
-    // Stop all subprocesses
-    this.subprocessManager.stopAll();
-
-    // Close Claude-style OAuth callback servers
-    for (const [port, entry] of this.oauthCallbackServers) {
-      clearTimeout(entry.idleTimer);
-      entry.server.close();
-      this.logger.debug(`Closed OAuth callback server on port ${port}`);
-    }
-    this.oauthCallbackServers.clear();
-
-    // Close database
-    this.sessionManager.dispose();
-    this.db.close();
-
-    this.logger.success('CAPA server stopped');
-    process.exit(0);
-  }
+	private db!: CapaDatabase;
+	private sessionManager!: SessionManager;
+	private subprocessManager!: SubprocessManager;
+	private oauth2Manager!: OAuth2Manager;
+	private gitIntegrationManager!: GitIntegrationManager;
+	private tokenRefreshScheduler!: TokenRefreshScheduler;
+	private httpServer!: HttpServer;
+	private settings: any;
+	private mcpServers = new Map<string, CapaMCPServer>();
+	/** Claude-style OAuth callback servers: port -> { server, idleTimer }; closed after completion or 5 min idle */
+	private oauthCallbackServers = new Map<
+		number,
+		{ server: HttpServer; idleTimer: ReturnType<typeof setTimeout> }
+	>();
+	private registryManager!: RegistryManager;
+	private capsWatcher!: CapabilitiesFileWatcher;
+	private toolCallTracer!: ToolCallTracer;
+	private projectEventClients = new Map<
+		string,
+		Set<(chunk: Uint8Array) => void>
+	>();
+	/** Cached plugin-expanded capabilities keyed by project id */
+	private effectiveCapsCache = new Map<string, EffectiveCapsCacheEntry>();
+	private startTime: number = Date.now();
+	private logger = logger.child("CapaServer");
+
+	private configureRouteDeps(): ConfigureRouteDeps {
+		return {
+			db: this.db,
+			sessionManager: this.sessionManager,
+			oauth2Manager: this.oauth2Manager,
+			capsWatcher: this.capsWatcher,
+			effectiveCapsCache: this.effectiveCapsCache,
+			getOrCreateMCPServer: (id) => this.getOrCreateMCPServer(id),
+			uiOrigin: () => this.uiOrigin(),
+			syncProjectMcpClients: (projectId, servers, previousServers) =>
+				this.syncProjectMcpClients(projectId, servers, previousServers),
+		};
+	}
+
+	/** Invalidate cached MCP children for a project after capabilities change. */
+	private async syncProjectMcpClients(
+		projectId: string,
+		servers: Capabilities["servers"],
+		previousServers?: Capabilities["servers"],
+	): Promise<void> {
+		for (const [key, mcp] of this.mcpServers) {
+			if (key === projectId || key.startsWith(`${projectId}:`)) {
+				await mcp.syncCachedMcpClients(servers, previousServers);
+			}
+		}
+	}
+
+	private projectRouteDeps(): ProjectRouteDeps {
+		return {
+			db: this.db,
+			sessionManager: this.sessionManager,
+			oauth2Manager: this.oauth2Manager,
+			capsWatcher: this.capsWatcher,
+			effectiveCapsCache: this.effectiveCapsCache,
+			projectEventClients: this.projectEventClients,
+			configureDeps: this.configureRouteDeps(),
+		};
+	}
+
+	private variablesRouteDeps(): VariablesRouteDeps {
+		return {
+			db: this.db,
+			sessionManager: this.sessionManager,
+		};
+	}
+
+	private mcpMetaRouteDeps(): McpMetaRouteDeps {
+		return {
+			db: this.db,
+			sessionManager: this.sessionManager,
+			getOrCreateMCPServer: (id) => this.getOrCreateMCPServer(id),
+		};
+	}
+
+	private tokenRefreshRouteDeps(): TokenRefreshRouteDeps {
+		return {
+			tokenRefreshScheduler: this.tokenRefreshScheduler,
+		};
+	}
+
+	private gitIntegrationsRouteDeps(): GitIntegrationsRouteDeps {
+		return {
+			gitIntegrationManager: this.gitIntegrationManager,
+			uiOrigin: () => this.uiOrigin(),
+			serverHost: this.settings.server.host,
+			serverPort: this.settings.server.port,
+		};
+	}
+
+	async start() {
+		this.logger.info("Starting CAPA server...");
+
+		// Load settings
+		this.settings = await loadSettings();
+
+		// Ensure .capa directory exists
+		await ensureCapaDir();
+
+		// Initialize database
+		const dbPath = getDatabasePath(this.settings);
+		this.db = new CapaDatabase(dbPath);
+
+		// Cleanup projects whose directories no longer exist
+		await this.cleanupMissingProjects();
+
+		// Initialize managers
+		this.registryManager = new RegistryManager(this.db);
+
+		// First-run seeding of the bundled example registries. This runs in the
+		// background — a slow or unauthenticated GitHub fetch must not block
+		// server startup, and any per-seed failure is persisted as a `failed`
+		// row that the user can see and retry from the UI.
+		void seedDefaultRegistries(this.db, this.registryManager, {
+			log: {
+				info: (m) => this.logger.info(m),
+				warn: (m) => this.logger.warn(m),
+				success: (m) => this.logger.success(m),
+			},
+		}).catch((err) => {
+			this.logger.warn(
+				`Default registry seeding failed: ${err?.message ?? err}`,
+			);
+		});
+
+		this.sessionManager = new SessionManager(this.db);
+		this.subprocessManager = new SubprocessManager(this.db);
+		this.oauth2Manager = new OAuth2Manager(this.db);
+		this.gitIntegrationManager = new GitIntegrationManager(this.db);
+		this.toolCallTracer = new ToolCallTracer(this.db, (projectId, record) => {
+			notifyToolCall(this.projectEventClients, projectId, record);
+		});
+
+		// Connect OAuth2Manager with SessionManager for capabilities access
+		this.oauth2Manager.setCapabilitiesProvider(() =>
+			this.sessionManager.getAllProjectCapabilities(),
+		);
+
+		// Initialize and start token refresh scheduler
+		const checkInterval =
+			(this.settings.token_refresh?.check_interval_seconds ?? 60) * 1000;
+		const refreshThreshold =
+			(this.settings.token_refresh?.refresh_threshold_seconds ?? 600) * 1000;
+
+		this.tokenRefreshScheduler = new TokenRefreshScheduler(
+			this.db,
+			this.oauth2Manager,
+			{
+				checkInterval,
+				refreshThreshold,
+			},
+		);
+		this.tokenRefreshScheduler.setCapabilitiesProvider(() =>
+			this.sessionManager.getAllProjectCapabilities(),
+		);
+		this.tokenRefreshScheduler.setGitIntegrationManager(
+			this.gitIntegrationManager,
+		);
+		this.tokenRefreshScheduler.start();
+		this.logger.success("Token refresh scheduler started");
+
+		// Keep in-memory capabilities + UI in sync with on-disk edits
+		this.capsWatcher = new CapabilitiesFileWatcher(
+			(projectId) => this.reloadProjectCapabilitiesFromDisk(projectId),
+			{
+				info: (m) => this.logger.info(m),
+				warn: (m) => this.logger.warn(m),
+				debug: (m) => this.logger.debug(m),
+			},
+		);
+
+		// Start HTTP server
+		await this.startHttpServer();
+
+		// Note: OAuth redirect server is started on-demand during OAuth flows
+
+		// Write PID file
+		this.writePidFile();
+
+		// Watch all known projects' capabilities files
+		for (const project of this.db.getAllProjects()) {
+			void this.capsWatcher.watchProject(project.id, project.path);
+		}
+
+		this.logger.success(
+			`CAPA server running at http://${this.settings.server.host}:${this.settings.server.port}`,
+		);
+		this.logger.info(
+			`OAuth redirect server will start on-demand at http://${this.settings.server.host}:${this.settings.oauth_redirect_port || 3100}`,
+		);
+		this.logger.info(`Version: ${VERSION}`);
+	}
+
+	private async cleanupMissingProjects(): Promise<void> {
+		const projects = this.db.getAllProjects();
+		let removed = 0;
+		for (const project of projects) {
+			if (isUnderWrapWorkspacesDir(project.path)) {
+				this.logger.warn(
+					`Removing shadow wrap workspace project "${project.id}" at path: ${project.path}`,
+				);
+				this.db.deleteProject(project.id);
+				removed++;
+				continue;
+			}
+			if (!existsSync(project.path)) {
+				this.logger.warn(
+					`Project directory not found, removing project "${project.id}" at path: ${project.path}`,
+				);
+				this.db.deleteProject(project.id);
+				removed++;
+			}
+		}
+		if (removed > 0) {
+			this.logger.info(
+				`Removed ${removed} invalid project(s) (missing dirs or wrap shadows)`,
+			);
+		} else {
+			this.logger.debug("All configured projects have valid directories");
+		}
+	}
+
+	private authFailureResponse(
+		request: Request,
+		reason: string,
+		status: number,
+	): Response {
+		const requestOrigin = request.headers.get("Origin");
+		const originCheck = isAllowedOrigin(requestOrigin);
+		const headers: Record<string, string> = {};
+		if (originCheck.origin) {
+			headers["Access-Control-Allow-Origin"] = originCheck.origin;
+		}
+		return new Response(reason, { status, headers });
+	}
+
+	private async startHttpServer() {
+		const { host, port } = this.settings.server;
+		const self = this;
+
+		const authToken = initAuth(host);
+		if (authToken && !isLoopbackHost(host)) {
+			process.stderr.write(`capa: auth token = ${authToken}\n`);
+			process.stderr.write(
+				"capa: clients must send `Authorization: Bearer <token>` to /api/* and the MCP route\n",
+			);
+		}
+
+		const server = Bun.serve({
+			hostname: host,
+			port: port,
+			async fetch(request, server) {
+				return await self.handleRequest(request, server);
+			},
+		});
+
+		this.logger.info(`HTTP server listening on ${host}:${port}`);
+	}
+
+	private async handleRequest(
+		request: Request,
+		server: any,
+	): Promise<Response> {
+		try {
+			return await this._handleRequest(request, server);
+		} catch (error: any) {
+			this.logger.failure(
+				`Unhandled error in request handler: ${error?.message ?? error}`,
+			);
+			return new Response(JSON.stringify({ error: "Internal server error" }), {
+				status: 500,
+				headers: { "Content-Type": "application/json" },
+			});
+		}
+	}
+
+	private async _handleRequest(
+		request: Request,
+		server: any,
+	): Promise<Response> {
+		const url = new URL(request.url);
+		const path = url.pathname;
+
+		this.logger.http(request.method, path);
+
+		// Health check
+		if (path === "/health") {
+			this.logger.debug("Health check");
+			const uptime = (Date.now() - this.startTime) / 1000; // uptime in seconds
+			return new Response(
+				JSON.stringify({
+					status: "ok",
+					version: VERSION,
+					uptime: uptime,
+				}),
+				{ headers: { "Content-Type": "application/json" } },
+			);
+		}
+
+		// SPA routes: home page and all /ui/* paths
+		if (path === "/" || path === "/ui" || path.startsWith("/ui/")) {
+			this.logger.debug("SPA");
+			return this.handleSpa();
+		}
+
+		// API endpoints
+		if (path.startsWith("/api/")) {
+			this.logger.debug("API endpoint");
+			const auth = requireAuth(request, this.settings.server.host);
+			if (!auth.ok) {
+				return this.authFailureResponse(request, auth.reason, auth.status);
+			}
+			return this.handleAPI(request, server);
+		}
+
+		// Sub-agent MCP endpoints: /{projectId}/agents/{agentId}/mcp
+		const agentMcpMatch = path.match(/^\/([^/]+)\/agents\/([^/]+)\/mcp$/);
+		if (agentMcpMatch) {
+			const projectId = agentMcpMatch[1];
+			const agentId = agentMcpMatch[2];
+			this.logger.debug(
+				`MCP endpoint for project: ${projectId}, sub-agent: ${agentId}`,
+			);
+			const auth = requireAuth(request, this.settings.server.host);
+			if (!auth.ok) {
+				return this.authFailureResponse(request, auth.reason, auth.status);
+			}
+			return this.handleMCP(request, projectId, agentId);
+		}
+
+		// Main MCP endpoints: /{projectId}/mcp
+		const mcpMatch = path.match(/^\/([^/]+)\/mcp$/);
+		if (mcpMatch) {
+			const projectId = mcpMatch[1];
+			this.logger.debug(`MCP endpoint for project: ${projectId}`);
+			const auth = requireAuth(request, this.settings.server.host);
+			if (!auth.ok) {
+				return this.authFailureResponse(request, auth.reason, auth.status);
+			}
+			return this.handleMCP(request, projectId);
+		}
+
+		this.logger.debug("404 Not Found");
+		return new Response("Not Found", { status: 404 });
+	}
+
+	private async handleSpa(): Promise<Response> {
+		return new Response(spaHtml as unknown as string, {
+			headers: { "Content-Type": "text/html" },
+		});
+	}
+
+	private async handleAPI(
+		request: Request,
+		bunServer?: { timeout?: (req: Request, seconds: number) => void },
+	): Promise<Response> {
+		const url = new URL(request.url);
+		const path = url.pathname;
+
+		// Get all projects
+		if (path === "/api/projects" && request.method === "GET") {
+			return this.handleGetProjects();
+		}
+
+		// Get project details
+		const projectGetMatch = path.match(/^\/api\/projects\/([^/]+)$/);
+		if (projectGetMatch && request.method === "GET") {
+			const projectId = projectGetMatch[1];
+			return this.handleGetProject(projectId);
+		}
+
+		// Delete / clean project (keeps capabilities file)
+		if (projectGetMatch && request.method === "DELETE") {
+			const projectId = projectGetMatch[1];
+			return this.handleDeleteProject(projectId);
+		}
+
+		// Live capabilities file change stream (SSE)
+		const projectEventsMatch = path.match(/^\/api\/projects\/([^/]+)\/events$/);
+		if (projectEventsMatch && request.method === "GET") {
+			// Bun closes quiet streams after ~10s unless idle timeout is disabled.
+			bunServer?.timeout?.(request, 0);
+			return this.handleProjectEvents(projectEventsMatch[1]);
+		}
+
+		// Recent tool-call activity for the project page feed
+		const activityMatch = path.match(/^\/api\/projects\/([^/]+)\/activity$/);
+		if (activityMatch && request.method === "GET") {
+			return handleGetProjectActivity(
+				this.projectRouteDeps(),
+				activityMatch[1],
+				url.searchParams.get("limit"),
+				url.searchParams.get("before"),
+				url.searchParams.get("beforeId"),
+			);
+		}
+
+		const activityStatsMatch = path.match(
+			/^\/api\/projects\/([^/]+)\/activity\/stats$/,
+		);
+		if (activityStatsMatch && request.method === "GET") {
+			return handleGetProjectActivityStats(
+				this.projectRouteDeps(),
+				activityStatsMatch[1],
+			);
+		}
+
+		const activityHooksSyncMatch = path.match(
+			/^\/api\/projects\/([^/]+)\/activity\/hooks\/sync$/,
+		);
+		if (activityHooksSyncMatch && request.method === "POST") {
+			return handleSyncActivityHooks(
+				this.projectRouteDeps(),
+				activityHooksSyncMatch[1],
+			);
+		}
+
+		const activityEventsMatch = path.match(
+			/^\/api\/projects\/([^/]+)\/activity\/events$/,
+		);
+		if (activityEventsMatch && request.method === "POST") {
+			return handlePostProjectActivityEvent(
+				{ ...this.projectRouteDeps(), toolCallTracer: this.toolCallTracer },
+				activityEventsMatch[1],
+				request,
+			);
+		}
+
+		// Configure project
+		const configMatch = path.match(/^\/api\/projects\/([^/]+)\/configure$/);
+		if (configMatch && request.method === "POST") {
+			const projectId = configMatch[1];
+			return this.handleProjectConfigure(projectId, request);
+		}
+
+		// Get required variables
+		const varsGetMatch = path.match(/^\/api\/projects\/([^/]+)\/variables$/);
+		if (varsGetMatch && request.method === "GET") {
+			const projectId = varsGetMatch[1];
+			return this.handleGetVariables(projectId);
+		}
+
+		// Set variables (bulk)
+		if (varsGetMatch && request.method === "POST") {
+			const projectId = varsGetMatch[1];
+			return this.handleSetVariables(projectId, request);
+		}
+
+		// Put / delete a single variable in the catalog
+		const varItemMatch = path.match(
+			/^\/api\/projects\/([^/]+)\/variables\/([^/]+)$/,
+		);
+		if (varItemMatch && request.method === "PUT") {
+			return this.handlePutVariable(
+				varItemMatch[1],
+				decodeURIComponent(varItemMatch[2]),
+				request,
+			);
+		}
+		if (varItemMatch && request.method === "DELETE") {
+			return this.handleDeleteVariable(
+				varItemMatch[1],
+				decodeURIComponent(varItemMatch[2]),
+			);
+		}
+
+		// Capabilities file mutations (write YAML + configure)
+		const capsProjectMatch = path.match(
+			/^\/api\/projects\/([^/]+)\/capabilities(?:\/|$)/,
+		);
+		if (capsProjectMatch) {
+			const projectId = capsProjectMatch[1];
+			const mutation = await handleCapabilitiesMutation(
+				{
+					db: this.db,
+					registryManager: this.registryManager,
+					configure: (id, caps) => this._runProjectConfigure(id, caps),
+					refreshCapabilities: (id, caps) =>
+						this._refreshProjectCapabilities(id, caps),
+					markSelfWrite: (id) => this.capsWatcher.markSelfWrite(id),
+					notifyChanged: (id) => this.notifyProjectChanged(id),
+				},
+				projectId,
+				path,
+				request.method,
+				request,
+			);
+			if (mutation) return mutation;
+		}
+
+		// Project filesystem browse (for local path pickers)
+		const fsListMatch = path.match(/^\/api\/projects\/([^/]+)\/fs$/);
+		if (fsListMatch && request.method === "GET") {
+			return this.handleProjectFsList(fsListMatch[1], request);
+		}
+		if (fsListMatch && request.method === "POST") {
+			return this.handleProjectFsUpload(fsListMatch[1], request);
+		}
+
+		// Get OAuth2 servers
+		const oauth2ServersMatch = path.match(
+			/^\/api\/projects\/([^/]+)\/oauth-servers$/,
+		);
+		if (oauth2ServersMatch && request.method === "GET") {
+			const projectId = oauth2ServersMatch[1];
+			return this.handleGetOAuth2Servers(projectId);
+		}
+
+		// Start OAuth2 flow
+		const oauth2StartMatch = path.match(
+			/^\/api\/projects\/([^/]+)\/oauth\/start$/,
+		);
+		if (oauth2StartMatch && request.method === "POST") {
+			const projectId = oauth2StartMatch[1];
+			return this.handleOAuth2Start(projectId, request);
+		}
+
+		// OAuth2 callback
+		const oauth2CallbackMatch = path.match(
+			/^\/api\/projects\/([^/]+)\/oauth\/callback$/,
+		);
+		if (oauth2CallbackMatch && request.method === "GET") {
+			const projectId = oauth2CallbackMatch[1];
+			return this.handleOAuth2Callback(projectId, request);
+		}
+
+		// List tools for a specific server
+		const serverToolsMatch = path.match(
+			/^\/api\/projects\/([^/]+)\/servers\/([^/]+)\/tools$/,
+		);
+		if (serverToolsMatch && request.method === "GET") {
+			const projectId = serverToolsMatch[1];
+			const serverId = serverToolsMatch[2];
+			return this.handleGetServerTools(projectId, serverId);
+		}
+
+		// Skill SKILL.md content for the project-detail UI
+		const skillContentMatch = path.match(
+			/^\/api\/projects\/([^/]+)\/skills\/([^/]+)\/content$/,
+		);
+		if (skillContentMatch && request.method === "GET") {
+			const projectId = skillContentMatch[1];
+			const skillId = decodeURIComponent(skillContentMatch[2]);
+			return this.handleGetSkillContent(projectId, skillId);
+		}
+
+		// Shell tools endpoint — tool metadata for the capa shell, regardless of exposure mode
+		const shellToolsMatch = path.match(
+			/^\/api\/projects\/([^/]+)\/shell-tools$/,
+		);
+		if (shellToolsMatch && request.method === "GET") {
+			const projectId = shellToolsMatch[1];
+			return this.handleGetShellTools(projectId);
+		}
+
+		// On-demand schema for a single shell tool (?tool=<qualified-id>)
+		const shellToolSchemaMatch = path.match(
+			/^\/api\/projects\/([^/]+)\/shell-tool-schema$/,
+		);
+		if (shellToolSchemaMatch && request.method === "GET") {
+			const projectId = shellToolSchemaMatch[1];
+			const toolId = url.searchParams.get("tool") || "";
+			return this.handleGetShellToolSchema(projectId, toolId);
+		}
+
+		// Disconnect OAuth2
+		const oauth2DisconnectMatch = path.match(
+			/^\/api\/projects\/([^/]+)\/oauth\/([^/]+)$/,
+		);
+		if (oauth2DisconnectMatch && request.method === "DELETE") {
+			const projectId = oauth2DisconnectMatch[1];
+			const serverId = oauth2DisconnectMatch[2];
+			return this.handleOAuth2Disconnect(projectId, serverId);
+		}
+
+		// Token refresh scheduler status
+		if (path === "/api/token-refresh/status" && request.method === "GET") {
+			return this.handleTokenRefreshStatus();
+		}
+
+		// Force token refresh check
+		if (path === "/api/token-refresh/check" && request.method === "POST") {
+			return this.handleForceTokenRefresh();
+		}
+
+		// Git integrations endpoints
+		if (path === "/api/integrations" && request.method === "GET") {
+			return this.handleGetIntegrations();
+		}
+
+		// GitHub OAuth flow
+		const githubOAuthStartMatch = path.match(
+			/^\/api\/integrations\/github\/oauth\/start$/,
+		);
+		if (githubOAuthStartMatch && request.method === "POST") {
+			return this.handleGitHubOAuthStart(request);
+		}
+
+		const githubOAuthCallbackMatch = path.match(
+			/^\/api\/integrations\/github\/oauth\/callback$/,
+		);
+		if (
+			githubOAuthCallbackMatch &&
+			(request.method === "POST" || request.method === "GET")
+		) {
+			return this.handleGitHubOAuthCallback(request);
+		}
+
+		// GitLab OAuth flow
+		const gitlabOAuthStartMatch = path.match(
+			/^\/api\/integrations\/gitlab\/oauth\/start$/,
+		);
+		if (gitlabOAuthStartMatch && request.method === "POST") {
+			return this.handleGitLabOAuthStart(request);
+		}
+
+		const gitlabOAuthCallbackMatch = path.match(
+			/^\/api\/integrations\/gitlab\/oauth\/callback$/,
+		);
+		if (
+			gitlabOAuthCallbackMatch &&
+			(request.method === "POST" || request.method === "GET")
+		) {
+			return this.handleGitLabOAuthCallback(request);
+		}
+
+		// Git integration token refresh
+		const gitTokenRefreshMatch = path.match(
+			/^\/api\/integrations\/(github|gitlab)\/refresh$/,
+		);
+		if (gitTokenRefreshMatch) {
+			if (request.method === "GET") {
+				return new Response(
+					JSON.stringify({ error: "Method not allowed. Use POST." }),
+					{ status: 405, headers: { "Content-Type": "application/json" } },
+				);
+			}
+			if (request.method === "POST") {
+				const platform = gitTokenRefreshMatch[1] as "github" | "gitlab";
+				return this.handleGitTokenRefresh(platform);
+			}
+		}
+
+		// GitHub Enterprise PAT
+		if (
+			path === "/api/integrations/github-enterprise" &&
+			request.method === "POST"
+		) {
+			return this.handleGitHubEnterprisePAT(request);
+		}
+
+		// GitLab Self-Managed PAT
+		if (
+			path === "/api/integrations/gitlab-self-managed" &&
+			request.method === "POST"
+		) {
+			return this.handleGitLabSelfManagedPAT(request);
+		}
+
+		// Disconnect integration
+		const disconnectMatch = path.match(
+			/^\/api\/integrations\/([^/]+)(?:\/([^/]+))?$/,
+		);
+		if (disconnectMatch && request.method === "DELETE") {
+			const platform = disconnectMatch[1];
+			const host = disconnectMatch[2];
+			return this.handleDisconnectIntegration(platform, host);
+		}
+
+		// --- Registry endpoints ---
+
+		if (path === "/api/registries" && request.method === "GET") {
+			return this.handleGetRegistries();
+		}
+
+		if (path === "/api/registries" && request.method === "POST") {
+			return this.handleCreateRegistry(request);
+		}
+
+		if (path === "/api/registries/preview" && request.method === "GET") {
+			return this.handlePreviewRegistry(url);
+		}
+
+		const registrySearchMatch = path.match(
+			/^\/api\/registries\/([^/]+)\/search$/,
+		);
+		if (registrySearchMatch && request.method === "GET") {
+			const registryId = decodeURIComponent(registrySearchMatch[1]);
+			return this.handleRegistrySearch(registryId, url);
+		}
+
+		// view uses a wildcard tail so item IDs containing slashes work (e.g. "owner/repo/slug")
+		const registryViewMatch = path.match(
+			/^\/api\/registries\/([^/]+)\/view\/(.+)$/,
+		);
+		if (registryViewMatch && request.method === "GET") {
+			const registryId = decodeURIComponent(registryViewMatch[1]);
+			const itemId = decodeURIComponent(registryViewMatch[2]);
+			return this.handleRegistryView(registryId, itemId, url);
+		}
+
+		const registryRefreshMatch = path.match(
+			/^\/api\/registries\/([^/]+)\/refresh$/,
+		);
+		if (registryRefreshMatch && request.method === "POST") {
+			const slug = decodeURIComponent(registryRefreshMatch[1]);
+			return this.handleRefreshRegistry(slug);
+		}
+
+		const registryItemMatch = path.match(/^\/api\/registries\/([^/]+)$/);
+		if (registryItemMatch && request.method === "DELETE") {
+			const slug = decodeURIComponent(registryItemMatch[1]);
+			return this.handleDeleteRegistry(slug);
+		}
+		if (registryItemMatch && request.method === "PATCH") {
+			const slug = decodeURIComponent(registryItemMatch[1]);
+			return this.handlePatchRegistry(slug, request);
+		}
+
+		return new Response("Not Found", { status: 404 });
+	}
+
+	private handleGetProjects(): Promise<Response> {
+		return handleGetProjects(this.projectRouteDeps());
+	}
+
+	private handleDeleteProject(projectId: string): Promise<Response> {
+		return handleDeleteProject(this.projectRouteDeps(), projectId);
+	}
+
+	private handleGetProject(projectId: string): Promise<Response> {
+		return handleGetProject(this.projectRouteDeps(), projectId);
+	}
+
+	private handleProjectFsList(
+		projectId: string,
+		request: Request,
+	): Promise<Response> {
+		return handleProjectFsList(this.projectRouteDeps(), projectId, request);
+	}
+
+	private handleProjectFsUpload(
+		projectId: string,
+		request: Request,
+	): Promise<Response> {
+		return handleProjectFsUpload(this.projectRouteDeps(), projectId, request);
+	}
+
+	private getOrCreateMCPServer(
+		projectId: string,
+		agentId?: string,
+	): CapaMCPServer | null {
+		const cacheKey = agentId ? `${projectId}:${agentId}` : projectId;
+		let mcpServer = this.mcpServers.get(cacheKey);
+		if (mcpServer) return mcpServer;
+
+		const project = this.db.getProject(projectId);
+		if (!project) return null;
+
+		mcpServer = new CapaMCPServer(
+			this.db,
+			this.sessionManager,
+			projectId,
+			project.path,
+			agentId,
+			this.toolCallTracer,
+		);
+		this.mcpServers.set(cacheKey, mcpServer);
+		return mcpServer;
+	}
+
+	private handleGetServerTools(
+		projectId: string,
+		serverId: string,
+	): Promise<Response> {
+		return handleGetServerTools(this.mcpMetaRouteDeps(), projectId, serverId);
+	}
+
+	private handleGetSkillContent(
+		projectId: string,
+		skillId: string,
+	): Promise<Response> {
+		return handleGetSkillContent(this.mcpMetaRouteDeps(), projectId, skillId);
+	}
+
+	private handleGetShellTools(projectId: string): Promise<Response> {
+		return handleGetShellTools(this.mcpMetaRouteDeps(), projectId);
+	}
+
+	private handleGetShellToolSchema(
+		projectId: string,
+		toolId: string,
+	): Promise<Response> {
+		return handleGetShellToolSchema(this.mcpMetaRouteDeps(), projectId, toolId);
+	}
+
+	private handleProjectConfigure(
+		projectId: string,
+		request: Request,
+	): Promise<Response> {
+		return handleProjectConfigure(
+			this.configureRouteDeps(),
+			projectId,
+			request,
+		);
+	}
+
+	private _runProjectConfigure(
+		projectId: string,
+		capabilities: Capabilities,
+		onProgress?: (event: Record<string, unknown>) => void,
+	): Promise<Record<string, unknown>> {
+		return runProjectConfigure(
+			this.configureRouteDeps(),
+			projectId,
+			capabilities,
+			onProgress,
+		);
+	}
+
+	private _refreshProjectCapabilities(
+		projectId: string,
+		capabilities: Capabilities,
+	): Promise<Record<string, unknown>> {
+		return applyProjectCapabilitiesOnly(
+			this.configureRouteDeps(),
+			projectId,
+			capabilities,
+		);
+	}
+
+	private handleGetVariables(projectId: string): Promise<Response> {
+		return handleGetVariables(this.variablesRouteDeps(), projectId);
+	}
+
+	private handlePutVariable(
+		projectId: string,
+		name: string,
+		request: Request,
+	): Promise<Response> {
+		return handlePutVariable(
+			this.variablesRouteDeps(),
+			projectId,
+			name,
+			request,
+		);
+	}
+
+	private handleDeleteVariable(
+		projectId: string,
+		name: string,
+	): Promise<Response> {
+		return handleDeleteVariable(this.variablesRouteDeps(), projectId, name);
+	}
+
+	private handleSetVariables(
+		projectId: string,
+		request: Request,
+	): Promise<Response> {
+		return handleSetVariables(this.variablesRouteDeps(), projectId, request);
+	}
+
+	private async handleGetOAuth2Servers(projectId: string): Promise<Response> {
+		const apiLogger = this.logger.child("API");
+		apiLogger.info(`Get OAuth2 servers for project: ${projectId}`);
+		try {
+			const capabilities =
+				this.sessionManager.getProjectCapabilities(projectId);
+			if (!capabilities) {
+				return new Response(
+					JSON.stringify({ error: "Project not configured" }),
+					{ status: 404, headers: { "Content-Type": "application/json" } },
+				);
+			}
+
+			// Ensure URL-based servers that require OAuth have def.oauth2 set (on-demand detection)
+			let capabilitiesUpdated = false;
+			for (const server of capabilities.servers) {
+				const hasExplicitAuthOnDemand =
+					server.def.headers &&
+					Object.keys(server.def.headers).some(
+						(k) => k.toLowerCase() === "authorization",
+					);
+				if (server.def.url && !server.def.oauth2 && !hasExplicitAuthOnDemand) {
+					try {
+						const oauth2Config =
+							await this.oauth2Manager.detectOAuth2Requirement(server.def.url, {
+								tlsSkipVerify: server.def.tlsSkipVerify,
+							});
+						if (oauth2Config) {
+							apiLogger.debug(`OAuth2 detected for ${server.id} (on-demand)`);
+							server.def.oauth2 = oauth2Config;
+							capabilitiesUpdated = true;
+						}
+					} catch (detectionError: any) {
+						apiLogger.warn(
+							`OAuth2 detection failed for ${server.id}: ${detectionError?.message ?? detectionError}`,
+						);
+					}
+				}
+			}
+			if (capabilitiesUpdated) {
+				this.sessionManager.setProjectCapabilities(projectId, capabilities);
+			}
+
+			const oauth2Servers = capabilities.servers
+				.filter((s: any) => s.def.oauth2)
+				.map((s: MCPServer) => {
+					const isConnected = this.oauth2Manager.isServerConnected(
+						projectId,
+						s.id,
+					);
+					let expiresAt: number | undefined;
+
+					if (isConnected) {
+						const tokenData = this.db.getOAuthToken(projectId, s.id);
+						expiresAt = tokenData?.expires_at ?? undefined;
+					}
+
+					return {
+						serverId: s.id,
+						serverUrl: s.def.url,
+						displayName: s.displayName ?? s.id,
+						isConnected: isConnected,
+						expiresAt: expiresAt,
+						oauth2Config: s.def.oauth2,
+					};
+				});
+
+			return new Response(JSON.stringify({ servers: oauth2Servers }), {
+				headers: { "Content-Type": "application/json" },
+			});
+		} catch (error: any) {
+			// Log full detail server-side, but return a generic message so raw
+			// exception text (stack-trace exposure) never reaches the client.
+			apiLogger.failure(
+				`Error getting OAuth2 servers: ${error?.message ?? error}`,
+			);
+			return new Response(
+				JSON.stringify({ error: "Failed to load OAuth2 servers" }),
+				{ status: 500, headers: { "Content-Type": "application/json" } },
+			);
+		}
+	}
+
+	private uiOrigin(): string {
+		return `http://${this.settings.server.host}:${this.settings.server.port}`;
+	}
+
+	/** Close and remove the callback server for a port (after completion or idle timeout). */
+	private closeOAuthCallbackServer(port: number): void {
+		const entry = this.oauthCallbackServers.get(port);
+		if (!entry) return;
+		clearTimeout(entry.idleTimer);
+		entry.server.close();
+		this.oauthCallbackServers.delete(port);
+		this.logger.debug(`OAuth callback server on port ${port} closed`);
+	}
+
+	/**
+	 * Ensure a Claude-style OAuth callback server is listening on the given port.
+	 * Serves GET /callback?code=...&state=... and redirects to main UI after token exchange.
+	 * Closed after completion or after 5 minutes idle. Used when a plugin provides client_id + callbackPort in .mcp.json (e.g. Slack).
+	 * Binds directly and retries on EADDRINUSE (no separate port-availability check).
+	 */
+	private async ensureOAuthCallbackServer(
+		startPort: number,
+		maxAttempts = 10,
+	): Promise<number> {
+		for (let attempt = 0; attempt < maxAttempts; attempt++) {
+			const port = startPort + attempt;
+			if (this.oauthCallbackServers.has(port)) {
+				return port;
+			}
+			try {
+				await this.bindOAuthCallbackServer(port);
+				return port;
+			} catch (err: any) {
+				if (err?.code === "EADDRINUSE") {
+					this.logger.warn(
+						`OAuth callback port ${port} in use, trying ${port + 1}`,
+					);
+					continue;
+				}
+				throw err;
+			}
+		}
+		throw new Error(
+			`Could not bind OAuth callback server after ${maxAttempts} attempts starting at ${startPort}`,
+		);
+	}
+
+	private bindOAuthCallbackServer(port: number): Promise<void> {
+		const self = this;
+		const IDLE_MS = 5 * 60 * 1000; // 5 minutes
+		const mainBase = this.uiOrigin();
+
+		return new Promise((resolve, reject) => {
+			const server = createServer((req, res) => {
+				if (req.method !== "GET" || !req.url) {
+					res.writeHead(405);
+					res.end();
+					return;
+				}
+				const reqUrl = new URL(req.url, `http://127.0.0.1:${port}`);
+				if (reqUrl.pathname !== "/callback") {
+					res.writeHead(404);
+					res.end();
+					return;
+				}
+				const entry = self.oauthCallbackServers.get(port);
+				if (entry) clearTimeout(entry.idleTimer);
+				const closeWhenDone = () => {
+					res.on("finish", () => self.closeOAuthCallbackServer(port));
+				};
+
+				const code = reqUrl.searchParams.get("code");
+				const state = reqUrl.searchParams.get("state");
+				const error = reqUrl.searchParams.get("error");
+				const apiLogger = self.logger.child("API");
+
+				const redirectToUi = (
+					projectId: string | undefined,
+					success: boolean,
+					message?: string,
+					serverId?: string,
+				) => {
+					closeWhenDone();
+					const loc = projectId
+						? projectUiUrl(mainBase, projectId, {
+								...(success
+									? { oauth_success: message ?? "true" }
+									: { oauth_error: message ?? "Unknown error" }),
+								...(serverId ? { server: serverId } : {}),
+							})
+						: `${mainBase}/`;
+					res.writeHead(302, { Location: loc });
+					res.end();
+				};
+
+				if (error) {
+					apiLogger.error(`OAuth2 callback error: ${error}`);
+					let projectId: string | undefined;
+					if (state) {
+						const flow = self.db.getFlowState(state);
+						projectId = flow?.project_id;
+					}
+					redirectToUi(projectId, false, error);
+					return;
+				}
+
+				if (!code || !state) {
+					redirectToUi(undefined, false, "Missing code or state");
+					return;
+				}
+
+				apiLogger.info("OAuth2 callback (Claude-style) received");
+				self.oauth2Manager
+					.handleCallback(code, state)
+					.then((result) => {
+						if (!result.success) {
+							apiLogger.failure(`Callback failed: ${result.error}`);
+							redirectToUi(
+								result.projectId,
+								false,
+								result.error ?? "Token exchange failed",
+							);
+							return;
+						}
+						apiLogger.success(
+							`OAuth2 flow completed for server: ${result.serverId}`,
+						);
+						redirectToUi(result.projectId, true, "true", result.serverId);
+					})
+					.catch((err: any) => {
+						apiLogger.failure(`Callback error: ${err.message}`);
+						redirectToUi(
+							undefined,
+							false,
+							err.message ?? "Token exchange failed",
+						);
+					});
+			});
+
+			server.once("error", reject);
+			server.listen(port, "127.0.0.1", () => {
+				self.logger.info(
+					`OAuth callback server (Claude-style) listening on http://localhost:${port}/callback`,
+				);
+				const idleTimer = setTimeout(() => {
+					self.logger.debug(
+						`OAuth callback server on port ${port} idle for 5 min, closing`,
+					);
+					self.closeOAuthCallbackServer(port);
+				}, IDLE_MS);
+				self.oauthCallbackServers.set(port, { server, idleTimer });
+				server.on("error", (err: any) => {
+					self.logger.failure(
+						`OAuth callback server on port ${port}: ${err.message}`,
+					);
+					self.closeOAuthCallbackServer(port);
+				});
+				resolve();
+			});
+		});
+	}
+
+	private async handleOAuth2Start(
+		projectId: string,
+		request: Request,
+	): Promise<Response> {
+		const apiLogger = this.logger.child("API");
+		try {
+			const url = new URL(request.url);
+			const serverId = url.searchParams.get("server");
+
+			if (!serverId) {
+				return new Response(
+					JSON.stringify({ error: "Missing server parameter" }),
+					{ status: 400, headers: { "Content-Type": "application/json" } },
+				);
+			}
+
+			apiLogger.info(`Start OAuth2 flow for server: ${serverId}`);
+
+			const capabilities =
+				this.sessionManager.getProjectCapabilities(projectId);
+			if (!capabilities) {
+				return new Response(
+					JSON.stringify({ error: "Project not configured" }),
+					{ status: 404, headers: { "Content-Type": "application/json" } },
+				);
+			}
+
+			const server = capabilities.servers.find((s: any) => s.id === serverId);
+			if (!server || !server.def.oauth2) {
+				return new Response(
+					JSON.stringify({
+						error: "Server not found or does not require OAuth2",
+					}),
+					{ status: 404, headers: { "Content-Type": "application/json" } },
+				);
+			}
+
+			const oauth2 = server.def.oauth2 as {
+				client_id?: string;
+				clientId?: string;
+				CLIENT_ID?: string;
+				callback_port?: number | string;
+				callbackPort?: number | string;
+				CALLBACK_PORT?: number | string;
+				registrationEndpoint?: string;
+				[k: string]: any;
+			};
+			// Read embedded values with the same fallbacks the configure-handler accepts —
+			// older capabilities stored in the DB (pre-normalization) may still use camelCase
+			// or uppercase snake_case keys. Without this we silently fall back to the capa
+			// server callback URL, which auth servers reject as an unregistered redirect.
+			const effectiveClientId =
+				oauth2.client_id ??
+				oauth2.clientId ??
+				oauth2.CLIENT_ID ??
+				(oauth2 as any).oauth?.clientId ??
+				(oauth2 as any).oauth?.client_id;
+			const callbackPortRaw =
+				oauth2.callback_port ?? oauth2.callbackPort ?? oauth2.CALLBACK_PORT;
+			let effectiveCallbackPort: number | undefined;
+			if (typeof callbackPortRaw === "number" && callbackPortRaw > 0) {
+				effectiveCallbackPort = callbackPortRaw;
+			} else if (typeof callbackPortRaw === "string") {
+				const parsed = Number(callbackPortRaw);
+				if (Number.isFinite(parsed) && parsed > 0)
+					effectiveCallbackPort = parsed;
+			}
+			// Claude-style only when dynamic client registration is not supported and .mcp.json
+			// provides client_id + callbackPort (e.g. Slack). Auth servers register specific
+			// (client_id, redirect_uri) pairs; falling back to the capa-server URL when the
+			// plugin embedded a callbackPort causes the auth server to reject the request.
+			const useClaudeCallback =
+				!!effectiveClientId &&
+				effectiveCallbackPort != null &&
+				!oauth2.registrationEndpoint;
+			let callbackPort = effectiveCallbackPort;
+			if (useClaudeCallback && callbackPort != null) {
+				callbackPort = await this.ensureOAuthCallbackServer(callbackPort);
+			}
+			const redirectUri = useClaudeCallback
+				? `http://localhost:${callbackPort}/callback`
+				: `http://${this.settings.server.host}:${this.settings.server.port}/api/projects/${projectId}/oauth/callback`;
+			apiLogger.debug(
+				`OAuth2 redirect for ${serverId}: ${redirectUri} (useClaudeCallback=${useClaudeCallback}, client_id=${effectiveClientId ? "set" : "missing"}, callback_port=${effectiveCallbackPort ?? "missing"}, registrationEndpoint=${oauth2.registrationEndpoint ? "set" : "missing"})`,
+			);
+
+			// Ensure the OAuth2Config we hand to the manager has the canonical snake_case
+			// client_id populated so generateAuthorizationUrl emits the embedded app id.
+			// Plugin manifests (e.g. Slack) often only embed client_id + callback_port;
+			// discovery fills authorization/token endpoints during configure — but GET
+			// can re-expand plugins and drop those. Discover on demand if still missing.
+			let configForFlow: OAuth2Config = {
+				...(server.def.oauth2 as OAuth2Config),
+				...(effectiveClientId ? { client_id: effectiveClientId } : {}),
+			};
+			const hasAuthEndpoint = !!(
+				configForFlow.authorizationEndpoint ||
+				(configForFlow as { authorizationUrl?: string }).authorizationUrl
+			);
+			const hasTokenEndpoint = !!(
+				configForFlow.tokenEndpoint ||
+				(configForFlow as { tokenUrl?: string }).tokenUrl
+			);
+			if ((!hasAuthEndpoint || !hasTokenEndpoint) && server.def.url) {
+				apiLogger.info(`Discovering OAuth endpoints for ${serverId}…`);
+				const detected = await this.oauth2Manager.detectOAuth2Requirement(
+					server.def.url,
+					{
+						tlsSkipVerify: server.def.tlsSkipVerify,
+					},
+				);
+				if (!detected) {
+					return new Response(
+						JSON.stringify({
+							error:
+								"Could not discover OAuth authorization endpoints for this server. Check that the MCP URL is reachable.",
+						}),
+						{ status: 502, headers: { "Content-Type": "application/json" } },
+					);
+				}
+				configForFlow = {
+					...detected,
+					...configForFlow,
+					authorizationEndpoint:
+						configForFlow.authorizationEndpoint ||
+						(configForFlow as { authorizationUrl?: string }).authorizationUrl ||
+						detected.authorizationEndpoint,
+					tokenEndpoint:
+						configForFlow.tokenEndpoint ||
+						(configForFlow as { tokenUrl?: string }).tokenUrl ||
+						detected.tokenEndpoint,
+					resourceServer:
+						configForFlow.resourceServer ||
+						detected.resourceServer ||
+						server.def.url,
+					...(effectiveClientId ? { client_id: effectiveClientId } : {}),
+				};
+				server.def.oauth2 = configForFlow;
+				this.sessionManager.setProjectCapabilities(projectId, capabilities);
+			}
+
+			const { url: authUrl, state } =
+				await this.oauth2Manager.generateAuthorizationUrl(
+					projectId,
+					serverId,
+					configForFlow,
+					redirectUri,
+				);
+
+			apiLogger.success("Authorization URL generated");
+			return new Response(
+				JSON.stringify({ authorizationUrl: authUrl, state }),
+				{ headers: { "Content-Type": "application/json" } },
+			);
+		} catch (error: any) {
+			apiLogger.failure(`Error: ${error.message}`);
+			return new Response(JSON.stringify({ error: error.message }), {
+				status: 500,
+				headers: { "Content-Type": "application/json" },
+			});
+		}
+	}
+
+	private async handleOAuth2Callback(
+		projectId: string,
+		request: Request,
+	): Promise<Response> {
+		const apiLogger = this.logger.child("API");
+		try {
+			const url = new URL(request.url);
+			const code = url.searchParams.get("code");
+			const state = url.searchParams.get("state");
+			const error = url.searchParams.get("error");
+
+			if (error) {
+				apiLogger.error(`OAuth2 callback error: ${error}`);
+				const redirectUrl = projectUiUrl(this.uiOrigin(), projectId, {
+					oauth_error: error,
+				});
+				return new Response(null, {
+					status: 302,
+					headers: { Location: redirectUrl },
+				});
+			}
+
+			if (!code || !state) {
+				return new Response(
+					JSON.stringify({ error: "Missing code or state parameter" }),
+					{ status: 400, headers: { "Content-Type": "application/json" } },
+				);
+			}
+
+			apiLogger.info(`OAuth2 callback for project: ${projectId}`);
+
+			const result = await this.oauth2Manager.handleCallback(code, state);
+
+			if (!result.success) {
+				apiLogger.failure(`Callback failed: ${result.error}`);
+				const redirectUrl = projectUiUrl(this.uiOrigin(), projectId, {
+					oauth_error: result.error || "Unknown error",
+				});
+				return new Response(null, {
+					status: 302,
+					headers: { Location: redirectUrl },
+				});
+			}
+
+			apiLogger.success(`OAuth2 flow completed for server: ${result.serverId}`);
+
+			const redirectUrl = projectUiUrl(this.uiOrigin(), projectId, {
+				oauth_success: "true",
+				...(result.serverId ? { server: result.serverId } : {}),
+			});
+			return new Response(null, {
+				status: 302,
+				headers: { Location: redirectUrl },
+			});
+		} catch (error: any) {
+			const apiLogger = this.logger.child("API");
+			apiLogger.failure(`Error: ${error.message}`);
+			const redirectUrl = projectUiUrl(this.uiOrigin(), projectId, {
+				oauth_error: error.message,
+			});
+			return new Response(null, {
+				status: 302,
+				headers: { Location: redirectUrl },
+			});
+		}
+	}
+
+	private async handleOAuth2Disconnect(
+		projectId: string,
+		serverId: string,
+	): Promise<Response> {
+		const apiLogger = this.logger.child("API");
+		apiLogger.info(`Disconnect OAuth2 for server: ${serverId}`);
+		try {
+			this.oauth2Manager.disconnect(projectId, serverId);
+			return new Response(JSON.stringify({ success: true }), {
+				headers: { "Content-Type": "application/json" },
+			});
+		} catch (error: any) {
+			apiLogger.failure(`Error: ${error.message}`);
+			return new Response(JSON.stringify({ error: error.message }), {
+				status: 500,
+				headers: { "Content-Type": "application/json" },
+			});
+		}
+	}
+
+	private handleTokenRefreshStatus(): Promise<Response> {
+		return handleTokenRefreshStatus(this.tokenRefreshRouteDeps());
+	}
+
+	private handleForceTokenRefresh(): Promise<Response> {
+		return handleForceTokenRefresh(this.tokenRefreshRouteDeps());
+	}
+
+	// Git Integration handlers (delegated to git-integrations-routes.ts)
+
+	private handleGetIntegrations(): Promise<Response> {
+		return handleGetIntegrations(this.gitIntegrationsRouteDeps());
+	}
+
+	private handleGitHubOAuthStart(request: Request): Promise<Response> {
+		return handleGitHubOAuthStart(this.gitIntegrationsRouteDeps(), request);
+	}
+
+	private handleGitHubOAuthCallback(request: Request): Promise<Response> {
+		return handleGitHubOAuthCallback(this.gitIntegrationsRouteDeps(), request);
+	}
+
+	private handleGitLabOAuthStart(request: Request): Promise<Response> {
+		return handleGitLabOAuthStart(this.gitIntegrationsRouteDeps(), request);
+	}
+
+	private handleGitLabOAuthCallback(request: Request): Promise<Response> {
+		return handleGitLabOAuthCallback(this.gitIntegrationsRouteDeps(), request);
+	}
+
+	private handleGitTokenRefresh(
+		platform: "github" | "gitlab",
+	): Promise<Response> {
+		return handleGitTokenRefresh(this.gitIntegrationsRouteDeps(), platform);
+	}
+
+	private handleGitHubEnterprisePAT(request: Request): Promise<Response> {
+		return handleGitHubEnterprisePAT(this.gitIntegrationsRouteDeps(), request);
+	}
+
+	private handleGitLabSelfManagedPAT(request: Request): Promise<Response> {
+		return handleGitLabSelfManagedPAT(this.gitIntegrationsRouteDeps(), request);
+	}
+
+	private handleDisconnectIntegration(
+		platform: string,
+		host?: string,
+	): Promise<Response> {
+		return handleDisconnectIntegration(
+			this.gitIntegrationsRouteDeps(),
+			platform,
+			host,
+		);
+	}
+
+	// --- Registry handlers ---
+
+	private async handleGetRegistries(): Promise<Response> {
+		this.logger.child("API").info("List registries");
+		return listRegistriesHandler(this.db, this.registryManager);
+	}
+
+	private async handleCreateRegistry(request: Request): Promise<Response> {
+		this.logger.child("API").info("Install registry");
+		return createRegistryHandler(this.db, this.registryManager, request);
+	}
+
+	private async handleDeleteRegistry(slug: string): Promise<Response> {
+		this.logger.child("API").info(`Delete registry: ${slug}`);
+		return deleteRegistryHandler(this.db, this.registryManager, slug);
+	}
+
+	private async handlePatchRegistry(
+		slug: string,
+		request: Request,
+	): Promise<Response> {
+		this.logger.child("API").info(`Patch registry: ${slug}`);
+		return patchRegistryHandler(this.db, this.registryManager, slug, request);
+	}
+
+	private async handleRefreshRegistry(slug: string): Promise<Response> {
+		this.logger.child("API").info(`Refresh registry: ${slug}`);
+		return refreshRegistryHandler(this.db, this.registryManager, slug);
+	}
+
+	private async handlePreviewRegistry(url: URL): Promise<Response> {
+		this.logger.child("API").info("Preview registry");
+		return previewRegistryHandler(this.db, url);
+	}
+
+	private async handleRegistrySearch(
+		registryId: string,
+		url: URL,
+	): Promise<Response> {
+		const apiLogger = this.logger.child("API");
+		apiLogger.info(`Registry search: ${registryId}`);
+		try {
+			const capability = (url.searchParams.get("capability") ??
+				"skills") as RegistryCapability;
+			const query = url.searchParams.get("q") ?? undefined;
+			const limit = url.searchParams.has("limit")
+				? Number(url.searchParams.get("limit"))
+				: undefined;
+			const cursor = url.searchParams.get("cursor") ?? undefined;
+
+			const result = await this.registryManager.search(registryId, {
+				capability,
+				query,
+				limit,
+				cursor,
+			});
+			return new Response(JSON.stringify(result), {
+				headers: { "Content-Type": "application/json" },
+			});
+		} catch (error: any) {
+			apiLogger.failure(`Registry search error: ${error.message}`);
+			const status = error.message.includes("not found") ? 404 : 502;
+			return new Response(
+				JSON.stringify({ error: error.message, registry: registryId }),
+				{ status, headers: { "Content-Type": "application/json" } },
+			);
+		}
+	}
+
+	private async handleRegistryView(
+		registryId: string,
+		itemId: string,
+		url: URL,
+	): Promise<Response> {
+		const apiLogger = this.logger.child("API");
+		apiLogger.info(`Registry view: ${registryId} / ${itemId}`);
+		try {
+			const capability = (url.searchParams.get("capability") ??
+				"skills") as RegistryCapability;
+			const detail = await this.registryManager.view(registryId, {
+				capability,
+				id: itemId,
+			});
+			return new Response(JSON.stringify(detail), {
+				headers: { "Content-Type": "application/json" },
+			});
+		} catch (error: any) {
+			apiLogger.failure(`Registry view error: ${error.message}`);
+			const status = error.message.includes("not found") ? 404 : 502;
+			return new Response(
+				JSON.stringify({ error: error.message, registry: registryId }),
+				{ status, headers: { "Content-Type": "application/json" } },
+			);
+		}
+	}
+
+	private async handleMCP(
+		request: Request,
+		projectId: string,
+		agentId?: string,
+	): Promise<Response> {
+		const mcpLogger = this.logger.child("MCP");
+		const cacheKey = agentId ? `${projectId}:${agentId}` : projectId;
+
+		// Get or create MCP server for this project (or project+sub-agent)
+		let mcpServer = this.mcpServers.get(cacheKey);
+
+		if (!mcpServer) {
+			const label = agentId
+				? `project: ${projectId}, sub-agent: ${agentId}`
+				: `project: ${projectId}`;
+			mcpLogger.info(`Creating new MCP server for ${label}`);
+			// Get project from database
+			const project = this.db.getProject(projectId);
+			if (!project) {
+				mcpLogger.warn("Project not found");
+				return new Response("Project not found", { status: 404 });
+			}
+
+			mcpServer = new CapaMCPServer(
+				this.db,
+				this.sessionManager,
+				projectId,
+				project.path,
+				agentId,
+				this.toolCallTracer,
+			);
+
+			this.mcpServers.set(cacheKey, mcpServer);
+			mcpLogger.success("MCP server created");
+		}
+
+		const requestOrigin = request.headers.get("Origin");
+		const originCheck = isAllowedOrigin(requestOrigin);
+		const corsHeaders: Record<string, string> = {
+			"Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+			"Access-Control-Allow-Headers": `Content-Type, ${CAPA_CLIENT_HEADER}`,
+		};
+		if (originCheck.origin) {
+			corsHeaders["Access-Control-Allow-Origin"] = originCheck.origin;
+		}
+
+		// Handle MCP protocol via HTTP (simplified without SSE)
+		if (request.method === "POST") {
+			if (requestOrigin && !originCheck.allowed) {
+				return new Response(
+					`Origin ${requestOrigin} not allowed. Set CAPA_ALLOWED_ORIGINS env var to include this origin.`,
+					{ status: 403 },
+				);
+			}
+
+			try {
+				const message = await request.json();
+				mcpLogger.debug(
+					`${message.method || "notification"} (id: ${message.id || "none"})`,
+				);
+
+				const headerClient = request.headers.get(CAPA_CLIENT_HEADER)?.trim();
+				const requestClient =
+					headerClient === CAPA_SHELL_CLIENT ? CAPA_SHELL_CLIENT : null;
+
+				// Handle JSON-RPC message (capa sh sets X-Capa-Client so traces
+				// stay "shell" without sticky-polluting IDE client identity).
+				const result = await runWithMcpRequestClient(requestClient, () =>
+					mcpServer.handleMessage(message),
+				);
+
+				// Return simple JSON response (not SSE)
+				return new Response(JSON.stringify(result), {
+					status: 200,
+					headers: {
+						"Content-Type": "application/json",
+						...corsHeaders,
+					},
+				});
+			} catch (error: any) {
+				mcpLogger.failure(`Error: ${error.message}`);
+				return new Response(
+					JSON.stringify({
+						jsonrpc: "2.0",
+						error: {
+							code: -32603,
+							message: error.message || "Internal error",
+						},
+						id: null,
+					}),
+					{
+						status: mcpHandlerHttpStatus(error),
+						headers: {
+							"Content-Type": "application/json",
+							...corsHeaders,
+						},
+					},
+				);
+			}
+		}
+
+		// Handle OPTIONS for CORS
+		if (request.method === "OPTIONS") {
+			if (requestOrigin && !originCheck.allowed) {
+				return new Response(
+					`Origin ${requestOrigin} not allowed. Set CAPA_ALLOWED_ORIGINS env var to include this origin.`,
+					{ status: 403 },
+				);
+			}
+
+			return new Response(null, {
+				status: 204,
+				headers: corsHeaders,
+			});
+		}
+
+		return new Response("Method not allowed", { status: 405 });
+	}
+
+	private reloadProjectCapabilitiesFromDisk(projectId: string): Promise<void> {
+		return reloadProjectCapabilitiesFromDisk(
+			this.projectRouteDeps(),
+			projectId,
+		);
+	}
+
+	private notifyProjectChanged(projectId: string): void {
+		notifyProjectChanged(this.projectEventClients, projectId);
+	}
+
+	private handleProjectEvents(projectId: string): Response {
+		return handleProjectEvents(this.projectRouteDeps(), projectId);
+	}
+
+	private writePidFile() {
+		const pidFile = getPidFilePath();
+		const content = `${process.pid}:${VERSION}`;
+		writeFileSync(pidFile, content, "utf-8");
+	}
+
+	async stop() {
+		this.logger.info("Stopping CAPA server...");
+
+		this.capsWatcher?.stop();
+
+		// Stop token refresh scheduler
+		this.tokenRefreshScheduler.stop();
+
+		// Close all MCP servers
+		for (const [projectId, mcpServer] of this.mcpServers) {
+			await mcpServer.close();
+		}
+
+		// Stop all subprocesses
+		this.subprocessManager.stopAll();
+
+		// Close Claude-style OAuth callback servers
+		for (const [port, entry] of this.oauthCallbackServers) {
+			clearTimeout(entry.idleTimer);
+			entry.server.close();
+			this.logger.debug(`Closed OAuth callback server on port ${port}`);
+		}
+		this.oauthCallbackServers.clear();
+
+		// Close database
+		this.sessionManager.dispose();
+		this.db.close();
+
+		this.logger.success("CAPA server stopped");
+		process.exit(0);
+	}
 }
 
 // Main
@@ -2334,20 +1807,20 @@ const server = new CapaServer();
 // dropped) those can reject after we've already returned a response, which Bun
 // would otherwise print as a raw "The socket connection was closed unexpectedly"
 // error. Log these instead of letting them crash the process or leak to stderr.
-process.on('unhandledRejection', (reason) => {
-  const message = reason instanceof Error ? reason.message : String(reason);
-  logger.warn(`Unhandled promise rejection (ignored): ${message}`);
+process.on("unhandledRejection", (reason) => {
+	const message = reason instanceof Error ? reason.message : String(reason);
+	logger.warn(`Unhandled promise rejection (ignored): ${message}`);
 });
-process.on('uncaughtException', (error) => {
-  logger.error(`Uncaught exception (ignored): ${error?.message ?? error}`);
+process.on("uncaughtException", (error) => {
+	logger.error(`Uncaught exception (ignored): ${error?.message ?? error}`);
 });
 
 // Handle shutdown signals
-process.on('SIGTERM', () => server.stop());
-process.on('SIGINT', () => server.stop());
+process.on("SIGTERM", () => server.stop());
+process.on("SIGINT", () => server.stop());
 
 // Start server
 server.start().catch((error) => {
-  logger.error('Failed to start server:', error);
-  process.exit(1);
+	logger.error("Failed to start server:", error);
+	process.exit(1);
 });

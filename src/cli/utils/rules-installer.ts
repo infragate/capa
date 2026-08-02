@@ -4,6 +4,11 @@ import * as yaml from 'js-yaml';
 import type { Rule } from '../../types/rules';
 import { getAllProviders, getProvider } from '../../shared/providers';
 import { buildRuleFrontmatter } from '../../shared/providers/handlers';
+import { assertSafeRepoPath } from '../../shared/repo-file';
+import {
+  describeUnsafeCapabilityId,
+  isSafeCapabilityId,
+} from '../../shared/safe-id';
 import { taskLog } from '../ui';
 
 const RULE_MARKER_PREFIX = 'rule:';
@@ -195,6 +200,8 @@ export interface InstallRulesOptions {
    * callback — they're tracked via the inline marker pattern instead.
    */
   onFileWritten?: (filePath: string) => void;
+  /** Suppress per-file success logs (e.g. wrap warm refresh). */
+  quiet?: boolean;
 }
 
 /**
@@ -231,6 +238,11 @@ export function installRules(
       mkdirSync(rulesDir, { recursive: true });
 
       for (const rule of applicableRules) {
+        if (!isSafeCapabilityId(rule.id)) {
+          taskLog(`  ⚠ Skipping rule "${rule.id}": ${describeUnsafeCapabilityId('Rule', rule.id)}`);
+          continue;
+        }
+
         const content = resolvedContent.get(rule.id);
         if (!content) continue;
 
@@ -261,9 +273,14 @@ export function installRules(
         fileContent += body;
         if (!fileContent.endsWith('\n')) fileContent += '\n';
 
-        const filePath = join(rulesDir, `${rule.id}${provider.rules.extension}`);
+        const filePath = assertSafeRepoPath(
+          rulesDir,
+          `${rule.id}${provider.rules.extension}`,
+        );
         writeFileSync(filePath, fileContent, 'utf-8');
-        taskLog(`  ✓ ${provider.rules.dir}/${rule.id}${provider.rules.extension} written (${provider.displayName})`);
+        if (!options.quiet) {
+          taskLog(`  ✓ ${provider.rules.dir}/${rule.id}${provider.rules.extension} written (${provider.displayName})`);
+        }
         options.onFileWritten?.(filePath);
       }
     } else if (provider.instructions) {
@@ -271,13 +288,19 @@ export function installRules(
       let mdContent = readMd(projectPath, filename);
 
       for (const rule of applicableRules) {
+        if (!isSafeCapabilityId(rule.id)) {
+          taskLog(`  ⚠ Skipping rule "${rule.id}": ${describeUnsafeCapabilityId('Rule', rule.id)}`);
+          continue;
+        }
         const content = resolvedContent.get(rule.id);
         if (!content) continue;
         mdContent = upsertBlock(mdContent, ruleMarkerId(rule.id), content);
       }
 
       writeMd(projectPath, filename, mdContent);
-      taskLog(`  ✓ ${filename} updated with ${applicableRules.length} rule(s) (${provider.displayName})`);
+      if (!options.quiet) {
+        taskLog(`  ✓ ${filename} updated with ${applicableRules.length} rule(s) (${provider.displayName})`);
+      }
     }
   }
 }
@@ -409,7 +432,9 @@ export function cleanRules(projectPath: string, providers: string[], ruleIds?: s
       if (!existsSync(rulesDir)) continue;
 
       const managedNames = new Set(
-        (ruleIds ?? []).map((id) => `${id}${provider.rules!.extension}`)
+        (ruleIds ?? [])
+          .filter((id) => isSafeCapabilityId(id))
+          .map((id) => `${id}${provider.rules!.extension}`)
       );
       const files = readdirSync(rulesDir)
         .filter((f) => f.endsWith(provider.rules!.extension))

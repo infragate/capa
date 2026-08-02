@@ -2,8 +2,8 @@
 
 ## Contents
 
-- **Workflows**: 1. Starting a New Project · 2. Adding a Community Skill · 3. Adding a Local Skill · 4. Creating a Custom Skill (inline) · 5. Running Tools with `capa sh` · 6. Managing Server Lifecycle · 7. Installing Without a Providers Section · 8. Bypassing the Cache
-- **Examples**: 1. Web Research Setup · 2. File Operations · 3. Mixed Command and MCP Tools · 4. On-Demand Tool Loading · 5. CLI Prerequisites · 6. Rules · 7. Plugins · 8. Optional Providers
+- **Workflows**: 1. Starting a New Project · 2. Adding a Community Skill · 3. Adding a Local Skill · 4. Creating a Custom Skill (inline) · 5. Running Tools with `capa sh` · 6. Managing Server Lifecycle · 7. Installing Without a Providers Section · 8. Bypassing the Cache · 9. Wrap (shadow workspaces) · 10. Passthrough native writes · 11. Browse registries
+- **Examples**: 1. Web Research Setup · 2. File Operations · 3. Mixed Command and MCP Tools · 4. On-Demand Tool Loading · 5. CLI Prerequisites · 6. Rules · 7. Plugins · 8. Optional Providers · 9. Tool formatter
 
 ---
 
@@ -12,15 +12,16 @@
 ### 1. Starting a New Project
 
 ```bash
-# Initialize capabilities file (defaults to YAML)
+# Initialize capabilities file (defaults to YAML) + register project in Web UI
 capa init
 
 # Edit capabilities.yaml to add your skills and tools
+# Or open http://localhost:5912 and use the capabilities editor
 
 # Install the capabilities
 capa install
 
-# Server starts automatically - check status
+# Server starts automatically - check status / Web UI URL
 capa status
 ```
 
@@ -30,7 +31,11 @@ capa status
 # Option 1: Use capa add command
 capa add vercel-labs/agent-skills
 
-# Option 2: Manually add to capabilities.yaml:
+# Option 2: From a registry
+capa registry search skills-sh "research"
+capa add skills-sh:vercel-labs/skills/find-skills --install
+
+# Option 3: Manually add to capabilities.yaml:
 skills:
   - id: web-researcher
     type: github
@@ -109,6 +114,9 @@ capa sh gitlab list-merge-requests --help
 # Execute a tool
 capa sh gitlab list-merge-requests --project-id 123 --state opened
 
+# Skip optional formatters
+capa sh --raw gitlab list-merge-requests --project-id 123
+
 # Top-level command tool
 capa sh find-skills --query "git automation"
 
@@ -121,10 +129,10 @@ Tool IDs are slugified automatically: `list_merge_requests` → `list-merge-requ
 ### 6. Managing Server Lifecycle
 
 ```bash
-# Check server status
+# Check server status + Web UI URL
 capa status
 
-# Stop server
+# Stop server (also stops active wrap sessions)
 capa stop
 
 # Start server (background)
@@ -165,6 +173,43 @@ capa install --no-cache
 capa cache clean
 capa install
 ```
+
+### 9. Wrap (shadow workspaces)
+
+Run an agent without writing provider dirs into the real repo:
+
+```bash
+capa wrap cursor          # Cursor GUI
+capa wrap claude          # Claude Code
+capa wrap codex
+capa wrap --prune         # clean stale ~/.capa/workspaces entries
+```
+
+Edit `capabilities.yaml` and run `capa install` from the **real** project path (mutating commands refuse wrap workspaces). The shadow workspace reinstalls automatically when capabilities change.
+
+### 10. Passthrough native writes
+
+One-off provider-native files without capa management:
+
+```bash
+capa add owner/repo@skill --passthrough --provider cursor
+capa add --rule --id ts-strict --inline "Always use strict TypeScript" --passthrough -p cursor
+capa install --passthrough -p cursor
+```
+
+Do **not** use `--tool … --passthrough` — tool aliases need the managed MCP proxy. Prefer managed mode (`capa add` without `--passthrough`) for anything that should be reproducible via `capabilities.lock`.
+
+### 11. Browse registries
+
+```bash
+capa registry list
+capa registry search "typescript"
+capa registry search skills-sh "research" --capability skills
+capa registry add anthropics/claude-plugins-official --type claude-marketplace
+capa add skills-sh:vercel-labs/skills/find-skills --install
+```
+
+Or open the Web UI → **Registries**.
 
 ---
 
@@ -528,7 +573,7 @@ skills:
 servers: []
 ```
 
-During `capa install`, the plugin manifest is fetched, its SKILL.md files are copied to each provider's skills folder, and its MCP servers are registered. The plugin contributes only the tools you declare in `tools:` and the skills you activate with `type: plugin`. Capa warns when a `type: plugin` skill id has no matching plugin manifest skill, and when a plugin server has no user-declared tool pointing at it.
+During `capa install`, the plugin manifest is fetched and **unpacked**: SKILL.md files are copied to each provider's skills folder, MCP servers are registered, and any rules / sub-agents / hooks from the plugin are merged into the same install pipeline. The plugin contributes only the tools you declare in `tools:` and the skills you activate with `type: plugin`. Capa warns when a `type: plugin` skill id has no matching plugin manifest skill, and when a plugin server has no user-declared tool pointing at it.
 
 ### Example 8: Optional Providers
 
@@ -571,3 +616,21 @@ capa install
 ```
 
 This pattern is ideal for shared `capabilities.yaml` files where different team members use different agents.
+
+### Example 9: Tool formatter
+
+Pipe MCP tool JSON through `jq` before the agent (or `capa sh`) sees it:
+
+```yaml
+tools:
+  - id: search
+    type: mcp
+    def:
+      server: "@brave"
+      tool: brave_web_search
+      formatter:
+        cmd: jq -r '.[] | [.title, .url] | @tsv'
+        timeout: 3000
+```
+
+Use `capa sh --raw brave search --query "…"` to skip the formatter. Do not use formatters that re-execute stdin (`eval`, `xargs sh -c`).

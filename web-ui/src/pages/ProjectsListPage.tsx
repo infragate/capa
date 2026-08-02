@@ -43,18 +43,19 @@ export function ProjectsListPage() {
             title={t('empty.title')}
             description={
               <p>
-                {t('empty.description').split('capa install').map((part, i, arr) =>
-                  i < arr.length - 1 ? (
-                    <span key={i}>
-                      {part}
-                      <code className="rounded-sm bg-code-bg px-1.5 py-0.5 font-mono text-xs">
-                        capa install
-                      </code>
-                    </span>
-                  ) : (
-                    <span key={i}>{part}</span>
-                  ),
-                )}
+                Projects appear here after you run{' '}
+                <code className="rounded-sm bg-code-bg px-1.5 py-0.5 font-mono text-xs">
+                  capa init
+                </code>
+                ,{' '}
+                <code className="rounded-sm bg-code-bg px-1.5 py-0.5 font-mono text-xs">
+                  capa install
+                </code>
+                , or{' '}
+                <code className="rounded-sm bg-code-bg px-1.5 py-0.5 font-mono text-xs">
+                  capa wrap
+                </code>
+                .
               </p>
             }
           />
