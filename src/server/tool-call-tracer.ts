@@ -52,6 +52,10 @@ export interface ToolCallFinishInput {
 	status: Exclude<ToolCallStatus, "running">;
 	resultPreview?: unknown;
 	errorMessage?: string | null;
+	inputTokens?: number | null;
+	outputTokens?: number | null;
+	cacheReadTokens?: number | null;
+	cacheWriteTokens?: number | null;
 }
 
 /**
@@ -83,6 +87,10 @@ export class ToolCallTracer {
 			result_preview: null,
 			result_bytes: null,
 			result_tokens: null,
+			input_tokens: null,
+			output_tokens: null,
+			cache_read_tokens: null,
+			cache_write_tokens: null,
 			error_message: null,
 			agent_id: input.agentId ?? null,
 		});
@@ -119,6 +127,10 @@ export class ToolCallTracer {
 			result_preview: resultPreview,
 			result_bytes: resultBytes,
 			result_tokens: resultTokens,
+			input_tokens: input.inputTokens ?? null,
+			output_tokens: input.outputTokens ?? null,
+			cache_read_tokens: input.cacheReadTokens ?? null,
+			cache_write_tokens: input.cacheWriteTokens ?? null,
 			error_message: errorMessage,
 		});
 		if (record) this.notify?.(record.project_id, record);

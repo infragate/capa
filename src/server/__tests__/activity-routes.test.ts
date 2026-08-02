@@ -79,6 +79,36 @@ describe("handlePostProjectActivityEvent", () => {
 		expect(page.calls[0].source).toBe("cursor");
 	});
 
+	it("persists provider token usage on stop events", async () => {
+		const res = await handlePostProjectActivityEvent(
+			deps,
+			"proj-1",
+			new Request("http://localhost/api/projects/proj-1/activity/events", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					kind: "stop",
+					toolName: "stop",
+					status: "ok",
+					source: "cursor",
+					tokenUsage: {
+						input_tokens: 100,
+						output_tokens: 20,
+						cache_read_tokens: 80,
+						cache_write_tokens: 5,
+					},
+				}),
+			}),
+		);
+		expect(res.status).toBe(201);
+		const row = db.listToolCalls("proj-1", { limit: 1 }).calls[0];
+		expect(row.kind).toBe("stop");
+		expect(row.input_tokens).toBe(100);
+		expect(row.output_tokens).toBe(20);
+		expect(row.cache_read_tokens).toBe(80);
+		expect(row.cache_write_tokens).toBe(5);
+	});
+
 	it("returns 204 when agentActivity is disabled", async () => {
 		// Session caps are the fast path; disk is not consulted when session is warm.
 		sessionManager.setProjectCapabilities("proj-1", {

@@ -160,6 +160,62 @@ export function formatClockTime(ts: number): string {
   });
 }
 
+export interface RunTokenTotals {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  /** True when at least one usage field was present on a span. */
+  hasAny: boolean;
+}
+
+/** Sum provider-reported usage across a run's events. */
+export function sumRunTokenUsage(
+  events: Array<Pick<
+    ToolCallRecord,
+    'input_tokens' | 'output_tokens' | 'cache_read_tokens' | 'cache_write_tokens'
+  >>,
+): RunTokenTotals {
+  let input = 0;
+  let output = 0;
+  let cacheRead = 0;
+  let cacheWrite = 0;
+  let hasAny = false;
+  for (const e of events) {
+    if (e.input_tokens != null) {
+      input += e.input_tokens;
+      hasAny = true;
+    }
+    if (e.output_tokens != null) {
+      output += e.output_tokens;
+      hasAny = true;
+    }
+    if (e.cache_read_tokens != null) {
+      cacheRead += e.cache_read_tokens;
+      hasAny = true;
+    }
+    if (e.cache_write_tokens != null) {
+      cacheWrite += e.cache_write_tokens;
+      hasAny = true;
+    }
+  }
+  return { input, output, cacheRead, cacheWrite, hasAny };
+}
+
+export function hasTokenUsage(
+  call: Pick<
+    ToolCallRecord,
+    'input_tokens' | 'output_tokens' | 'cache_read_tokens' | 'cache_write_tokens'
+  >,
+): boolean {
+  return (
+    call.input_tokens != null ||
+    call.output_tokens != null ||
+    call.cache_read_tokens != null ||
+    call.cache_write_tokens != null
+  );
+}
+
 export function kindLabel(kind: string): string {
   switch (kind) {
     case 'agent_tool':

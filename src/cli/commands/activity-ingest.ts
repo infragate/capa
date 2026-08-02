@@ -67,6 +67,7 @@ async function postEvent(
 				args: normalized.args,
 				resultPreview: normalized.resultPreview,
 				errorMessage: normalized.errorMessage,
+				tokenUsage: normalized.tokenUsage ?? null,
 			}),
 			signal: AbortSignal.timeout(5000),
 		});

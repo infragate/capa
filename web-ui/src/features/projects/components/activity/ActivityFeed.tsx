@@ -10,8 +10,9 @@ import {
   formatRelative,
   groupActivityRuns,
   maxSpanDuration,
+  sumRunTokenUsage,
 } from './groupActivityRuns';
-import { LatencyBar, sourceLabelText } from './ActivityShared';
+import { LatencyBar, sourceLabelText, TokenUsageLabel } from './ActivityShared';
 
 interface ActivityFeedProps {
   calls: ToolCallRecord[];
@@ -33,6 +34,10 @@ function RunRow({
   const { t } = useTranslation('projects');
   const spanCount = run.spans.length + (run.prompt ? 1 : 0);
   const running = [run.prompt, ...run.spans].some((s) => s?.status === 'running');
+  const tokenTotals = sumRunTokenUsage([
+    ...(run.prompt ? [run.prompt] : []),
+    ...run.spans,
+  ]);
 
   return (
     <button
@@ -61,6 +66,13 @@ function RunRow({
       <span className="hidden sm:inline shrink-0 rounded bg-bg-tertiary px-1.5 py-0.5 text-[10px] text-text-tertiary">
         {sourceLabelText(run.source, t)}
       </span>
+      {tokenTotals.hasAny ? (
+        <TokenUsageLabel
+          totals={tokenTotals}
+          t={t}
+          className="hidden max-w-[9rem] shrink-0 truncate text-[10px] lg:inline"
+        />
+      ) : null}
       <span className="shrink-0 text-[11px] tabular-nums text-text-tertiary">
         {spanCount} {spanCount === 1 ? t('activity.span') : t('activity.spans')}
       </span>

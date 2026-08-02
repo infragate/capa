@@ -154,4 +154,57 @@ describe("normalizeActivityHookPayload", () => {
 		expect(out.skip).toBe(false);
 		expect(out.kind).toBe("agent_mcp");
 	});
+
+	it("extracts Cursor stop token usage", () => {
+		const out = normalizeActivityHookPayload(
+			"stop",
+			{
+				status: "completed",
+				model: "composer-1.5",
+				input_tokens: 191551,
+				output_tokens: 1789,
+				cache_read_tokens: 176032,
+				cache_write_tokens: 0,
+			},
+			"cursor",
+		);
+		expect(out.skip).toBe(false);
+		expect(out.kind).toBe("stop");
+		expect(out.tokenUsage).toEqual({
+			input_tokens: 191551,
+			output_tokens: 1789,
+			cache_read_tokens: 176032,
+			cache_write_tokens: 0,
+		});
+		expect(out.args).toMatchObject({
+			status: "completed",
+			model: "composer-1.5",
+			usage: {
+				input_tokens: 191551,
+				output_tokens: 1789,
+				cache_read_tokens: 176032,
+				cache_write_tokens: 0,
+			},
+		});
+	});
+
+	it("reads nested usage objects", () => {
+		const out = normalizeActivityHookPayload(
+			"stop",
+			{
+				usage: {
+					input_tokens: 10,
+					output_tokens: 4,
+					cache_read_input_tokens: 8,
+				},
+			},
+			"claude-code",
+		);
+		expect(out.tokenUsage).toEqual({
+			input_tokens: 10,
+			output_tokens: 4,
+			cache_read_tokens: 8,
+			cache_write_tokens: null,
+		});
+	});
 });

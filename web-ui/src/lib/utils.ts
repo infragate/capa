@@ -52,8 +52,15 @@ export function formatDate(dateStr: string): string {
 }
 
 export function formatTokenCount(n: number): string {
-  if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
-  return String(n);
+  if (!Number.isFinite(n) || n < 0) return '0';
+  const v = Math.floor(n);
+  if (v >= 1_000_000) {
+    return (v / 1_000_000).toFixed(1).replace(/\.0$/, '') + 'M';
+  }
+  if (v >= 1000) {
+    return (v / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
+  }
+  return String(v);
 }
 
 export function highlightText(text: string, query: string): string {

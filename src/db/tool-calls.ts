@@ -9,8 +9,19 @@ export const TOOL_CALLS_PER_PROJECT_CAP = 1000;
 export const TOOL_CALLS_PAGE_SIZE_DEFAULT = 50;
 export const TOOL_CALLS_PAGE_SIZE_MAX = 100;
 
-export type ToolCallInsert = Omit<ToolCallRecord, "duration_ms"> & {
+export type ToolCallInsert = Omit<
+	ToolCallRecord,
+	| "duration_ms"
+	| "input_tokens"
+	| "output_tokens"
+	| "cache_read_tokens"
+	| "cache_write_tokens"
+> & {
 	duration_ms?: number | null;
+	input_tokens?: number | null;
+	output_tokens?: number | null;
+	cache_read_tokens?: number | null;
+	cache_write_tokens?: number | null;
 };
 
 export type ToolCallFinish = {
@@ -19,6 +30,10 @@ export type ToolCallFinish = {
 	result_preview?: string | null;
 	result_bytes?: number | null;
 	result_tokens?: number | null;
+	input_tokens?: number | null;
+	output_tokens?: number | null;
+	cache_read_tokens?: number | null;
+	cache_write_tokens?: number | null;
 	error_message?: string | null;
 };
 
@@ -53,8 +68,9 @@ export class ToolCallsRepo {
 			`INSERT INTO tool_calls (
         id, project_id, session_id, started_at, duration_ms, status, source,
         kind, tool_name, meta_tool, args_json, result_preview, result_bytes,
-        result_tokens, error_message, agent_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        result_tokens, input_tokens, output_tokens, cache_read_tokens,
+        cache_write_tokens, error_message, agent_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			[
 				row.id,
 				row.project_id,
@@ -70,6 +86,10 @@ export class ToolCallsRepo {
 				row.result_preview,
 				row.result_bytes ?? null,
 				row.result_tokens ?? null,
+				row.input_tokens ?? null,
+				row.output_tokens ?? null,
+				row.cache_read_tokens ?? null,
+				row.cache_write_tokens ?? null,
 				row.error_message,
 				row.agent_id,
 			],
@@ -82,7 +102,11 @@ export class ToolCallsRepo {
 		this.db.run(
 			`UPDATE tool_calls
        SET status = ?, duration_ms = ?, result_preview = ?, result_bytes = ?,
-           result_tokens = ?, error_message = ?
+           result_tokens = ?, input_tokens = COALESCE(?, input_tokens),
+           output_tokens = COALESCE(?, output_tokens),
+           cache_read_tokens = COALESCE(?, cache_read_tokens),
+           cache_write_tokens = COALESCE(?, cache_write_tokens),
+           error_message = ?
        WHERE id = ?`,
 			[
 				update.status,
@@ -90,6 +114,10 @@ export class ToolCallsRepo {
 				update.result_preview ?? null,
 				update.result_bytes ?? null,
 				update.result_tokens ?? null,
+				update.input_tokens ?? null,
+				update.output_tokens ?? null,
+				update.cache_read_tokens ?? null,
+				update.cache_write_tokens ?? null,
 				update.error_message ?? null,
 				id,
 			],

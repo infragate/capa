@@ -8,9 +8,10 @@ import {
   type ActivityRun,
   formatDuration,
   formatRelative,
+  sumRunTokenUsage,
 } from './groupActivityRuns';
 import { ActivitySpanRow } from './ActivitySpanRow';
-import { sourceLabelText } from './ActivityShared';
+import { sourceLabelText, TokenUsageLabel } from './ActivityShared';
 
 interface ActivityRunDialogProps {
   run: ActivityRun | null;
@@ -64,6 +65,8 @@ export function ActivityRunDialog({
   const [followLatest, setFollowLatest] = useState(true);
   const eventCount = run ? runEvents(run).length : 0;
   const prevCountRef = useRef(eventCount);
+  const seenIdsRef = useRef<Set<string>>(new Set());
+  const [freshIds, setFreshIds] = useState<Set<string>>(() => new Set());
 
   const events = useMemo(() => (run ? runEvents(run) : []), [run]);
   const timeline = useMemo(
@@ -72,15 +75,45 @@ export function ActivityRunDialog({
   );
   const errors = run ? runErrorCount(run) : 0;
   const running = run ? runIsLive(run) : false;
+  const tokenTotals = useMemo(() => sumRunTokenUsage(events), [events]);
 
-  // Reset follow mode when opening a different run.
+  // Reset follow mode + freshness tracking when opening a different run.
   useEffect(() => {
-    if (!open) return;
+    if (!open || !run) return;
     setFollowLatest(true);
     prevCountRef.current = eventCount;
+    const ids = new Set(runEvents(run).map((e) => e.id));
+    seenIdsRef.current = ids;
+    setFreshIds(new Set());
     // Only re-seed when the dialog opens or the selected run changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- eventCount snapshot on open
   }, [open, run?.id]);
+
+  // Mark newly arrived span ids so they get the amber fade.
+  useEffect(() => {
+    if (!open || !run) return;
+    const nextFresh = new Set<string>();
+    for (const ev of events) {
+      if (!seenIdsRef.current.has(ev.id)) {
+        nextFresh.add(ev.id);
+        seenIdsRef.current.add(ev.id);
+      }
+    }
+    if (nextFresh.size === 0) return;
+    setFreshIds((prev) => {
+      const merged = new Set(prev);
+      for (const id of nextFresh) merged.add(id);
+      return merged;
+    });
+    const timer = window.setTimeout(() => {
+      setFreshIds((prev) => {
+        const cleaned = new Set(prev);
+        for (const id of nextFresh) cleaned.delete(id);
+        return cleaned;
+      });
+    }, 2600);
+    return () => window.clearTimeout(timer);
+  }, [events, open, run]);
 
   // Auto-scroll when new events arrive and follow is on.
   useEffect(() => {
@@ -133,6 +166,9 @@ export function ActivityRunDialog({
                       {events.length === 1 ? t('activity.span') : t('activity.spans')}
                     </span>
                     <span className="tabular-nums">{formatDuration(run.duration_ms)}</span>
+                    {tokenTotals.hasAny ? (
+                      <TokenUsageLabel totals={tokenTotals} t={t} />
+                    ) : null}
                     {errors > 0 ? (
                       <span className="font-medium text-error-text">
                         {errors} {t('activity.errors')}
@@ -210,6 +246,7 @@ export function ActivityRunDialog({
                     runStart={timeline.start}
                     runEnd={timeline.end}
                     nestedPayload
+                    fresh={freshIds.has(ev.id)}
                     onInspect={() => setFollowLatest(false)}
                   />
                 ))}
