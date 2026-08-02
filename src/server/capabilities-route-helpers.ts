@@ -18,7 +18,9 @@ export const ARRAY_SECTIONS = new Set<ArrayCapabilitySection>([
 ]);
 
 export function jsonError(message: string, status: number): Response {
-	return new Response(JSON.stringify({ error: message }), {
+	// Keep responses single-line so exception stacks never leak via message text.
+	const safe = message.split("\n", 1)[0]?.slice(0, 500) || "Request failed";
+	return new Response(JSON.stringify({ error: safe }), {
 		status,
 		headers: JSON_HEADERS,
 	});

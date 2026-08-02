@@ -1,11 +1,14 @@
 import {
 	type Dirent,
+	closeSync,
+	constants as fsConstants,
 	existsSync,
 	lstatSync,
 	mkdirSync,
+	openSync,
 	readdirSync,
 	realpathSync,
-	writeFileSync,
+	writeSync,
 } from "fs";
 import { basename, dirname, join, relative, resolve, sep } from "path";
 import { assertSafeRepoPath } from "../shared/repo-file";
@@ -18,6 +21,47 @@ export interface ProjectFsEntry {
 
 function normalizeRel(rel: string): string {
 	return rel.split(/[/\\]/).filter(Boolean).join("/");
+}
+
+/**
+ * Write a file without a check-then-act race (CodeQL js/file-system-race).
+ * Uses O_NOFOLLOW on Unix so a symlink cannot be swapped in for the path.
+ */
+function writeFileNoSymlink(filePath: string, data: Uint8Array): void {
+	let fd: number;
+	try {
+		if (process.platform === "win32") {
+			// Bun/Node on Windows reject numeric O_* flag combos with EINVAL;
+			// string mode is the supported path and still avoids TOCTOU checks.
+			fd = openSync(filePath, "w");
+		} else {
+			const noFollow =
+				typeof fsConstants.O_NOFOLLOW === "number"
+					? fsConstants.O_NOFOLLOW
+					: 0;
+			fd = openSync(
+				filePath,
+				fsConstants.O_WRONLY |
+					fsConstants.O_CREAT |
+					fsConstants.O_TRUNC |
+					noFollow,
+			);
+		}
+	} catch (err: unknown) {
+		const code =
+			err && typeof err === "object" && "code" in err
+				? String((err as { code: unknown }).code)
+				: "";
+		if (code === "ELOOP" || code === "EMLINK") {
+			throw new Error("Refusing to write through symlink");
+		}
+		throw err;
+	}
+	try {
+		writeSync(fd, data);
+	} finally {
+		closeSync(fd);
+	}
 }
 
 /**
@@ -184,10 +228,7 @@ export function writeProjectImport(
 		);
 		const skillDirAbs = mkdirInsideProject(projectRoot, skillDirRel);
 		const skillMd = join(skillDirAbs, "SKILL.md");
-		if (existsSync(skillMd) && lstatSync(skillMd).isSymbolicLink()) {
-			throw new Error("Refusing to write through symlink");
-		}
-		writeFileSync(skillMd, opts.bytes);
+		writeFileNoSymlink(skillMd, opts.bytes);
 		return { path: toProjectRelative(projectRoot, skillDirAbs) };
 	}
 
@@ -196,10 +237,7 @@ export function writeProjectImport(
 	);
 	const parentAbs = mkdirInsideProject(projectRoot, dirname(targetRel));
 	const targetAbs = join(parentAbs, basename(targetRel));
-	if (existsSync(targetAbs) && lstatSync(targetAbs).isSymbolicLink()) {
-		throw new Error("Refusing to write through symlink");
-	}
-	writeFileSync(targetAbs, opts.bytes);
+	writeFileNoSymlink(targetAbs, opts.bytes);
 	return { path: toProjectRelative(projectRoot, targetAbs) };
 }
 

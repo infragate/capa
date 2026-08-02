@@ -14,6 +14,7 @@ import {
 	jsonError,
 	loadProjectFile,
 } from "./capabilities-route-helpers";
+import { clientErrorMessage } from "./http-error";
 
 export async function handlePatchOptions(
 	deps: CapabilitiesRouteDeps,
@@ -34,7 +35,7 @@ export async function handlePatchOptions(
 		await upsertOptions(loaded.path, loaded.format, body);
 		return await afterWrite(deps, projectId, loaded.path, loaded.format);
 	} catch (err: any) {
-		return jsonError(err?.message ?? String(err), 400);
+		return jsonError(clientErrorMessage(err), 400);
 	}
 }
 
@@ -72,7 +73,7 @@ export async function handlePutAgents(
 		await upsertAgents(loaded.path, loaded.format, agents ?? null);
 		return await afterWrite(deps, projectId, loaded.path, loaded.format);
 	} catch (err: any) {
-		return jsonError(err?.message ?? String(err), 400);
+		return jsonError(clientErrorMessage(err), 400);
 	}
 }
 
@@ -141,6 +142,6 @@ export async function handleFromRegistry(
 
 		return await afterWrite(deps, projectId, loaded.path, loaded.format);
 	} catch (err: any) {
-		return jsonError(err?.message ?? String(err), 400);
+		return jsonError(clientErrorMessage(err), 400);
 	}
 }

@@ -17,6 +17,7 @@ import { runProjectConfigure } from "./configure-routes";
 import type { CapaMCPServer } from "./mcp-handler";
 import { OAuth2Manager } from "./oauth-manager";
 import { listProjectFs, writeProjectImport } from "./project-fs";
+import { clientErrorMessage } from "./http-error";
 import {
 	type EffectiveCapsCacheEntry,
 	loadEffectiveCapabilities,
@@ -407,9 +408,9 @@ export async function handleProjectFsList(
 	try {
 		const result = listProjectFs(project.path, rel, { ext, dirsOnly });
 		return new Response(JSON.stringify(result), { headers: JSON_HEADERS });
-	} catch (err: any) {
+	} catch (err: unknown) {
 		return new Response(
-			JSON.stringify({ error: err?.message ?? String(err) }),
+			JSON.stringify({ error: clientErrorMessage(err, "Invalid path") }),
 			{ status: 400, headers: JSON_HEADERS },
 		);
 	}
@@ -458,9 +459,11 @@ export async function handleProjectFsUpload(
 			asSkillDir,
 		});
 		return new Response(JSON.stringify(written), { headers: JSON_HEADERS });
-	} catch (err: any) {
+	} catch (err: unknown) {
 		return new Response(
-			JSON.stringify({ error: err?.message ?? String(err) }),
+			JSON.stringify({
+				error: clientErrorMessage(err, "Upload failed"),
+			}),
 			{ status: 400, headers: JSON_HEADERS },
 		);
 	}

@@ -10,11 +10,13 @@ import {
 import type { RegistryManager } from "../shared/registries/manager";
 import type { RegistrySourceType } from "../types/database";
 import type { RegistryManifest } from "../types/registry";
+import { clientErrorMessage } from "./http-error";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
 function jsonError(message: string, status: number): Response {
-	return new Response(JSON.stringify({ error: message }), {
+	const safe = message.split("\n", 1)[0]?.slice(0, 500) || "Request failed";
+	return new Response(JSON.stringify({ error: safe }), {
 		status,
 		headers: JSON_HEADERS,
 	});
@@ -87,7 +89,7 @@ export async function createRegistryHandler(
 	try {
 		installSlug = body.slug?.trim() || deriveSlug(source, type);
 	} catch (err: any) {
-		return jsonError(`Cannot derive slug: ${err?.message ?? err}`, 400);
+		return jsonError(`Cannot derive slug: ${clientErrorMessage(err, "invalid source")}`, 400);
 	}
 	if (!isValidSlug(installSlug)) {
 		return jsonError(
@@ -128,7 +130,7 @@ export async function createRegistryHandler(
 		await manager.reload().catch(() => {});
 		return jsonOk({ registry: record, manifest: result.manifest }, 201);
 	} catch (err: any) {
-		return jsonError(err?.message ?? String(err), 400);
+		return jsonError(clientErrorMessage(err), 400);
 	}
 }
 
@@ -213,7 +215,7 @@ export async function patchRegistryHandler(
 			await manager.reload().catch(() => {});
 			return jsonOk({ registry: record, manifest: result.manifest });
 		} catch (err: any) {
-			const message = err?.message ?? String(err);
+			const message = clientErrorMessage(err);
 			// Persist the new pointer so the user can fix and retry, but mark
 			// the row failed so the loader stops serving the broken adapter.
 			db.upsertRegistry({
@@ -266,7 +268,7 @@ export async function refreshRegistryHandler(
 		await manager.reload().catch(() => {});
 		return jsonOk({ registry: record, manifest: result.manifest });
 	} catch (err: any) {
-		const message = err?.message ?? String(err);
+		const message = clientErrorMessage(err);
 		db.setRegistryStatus(slug, "failed", message);
 		return new Response(JSON.stringify({ error: message, slug }), {
 			status: 400,
@@ -307,6 +309,6 @@ export async function previewRegistryHandler(
 			...(typeof pluginCount === "number" ? { pluginCount } : {}),
 		});
 	} catch (err: any) {
-		return jsonError(err?.message ?? String(err), 400);
+		return jsonError(clientErrorMessage(err), 400);
 	}
 }

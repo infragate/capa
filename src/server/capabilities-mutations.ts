@@ -17,6 +17,7 @@ import {
 	jsonError,
 	loadProjectFile,
 } from "./capabilities-route-helpers";
+import { clientErrorMessage } from "./http-error";
 
 export async function handleAppend(
 	deps: CapabilitiesRouteDeps,
@@ -50,7 +51,7 @@ export async function handleAppend(
 		await appendCapabilityEntry(loaded.path, loaded.format, section, body);
 		return await afterWrite(deps, projectId, loaded.path, loaded.format);
 	} catch (err: any) {
-		return jsonError(err?.message ?? String(err), 400);
+		return jsonError(clientErrorMessage(err), 400);
 	}
 }
 
@@ -86,7 +87,7 @@ export async function handleReorder(
 		);
 		return await afterReorderWrite(deps, projectId, loaded.path, loaded.format);
 	} catch (err: any) {
-		return jsonError(err?.message ?? String(err), 400);
+		return jsonError(clientErrorMessage(err), 400);
 	}
 }
 
@@ -253,7 +254,7 @@ export async function handleUpdate(
 
 		return await afterWrite(deps, projectId, loaded.path, loaded.format);
 	} catch (err: any) {
-		return jsonError(err?.message ?? String(err), 400);
+		return jsonError(clientErrorMessage(err), 400);
 	}
 }
 
@@ -311,6 +312,6 @@ export async function handleDelete(
 
 		return await afterWrite(deps, projectId, loaded.path, loaded.format);
 	} catch (err: any) {
-		return jsonError(err?.message ?? String(err), 400);
+		return jsonError(clientErrorMessage(err), 400);
 	}
 }

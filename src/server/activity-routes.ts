@@ -198,10 +198,16 @@ export async function handleSyncActivityHooks(
 			{ headers: JSON_HEADERS },
 		);
 	} catch (error: unknown) {
-		const message = error instanceof Error ? error.message : String(error);
-		return new Response(JSON.stringify({ error: message }), {
-			status: 500,
-			headers: JSON_HEADERS,
-		});
+		console.error(
+			"[activity] Failed to sync activity hooks:",
+			error instanceof Error ? error.message : error,
+		);
+		return new Response(
+			JSON.stringify({ error: "Failed to sync activity hooks" }),
+			{
+				status: 500,
+				headers: JSON_HEADERS,
+			},
+		);
 	}
 }
