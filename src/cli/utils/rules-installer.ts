@@ -195,6 +195,8 @@ export interface InstallRulesOptions {
    * callback — they're tracked via the inline marker pattern instead.
    */
   onFileWritten?: (filePath: string) => void;
+  /** Suppress per-file success logs (e.g. wrap warm refresh). */
+  quiet?: boolean;
 }
 
 /**
@@ -263,7 +265,9 @@ export function installRules(
 
         const filePath = join(rulesDir, `${rule.id}${provider.rules.extension}`);
         writeFileSync(filePath, fileContent, 'utf-8');
-        taskLog(`  ✓ ${provider.rules.dir}/${rule.id}${provider.rules.extension} written (${provider.displayName})`);
+        if (!options.quiet) {
+          taskLog(`  ✓ ${provider.rules.dir}/${rule.id}${provider.rules.extension} written (${provider.displayName})`);
+        }
         options.onFileWritten?.(filePath);
       }
     } else if (provider.instructions) {
@@ -277,7 +281,9 @@ export function installRules(
       }
 
       writeMd(projectPath, filename, mdContent);
-      taskLog(`  ✓ ${filename} updated with ${applicableRules.length} rule(s) (${provider.displayName})`);
+      if (!options.quiet) {
+        taskLog(`  ✓ ${filename} updated with ${applicableRules.length} rule(s) (${provider.displayName})`);
+      }
     }
   }
 }
