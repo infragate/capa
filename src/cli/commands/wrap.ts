@@ -8,6 +8,8 @@ import { startWrapWatchers } from '../utils/wrap/watch-project';
 import { launchProvider } from '../utils/wrap/launch';
 import { waitForInterrupt } from '../utils/wrap/wait-for-interrupt';
 import { clearWrapSession, writeWrapSession } from '../utils/wrap/session-file';
+import { ensureWrapBinaryOnPath } from './wrap-ensure-binary';
+import { resolveWrapProviderArg } from './wrap-prompt';
 import { info, error } from '../ui';
 
 export interface WrapOptions {
@@ -71,23 +73,34 @@ export async function wrapCommand(
     return;
   }
 
-  if (!providerArg) {
-    const available = formatWrappableProviderList();
-    error(`Missing provider. Wrappable providers: ${available || '(none)'}`);
+  let providerToken: string;
+  try {
+    providerToken = await resolveWrapProviderArg(providerArg);
+  } catch (err) {
+    error(err instanceof Error ? err.message : String(err));
     process.exit(1);
   }
 
-  const target = resolveWrapTarget(providerArg);
+  const target = resolveWrapTarget(providerToken);
   if (!target) {
     const available = formatWrappableProviderList();
     error(
-      `Unknown or non-wrappable provider "${providerArg}".\n` +
+      `Unknown or non-wrappable provider "${providerToken}".\n` +
         `  Available: ${available || '(none)'}`,
     );
     process.exit(1);
   }
 
   const { provider, wrap } = target;
+
+  // Fail fast before shadow workspace install when the launch binary is missing.
+  try {
+    await ensureWrapBinaryOnPath(wrap.binary, providerToken);
+  } catch (err) {
+    error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
+
   const realProjectPath = resolve(options.project ?? process.cwd());
 
   let prepared;

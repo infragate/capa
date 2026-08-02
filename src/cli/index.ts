@@ -189,7 +189,9 @@ if (process.argv[2] === '__server__') {
 
     program
       .command('wrap [provider] [args...]')
-      .description('Run a provider from a CAPA shadow workspace without modifying in-repo provider configs')
+      .description(
+        'Run a provider from a CAPA shadow workspace without modifying in-repo provider configs (prompts for provider when omitted)',
+      )
       .option('--project <dir>', 'Source project directory (default: cwd)')
       .option('--print-dir', 'Print the workspace path before launching')
       .option('--prune', 'Remove wrap workspaces under ~/.capa/workspaces and exit')
