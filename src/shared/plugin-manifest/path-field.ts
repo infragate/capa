@@ -1,20 +1,43 @@
 import { existsSync, readdirSync, statSync } from "fs";
-import { join, relative } from "path";
+import { join, posix, relative, win32 } from "path";
+import { assertSafeRepoPath } from "../repo-file";
 import { isPlainObject } from "./types-helpers";
+
+/**
+ * True when a manifest path would escape the plugin root if joined.
+ * Rejects absolute paths and `..` segments (same policy as assertSafeRepoPath).
+ */
+function isUnsafeManifestPath(p: string): boolean {
+	if (
+		posix.isAbsolute(p) ||
+		win32.isAbsolute(p) ||
+		/^[a-zA-Z]:/.test(p) ||
+		p.startsWith("/") ||
+		p.startsWith("\\")
+	) {
+		return true;
+	}
+	return p.split(/[\\/]/).some((s) => s === "..");
+}
 
 /**
  * Normalize a manifest path field (string | string[]) into relative paths
  * from the plugin root. Leading `./` is stripped for joins.
+ * Unsafe paths (`..`, absolute) are dropped.
  */
 export function normalizePathField(raw: unknown): string[] | undefined {
 	if (raw === undefined || raw === null) return undefined;
 	const list = typeof raw === "string" ? [raw] : Array.isArray(raw) ? raw : null;
 	if (!list || !list.every((p) => typeof p === "string")) return undefined;
-	return list.map((p) => {
+	const out: string[] = [];
+	for (const p of list) {
 		let s = (p as string).replace(/\\/g, "/");
 		if (s.startsWith("./")) s = s.slice(2);
-		return s.replace(/\/+$/, "");
-	});
+		s = s.replace(/\/+$/, "");
+		if (!s || isUnsafeManifestPath(s)) continue;
+		out.push(s);
+	}
+	return out;
 }
 
 /**
@@ -34,13 +57,19 @@ export function resolveComponentPaths(
 /**
  * Collect files under a path (file or directory) matching an extension predicate.
  * Paths returned are relative to `repoRoot` using forward slashes.
+ * Paths that escape `repoRoot` are ignored.
  */
 export function collectFiles(
 	repoRoot: string,
 	relativePath: string,
 	opts: { extensions?: string[]; recursive?: boolean } = {},
 ): string[] {
-	const full = join(repoRoot, relativePath);
+	let full: string;
+	try {
+		full = assertSafeRepoPath(repoRoot, relativePath);
+	} catch {
+		return [];
+	}
 	if (!existsSync(full)) return [];
 
 	const exts = opts.extensions?.map((e) => e.toLowerCase());
@@ -48,6 +77,7 @@ export function collectFiles(
 
 	function accept(abs: string): void {
 		const rel = relative(repoRoot, abs).replace(/\\/g, "/");
+		if (!rel || rel.startsWith("..") || isUnsafeManifestPath(rel)) return;
 		if (exts) {
 			const lower = abs.toLowerCase();
 			if (!exts.some((e) => lower.endsWith(e))) return;

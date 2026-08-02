@@ -301,9 +301,16 @@ export function promoteToRealProject(
       tryRelink(realEntry, wsEntry);
       return;
     }
-    // Both dirs exist separately — prefer linking workspace to real (real wins structure).
-    // Do not delete workspace content without linking; try junction/symlink only.
-    tryRelink(realEntry, wsEntry);
+    // Both dirs exist separately — push workspace content into real first
+    // (agent edits win, same as files), then prefer linking.
+    try {
+      cpSync(wsEntry, realEntry, { recursive: true, force: true });
+    } catch {
+      // best-effort
+    }
+    if (!tryRelink(realEntry, wsEntry)) {
+      // Keep separate dirs; content already mirrored to real.
+    }
     return;
   }
 

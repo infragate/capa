@@ -184,4 +184,14 @@ describe('symlink-workspace', () => {
     promoteToRealProject(realDir, wsDir, '.cursor', CURSOR_ONLY);
     expect(lstatSync(join(wsDir, '.cursor')).isSymbolicLink()).toBe(false);
   });
+
+  it('promote copies directory contents into real when both dirs exist separately', () => {
+    buildSymlinkWorkspace(realDir, wsDir, CURSOR_ONLY);
+    mkdirSync(join(realDir, 'docs'), { recursive: true });
+    writeFileSync(join(realDir, 'docs', 'old.md'), 'old');
+    mkdirSync(join(wsDir, 'docs'), { recursive: true });
+    writeFileSync(join(wsDir, 'docs', 'new.md'), 'from agent');
+    promoteToRealProject(realDir, wsDir, 'docs', CURSOR_ONLY);
+    expect(readFileSync(join(realDir, 'docs', 'new.md'), 'utf8')).toBe('from agent');
+  });
 });
