@@ -62,7 +62,6 @@ describe('symlink-workspace', () => {
     expect(cursorOnly.has('skills')).toBe(false);
     expect(cursorOnly.has(LOCKFILE_NAME)).toBe(true);
     expect(cursorOnly.has(WORKSPACE_MARKER)).toBe(true);
-    expect(cursorOnly.has('.git')).toBe(true);
 
     const both = getWrapExclusionSet(CURSOR_AND_CLAUDE);
     expect(both.has('.cursor')).toBe(true);
@@ -184,15 +183,5 @@ describe('symlink-workspace', () => {
     writeFileSync(join(wsDir, '.cursor', 'settings.json'), '{}');
     promoteToRealProject(realDir, wsDir, '.cursor', CURSOR_ONLY);
     expect(lstatSync(join(wsDir, '.cursor')).isSymbolicLink()).toBe(false);
-  });
-
-  it('promote does not move .git', () => {
-    buildSymlinkWorkspace(realDir, wsDir, CURSOR_ONLY);
-    // Poison a fake workspace-only .git entry — promote must skip it.
-    rmSync(join(wsDir, '.git'), { recursive: true, force: true });
-    mkdirSync(join(wsDir, '.git'));
-    writeFileSync(join(wsDir, '.git', 'evil'), 'nope');
-    promoteToRealProject(realDir, wsDir, '.git', CURSOR_ONLY);
-    expect(existsSync(join(realDir, '.git', 'evil'))).toBe(false);
   });
 });

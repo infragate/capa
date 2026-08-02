@@ -16,7 +16,6 @@ import { platform } from 'os';
 import { getProviderOwnedTopLevelNames } from '../../../shared/providers';
 import { LOCKFILE_NAME } from '../../../shared/lockfile';
 import { WORKSPACE_MARKER } from '../../../shared/workspaces/paths';
-import { syncWrapGitExclude } from './git-exclude-sync';
 
 const isWin = platform() === 'win32';
 
@@ -25,8 +24,6 @@ export const ALWAYS_EXCLUDE = new Set([
   LOCKFILE_NAME,
   '.capa',
   WORKSPACE_MARKER,
-  // Selective layout + shadow-local info/exclude — see git-exclude-sync.ts.
-  '.git',
 ]);
 
 /**
@@ -83,7 +80,7 @@ export function createWorkspaceSymlink(targetPath: string, linkPath: string): vo
  * linked to the real project (symlink / junction / hardlink).
  *
  * Leaves capa-materialized trees alone (e.g. shadow `.cursor` written by install).
- * Never touches ALWAYS_EXCLUDE internals (`.git`, lockfile, marker, `.capa`).
+ * Never touches ALWAYS_EXCLUDE internals (lockfile, marker, `.capa`).
  */
 export function pruneExcludedWorkspaceLinks(
   realProjectPath: string,
@@ -176,8 +173,7 @@ export function removeTopLevelEntry(root: string, name: string): void {
 }
 
 /**
- * Full cold build: ensure workspace dir, sync all top-level symlinks,
- * then materialize selective `.git` + wrap-local `info/exclude`.
+ * Full cold build: ensure workspace dir, sync all top-level symlinks.
  */
 export function buildSymlinkWorkspace(
   realProjectPath: string,
@@ -186,7 +182,6 @@ export function buildSymlinkWorkspace(
 ): void {
   mkdirSync(workspacePath, { recursive: true });
   syncTopLevelSymlinks(realProjectPath, workspacePath, providerIds);
-  syncWrapGitExclude(realProjectPath, workspacePath, providerIds);
 }
 
 function isAlreadyLinked(wsEntry: string, realEntry: string): boolean {

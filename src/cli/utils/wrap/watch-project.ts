@@ -9,7 +9,6 @@ import {
   removeTopLevelEntry,
   syncTopLevelSymlinks,
 } from './symlink-workspace';
-import { syncWrapGitExclude } from './git-exclude-sync';
 import { installCommand } from '../../commands/install';
 import { parseCapabilitiesFile } from '../../../shared/capabilities';
 import { collectWrapExclusionProviderIds } from '../../../shared/providers';
@@ -94,15 +93,6 @@ export function startWrapWatchers(opts: WatchOpts): WrapWatchers {
       ignoreReal.delete(name);
       ignoreWs.delete(name);
     }, 50);
-  }
-
-  function refreshGitExclude(): void {
-    if (stopped) return;
-    try {
-      syncWrapGitExclude(realRoot, wsRoot, providerIds);
-    } catch {
-      // quiet
-    }
   }
 
   function flushPromote(name: string): void {
@@ -274,7 +264,6 @@ export function startWrapWatchers(opts: WatchOpts): WrapWatchers {
       } catch {
         // ignore
       }
-      refreshGitExclude();
       writeReapplyStatus('Capabilities re-applied');
     } catch (err) {
       writeReapplyStatus(
@@ -383,8 +372,6 @@ export function startWrapWatchers(opts: WatchOpts): WrapWatchers {
   } catch {
     // ignore
   }
-
-  refreshGitExclude();
 
   pollTimer = setInterval(reconcile, POLL_MS);
   if (
