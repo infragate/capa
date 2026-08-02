@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import type { ToolCallRecord } from '../../../../types/api';
-import { groupActivityRuns } from './groupActivityRuns';
+import { groupActivityRuns, isCapaToolCall } from './groupActivityRuns';
 
 function call(
   partial: Partial<ToolCallRecord> & Pick<ToolCallRecord, 'id' | 'kind' | 'tool_name' | 'started_at'>,
@@ -46,5 +46,20 @@ describe('groupActivityRuns', () => {
     expect(runs).toHaveLength(2);
     expect(runs[0]!.title).toBe('second');
     expect(runs[1]!.title).toBe('first');
+  });
+});
+
+describe('isCapaToolCall', () => {
+  it('detects capa MCP tracer kinds', () => {
+    expect(isCapaToolCall({ kind: 'tool' })).toBe(true);
+    expect(isCapaToolCall({ kind: 'call_tool' })).toBe(true);
+    expect(isCapaToolCall({ kind: 'setup_tools' })).toBe(true);
+    expect(isCapaToolCall({ kind: 'agent_tool', meta_tool: 'call_tool' })).toBe(true);
+  });
+
+  it('ignores provider-native agent events', () => {
+    expect(isCapaToolCall({ kind: 'agent_tool' })).toBe(false);
+    expect(isCapaToolCall({ kind: 'shell' })).toBe(false);
+    expect(isCapaToolCall({ kind: 'prompt' })).toBe(false);
   });
 });

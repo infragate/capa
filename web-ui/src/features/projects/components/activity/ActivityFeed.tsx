@@ -9,6 +9,7 @@ import {
   formatDuration,
   formatRelative,
   groupActivityRuns,
+  isCapaToolCall,
   kindLabel,
   maxSpanDuration,
 } from './groupActivityRuns';
@@ -37,10 +38,11 @@ function sourceLabel(
 }
 
 /** Soft kind chip — muted, LangSmith-style. */
-function KindBadge({ kind }: { kind: string }) {
+function KindBadge({ kind, capa }: { kind: string; capa?: boolean }) {
   const label = kindLabel(kind);
-  const tone =
-    kind === 'prompt'
+  const tone = capa
+    ? 'bg-info-bg text-info-text'
+    : kind === 'prompt'
       ? 'bg-info-bg text-info-text'
       : kind === 'shell'
         ? 'bg-bg-tertiary text-text-secondary'
@@ -69,10 +71,12 @@ function LatencyBar({
   ms,
   maxMs,
   errored,
+  capa,
 }: {
   ms: number | null | undefined;
   maxMs: number;
   errored?: boolean;
+  capa?: boolean;
 }) {
   const pct =
     ms == null || maxMs <= 0 ? 0 : Math.min(100, Math.max(6, (ms / maxMs) * 100));
@@ -81,7 +85,11 @@ function LatencyBar({
       <div
         className={cn(
           'h-full rounded-full transition-[width] duration-300 ease-out',
-          errored ? 'bg-error-text/70' : 'bg-text-tertiary/60',
+          errored
+            ? 'bg-error-text/70'
+            : capa
+              ? 'bg-accent-primary/70'
+              : 'bg-text-tertiary/60',
         )}
         style={{ width: `${pct}%` }}
       />
@@ -101,6 +109,7 @@ function SpanRow({
   const { t } = useTranslation('projects');
   const [open, setOpen] = useState(false);
   const summary = useMemo(() => formatArgsSummary(call.args_json), [call.args_json]);
+  const capa = isCapaToolCall(call);
 
   return (
     <div className="group/span">
@@ -110,8 +119,17 @@ function SpanRow({
         aria-expanded={open}
         className={cn(
           'flex w-full items-center gap-2.5 py-1.5 pr-3 text-left cursor-pointer',
-          'hover:bg-hover-bg/70 transition-colors duration-100',
-          open && 'bg-bg-tertiary/40',
+          'transition-colors duration-100',
+          capa
+            ? cn(
+                'border-l-2 border-l-accent-primary bg-accent-primary/[0.04]',
+                'hover:bg-accent-primary/[0.08]',
+                open && 'bg-accent-primary/[0.1]',
+              )
+            : cn(
+                'border-l-2 border-l-transparent hover:bg-hover-bg/70',
+                open && 'bg-bg-tertiary/40',
+              ),
         )}
         style={{ paddingLeft: `${10 + depth * 18}px` }}
       >
@@ -121,9 +139,16 @@ function SpanRow({
             title={call.status}
           />
         </span>
-        <KindBadge kind={call.kind} />
+        <KindBadge kind={call.kind} capa={capa} />
+        {capa ? (
+          <span className="shrink-0 rounded px-1 py-0.5 text-[9px] font-semibold uppercase tracking-[0.06em] text-accent-primary">
+            {t('activity.capaBadge')}
+          </span>
+        ) : null}
         <span className="min-w-0 flex-1 truncate text-[12.5px] text-text-primary">
-          <span className="font-medium">{call.tool_name}</span>
+          <span className={cn('font-medium', capa && 'text-accent-primary')}>
+            {call.tool_name}
+          </span>
           {summary ? (
             <span className="ml-2 font-normal text-text-tertiary" title={summary}>
               {summary}
@@ -134,6 +159,7 @@ function SpanRow({
           ms={call.duration_ms}
           maxMs={maxMs}
           errored={call.status === 'error'}
+          capa={capa}
         />
         <span className="w-12 shrink-0 text-right text-[11px] tabular-nums text-text-tertiary">
           {formatDuration(call.duration_ms)}
@@ -142,7 +168,12 @@ function SpanRow({
 
       {open && (
         <div
-          className="border-y border-border-secondary/80 bg-bg-primary/50 py-3"
+          className={cn(
+            'border-y py-3',
+            capa
+              ? 'border-accent-primary/20 bg-accent-primary/[0.03]'
+              : 'border-border-secondary/80 bg-bg-primary/50',
+          )}
           style={{ paddingLeft: `${28 + depth * 18}px`, paddingRight: 12 }}
         >
           <div className="mb-2.5 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-text-tertiary">

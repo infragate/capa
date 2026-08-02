@@ -277,6 +277,7 @@
     "colSpans": "Spans",
     "colLatency": "Latency",
     "colTime": "Time",
+    "capaBadge": "capa",
     "noInput": "No input",
     "noOutput": "No output",
     "status": "Status",

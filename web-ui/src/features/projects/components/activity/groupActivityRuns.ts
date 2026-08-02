@@ -154,3 +154,18 @@ export function kindLabel(kind: string): string {
       return kind;
   }
 }
+
+/**
+ * True for spans that went through capa's MCP / `capa sh` tracer
+ * (as opposed to provider-native agent hooks).
+ */
+export function isCapaToolCall(call: {
+  kind: string;
+  meta_tool?: string | null;
+}): boolean {
+  if (call.kind === 'setup_tools' || call.kind === 'call_tool' || call.kind === 'tool') {
+    return true;
+  }
+  const meta = call.meta_tool;
+  return meta === 'call_tool' || meta === 'setup_tools';
+}
