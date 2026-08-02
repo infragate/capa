@@ -66,6 +66,7 @@ export function ActivityRunDialog({
   const eventCount = run ? runEvents(run).length : 0;
   const prevCountRef = useRef(eventCount);
   const seenIdsRef = useRef<Set<string>>(new Set());
+  const freshTimersRef = useRef<Map<string, number>>(new Map());
   const [freshIds, setFreshIds] = useState<Set<string>>(() => new Set());
 
   const events = useMemo(() => (run ? runEvents(run) : []), [run]);
@@ -77,6 +78,13 @@ export function ActivityRunDialog({
   const running = run ? runIsLive(run) : false;
   const tokenTotals = useMemo(() => sumRunTokenUsage(events), [events]);
 
+  function clearFreshTimers() {
+    for (const timer of freshTimersRef.current.values()) {
+      window.clearTimeout(timer);
+    }
+    freshTimersRef.current.clear();
+  }
+
   // Reset follow mode + freshness tracking when opening a different run.
   useEffect(() => {
     if (!open || !run) return;
@@ -84,12 +92,17 @@ export function ActivityRunDialog({
     prevCountRef.current = eventCount;
     const ids = new Set(runEvents(run).map((e) => e.id));
     seenIdsRef.current = ids;
+    clearFreshTimers();
     setFreshIds(new Set());
     // Only re-seed when the dialog opens or the selected run changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- eventCount snapshot on open
   }, [open, run?.id]);
 
+  // Drop pending highlight timers on unmount.
+  useEffect(() => () => clearFreshTimers(), []);
+
   // Mark newly arrived span ids so they get the amber fade.
+  // Per-id timers so rapid event streams don't cancel earlier removals.
   useEffect(() => {
     if (!open || !run) return;
     const nextFresh = new Set<string>();
@@ -105,14 +118,20 @@ export function ActivityRunDialog({
       for (const id of nextFresh) merged.add(id);
       return merged;
     });
-    const timer = window.setTimeout(() => {
-      setFreshIds((prev) => {
-        const cleaned = new Set(prev);
-        for (const id of nextFresh) cleaned.delete(id);
-        return cleaned;
-      });
-    }, 2600);
-    return () => window.clearTimeout(timer);
+    for (const id of nextFresh) {
+      const existing = freshTimersRef.current.get(id);
+      if (existing != null) window.clearTimeout(existing);
+      const timer = window.setTimeout(() => {
+        freshTimersRef.current.delete(id);
+        setFreshIds((prev) => {
+          if (!prev.has(id)) return prev;
+          const cleaned = new Set(prev);
+          cleaned.delete(id);
+          return cleaned;
+        });
+      }, 2600);
+      freshTimersRef.current.set(id, timer);
+    }
   }, [events, open, run]);
 
   // Auto-scroll when new events arrive and follow is on.
