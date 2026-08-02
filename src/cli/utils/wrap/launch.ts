@@ -109,12 +109,15 @@ export async function launchProvider(
   const restoreSigint = ignoreParentSigint();
 
   try {
+    // Windows CLI shims are often `.cmd`/`.ps1` (e.g. Cursor's `agent`).
+    // spawnSync without a shell only resolves real executables, so enable
+    // shell on win32 — same pattern as native plugin install.
     const result = spawnSync(wrap.binary, [...wrapArgs, ...args], {
       cwd: workspacePath,
       env: process.env,
       stdio: 'inherit',
       windowsHide: false,
-      shell: false,
+      shell: process.platform === 'win32',
     });
 
     if (result.error) {

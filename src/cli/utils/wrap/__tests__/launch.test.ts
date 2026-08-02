@@ -36,7 +36,7 @@ describe('launchProvider CLI', () => {
     expect(spawnSyncCalls[0]?.opts.stdio).toBe('inherit');
     expect(spawnSyncCalls[0]?.opts.cwd).toBe('C:\\ws\\proj');
     expect(spawnSyncCalls[0]?.opts.windowsHide).toBe(false);
-    expect(spawnSyncCalls[0]?.opts.shell).toBe(false);
+    expect(spawnSyncCalls[0]?.opts.shell).toBe(process.platform === 'win32');
   });
 
   test('launches cursor agent CLI binary from wrap config', async () => {
@@ -44,5 +44,6 @@ describe('launchProvider CLI', () => {
     expect(result.exitCode).toBe(0);
     expect(spawnSyncCalls[0]?.cmd).toBe('agent');
     expect(spawnSyncCalls[0]?.args).toEqual([]);
+    expect(spawnSyncCalls[0]?.opts.shell).toBe(process.platform === 'win32');
   });
 });
