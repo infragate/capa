@@ -130,7 +130,7 @@ capa wrap codex
 capa wrap gemini-cli
 capa wrap opencode
 
-capa wrap cursor --print-dir   # print shadow path only
+capa wrap cursor --print-dir   # print shadow path, then launch
 capa wrap --prune              # clean stale workspaces
 capa stop                      # stop server + active wrap sessions
 ```

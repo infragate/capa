@@ -118,12 +118,13 @@ Use `--plugin` to add a plugin entry (skills, MCP, rules, sub-agents, hooks) ins
 ### Servers, tools, rules, hooks
 
 ```bash
-# MCP server (stdio)
+# MCP server (stdio) — quote ${VarName} so the shell does not expand it
 capa add --server --id brave --cmd npx --arg -y --arg @modelcontextprotocol/server-brave-search \
-  --env-var BRAVE_API_KEY=${BraveApiKey}
+  --env-var 'BRAVE_API_KEY=${BraveApiKey}'
 
 # Remote MCP server
-capa add --server --id remote-api --url https://mcp.example.com --header Authorization=Bearer\ ${Token}
+capa add --server --id remote-api --url https://mcp.example.com \
+  --header 'Authorization=Bearer ${Token}'
 
 # Tool alias for an MCP server tool
 capa add --tool --id search --mcp-server @brave --mcp-tool brave_web_search --default count=5
@@ -160,7 +161,7 @@ capa wrap codex
 capa wrap gemini-cli
 capa wrap opencode
 capa wrap cursor --project /path/to/repo
-capa wrap cursor --print-dir  # print shadow path only
+capa wrap cursor --print-dir  # print shadow path, then launch
 capa wrap --prune             # remove stale workspaces under ~/.capa/workspaces
 ```
 
