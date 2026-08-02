@@ -208,6 +208,9 @@ async function runWrapInstall(
   providerId: string,
   exclusionProviderIds: Iterable<string>,
 ): Promise<void> {
+  // Invariant: wrap install may only write under `workspacePath`. The real
+  // project is identity-only (projectId / credentials) — never a mutate target
+  // for hooks, rules, skills, or MCP config.
   await installCommand({
     projectPath: workspacePath,
     identityPath: realProjectPath,

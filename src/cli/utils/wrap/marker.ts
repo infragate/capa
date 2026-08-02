@@ -1,11 +1,12 @@
 import { existsSync } from 'fs';
-import { dirname, join, relative, resolve, sep } from 'path';
+import { dirname, join, resolve } from 'path';
 import {
   WORKSPACE_MARKER,
   getWorkspacesDir,
   isUnderWrapWorkspacesDir,
   type WorkspaceMarker,
 } from '../../../shared/workspaces/paths';
+import { isPathInside } from '../../../shared/paths';
 
 async function tryReadMarker(markerPath: string): Promise<WorkspaceMarker | null> {
   if (!existsSync(markerPath)) return null;
@@ -16,11 +17,6 @@ async function tryReadMarker(markerPath: string): Promise<WorkspaceMarker | null
   } catch {
     return null;
   }
-}
-
-function isPathInside(child: string, parent: string): boolean {
-  const rel = relative(resolve(parent), resolve(child));
-  return rel === '' || (!rel.startsWith('..') && !rel.startsWith(`..${sep}`));
 }
 
 /**

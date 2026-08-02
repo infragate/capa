@@ -164,6 +164,7 @@ async function installCommandBody(opts: {
 
   let resolvedProviders: string[];
   let configureProviders: string[];
+  let isWrapInstall = false;
   try {
     // Always store the real project path for MCP tool cwd / identity.
     db.upsertProject({ id: projectId, path: idPath });
@@ -185,7 +186,7 @@ async function installCommandBody(opts: {
     // Shadow wrap: local file writes use `resolvedProviders` (e.g. claude-code),
     // but POST /configure must keep the identity project's authored providers
     // so the real repo / live session stay on cursor (or whatever the file says).
-    const isWrapInstall =
+    isWrapInstall =
       !!identityPath &&
       (process.platform === 'win32'
         ? resolve(identityPath).toLowerCase() !== resolve(projectPath).toLowerCase()
@@ -224,6 +225,7 @@ async function installCommandBody(opts: {
     serverStatus: { running: true, url: serverStatus.url },
     resolvedProviders,
     configureProviders,
+    isWrapInstall,
     lockBuilder,
     mcpUrl,
     resolvedRepos: new Map(),

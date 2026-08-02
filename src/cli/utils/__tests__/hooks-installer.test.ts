@@ -462,4 +462,90 @@ describe('hooks-installer — pruneOrphanHooks / cleanHooks', () => {
     ) as any;
     expect(settings.hooks).toBeUndefined();
   });
+
+  it('onlyDesiredProviders leaves other providers managed hooks untouched (wrap)', async () => {
+    // Simulate: capa install for cursor, then wrap install for claude-code
+    // sharing the same projectId — must not strip cursor hooks from the real project.
+    await installHooks({
+      projectPath,
+      projectId,
+      capabilitiesFilePath: join(projectPath, 'capabilities.yaml'),
+      hooks: [{ id: 'keep-me', on: 'sessionStart', command: 'echo cursor' }],
+      providers: ['cursor'],
+      db,
+      authFetch: makeAuthFetch(),
+      getRepoSnapshot: stubGetRepoSnapshot,
+    });
+    expect(db.getManagedHooks(projectId).some((r) => r.providerId === 'cursor')).toBe(true);
+
+    const result = pruneOrphanHooks(
+      join(tempDir, 'shadow-workspace'),
+      projectId,
+      [{ id: 'keep-me', on: 'sessionStart', command: 'echo cursor' }],
+      ['claude-code'],
+      db,
+      { onlyDesiredProviders: true },
+    );
+    expect(result.removed).toBe(0);
+    const rows = db.getManagedHooks(projectId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].providerId).toBe('cursor');
+    expect(rows[0].hookId).toBe('keep-me');
+
+    const hooksJson = JSON.parse(
+      readFileSync(join(projectPath, '.cursor', 'hooks.json'), 'utf-8'),
+    ) as { hooks?: Record<string, unknown[]> };
+    expect(hooksJson.hooks?.sessionStart?.length).toBeGreaterThan(0);
+  });
+
+  it('without onlyDesiredProviders, other providers are still pruned (normal install)', async () => {
+    await installHooks({
+      projectPath,
+      projectId,
+      capabilitiesFilePath: join(projectPath, 'capabilities.yaml'),
+      hooks: [{ id: 'drop-me', on: 'sessionStart', command: 'echo cursor' }],
+      providers: ['cursor'],
+      db,
+      authFetch: makeAuthFetch(),
+      getRepoSnapshot: stubGetRepoSnapshot,
+    });
+
+    const result = pruneOrphanHooks(
+      projectPath,
+      projectId,
+      [{ id: 'drop-me', on: 'sessionStart', command: 'echo cursor' }],
+      ['claude-code'],
+      db,
+    );
+    expect(result.removed).toBe(1);
+    expect(db.getManagedHooks(projectId)).toEqual([]);
+  });
+
+  it('mutateRoot refuses to touch hook configs outside the shadow workspace', async () => {
+    await installHooks({
+      projectPath,
+      projectId,
+      capabilitiesFilePath: join(projectPath, 'capabilities.yaml'),
+      hooks: [{ id: 'real-claude', on: 'beforeShell', command: 'echo real' }],
+      providers: ['claude-code'],
+      db,
+      authFetch: makeAuthFetch(),
+      getRepoSnapshot: stubGetRepoSnapshot,
+    });
+    const realSettings = join(projectPath, '.claude', 'settings.json');
+    const before = readFileSync(realSettings, 'utf-8');
+
+    const shadow = join(tempDir, 'shadow-workspace');
+    const result = pruneOrphanHooks(
+      shadow,
+      projectId,
+      [],
+      ['claude-code'],
+      db,
+      { onlyDesiredProviders: true, mutateRoot: shadow },
+    );
+    expect(result.removed).toBe(0);
+    expect(db.getManagedHooks(projectId)).toHaveLength(1);
+    expect(readFileSync(realSettings, 'utf-8')).toBe(before);
+  });
 });

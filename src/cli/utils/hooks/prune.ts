@@ -1,11 +1,33 @@
 import type { CapaDatabase } from '../../../db/database';
 import type { Hook } from '../../../types/hooks';
+import { isPathInside } from '../../../shared/paths';
 import { scopeHookForProvider } from './provider-map';
 import { removeManagedHookEntry } from './config-apply';
 
 export interface PruneOrphanHooksResult {
   removed: number;
   warnings: string[];
+}
+
+export interface PruneOrphanHooksOptions {
+  /**
+   * When true, only prune within `desiredProviders`. Managed hooks for other
+   * providers are left alone (DB + on-disk).
+   *
+   * Used by `capa wrap` shadow installs: they share the real project's
+   * `projectId` / `managed_hooks` rows but install for a single provider into
+   * a shadow workspace. Without this, cursor hooks would be treated as orphans
+   * and removed via their stored absolute `configPath` in the real project.
+   */
+  onlyDesiredProviders?: boolean;
+  /**
+   * When set, never mutate (or drop DB rows for) managed hooks whose
+   * `configPath` lies outside this directory.
+   *
+   * Wrap installs pass the shadow workspace path so capa wrap cannot touch
+   * the real project's hook configs — even for the same provider id.
+   */
+  mutateRoot?: string;
 }
 
 /**
@@ -18,6 +40,7 @@ export function pruneOrphanHooks(
   desiredHooks: Hook[],
   desiredProviders: string[],
   db: CapaDatabase,
+  options: PruneOrphanHooksOptions = {},
 ): PruneOrphanHooksResult {
   const warnings: string[] = [];
   let removed = 0;
@@ -36,6 +59,15 @@ export function pruneOrphanHooks(
   for (const row of existing) {
     const desired = desiredByProvider.get(row.providerId);
     if (desired && desired.has(row.hookId)) continue;
+    // Wrap / scoped installs: other providers' rows are still desired on the
+    // identity project — do not treat them as orphans.
+    if (options.onlyDesiredProviders && !desiredByProvider.has(row.providerId)) {
+      continue;
+    }
+    // Hard invariant for wrap: never write outside the shadow workspace.
+    if (options.mutateRoot && !isPathInside(row.configPath, options.mutateRoot)) {
+      continue;
+    }
 
     try {
       removeManagedHookEntry(projectPath, row);

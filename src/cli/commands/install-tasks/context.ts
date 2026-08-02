@@ -27,6 +27,12 @@ export interface InstallCtx {
    * in-memory provider set or triggers server-side writes for that provider.
    */
   configureProviders: string[];
+  /**
+   * True when writing into a wrap shadow workspace under a different identity
+   * path. Install prune/cleanup must not mutate the real project: only paths
+   * under `projectPath` (the shadow) may be written or deleted.
+   */
+  isWrapInstall: boolean;
   lockBuilder: LockfileBuilder;
   configureResult?: Record<string, unknown>;
   mcpUrl: string;

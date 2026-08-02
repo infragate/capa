@@ -1,8 +1,37 @@
 import { existsSync, rmSync } from 'fs';
-import { basename } from 'path';
+import { basename, relative, resolve, sep } from 'path';
 import type { Skill } from '../../../../types/capabilities';
 import type { CapaDatabase } from '../../../../db/database';
-import { isProviderRulesManagedPath } from '../../../utils/rules-installer';
+import { getProvider } from '../../../../shared/providers';
+import { isPathInside } from '../../../../shared/paths';
+
+/**
+ * True when `filePath` is a skill install directory for one of `providers`
+ * under `projectPath` (e.g. `<project>/.cursor/skills/<id>`).
+ *
+ * Restricting cleanup to these paths avoids:
+ * - deleting rule files that share `managed_files` (basename `foo.mdc` ≠ skill id)
+ * - deleting another provider's skills during a scoped install (e.g. wrap)
+ * - deleting the real project's managed paths when `projectPath` is a wrap shadow
+ */
+export function isProviderSkillManagedPath(
+  projectPath: string,
+  filePath: string,
+  providers: string[],
+): boolean {
+  const resolvedFile = resolve(filePath);
+  for (const pid of providers) {
+    const provider = getProvider(pid);
+    if (!provider?.skillsDir) continue;
+    const skillsDir = resolve(projectPath, provider.skillsDir);
+    if (!isPathInside(resolvedFile, skillsDir)) continue;
+    const rel = relative(skillsDir, resolvedFile);
+    // Managed skill entries are the skill directory itself (one level under skillsDir).
+    if (!rel || rel === '' || rel.split(sep).length !== 1) continue;
+    return true;
+  }
+  return false;
+}
 
 // Clean up skill directories for skills that have been removed from capabilities.
 export async function cleanupRemovedSkills(
@@ -21,8 +50,9 @@ export async function cleanupRemovedSkills(
   const dirsToRemove: string[] = [];
 
   for (const managedPath of managedFiles) {
-    // Rule files share the managed-files table but are pruned in step 3.5
-    if (isProviderRulesManagedPath(projectPath, managedPath, clients)) {
+    // Only touch skill dirs for providers in this install under projectPath.
+    // Rule files and other-provider / real-project paths are left alone.
+    if (!isProviderSkillManagedPath(projectPath, managedPath, clients)) {
       continue;
     }
 

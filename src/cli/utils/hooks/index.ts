@@ -16,6 +16,8 @@
  *     hook combination is no longer requested by the current capabilities
  *     file. Stale config entries are removed surgically using the stored
  *     locator; the row is dropped from the DB.
+ *   • With `onlyDesiredProviders: true` (wrap shadow installs), rows for
+ *     providers outside the current install set are left untouched.
  *
  * `cleanHooks`:
  *   • Used by `capa clean` to remove every capa-installed hook entry for
@@ -33,6 +35,7 @@ export {
   pruneOrphanHooks,
   cleanHooks,
   type PruneOrphanHooksResult,
+  type PruneOrphanHooksOptions,
 } from './prune';
 
 export { resolveProviderEventName as _resolveProviderEventName } from './provider-map';
