@@ -69,10 +69,15 @@ export function applyHookEntryToConfig(args: ApplyEntryArgs): { configPath: stri
  * Errors propagate to the caller — pruneOrphanHooks/cleanHooks catch them
  * and surface as warnings so a malformed config never aborts the install.
  */
-export function removeManagedHookEntry(projectPath: string, row: ManagedHookRow): void {
+export function removeManagedHookEntry(
+  projectPath: string,
+  row: ManagedHookRow,
+  options: { preserveScript?: boolean } = {},
+): void {
+  const preserveScript = !!options.preserveScript;
   const provider = getProvider(row.providerId);
   if (!provider?.hooks) {
-    if (row.scriptPath && existsSync(row.scriptPath)) {
+    if (!preserveScript && row.scriptPath && existsSync(row.scriptPath)) {
       try { unlinkSync(row.scriptPath); } catch {}
     }
     return;
@@ -89,7 +94,7 @@ export function removeManagedHookEntry(projectPath: string, row: ManagedHookRow)
   }
 
   if (!existsSync(configPath)) {
-    if (row.scriptPath && existsSync(row.scriptPath)) {
+    if (!preserveScript && row.scriptPath && existsSync(row.scriptPath)) {
       try { unlinkSync(row.scriptPath); } catch {}
     }
     return;
@@ -136,7 +141,7 @@ export function removeManagedHookEntry(projectPath: string, row: ManagedHookRow)
     writeJsonFile(configPath, config);
   }
 
-  if (row.scriptPath && existsSync(row.scriptPath)) {
+  if (!preserveScript && row.scriptPath && existsSync(row.scriptPath)) {
     try { unlinkSync(row.scriptPath); } catch {}
   }
 }

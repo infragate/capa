@@ -548,4 +548,49 @@ describe('hooks-installer — pruneOrphanHooks / cleanHooks', () => {
     expect(db.getManagedHooks(projectId)).toHaveLength(1);
     expect(readFileSync(realSettings, 'utf-8')).toBe(before);
   });
+
+  it('preserves shared materialized scripts when only one provider row is pruned (wrap)', async () => {
+    // Remote/source hooks materialize once under ~/.capa/hooks/<projectId>/<hookId>
+    // and both provider rows reference that same scriptPath.
+    await installHooks({
+      projectPath,
+      projectId,
+      capabilitiesFilePath: join(projectPath, 'capabilities.yaml'),
+      hooks: [
+        {
+          id: 'shared-remote',
+          on: 'beforeShell',
+          type: 'command',
+          source: { type: 'remote', url: 'https://example.com/hook.sh' },
+        },
+      ],
+      providers: ['cursor', 'claude-code'],
+      db,
+      authFetch: makeAuthFetch(),
+      getRepoSnapshot: stubGetRepoSnapshot,
+    });
+
+    const rows = db.getManagedHooks(projectId);
+    expect(rows).toHaveLength(2);
+    const scriptPath = rows[0].scriptPath;
+    expect(scriptPath).toBeTruthy();
+    expect(rows.every((r) => r.scriptPath === scriptPath)).toBe(true);
+    expect(existsSync(scriptPath!)).toBe(true);
+
+    // Scoped prune: drop claude's orphaned row, keep cursor's row.
+    const result = pruneOrphanHooks(
+      projectPath,
+      projectId,
+      [],
+      ['claude-code'],
+      db,
+      { onlyDesiredProviders: true },
+    );
+    expect(result.removed).toBe(1);
+    const remaining = db.getManagedHooks(projectId);
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0].providerId).toBe('cursor');
+    expect(remaining[0].scriptPath).toBe(scriptPath);
+    expect(existsSync(scriptPath!)).toBe(true);
+  });
 });

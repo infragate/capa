@@ -56,21 +56,39 @@ export function pruneOrphanHooks(
   }
 
   const existing = db.getManagedHooks(projectId);
+  const toRemove: typeof existing = [];
+  const toKeep: typeof existing = [];
   for (const row of existing) {
     const desired = desiredByProvider.get(row.providerId);
-    if (desired && desired.has(row.hookId)) continue;
+    if (desired && desired.has(row.hookId)) {
+      toKeep.push(row);
+      continue;
+    }
     // Wrap / scoped installs: other providers' rows are still desired on the
     // identity project — do not treat them as orphans.
     if (options.onlyDesiredProviders && !desiredByProvider.has(row.providerId)) {
+      toKeep.push(row);
       continue;
     }
     // Hard invariant for wrap: never write outside the shadow workspace.
     if (options.mutateRoot && !isPathInside(row.configPath, options.mutateRoot)) {
+      toKeep.push(row);
       continue;
     }
+    toRemove.push(row);
+  }
 
+  // Materialized scripts live at ~/.capa/hooks/<projectId>/<hookId> and are
+  // shared across providers for the same hookId. Only unlink when no kept row
+  // still references that path.
+  const retainedScripts = new Set(
+    toKeep.map((r) => r.scriptPath).filter((p): p is string => !!p),
+  );
+
+  for (const row of toRemove) {
     try {
-      removeManagedHookEntry(projectPath, row);
+      const preserveScript = !!(row.scriptPath && retainedScripts.has(row.scriptPath));
+      removeManagedHookEntry(projectPath, row, { preserveScript });
       removed++;
       db.removeManagedHook(row.projectId, row.providerId, row.hookId);
     } catch (err: unknown) {
