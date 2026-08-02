@@ -118,6 +118,102 @@ describe('authCommand', () => {
     exitSpy.mockRestore();
   });
 
+  describe('access-token path', () => {
+    const originalFetch = globalThis.fetch;
+    let fetchOk = true;
+
+    beforeEach(() => {
+      fetchOk = true;
+      globalThis.fetch = (async () =>
+        new Response(fetchOk ? JSON.stringify({ login: 'u' }) : 'Unauthorized', {
+          status: fetchOk ? 200 : 401,
+          headers: { 'Content-Type': 'application/json' },
+        })) as typeof fetch;
+    });
+
+    afterEach(() => {
+      globalThis.fetch = originalFetch;
+    });
+
+    it('stores a cloud GitHub token without starting the server', async () => {
+      const { stdout } = await captureOutput(() =>
+        authCommand('github.com', { accessToken: 'ghp_test' }),
+      );
+
+      expect(ensureServerMock).not.toHaveBeenCalled();
+      expect(stdout).toContain('Authenticated with github.com using access token');
+
+      const { loadSettings, getDatabasePath } = await import('../../../shared/config');
+      const { CapaDatabase } = await import('../../../db/database');
+      const settings = await loadSettings();
+      const db = new CapaDatabase(getDatabasePath(settings));
+      try {
+        const stored = db.getGitIntegration('github');
+        expect(stored?.access_token).toBe('ghp_test');
+        expect(stored?.host).toBeNull();
+      } finally {
+        db.close();
+      }
+    });
+
+    it('stores a self-hosted token when --type is provided', async () => {
+      const { stdout } = await captureOutput(() =>
+        authCommand('git.corp.com', {
+          accessToken: 'ghe_test',
+          type: 'github-enterprise',
+        }),
+      );
+
+      expect(ensureServerMock).not.toHaveBeenCalled();
+      expect(stdout).toContain('Authenticated with git.corp.com using access token');
+
+      const { loadSettings, getDatabasePath } = await import('../../../shared/config');
+      const { CapaDatabase } = await import('../../../db/database');
+      const settings = await loadSettings();
+      const db = new CapaDatabase(getDatabasePath(settings));
+      try {
+        const stored = db.getGitIntegration('github-enterprise', 'git.corp.com');
+        expect(stored?.access_token).toBe('ghe_test');
+      } finally {
+        db.close();
+      }
+    });
+
+    it('requires --type for unknown self-hosted hosts', async () => {
+      const exitSpy = spyOn(process, 'exit').mockImplementation((() => {}) as typeof process.exit);
+      const { stdout } = await captureOutput(() =>
+        authCommand('git.corp.com', { accessToken: 'tok' }),
+      );
+      expect(stdout).toContain('--type');
+      expect(exitSpy).toHaveBeenCalledWith(1);
+      exitSpy.mockRestore();
+    });
+
+    it('rejects --type on cloud hosts', async () => {
+      const exitSpy = spyOn(process, 'exit').mockImplementation((() => {}) as typeof process.exit);
+      const { stdout } = await captureOutput(() =>
+        authCommand('github.com', {
+          accessToken: 'tok',
+          type: 'github-enterprise',
+        }),
+      );
+      expect(stdout).toContain('--type is not needed');
+      expect(exitSpy).toHaveBeenCalledWith(1);
+      exitSpy.mockRestore();
+    });
+
+    it('exits when the token is invalid', async () => {
+      fetchOk = false;
+      const exitSpy = spyOn(process, 'exit').mockImplementation((() => {}) as typeof process.exit);
+      const { stdout } = await captureOutput(() =>
+        authCommand('github.com', { accessToken: 'bad' }),
+      );
+      expect(stdout).toContain('Invalid Personal Access Token');
+      expect(exitSpy).toHaveBeenCalledWith(1);
+      exitSpy.mockRestore();
+    });
+  });
+
   afterAll(() => {
     mock.restore();
   });

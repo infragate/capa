@@ -27,7 +27,8 @@ export interface GitTokenData {
 }
 
 export interface GitPATConfig {
-  platform: 'github-enterprise' | 'gitlab-self-managed';
-  host: string;
+  platform: GitPlatform;
+  /** Required for github-enterprise / gitlab-self-managed; omit for cloud github/gitlab. */
+  host?: string;
   token: string;
 }

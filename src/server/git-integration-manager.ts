@@ -195,12 +195,23 @@ export class GitIntegrationManager {
 	}
 
 	/**
-	 * Store Personal Access Token for self-managed instances
+	 * Store a Personal Access Token for cloud or self-hosted Git providers.
+	 * Overwrites any existing credential for the platform/host (including OAuth).
 	 */
 	async storePAT(config: GitPATConfig): Promise<void> {
-		this.logger.info(`Storing PAT for ${config.platform} at ${config.host}`);
+		const isSelfHosted =
+			config.platform === "github-enterprise" ||
+			config.platform === "gitlab-self-managed";
 
-		// Validate the token by making a test API call
+		if (isSelfHosted && !config.host) {
+			throw new Error(
+				`Host is required for ${config.platform} Personal Access Tokens.`,
+			);
+		}
+
+		const hostLabel = config.host ?? "cloud";
+		this.logger.info(`Storing PAT for ${config.platform} at ${hostLabel}`);
+
 		const isValid = await this.validatePAT(
 			config.platform,
 			config.host,
@@ -214,23 +225,33 @@ export class GitIntegrationManager {
 		}
 
 		this.db.setGitIntegration(config.platform, {
-			host: config.host,
+			host: config.host ?? null,
 			access_token: config.token,
+			refresh_token: null,
 			token_type: "token",
+			expires_at: null,
 		});
 
-		this.logger.success(`PAT stored for ${config.platform} at ${config.host}`);
+		this.logger.success(`PAT stored for ${config.platform} at ${hostLabel}`);
 	}
 
 	/**
-	 * Validate a Personal Access Token
+	 * Validate a Personal Access Token against the provider's user API.
 	 */
 	private async validatePAT(
-		platform: "github-enterprise" | "gitlab-self-managed",
-		host: string,
+		platform: GitPlatform,
+		host: string | undefined,
 		token: string,
 	): Promise<boolean> {
 		try {
+			if (platform === "github" || platform === "gitlab") {
+				return await this.testToken(platform, token);
+			}
+
+			if (!host) {
+				return false;
+			}
+
 			const apiUrl =
 				platform === "github-enterprise"
 					? `https://${host}/api/v3/user`
