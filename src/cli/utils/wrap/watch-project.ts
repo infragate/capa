@@ -1,4 +1,4 @@
-import { watch, type FSWatcher, existsSync, lstatSync, readdirSync } from 'fs';
+import { watch, type FSWatcher, lstatSync, readdirSync } from 'fs';
 import { join, resolve, basename } from 'path';
 import {
   createWorkspaceSymlink,

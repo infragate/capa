@@ -54,8 +54,8 @@ function symlinkErrorMessage(err: unknown): string {
  * from `linkPath` to `targetPath`.
  */
 export function createWorkspaceSymlink(targetPath: string, linkPath: string): void {
-  const targetIsDir = existsSync(targetPath) && statSync(targetPath).isDirectory();
   try {
+    const targetIsDir = existsSync(targetPath) && statSync(targetPath).isDirectory();
     if (isWin) {
       if (targetIsDir) {
         symlinkSync(targetPath, linkPath, 'junction');

@@ -16,7 +16,7 @@ mock.module('../../utils/server-manager', () => ({
   restartServer: mock(async () => {}),
 }));
 
-const { authCommand } = await import('../auth');
+const { authCommand, normalizeProviderHost } = await import('../auth');
 
 function isolateHome(): { restore: () => void } {
   const home = mkdtempSync(join(tmpdir(), 'capa-auth-home-'));
@@ -142,6 +142,25 @@ describe('authCommand', () => {
     exitSpy.mockRestore();
   });
 
+  describe('normalizeProviderHost', () => {
+    it('accepts DNS hosts, localhost, IPs, and optional ports', () => {
+      expect(normalizeProviderHost('github.com')).toBe('github.com');
+      expect(normalizeProviderHost('git.corp.com:8443')).toBe('git.corp.com:8443');
+      expect(normalizeProviderHost('localhost')).toBe('localhost');
+      expect(normalizeProviderHost('localhost:3000')).toBe('localhost:3000');
+      expect(normalizeProviderHost('192.168.1.10')).toBe('192.168.1.10');
+      expect(normalizeProviderHost('192.168.1.10:8080')).toBe('192.168.1.10:8080');
+      expect(normalizeProviderHost('::1')).toBe('[::1]');
+      expect(normalizeProviderHost('[::1]:8443')).toBe('[::1]:8443');
+    });
+
+    it('rejects schemes and path segments', () => {
+      expect(normalizeProviderHost('https://github.com')).toBeNull();
+      expect(normalizeProviderHost('github.com/org')).toBeNull();
+      expect(normalizeProviderHost('')).toBeNull();
+    });
+  });
+
   describe('access-token path', () => {
     const originalFetch = globalThis.fetch;
     let fetchOk = true;
@@ -198,6 +217,28 @@ describe('authCommand', () => {
       try {
         const stored = db.getGitIntegration('github-enterprise', 'git.corp.com');
         expect(stored?.access_token).toBe('ghe_test');
+      } finally {
+        db.close();
+      }
+    });
+
+    it('stores a self-hosted token for localhost with a port', async () => {
+      const { stdout } = await captureOutput(() =>
+        authCommand('localhost:8443', {
+          accessToken: 'ghe_local',
+          type: 'github-enterprise',
+        }),
+      );
+
+      expect(stdout).toContain('Authenticated with localhost:8443 using access token');
+
+      const { loadSettings, getDatabasePath } = await import('../../../shared/config');
+      const { CapaDatabase } = await import('../../../db/database');
+      const settings = await loadSettings();
+      const db = new CapaDatabase(getDatabasePath(settings));
+      try {
+        const stored = db.getGitIntegration('github-enterprise', 'localhost:8443');
+        expect(stored?.access_token).toBe('ghe_local');
       } finally {
         db.close();
       }

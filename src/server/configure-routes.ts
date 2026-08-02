@@ -1,5 +1,4 @@
 import type { CapaDatabase } from "../db/database";
-import { parseCapabilitiesFile } from "../shared/capabilities";
 import { logger } from "../shared/logger";
 import { detectCapabilitiesFile } from "../shared/paths";
 import { projectUiUrl } from "../shared/ui-urls";

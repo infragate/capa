@@ -1,3 +1,4 @@
+import { isIP } from 'net';
 import { loadSettings, getDatabasePath } from '../../shared/config';
 import { CapaDatabase } from '../../db/database';
 import { ensureServer } from '../utils/server-manager';
@@ -240,9 +241,12 @@ async function authenticateWithAccessToken(
     return;
   }
 
-  if (!isValidProvider(provider)) {
+  const normalizedHost = normalizeProviderHost(provider);
+  if (!normalizedHost) {
     error(`Invalid provider: ${provider}`);
-    error('Provider must be a domain name (e.g., github.com, gitlab.com)');
+    error(
+      'Provider must be a host (e.g., github.com, localhost:8443, 192.168.1.10). Do not include https://',
+    );
     db.close();
     process.exit(1);
     return;
@@ -252,7 +256,7 @@ async function authenticateWithAccessToken(
   let host: string | undefined;
 
   try {
-    ({ platform, host } = resolveTokenAuthTarget(provider, options.type));
+    ({ platform, host } = resolveTokenAuthTarget(normalizedHost, options.type));
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     error(message);
@@ -261,7 +265,7 @@ async function authenticateWithAccessToken(
     return;
   }
 
-  const displayHost = host ?? provider;
+  const displayHost = host ?? normalizedHost;
   info(`Authenticating with access token: ${displayHost}`);
 
   try {
@@ -405,6 +409,57 @@ function formatIntegrationLabel(integration: GitIntegration): {
 
 function isValidProvider(provider: string): boolean {
   return /^[a-z0-9]+([\-\.]{1}[a-z0-9]+)*\.[a-z]{2,}$/i.test(provider);
+}
+
+/**
+ * Normalize a PAT/self-hosted host argument to `host` or `host:port`.
+ * Accepts DNS names, localhost, IPv4/IPv6 literals, and optional ports.
+ * Rejects schemes and path segments. Returns null when invalid.
+ */
+export function normalizeProviderHost(provider: string): string | null {
+  const trimmed = provider.trim();
+  if (!trimmed || /\s/.test(trimmed) || trimmed.includes('://') || trimmed.includes('/')) {
+    return null;
+  }
+
+  // Bare IPv6 (e.g. ::1) is not a valid URL authority; try the bracketed form first.
+  const candidates =
+    isIP(trimmed) === 6
+      ? [`[${trimmed}]`]
+      : [trimmed];
+
+  for (const candidate of candidates) {
+    try {
+      const url = new URL(`https://${candidate}`);
+      const hostname = stripIpv6Brackets(url.hostname);
+      if (!hostname) continue;
+
+      const ipVersion = isIP(hostname);
+      const isLoopback =
+        hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+      const isDnsHost =
+        /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/i.test(
+          hostname,
+        );
+
+      if (!isLoopback && ipVersion === 0 && !isDnsHost) {
+        continue;
+      }
+
+      const hostPart = ipVersion === 6 ? `[${hostname}]` : hostname;
+      return url.port ? `${hostPart}:${url.port}` : hostPart;
+    } catch {
+      // try next candidate
+    }
+  }
+
+  return null;
+}
+
+function stripIpv6Brackets(hostname: string): string {
+  return hostname.startsWith('[') && hostname.endsWith(']')
+    ? hostname.slice(1, -1)
+    : hostname;
 }
 
 async function pollForCompletion(
