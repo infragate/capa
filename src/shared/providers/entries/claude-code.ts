@@ -52,14 +52,19 @@ export const claudeCode: ProviderIntegration = {
 			userPromptSubmit: { event: "UserPromptSubmit" },
 			beforeTool: { event: "PreToolUse" },
 			afterTool: { event: "PostToolUse" },
+			afterToolFailure: { event: "PostToolUseFailure" },
 			beforeShell: { event: "PreToolUse", matcherPrefix: "Bash" },
 			afterShell: { event: "PostToolUse", matcherPrefix: "Bash" },
+			// Cursor has a dedicated beforeReadFile; Claude covers reads via
+			// PostToolUse — we intentionally omit beforeFileRead here so activity
+			// does not double-count Read (before + after).
 			afterFileEdit: {
 				event: "PostToolUse",
 				matcherPrefix: "Edit|MultiEdit|Write",
 			},
 			beforeMcpCall: { event: "PreToolUse", matcherPrefix: "mcp__" },
 			afterMcpCall: { event: "PostToolUse", matcherPrefix: "mcp__" },
+			subagentStart: { event: "SubagentStart" },
 			subagentStop: { event: "SubagentStop" },
 			preCompact: { event: "PreCompact" },
 			stop: { event: "Stop" },

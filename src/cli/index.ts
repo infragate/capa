@@ -12,6 +12,7 @@ import { wrapCommand } from './commands/wrap';
 import { authCommand } from './commands/auth';
 import { upgradeCommand } from './commands/upgrade';
 import { shellCommand } from './commands/sh';
+import { activityIngestCommand } from './commands/activity-ingest';
 import { cacheInfoCommand, cacheCleanCommand } from './commands/cache';
 import {
   registryListCommand,
@@ -261,6 +262,27 @@ if (process.argv[2] === '__server__') {
       .allowUnknownOption()   // pass unknown options (--query, etc.) into args
       .action(async (args: string[]) => {
         await shellCommand(args);
+      });
+
+    program
+      .command('activity-ingest')
+      .description('Internal: ingest provider hook activity into the project Activity feed (fail-open)')
+      .option('-p, --project <id>', 'Project id')
+      .option('-e, --event <name>', 'Canonical hook event name')
+      .option('--provider <id>', 'Provider id to stamp on the activity source')
+      .allowUnknownOption()
+      .action(async (options) => {
+        const args: string[] = [];
+        if (options.project) {
+          args.push('--project', String(options.project));
+        }
+        if (options.event) {
+          args.push('--event', String(options.event));
+        }
+        if (options.provider) {
+          args.push('--provider', String(options.provider));
+        }
+        await activityIngestCommand(args);
       });
 
     const cacheCmd = program

@@ -4,7 +4,7 @@ import { Settings, Plus, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { CapabilitiesOptions, RequiredCommand } from '../../../types/api';
 import { projectDisplayName } from '../../../lib/utils';
-import { useDeleteProject, usePatchOptions, useProject } from '../hooks';
+import { useDeleteProject, usePatchOptions, useProject, useSyncActivityHooks } from '../hooks';
 
 interface OptionsSectionProps {
   projectId: string;
@@ -18,13 +18,27 @@ export function OptionsSection({ projectId, options }: OptionsSectionProps) {
   const navigate = useNavigate();
   const { data: project } = useProject(projectId);
   const patchMutation = usePatchOptions(projectId);
+  const syncActivityHooks = useSyncActivityHooks(projectId);
   const deleteProject = useDeleteProject();
   const [cli, setCli] = useState('');
   const [cliDesc, setCliDesc] = useState('');
 
   const toolExposure = options?.toolExposure || 'on-demand';
+  const agentActivity = options?.agentActivity !== false;
   const requiresCommands: RequiredCommand[] = options?.requiresCommands || [];
   const displayName = projectDisplayName(project?.path, projectId);
+
+  const handleAgentActivityToggle = () => {
+    const next = !agentActivity;
+    patchMutation.mutate(
+      { agentActivity: next },
+      {
+        onSuccess: () => {
+          syncActivityHooks.mutate();
+        },
+      },
+    );
+  };
 
   const handleDeleteProject = () => {
     if (!confirm(t('actions.confirmDeleteProject', { name: displayName }))) return;
@@ -63,6 +77,27 @@ export function OptionsSection({ projectId, options }: OptionsSectionProps) {
               </button>
             ))}
           </div>
+        </div>
+
+        <div>
+          <h3 className="mb-2 text-xs font-medium text-text-primary">
+            {t('options.agentActivity')}
+          </h3>
+          <p className="mb-2 text-xs text-text-tertiary">{t('options.agentActivityHint')}</p>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={agentActivity}
+            disabled={patchMutation.isPending || syncActivityHooks.isPending}
+            onClick={handleAgentActivityToggle}
+            className={`rounded-sm px-2.5 py-1.5 text-xs cursor-pointer disabled:opacity-50 ${
+              agentActivity
+                ? 'bg-accent-primary/15 text-accent-primary'
+                : 'bg-bg-tertiary text-text-secondary hover:bg-hover-bg'
+            }`}
+          >
+            {agentActivity ? t('options.agentActivityOn') : t('options.agentActivityOff')}
+          </button>
         </div>
 
         <div>

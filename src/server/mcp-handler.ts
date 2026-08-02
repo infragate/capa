@@ -35,6 +35,8 @@ import {
 import type { SessionInfo } from "./session-manager";
 import { SessionManager } from "./session-manager";
 import {
+	CAPA_SHELL_CLIENT,
+	getMcpRequestClientName,
 	previewFromToolResult,
 	resolveToolCallSource,
 	type ToolCallTracer,
@@ -175,14 +177,14 @@ export class CapaMCPServer {
 		toolName: string;
 		metaTool?: string | null;
 		args?: unknown;
-		toolType?: "mcp" | "command" | null;
 	}): string | null {
 		if (!this.tracer) return null;
+		const clientName = getMcpRequestClientName() ?? this.clientName;
 		return this.tracer.start({
 			projectId: this.projectId,
 			sessionId: this.sessionId,
 			agentId: this.agentId,
-			source: resolveToolCallSource(this.clientName, input.toolType),
+			source: resolveToolCallSource(clientName),
 			kind: input.kind,
 			toolName: input.toolName,
 			metaTool: input.metaTool ?? null,
@@ -423,9 +425,6 @@ export class CapaMCPServer {
 				kind: "tool",
 				toolName: name,
 				args: cleanArgs,
-				toolType: toolDef?.type === "command" || toolDef?.type === "mcp"
-					? toolDef.type
-					: null,
 			});
 			if (!toolDef) {
 				const missing = {
@@ -709,10 +708,6 @@ export class CapaMCPServer {
 				toolName,
 				metaTool: "call_tool",
 				args: { name: toolName, data: toolData },
-				toolType:
-					toolDef?.type === "command" || toolDef?.type === "mcp"
-						? toolDef.type
-						: "mcp",
 			});
 			if (!toolDef) {
 				this.logger.warn(`Tool not found: ${toolName}`);
@@ -1289,15 +1284,22 @@ export class CapaMCPServer {
 		// Handle initialization
 		if (message.method === "initialize") {
 			this.logger.info("Initialize request");
-			const clientName = message.params?.clientInfo?.name;
-			this.clientName =
-				typeof clientName === "string" && clientName.trim()
-					? clientName.trim()
+			const rawClientName = message.params?.clientInfo?.name;
+			const clientName =
+				typeof rawClientName === "string" && rawClientName.trim()
+					? rawClientName.trim()
 					: null;
+			// capa-shell must not stick on the shared per-project MCP server —
+			// otherwise IDE call_tool/setup_tools inherit source "shell".
+			// capa sh labels traces via X-Capa-Client / request ALS instead.
+			if (clientName && clientName !== CAPA_SHELL_CLIENT) {
+				this.clientName = clientName;
+			}
 			this.ensureSession();
 			this.logger.debug(`Session ID: ${this.sessionId}`);
-			if (this.clientName) {
-				this.logger.debug(`Client: ${this.clientName}`);
+			const effectiveClient = getMcpRequestClientName() ?? clientName;
+			if (effectiveClient) {
+				this.logger.debug(`Client: ${effectiveClient}`);
 			}
 
 			return {
@@ -1579,10 +1581,6 @@ export class CapaMCPServer {
 				kind: "tool",
 				toolName: name,
 				args: cleanArgs,
-				toolType:
-					toolDef?.type === "command" || toolDef?.type === "mcp"
-						? toolDef.type
-						: null,
 			});
 			if (!toolDef) {
 				this.logger.warn("Tool not found");

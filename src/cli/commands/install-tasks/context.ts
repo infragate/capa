@@ -20,6 +20,13 @@ export interface InstallCtx {
   settings: Awaited<ReturnType<typeof loadSettings>>;
   serverStatus: { running: boolean; url: string };
   resolvedProviders: string[];
+  /**
+   * Providers sent to POST /configure (identity / real project session).
+   * For wrap installs this stays the authored capabilities.providers list so
+   * the shadow provider (e.g. claude-code) never mutates the real project's
+   * in-memory provider set or triggers server-side writes for that provider.
+   */
+  configureProviders: string[];
   lockBuilder: LockfileBuilder;
   configureResult?: Record<string, unknown>;
   mcpUrl: string;

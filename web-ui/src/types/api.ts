@@ -187,6 +187,8 @@ export interface SecurityOptions {
 
 export interface CapabilitiesOptions {
   toolExposure: string | null;
+  /** Default true when omitted from capabilities file. */
+  agentActivity: boolean;
   security: SecurityOptions | null;
   requiresCommands: RequiredCommand[];
 }
@@ -326,7 +328,20 @@ export interface OAuthStartResponse {
 }
 
 export type ToolCallStatus = 'running' | 'ok' | 'error';
-export type ToolCallKind = 'setup_tools' | 'call_tool' | 'tool';
+export type ToolCallKind =
+  | 'setup_tools'
+  | 'call_tool'
+  | 'tool'
+  | 'prompt'
+  | 'shell'
+  | 'file'
+  | 'skill'
+  | 'session'
+  | 'subagent'
+  | 'compact'
+  | 'stop'
+  | 'agent_mcp'
+  | 'agent_tool';
 
 export interface ToolCallRecord {
   id: string;

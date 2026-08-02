@@ -9,6 +9,7 @@ import {
   removeTopLevelEntry,
   syncTopLevelSymlinks,
 } from './symlink-workspace';
+import { applyWrapShadowExtras } from './shadow-extras';
 import { installCommand } from '../../commands/install';
 import { parseCapabilitiesFile } from '../../../shared/capabilities';
 import { collectWrapExclusionProviderIds } from '../../../shared/providers';
@@ -259,6 +260,11 @@ export function startWrapWatchers(opts: WatchOpts): WrapWatchers {
         persistProviders: false,
       });
       try {
+        applyWrapShadowExtras(wsRoot, realRoot, opts.providerId, providerIds);
+      } catch {
+        // quiet
+      }
+      try {
         const linked = syncTopLevelSymlinks(realRoot, wsRoot, providerIds);
         for (const name of linked) synced.add(name);
       } catch {
@@ -290,7 +296,8 @@ export function startWrapWatchers(opts: WatchOpts): WrapWatchers {
   function onRealChange(filename: string | null): void {
     if (!filename || stopped) return;
     const name = filename.split(/[/\\]/)[0];
-    if (!name || excluded.has(name) || ignoreReal.has(name)) return;
+    if (!name || ignoreReal.has(name)) return;
+    if (excluded.has(name)) return;
 
     if (!entryExists(realRoot, name)) {
       syncDeleteFromReal(name);
@@ -314,7 +321,8 @@ export function startWrapWatchers(opts: WatchOpts): WrapWatchers {
   function onWsChange(filename: string | null): void {
     if (!filename || stopped) return;
     const name = filename.split(/[/\\]/)[0];
-    if (!name || excluded.has(name) || ignoreWs.has(name)) return;
+    if (!name || ignoreWs.has(name)) return;
+    if (excluded.has(name)) return;
 
     if (!entryExists(wsRoot, name)) {
       syncDeleteFromWorkspace(name);

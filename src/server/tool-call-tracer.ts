@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { nanoid } from "nanoid";
 import type { CapaDatabase } from "../db/database";
 import type {
@@ -7,6 +8,29 @@ import type {
 } from "../types/database";
 
 export const TOOL_CALL_PREVIEW_MAX_CHARS = 6_000;
+
+/** HTTP header so `capa sh` can label traces without polluting sticky MCP client state. */
+export const CAPA_CLIENT_HEADER = "X-Capa-Client";
+export const CAPA_SHELL_CLIENT = "capa-shell";
+
+type McpRequestContext = { clientName: string | null };
+
+const mcpRequestContext = new AsyncLocalStorage<McpRequestContext>();
+
+/** Run an MCP HTTP handler with a per-request client name override. */
+export function runWithMcpRequestClient<T>(
+	clientName: string | null,
+	fn: () => T,
+): T {
+	return mcpRequestContext.run({ clientName }, fn);
+}
+
+/** Per-request client override from {@link runWithMcpRequestClient}, if any. */
+export function getMcpRequestClientName(): string | null {
+	const store = mcpRequestContext.getStore();
+	if (!store) return null;
+	return store.clientName;
+}
 
 export type ToolCallNotify = (
 	projectId: string,
@@ -107,18 +131,15 @@ export class ToolCallTracer {
 	}
 }
 
-/** Map tool execution + MCP clientInfo.name to a stable activity source label. */
+/**
+ * Map MCP clientInfo.name / request client override to a stable activity source.
+ * Entry point wins: `capa-shell` → shell; other named clients keep their name; else mcp.
+ */
 export function resolveToolCallSource(
 	clientName: string | null | undefined,
-	toolType?: "mcp" | "command" | null,
 ): string {
-	// Prefer the executed tool type: command tools are "shell", MCP tools are "mcp"
-	// — even when the client is capa-shell (which speaks MCP for both).
-	if (toolType === "command") return "shell";
-	if (toolType === "mcp") return "mcp";
-	if (clientName && clientName.trim() && clientName !== "capa-shell") {
-		return clientName.trim();
-	}
+	if (clientName === CAPA_SHELL_CLIENT) return "shell";
+	if (clientName && clientName.trim()) return clientName.trim();
 	return "mcp";
 }
 

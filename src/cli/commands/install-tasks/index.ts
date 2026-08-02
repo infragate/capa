@@ -18,6 +18,7 @@ import { installSubagentsTask } from './install-subagents';
 import { validateSubagentRefsTask } from './validate-subagent-refs';
 import { pruneOrphanHooksTask } from './prune-orphan-hooks';
 import { installHooksTask } from './install-hooks';
+import { installSystemActivityHooksTask } from './install-system-activity-hooks';
 import { openCredentialSetupTask } from './open-credential-setup';
 
 export type { InstallCtx, InstallOptions, GetRepoSnapshotFn, SkillInstallOutcome } from './context';
@@ -48,6 +49,7 @@ export function buildInstallTasks(
     installSubagentsTask(),
     pruneOrphanHooksTask(),
     installHooksTask(),
+    installSystemActivityHooksTask(),
     openCredentialSetupTask({ skipOpen: !!opts?.skipCredentialOpen }),
   );
 

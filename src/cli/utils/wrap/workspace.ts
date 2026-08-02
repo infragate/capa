@@ -19,6 +19,7 @@ import {
 import { parseCapabilitiesFile } from '../../../shared/capabilities';
 import { collectWrapExclusionProviderIds } from '../../../shared/providers';
 import { buildSymlinkWorkspace, syncTopLevelSymlinks } from './symlink-workspace';
+import { applyWrapShadowExtras } from './shadow-extras';
 import { installCommand } from '../../commands/install';
 import type { ProviderIntegration } from '../../../types/providers';
 
@@ -205,6 +206,7 @@ async function runWrapInstall(
   workspacePath: string,
   realProjectPath: string,
   providerId: string,
+  exclusionProviderIds: Iterable<string>,
 ): Promise<void> {
   await installCommand({
     projectPath: workspacePath,
@@ -213,6 +215,12 @@ async function runWrapInstall(
     // Keep the real project's stored install providers unchanged.
     persistProviders: false,
   });
+  applyWrapShadowExtras(
+    workspacePath,
+    realProjectPath,
+    providerId,
+    exclusionProviderIds,
+  );
 }
 
 /**
@@ -268,6 +276,7 @@ export async function prepareWorkspace(
     marker!.capabilitiesFingerprint === fingerprint
   ) {
     syncTopLevelSymlinks(real, workspacePath, exclusionProviderIds);
+    applyWrapShadowExtras(workspacePath, real, provider.id, exclusionProviderIds);
     return {
       cachePath,
       workspacePath,
@@ -282,7 +291,7 @@ export async function prepareWorkspace(
   // Existing workspace, capabilities/lock changed → reinstall in place.
   if (workspaceReady) {
     syncTopLevelSymlinks(real, workspacePath, exclusionProviderIds);
-    await runWrapInstall(workspacePath, real, provider.id);
+    await runWrapInstall(workspacePath, real, provider.id, exclusionProviderIds);
     await writeMarker(cachePath, real, provider.id, workName, fingerprint);
     return {
       cachePath,
@@ -302,7 +311,7 @@ export async function prepareWorkspace(
   mkdirSync(workspacePath, { recursive: true });
   buildSymlinkWorkspace(real, workspacePath, exclusionProviderIds);
   await writeMarker(cachePath, real, provider.id, workName, fingerprint);
-  await runWrapInstall(workspacePath, real, provider.id);
+  await runWrapInstall(workspacePath, real, provider.id, exclusionProviderIds);
 
   return {
     cachePath,

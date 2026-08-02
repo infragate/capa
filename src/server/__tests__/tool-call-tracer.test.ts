@@ -7,8 +7,10 @@ import { CapaDatabase } from "../../db/database";
 import { ToolCallsRepo } from "../../db/tool-calls";
 import { initSchema } from "../../db/schema";
 import {
+	getMcpRequestClientName,
 	redactText,
 	resolveToolCallSource,
+	runWithMcpRequestClient,
 	serializeForPreview,
 	ToolCallTracer,
 	truncateText,
@@ -17,13 +19,30 @@ import { notifyToolCall } from "../project-routes";
 import type { ToolCallRecord } from "../../types/database";
 
 describe("tool-call-tracer helpers", () => {
-	it("maps tool type to shell/mcp source (capa-shell is still MCP client)", () => {
-		expect(resolveToolCallSource("capa-shell", "command")).toBe("shell");
-		expect(resolveToolCallSource("capa-shell", "mcp")).toBe("mcp");
-		expect(resolveToolCallSource("capa-shell")).toBe("mcp");
+	it("maps MCP client name to shell/mcp source", () => {
+		expect(resolveToolCallSource("capa-shell")).toBe("shell");
 		expect(resolveToolCallSource("cursor-ide")).toBe("cursor-ide");
 		expect(resolveToolCallSource(null)).toBe("mcp");
 		expect(resolveToolCallSource(undefined)).toBe("mcp");
+		expect(resolveToolCallSource("")).toBe("mcp");
+	});
+
+	it("prefers per-request capa-shell override via ALS", () => {
+		expect(getMcpRequestClientName()).toBeNull();
+		const inside = runWithMcpRequestClient("capa-shell", () => {
+			expect(getMcpRequestClientName()).toBe("capa-shell");
+			return resolveToolCallSource(getMcpRequestClientName());
+		});
+		expect(inside).toBe("shell");
+		expect(getMcpRequestClientName()).toBeNull();
+	});
+
+	it("keeps ALS client across await inside run()", async () => {
+		const source = await runWithMcpRequestClient("capa-shell", async () => {
+			await Promise.resolve();
+			return resolveToolCallSource(getMcpRequestClientName());
+		});
+		expect(source).toBe("shell");
 	});
 
 	it("truncates long text", () => {
@@ -141,6 +160,84 @@ describe("ToolCallsRepo prune", () => {
 		expect(next.calls.map((c) => c.id)).toEqual(["page-3", "page-2"]);
 	});
 
+	it("expands a mid-run page back to the prompt opener", () => {
+		const rows: Array<Pick<ToolCallRecord, "id" | "kind" | "tool_name" | "started_at">> = [
+			{ id: "p", kind: "prompt", tool_name: "hello", started_at: 100 },
+			{ id: "t1", kind: "tool", tool_name: "read", started_at: 110 },
+			{ id: "t2", kind: "tool", tool_name: "edit", started_at: 120 },
+			{ id: "t3", kind: "tool", tool_name: "shell", started_at: 130 },
+			{ id: "s", kind: "stop", tool_name: "stop", started_at: 140 },
+		];
+		for (const r of rows) {
+			repo.insert({
+				id: r.id,
+				project_id: "proj-1",
+				session_id: null,
+				started_at: r.started_at,
+				duration_ms: 1,
+				status: "ok",
+				source: "mcp",
+				kind: r.kind,
+				tool_name: r.tool_name,
+				meta_tool: null,
+				args_json: null,
+				result_preview: null,
+				result_bytes: null,
+				result_tokens: null,
+				error_message: null,
+				agent_id: null,
+			});
+		}
+
+		const page = repo.listRecent("proj-1", { limit: 2 });
+		expect(page.calls.map((c) => c.id)).toEqual(["s", "t3", "t2", "t1", "p"]);
+		expect(page.hasMore).toBe(false);
+	});
+
+	it("expands only the newest run and leaves older runs for the next page", () => {
+		const rows: Array<Pick<ToolCallRecord, "id" | "kind" | "tool_name" | "started_at">> = [
+			{ id: "a-p", kind: "prompt", tool_name: "first", started_at: 100 },
+			{ id: "a-t", kind: "tool", tool_name: "tool-a", started_at: 110 },
+			{ id: "a-s", kind: "stop", tool_name: "stop", started_at: 120 },
+			{ id: "b-p", kind: "prompt", tool_name: "second", started_at: 200 },
+			{ id: "b-t1", kind: "tool", tool_name: "tool-b1", started_at: 210 },
+			{ id: "b-t2", kind: "tool", tool_name: "tool-b2", started_at: 220 },
+		];
+		for (const r of rows) {
+			repo.insert({
+				id: r.id,
+				project_id: "proj-1",
+				session_id: null,
+				started_at: r.started_at,
+				duration_ms: 1,
+				status: "ok",
+				source: "mcp",
+				kind: r.kind,
+				tool_name: r.tool_name,
+				meta_tool: null,
+				args_json: null,
+				result_preview: null,
+				result_bytes: null,
+				result_tokens: null,
+				error_message: null,
+				agent_id: null,
+			});
+		}
+
+		const first = repo.listRecent("proj-1", { limit: 2 });
+		expect(first.calls.map((c) => c.id)).toEqual(["b-t2", "b-t1", "b-p"]);
+		expect(first.hasMore).toBe(true);
+
+		const oldest = first.calls[first.calls.length - 1]!;
+		const next = repo.listRecent("proj-1", {
+			limit: 2,
+			beforeStartedAt: oldest.started_at,
+			beforeId: oldest.id,
+		});
+		expect(next.calls.map((c) => c.id)).toEqual(["a-s", "a-t", "a-p"]);
+		expect(next.hasMore).toBe(false);
+	});
+
 	it("does not skip same-ms ties at a page boundary", () => {
 		const ts = 5000;
 		for (const id of ["a", "b", "c", "d"]) {
@@ -172,6 +269,39 @@ describe("ToolCallsRepo prune", () => {
 			beforeId: oldest.id,
 		});
 		expect(next.calls.map((c) => c.id)).toEqual(["b", "a"]);
+	});
+
+	it("stats count shell/mcp only — provider sources are neither", () => {
+		const rows = [
+			{ id: "s1", source: "shell" },
+			{ id: "m1", source: "mcp" },
+			{ id: "c1", source: "cursor" },
+			{ id: "c2", source: "claude-code" },
+		] as const;
+		for (const r of rows) {
+			repo.insert({
+				id: r.id,
+				project_id: "proj-1",
+				session_id: null,
+				started_at: Date.now(),
+				duration_ms: 5,
+				status: "ok",
+				source: r.source,
+				kind: "tool",
+				tool_name: r.id,
+				meta_tool: null,
+				args_json: null,
+				result_preview: null,
+				result_bytes: null,
+				result_tokens: null,
+				error_message: null,
+				agent_id: null,
+			});
+		}
+		const stats = repo.stats("proj-1");
+		expect(stats.total).toBe(4);
+		expect(stats.shell).toBe(1);
+		expect(stats.mcp).toBe(1);
 	});
 
 	it("does not prune running traces while under pressure", () => {

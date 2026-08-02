@@ -1,5 +1,6 @@
 import { cleanProject } from "../cli/commands/clean-project";
 import type { CapaDatabase } from "../db/database";
+import { isSystemActivityHookId } from "../shared/agent-activity";
 import { parseCapabilitiesFile } from "../shared/capabilities";
 import { detectCapabilitiesFile } from "../shared/paths";
 import { isUnderWrapWorkspacesDir } from "../shared/workspaces/paths";
@@ -250,7 +251,9 @@ export async function handleGetProject(
 							def: r.def || null,
 							sourcePlugin: r.sourcePlugin || null,
 						})),
-						hooks: (capabilities.hooks || []).map((h) => ({
+						hooks: (capabilities.hooks || [])
+							.filter((h) => !isSystemActivityHookId(h.id))
+							.map((h) => ({
 							id: h.id,
 							description: h.description || null,
 							on: h.on,
@@ -302,6 +305,8 @@ export async function handleGetProject(
 						options: capabilities.options
 							? {
 									toolExposure: capabilities.options.toolExposure || null,
+									agentActivity:
+										capabilities.options.agentActivity !== false,
 									security: capabilities.options.security
 										? {
 												blockedPhrases:
