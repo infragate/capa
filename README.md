@@ -55,10 +55,6 @@ The teammate who clones tomorrow gets the exact setup you have today.
 - **`capa add --passthrough`** — write provider-native files directly when you want unmanaged one-offs
 - **Sub-agent isolation** — each sub-agent gets a filtered MCP endpoint, so research agents never inherit a `git push` tool
 
-<p align="center">
-  <img width="1305" height="941" alt="CAPA Architecture" src="https://github.com/user-attachments/assets/a4db54a2-6ea5-43df-baa9-c61c189d30c1" />
-</p>
-
 ## Installation
 
 **macOS and Linux:**
