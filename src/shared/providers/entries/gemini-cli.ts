@@ -67,4 +67,5 @@ export const geminiCli: ProviderIntegration = {
 			preCompact: { event: "PreCompress" },
 		},
 	},
+	wrap: { binary: "gemini", kind: "cli" },
 };

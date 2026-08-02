@@ -70,6 +70,7 @@ export const skillsOnlyProviders: Record<string, ProviderIntegration> = {
 		detectInstalled: async () => existsSync(join(home, ".kimi")),
 		// MCP is global-only (~/.kimi/mcp.json); no project-local file.
 		instructions: { filename: "AGENTS.md" },
+		wrap: { binary: "kimi", kind: "cli" },
 	},
 	mcpjam: {
 		id: "mcpjam",

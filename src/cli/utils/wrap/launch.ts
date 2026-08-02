@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import type { ProviderIntegration } from '../../../types/providers';
+import type { WrapLaunchConfig } from '../../../types/providers';
 
 export interface LaunchResult {
   /** Exit code for CLI providers after they exit. */
@@ -70,20 +70,15 @@ function ignoreParentSigint(): () => void {
 }
 
 /**
- * Launch the provider binary according to wrap.kind.
+ * Launch according to wrap.kind.
  * CLI: blocking spawnSync with inherited console (real TTY for Claude).
  * GUI: returns immediately with `closed`/`kill` so wrap can race window-close vs interrupt.
  */
 export async function launchProvider(
-  provider: ProviderIntegration,
+  wrap: WrapLaunchConfig,
   workspacePath: string,
   args: string[],
 ): Promise<LaunchResult> {
-  const wrap = provider.wrap;
-  if (!wrap) {
-    throw new Error(`Provider "${provider.id}" is not wrappable.`);
-  }
-
   const wrapArgs = wrap.args ?? [];
 
   if (wrap.kind === 'gui') {

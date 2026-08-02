@@ -45,4 +45,5 @@ export const opencode: ProviderIntegration = {
 			value: "allow",
 		},
 	},
+	wrap: { binary: "opencode", kind: "cli" },
 };
