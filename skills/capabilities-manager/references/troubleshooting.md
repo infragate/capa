@@ -124,3 +124,36 @@ If `capa install` does not register the MCP server in `.cursor/mcp.json` or equi
 - This is expected when no tools or subagents are configured in the capabilities file
 - Add at least one tool or subagent to trigger MCP server registration
 - If the server was previously registered but tools were removed, capa automatically unregisters it
+
+### Cannot Run Command Inside Wrap Workspace
+
+If you see `Cannot run "capa <command>" inside a wrap workspace`:
+
+- You are inside `~/.capa/workspaces/...` (or a symlink into it)
+- `cd` back to the real project path shown in the error (or check `.capa-workspace.json` / the wrap marker for `realProjectPath`)
+- Run `capa install` / `capa add` / `capa clean` from the real project; then re-launch with `capa wrap <provider>` if needed
+
+### Wrap Symlink Failures (Windows)
+
+If `capa wrap` fails creating the shadow workspace on Windows:
+
+- Enable [Developer Mode](https://learn.microsoft.com/windows/apps/get-started/enable-your-device-for-development) so symlinks work without elevation, **or** run an elevated shell
+- Confirm the project path is not already a wrap workspace
+- Try `capa wrap --prune` then retry
+
+### Passthrough Wrote Files but `capa clean` Did Not Remove Them
+
+- Expected — `--passthrough` writes unmanaged provider-native files
+- Delete the files manually, or re-add them via managed `capa add` (without `--passthrough`) so future cleans track them
+
+### Activity Feed Empty / Missing Events
+
+- Confirm `options.agentActivity` is not set to `false`
+- Re-run `capa install` so system activity hooks are injected
+- Open the project page in the Web UI (`capa status` for the URL) — Activity lives there, not in the CLI
+- Providers without hook support will not emit lifecycle events (tool calls via the MCP proxy still appear)
+
+### `--tool` Refused With `--passthrough`
+
+- Tool aliases, defaults, and formatters require the managed MCP proxy
+- Drop `--passthrough` and use a normal `capa add --tool …` + `capa install`
