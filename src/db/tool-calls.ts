@@ -1,4 +1,8 @@
 import type { Database } from "bun:sqlite";
+import {
+	isActivityRunCloser,
+	isActivityRunOpener,
+} from "../shared/activity-run-boundary";
 import type { ToolCallRecord, ToolCallStats } from "../types/database";
 
 export const TOOL_CALLS_PER_PROJECT_CAP = 1000;
@@ -36,19 +40,7 @@ export type ToolCallListResult = {
 	hasMore: boolean;
 };
 
-/** Matches web-ui `groupActivityRuns` openers. */
-export function isActivityRunOpener(call: Pick<ToolCallRecord, "kind" | "tool_name">): boolean {
-	if (call.kind === "prompt") return true;
-	if (call.kind === "session" && /start/i.test(call.tool_name)) return true;
-	return false;
-}
-
-/** Matches web-ui `groupActivityRuns` closers. */
-export function isActivityRunCloser(call: Pick<ToolCallRecord, "kind" | "tool_name">): boolean {
-	if (call.kind === "stop") return true;
-	if (call.kind === "session" && /end/i.test(call.tool_name)) return true;
-	return false;
-}
+export { isActivityRunCloser, isActivityRunOpener };
 
 /** Cap how far we walk older rows to complete a cut-off run. */
 const RUN_BOUNDARY_EXPAND_MAX = TOOL_CALLS_PER_PROJECT_CAP;
@@ -337,8 +329,9 @@ export class ToolCallsRepo {
 
 		for (const row of rows) {
 			if (row.status === "error") errors += 1;
+			// Only capa shell / capa MCP — provider hook sources (cursor, etc.) are neither.
 			if (row.source === "shell") shell += 1;
-			else mcp += 1;
+			else if (row.source === "mcp") mcp += 1;
 			if (typeof row.duration_ms === "number") {
 				durationSum += row.duration_ms;
 				durationCount += 1;

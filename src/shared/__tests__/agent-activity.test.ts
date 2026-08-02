@@ -118,6 +118,16 @@ describe("normalizeActivityHookPayload", () => {
 		expect(out.skip).toBe(true);
 	});
 
+	it("does not treat third-party /mcp URLs as capa MCP", () => {
+		const out = normalizeActivityHookPayload("afterMcpCall", {
+			url: "http://localhost:3000/mcp",
+			tool_name: "search",
+			server: "brave",
+		});
+		expect(out.skip).toBe(false);
+		expect(out.kind).toBe("agent_mcp");
+	});
+
 	it("dedups Claude-style mcp__capa tools", () => {
 		const out = normalizeActivityHookPayload("afterTool", {
 			tool_name: "mcp__capa__setup_tools",

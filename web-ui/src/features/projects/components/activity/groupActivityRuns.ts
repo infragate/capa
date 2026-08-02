@@ -1,4 +1,8 @@
 import type { ToolCallRecord } from '../../../../types/api';
+import {
+  isActivityRunCloser,
+  isActivityRunOpener,
+} from '../../../../../../src/shared/activity-run-boundary';
 
 /** A LangSmith-style “run”: a user prompt (optional) + the spans that followed. */
 export interface ActivityRun {
@@ -29,7 +33,7 @@ export function groupActivityRuns(calls: ToolCallRecord[]): ActivityRun[] {
   };
 
   for (const call of chronological) {
-    if (call.kind === 'prompt') {
+    if (isActivityRunOpener(call) && call.kind === 'prompt') {
       flush();
       current = {
         id: call.id,
@@ -44,7 +48,7 @@ export function groupActivityRuns(calls: ToolCallRecord[]): ActivityRun[] {
       continue;
     }
 
-    if (call.kind === 'session' && /start/i.test(call.tool_name)) {
+    if (isActivityRunOpener(call)) {
       flush();
       current = {
         id: call.id,
@@ -76,7 +80,7 @@ export function groupActivityRuns(calls: ToolCallRecord[]): ActivityRun[] {
       if (call.status === 'error') current.hasError = true;
     }
 
-    if (call.kind === 'stop' || (call.kind === 'session' && /end/i.test(call.tool_name))) {
+    if (isActivityRunCloser(call)) {
       flush();
     }
   }
@@ -97,7 +101,13 @@ function finalizeRun(run: ActivityRun): void {
   let maxEnd = points[0]!.started_at + (points[0]!.duration_ms ?? 0);
   for (const p of points) {
     minStart = Math.min(minStart, p.started_at);
-    maxEnd = Math.max(maxEnd, p.started_at + (p.duration_ms ?? 0));
+    const spanEnd =
+      p.duration_ms != null
+        ? p.started_at + p.duration_ms
+        : p.status === 'running'
+          ? Math.max(p.started_at, Date.now())
+          : p.started_at;
+    maxEnd = Math.max(maxEnd, spanEnd);
   }
   run.started_at = minStart;
   run.duration_ms = Math.max(0, maxEnd - minStart);

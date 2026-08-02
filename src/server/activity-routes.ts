@@ -3,27 +3,13 @@ import { parseCapabilitiesFile } from "../shared/capabilities";
 import { isAgentActivityEnabled } from "../shared/agent-activity";
 import { syncSystemActivityHooks } from "../shared/agent-activity-sync";
 import { resolveProvidersForClean } from "../shared/providers/resolve";
-import type { ToolCallKind, ToolCallStatus } from "../types/database";
+import { TOOL_CALL_KINDS, type ToolCallKind, type ToolCallStatus } from "../types/database";
 import type { ToolCallTracer } from "./tool-call-tracer";
 import { type ProjectRouteDeps } from "./project-routes";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
-const ALLOWED_KINDS = new Set<ToolCallKind>([
-	"setup_tools",
-	"call_tool",
-	"tool",
-	"prompt",
-	"shell",
-	"file",
-	"skill",
-	"session",
-	"subagent",
-	"compact",
-	"stop",
-	"agent_mcp",
-	"agent_tool",
-]);
+const ALLOWED_KINDS = new Set<ToolCallKind>(TOOL_CALL_KINDS);
 
 export interface ActivityIngestBody {
 	kind?: string;
@@ -201,8 +187,9 @@ export async function handleSyncActivityHooks(
 			}),
 			{ headers: JSON_HEADERS },
 		);
-	} catch (error: any) {
-		return new Response(JSON.stringify({ error: error.message }), {
+	} catch (error: unknown) {
+		const message = error instanceof Error ? error.message : String(error);
+		return new Response(JSON.stringify({ error: message }), {
 			status: 500,
 			headers: JSON_HEADERS,
 		});

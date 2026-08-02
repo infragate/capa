@@ -5,6 +5,16 @@
 
 import type { ToolCallKind, ToolCallStatus } from "../types/database";
 import type { CanonicalHookEvent } from "../types/hooks";
+import {
+	asRecord,
+	extractPath,
+	nested,
+	nestedString,
+	promptTextFrom,
+	shellCommandFrom,
+	stringField,
+	toolNameFrom,
+} from "./agent-activity-fields";
 
 export interface NormalizedActivityEvent {
 	kind: ToolCallKind;
@@ -19,8 +29,12 @@ export interface NormalizedActivityEvent {
 	skipReason?: string;
 }
 
+/**
+ * Match capa's own MCP endpoint / server — not arbitrary `/mcp` URLs.
+ * Port 5912 is the default capa server port; also match capa-named paths.
+ */
 const CAPA_MCP_RE =
-	/localhost:5912|127\.0\.0\.1:5912|\/mcp\b|capa-.*\/mcp|mcpServers\.capa\b/i;
+	/localhost:5912|127\.0\.0\.1:5912|capa-.*\/mcp|mcpServers\.capa\b/i;
 
 export function normalizeActivityHookPayload(
 	event: CanonicalHookEvent,
@@ -47,6 +61,7 @@ export function normalizeActivityHookPayload(
 	}
 
 	// Outcome-only: ignore lifecycle "before" noise (except file reads).
+	// Kept even though SYSTEM_ACTIVITY_EVENTS omits these — CLI may still receive them.
 	if (
 		event === "beforeTool" ||
 		event === "beforeShell" ||
@@ -135,21 +150,10 @@ function nameForEvent(
 		return skillNameFromPath(extractPath(obj)) || "skill";
 	}
 	if (kind === "shell") {
-		return (
-			stringField(obj, "command") ||
-			stringField(obj, "cmd") ||
-			nestedString(obj, ["tool_input", "command"]) ||
-			nestedString(obj, ["input", "command"]) ||
-			nestedString(obj, ["args", "command"]) ||
-			"shell"
-		);
+		return shellCommandFrom(obj) || "shell";
 	}
 	if (kind === "prompt") {
-		const prompt =
-			stringField(obj, "prompt") ||
-			stringField(obj, "user_prompt") ||
-			stringField(obj, "content") ||
-			nestedString(obj, ["input", "prompt"]);
+		const prompt = promptTextFrom(obj);
 		if (prompt) {
 			const trimmed = prompt.trim().replace(/\s+/g, " ");
 			return trimmed.length > 80 ? `${trimmed.slice(0, 77)}…` : trimmed;
@@ -160,13 +164,7 @@ function nameForEvent(
 		return extractPath(obj) || "file";
 	}
 	if (kind === "agent_mcp") {
-		return (
-			stringField(obj, "tool_name") ||
-			stringField(obj, "toolName") ||
-			stringField(obj, "name") ||
-			nestedString(obj, ["tool", "name"]) ||
-			"mcp"
-		);
+		return toolNameFrom(obj) || "mcp";
 	}
 	if (kind === "session") return event;
 	if (kind === "subagent") {
@@ -180,11 +178,8 @@ function nameForEvent(
 	if (kind === "compact" || kind === "stop") return event;
 
 	return (
-		stringField(obj, "tool_name") ||
-		stringField(obj, "toolName") ||
-		stringField(obj, "name") ||
+		toolNameFrom(obj) ||
 		stringField(obj, "tool") ||
-		nestedString(obj, ["tool", "name"]) ||
 		event
 	);
 }
@@ -216,21 +211,11 @@ function argsForEvent(
 	obj: Record<string, unknown>,
 ): unknown {
 	if (event === "userPromptSubmit") {
-		return {
-			prompt:
-				stringField(obj, "prompt") ||
-				stringField(obj, "user_prompt") ||
-				stringField(obj, "content") ||
-				null,
-		};
+		return { prompt: promptTextFrom(obj) };
 	}
 	if (event === "beforeShell" || event === "afterShell") {
 		return {
-			command:
-				stringField(obj, "command") ||
-				nestedString(obj, ["tool_input", "command"]) ||
-				nestedString(obj, ["input", "command"]) ||
-				null,
+			command: shellCommandFrom(obj),
 			cwd: stringField(obj, "cwd") || stringField(obj, "working_directory") || null,
 		};
 	}
@@ -279,11 +264,7 @@ function isCapaMcpPayload(
 ): boolean {
 	if (event !== "beforeMcpCall" && event !== "afterMcpCall") {
 		// Also catch generic tool events that are capa MCP wrappers
-		const name =
-			stringField(obj, "tool_name") ||
-			stringField(obj, "toolName") ||
-			stringField(obj, "name") ||
-			"";
+		const name = toolNameFrom(obj) || "";
 		if (!/^mcp__/i.test(name) && !/capa/i.test(name)) return false;
 	}
 
@@ -293,9 +274,7 @@ function isCapaMcpPayload(
 		stringField(obj, "mcpServer"),
 		stringField(obj, "url"),
 		stringField(obj, "endpoint"),
-		stringField(obj, "tool_name"),
-		stringField(obj, "toolName"),
-		stringField(obj, "name"),
+		toolNameFrom(obj),
 		nestedString(obj, ["server", "url"]),
 		nestedString(obj, ["server", "name"]),
 		nestedString(obj, ["mcp_server", "url"]),
@@ -341,19 +320,6 @@ function isCapaShCommand(command: string): boolean {
 	return /(?:^|[\s"'\\/])capa(\.exe)?["']?\s+sh\b/.test(c);
 }
 
-function extractPath(obj: Record<string, unknown>): string | null {
-	return (
-		stringField(obj, "file_path") ||
-		stringField(obj, "filePath") ||
-		stringField(obj, "path") ||
-		nestedString(obj, ["tool_input", "file_path"]) ||
-		nestedString(obj, ["tool_input", "path"]) ||
-		nestedString(obj, ["input", "file_path"]) ||
-		nestedString(obj, ["input", "path"]) ||
-		null
-	);
-}
-
 function isSkillMdPath(path: string | null): boolean {
 	if (!path) return false;
 	return /(^|[/\\])SKILL\.md$/i.test(path);
@@ -375,38 +341,6 @@ function inferProvider(obj: Record<string, unknown>): string | null {
 		if (/^(before|after|session|pre|stop)/.test(hookEvent)) return "cursor";
 	}
 	return null;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-	if (value && typeof value === "object" && !Array.isArray(value)) {
-		return value as Record<string, unknown>;
-	}
-	return null;
-}
-
-function stringField(
-	obj: Record<string, unknown>,
-	key: string,
-): string | null {
-	const v = obj[key];
-	return typeof v === "string" && v.trim() ? v : null;
-}
-
-function nested(obj: Record<string, unknown>, path: string[]): unknown {
-	let cur: unknown = obj;
-	for (const key of path) {
-		if (!cur || typeof cur !== "object") return undefined;
-		cur = (cur as Record<string, unknown>)[key];
-	}
-	return cur;
-}
-
-function nestedString(
-	obj: Record<string, unknown>,
-	path: string[],
-): string | null {
-	const v = nested(obj, path);
-	return typeof v === "string" && v.trim() ? v : null;
 }
 
 function summarizeRaw(obj: Record<string, unknown>): Record<string, unknown> {

@@ -147,7 +147,7 @@ export function PayloadBlock({
             }}
           >
             {copied ? <Check size={10} /> : <Copy size={10} />}
-            {copied ? 'Copied' : 'Copy'}
+            {copied ? t('activity.copied') : t('activity.copy')}
           </button>
         </div>
       </div>
@@ -190,7 +190,7 @@ export function PayloadBlock({
                   }}
                 >
                   <Copy size={12} />
-                  Copy
+                  {t('activity.copy')}
                 </button>
                 <Dialog.Close asChild>
                   <button

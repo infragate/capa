@@ -271,6 +271,39 @@ describe("ToolCallsRepo prune", () => {
 		expect(next.calls.map((c) => c.id)).toEqual(["b", "a"]);
 	});
 
+	it("stats count shell/mcp only — provider sources are neither", () => {
+		const rows = [
+			{ id: "s1", source: "shell" },
+			{ id: "m1", source: "mcp" },
+			{ id: "c1", source: "cursor" },
+			{ id: "c2", source: "claude-code" },
+		] as const;
+		for (const r of rows) {
+			repo.insert({
+				id: r.id,
+				project_id: "proj-1",
+				session_id: null,
+				started_at: Date.now(),
+				duration_ms: 5,
+				status: "ok",
+				source: r.source,
+				kind: "tool",
+				tool_name: r.id,
+				meta_tool: null,
+				args_json: null,
+				result_preview: null,
+				result_bytes: null,
+				result_tokens: null,
+				error_message: null,
+				agent_id: null,
+			});
+		}
+		const stats = repo.stats("proj-1");
+		expect(stats.total).toBe(4);
+		expect(stats.shell).toBe(1);
+		expect(stats.mcp).toBe(1);
+	});
+
 	it("does not prune running traces while under pressure", () => {
 		for (let i = 0; i < 4; i++) {
 			repo.insert({

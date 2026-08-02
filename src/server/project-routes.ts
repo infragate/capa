@@ -1,5 +1,6 @@
 import { cleanProject } from "../cli/commands/clean-project";
 import type { CapaDatabase } from "../db/database";
+import { isSystemActivityHookId } from "../shared/agent-activity";
 import { parseCapabilitiesFile } from "../shared/capabilities";
 import { detectCapabilitiesFile } from "../shared/paths";
 import { isUnderWrapWorkspacesDir } from "../shared/workspaces/paths";
@@ -251,7 +252,7 @@ export async function handleGetProject(
 							sourcePlugin: r.sourcePlugin || null,
 						})),
 						hooks: (capabilities.hooks || [])
-							.filter((h) => !h.id.startsWith("capa-sys-activity-"))
+							.filter((h) => !isSystemActivityHookId(h.id))
 							.map((h) => ({
 							id: h.id,
 							description: h.description || null,

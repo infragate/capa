@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { projectsApi } from './api';
+import { subscribeProjectEvents } from './project-events';
 import type {
   CapabilitySection,
   ProjectDetail,
@@ -88,50 +89,48 @@ export function useProjectCapabilitiesLiveSync(projectId: string | null) {
   useEffect(() => {
     if (!projectId) return;
 
-    let es: EventSource | null = null;
-    let disposed = false;
-
     const sync = () => {
-      void qc.invalidateQueries({ queryKey: ['project', projectId] });
-      void qc.invalidateQueries({ queryKey: ['variables', projectId] });
-      void qc.invalidateQueries({ queryKey: ['oauth2-servers', projectId] });
-      void qc.invalidateQueries({ queryKey: ['server-tools', projectId] });
-      void qc.invalidateQueries({ queryKey: ['skill-content', projectId] });
+      invalidateProjectQueries(qc, projectId);
     };
 
-    const connect = () => {
-      if (disposed) return;
-      es?.close();
-      es = new EventSource(`/api/projects/${encodeURIComponent(projectId)}/events`);
-      es.addEventListener('capabilities-changed', sync);
-      // Refetch after every (re)connect — covers events missed while disconnected.
-      es.onopen = () => {
-        sync();
-      };
-    };
-
-    connect();
-
-    return () => {
-      disposed = true;
-      es?.removeEventListener('capabilities-changed', sync);
-      es?.close();
-      es = null;
-    };
+    return subscribeProjectEvents(projectId, {
+      onOpen: sync,
+      onCapabilitiesChanged: sync,
+    });
   }, [projectId, qc]);
 }
+
+const ACTIVITY_PAGE_SIZE = 50;
+const ACTIVITY_RETENTION = 1000;
+/** Coalesce busy-agent stats invalidations. */
+const STATS_INVALIDATE_MS = 2_000;
 
 function mergeToolCall(prev: ToolCallRecord[], next: ToolCallRecord): ToolCallRecord[] {
   const idx = prev.findIndex((c) => c.id === next.id);
   if (idx === -1) {
-    return [next, ...prev].slice(0, 1000);
+    return [next, ...prev].slice(0, ACTIVITY_RETENTION);
   }
   const copy = prev.slice();
   copy[idx] = next;
   return copy;
 }
 
-const ACTIVITY_PAGE_SIZE = 50;
+function mergeHistorySeed(
+  prev: ToolCallRecord[],
+  pageCalls: ToolCallRecord[],
+): ToolCallRecord[] {
+  if (prev.length === 0) return pageCalls;
+  const byId = new Map<string, ToolCallRecord>();
+  // Prefer live/updated rows already in state; seed fills gaps from page 1.
+  for (const c of pageCalls) byId.set(c.id, c);
+  for (const c of prev) byId.set(c.id, c);
+  return [...byId.values()]
+    .sort((a, b) => {
+      if (b.started_at !== a.started_at) return b.started_at - a.started_at;
+      return b.id.localeCompare(a.id);
+    })
+    .slice(0, ACTIVITY_RETENTION);
+}
 
 /**
  * Recent tool-call activity + live SSE updates for the project page feed.
@@ -144,6 +143,8 @@ export function useProjectActivity(projectId: string | null) {
   const [total, setTotal] = useState(0);
   const [live, setLive] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  const seededForData = useRef<unknown>(null);
+  const statsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const history = useQuery({
     queryKey: ['activity', projectId],
@@ -159,45 +160,67 @@ export function useProjectActivity(projectId: string | null) {
   });
 
   useEffect(() => {
+    seededForData.current = null;
+    setCalls([]);
+    setHasMore(false);
+    setTotal(0);
+  }, [projectId]);
+
+  useEffect(() => {
     if (!history.data) return;
-    setCalls(history.data.calls);
-    setHasMore(history.data.hasMore);
-    setTotal(history.data.total);
+    // Seed page-1 once per fetch result; never wipe live/loadMore merges on refetch.
+    if (seededForData.current === history.data) return;
+    seededForData.current = history.data;
+    const page = history.data;
+    setCalls((prev) => {
+      const wasPaginated = prev.length > ACTIVITY_PAGE_SIZE;
+      const merged = mergeHistorySeed(prev, page.calls);
+      if (!wasPaginated) {
+        setHasMore(page.hasMore);
+      }
+      setTotal(page.total);
+      return merged;
+    });
   }, [history.data]);
 
   useEffect(() => {
     if (!projectId) return;
 
-    let es: EventSource | null = null;
-    let disposed = false;
+    const scheduleStatsInvalidate = () => {
+      if (statsTimer.current) return;
+      statsTimer.current = setTimeout(() => {
+        statsTimer.current = null;
+        void qc.invalidateQueries({ queryKey: ['activity-stats', projectId] });
+      }, STATS_INVALIDATE_MS);
+    };
 
     const onToolCall = (ev: MessageEvent) => {
       try {
         const record = JSON.parse(String(ev.data)) as ToolCallRecord;
         setCalls((prev) => mergeToolCall(prev, record));
-        void qc.invalidateQueries({ queryKey: ['activity-stats', projectId] });
+        scheduleStatsInvalidate();
       } catch {
         // ignore malformed events
       }
     };
 
-    const connect = () => {
-      if (disposed) return;
-      es?.close();
-      es = new EventSource(`/api/projects/${encodeURIComponent(projectId)}/events`);
-      es.addEventListener('tool-call', onToolCall);
-      es.onopen = () => setLive(true);
-      es.onerror = () => setLive(false);
-    };
-
-    connect();
+    const unsub = subscribeProjectEvents(projectId, {
+      onOpen: () => {
+        setLive(true);
+        // Recover rows missed while disconnected without wiping loadMore.
+        void qc.invalidateQueries({ queryKey: ['activity', projectId] });
+      },
+      onError: () => setLive(false),
+      onToolCall,
+    });
 
     return () => {
-      disposed = true;
+      unsub();
       setLive(false);
-      es?.removeEventListener('tool-call', onToolCall);
-      es?.close();
-      es = null;
+      if (statsTimer.current) {
+        clearTimeout(statsTimer.current);
+        statsTimer.current = null;
+      }
     };
   }, [projectId, qc]);
 
@@ -215,7 +238,7 @@ export function useProjectActivity(projectId: string | null) {
       setCalls((prev) => {
         const seen = new Set(prev.map((c) => c.id));
         const appended = page.calls.filter((c) => !seen.has(c.id));
-        return [...prev, ...appended].slice(0, 1000);
+        return [...prev, ...appended].slice(0, ACTIVITY_RETENTION);
       });
       setHasMore(page.hasMore);
       setTotal(page.total);

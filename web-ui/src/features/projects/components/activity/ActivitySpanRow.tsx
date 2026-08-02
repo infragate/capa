@@ -125,7 +125,7 @@ export function ActivitySpanRow({
             <span>{sourceLabelText(call.source, t)}</span>
             <span className="tabular-nums">{formatRelative(call.started_at)}</span>
             {call.meta_tool && call.meta_tool !== call.tool_name ? (
-              <span>via {call.meta_tool}</span>
+              <span>{t('activity.via')} {call.meta_tool}</span>
             ) : null}
           </div>
           <div className="grid gap-2 md:grid-cols-2">

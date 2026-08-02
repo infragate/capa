@@ -47,6 +47,45 @@ describe('groupActivityRuns', () => {
     expect(runs[0]!.title).toBe('second');
     expect(runs[1]!.title).toBe('first');
   });
+
+  it('closes a run on stop and orphans become singleton runs', () => {
+    const calls = [
+      call({ id: '4', kind: 'shell', tool_name: 'orphan', started_at: 400 }),
+      call({ id: '3', kind: 'stop', tool_name: 'stop', started_at: 300 }),
+      call({ id: '2', kind: 'shell', tool_name: 'ls', started_at: 200 }),
+      call({ id: '1', kind: 'prompt', tool_name: 'do it', started_at: 100 }),
+    ];
+    const runs = groupActivityRuns(calls);
+    expect(runs).toHaveLength(2);
+    expect(runs[0]!.title).toBe('orphan');
+    expect(runs[1]!.spans.map((s) => s.id)).toEqual(['2', '3']);
+  });
+
+  it('opens a run on session start and closes on session end', () => {
+    const calls = [
+      call({ id: '3', kind: 'session', tool_name: 'sessionEnd', started_at: 300 }),
+      call({ id: '2', kind: 'shell', tool_name: 'ls', started_at: 200 }),
+      call({ id: '1', kind: 'session', tool_name: 'sessionStart', started_at: 100 }),
+    ];
+    const runs = groupActivityRuns(calls);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]!.spans.map((s) => s.id)).toEqual(['1', '2', '3']);
+  });
+
+  it('flags hasError when any span errors', () => {
+    const calls = [
+      call({
+        id: '2',
+        kind: 'shell',
+        tool_name: 'bad',
+        started_at: 200,
+        status: 'error',
+      }),
+      call({ id: '1', kind: 'prompt', tool_name: 'go', started_at: 100 }),
+    ];
+    const runs = groupActivityRuns(calls);
+    expect(runs[0]!.hasError).toBe(true);
+  });
 });
 
 describe('isCapaToolCall', () => {

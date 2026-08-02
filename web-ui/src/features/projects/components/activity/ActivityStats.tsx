@@ -57,6 +57,12 @@ export function ActivityStatsBar({ stats, live }: ActivityStatsProps) {
         warn={!!stats && stats.errors > 0}
       />
       <Stat label={t('activity.avgDuration')} value={avg} />
+      {stats && (stats.shell > 0 || stats.mcp > 0) ? (
+        <Stat
+          label={t('activity.shellVsMcp')}
+          value={`${stats.shell} / ${stats.mcp}`}
+        />
+      ) : null}
     </div>
   );
 }

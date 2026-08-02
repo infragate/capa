@@ -51,20 +51,23 @@ export interface Session {
 
 export type ToolCallStatus = 'running' | 'ok' | 'error';
 /** Activity row kind — capa MCP tools plus provider-hook agent events. */
-export type ToolCallKind =
-  | 'setup_tools'
-  | 'call_tool'
-  | 'tool'
-  | 'prompt'
-  | 'shell'
-  | 'file'
-  | 'skill'
-  | 'session'
-  | 'subagent'
-  | 'compact'
-  | 'stop'
-  | 'agent_mcp'
-  | 'agent_tool';
+export const TOOL_CALL_KINDS = [
+  'setup_tools',
+  'call_tool',
+  'tool',
+  'prompt',
+  'shell',
+  'file',
+  'skill',
+  'session',
+  'subagent',
+  'compact',
+  'stop',
+  'agent_mcp',
+  'agent_tool',
+] as const;
+
+export type ToolCallKind = (typeof TOOL_CALL_KINDS)[number];
 
 export interface ToolCallRecord {
   id: string;

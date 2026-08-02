@@ -19,8 +19,7 @@ import {
 import { parseCapabilitiesFile } from '../../../shared/capabilities';
 import { collectWrapExclusionProviderIds } from '../../../shared/providers';
 import { buildSymlinkWorkspace, syncTopLevelSymlinks } from './symlink-workspace';
-import { installWrapProviderNoiseRule } from './provider-noise-rule';
-import { syncWrapProviderConfig } from './provider-config-sync';
+import { applyWrapShadowExtras } from './shadow-extras';
 import { installCommand } from '../../commands/install';
 import type { ProviderIntegration } from '../../../types/providers';
 
@@ -216,8 +215,12 @@ async function runWrapInstall(
     // Keep the real project's stored install providers unchanged.
     persistProviders: false,
   });
-  syncWrapProviderConfig(workspacePath, realProjectPath, providerId);
-  installWrapProviderNoiseRule(workspacePath, providerId, exclusionProviderIds);
+  applyWrapShadowExtras(
+    workspacePath,
+    realProjectPath,
+    providerId,
+    exclusionProviderIds,
+  );
 }
 
 /**
@@ -273,8 +276,7 @@ export async function prepareWorkspace(
     marker!.capabilitiesFingerprint === fingerprint
   ) {
     syncTopLevelSymlinks(real, workspacePath, exclusionProviderIds);
-    syncWrapProviderConfig(workspacePath, real, provider.id);
-    installWrapProviderNoiseRule(workspacePath, provider.id, exclusionProviderIds);
+    applyWrapShadowExtras(workspacePath, real, provider.id, exclusionProviderIds);
     return {
       cachePath,
       workspacePath,
