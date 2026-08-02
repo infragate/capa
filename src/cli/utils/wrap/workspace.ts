@@ -19,6 +19,7 @@ import {
 import { parseCapabilitiesFile } from '../../../shared/capabilities';
 import { collectWrapExclusionProviderIds } from '../../../shared/providers';
 import { buildSymlinkWorkspace, syncTopLevelSymlinks } from './symlink-workspace';
+import { syncWrapGitExclude } from './git-exclude-sync';
 import { installCommand } from '../../commands/install';
 import type { ProviderIntegration } from '../../../types/providers';
 
@@ -268,6 +269,7 @@ export async function prepareWorkspace(
     marker!.capabilitiesFingerprint === fingerprint
   ) {
     syncTopLevelSymlinks(real, workspacePath, exclusionProviderIds);
+    syncWrapGitExclude(real, workspacePath, exclusionProviderIds);
     return {
       cachePath,
       workspacePath,
@@ -282,6 +284,7 @@ export async function prepareWorkspace(
   // Existing workspace, capabilities/lock changed → reinstall in place.
   if (workspaceReady) {
     syncTopLevelSymlinks(real, workspacePath, exclusionProviderIds);
+    syncWrapGitExclude(real, workspacePath, exclusionProviderIds);
     await runWrapInstall(workspacePath, real, provider.id);
     await writeMarker(cachePath, real, provider.id, workName, fingerprint);
     return {
