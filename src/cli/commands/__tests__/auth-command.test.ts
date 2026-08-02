@@ -102,6 +102,30 @@ describe('authCommand', () => {
     expect(ensureServerMock).toHaveBeenCalled();
   });
 
+  it('lists self-hosted integrations alongside cloud providers', async () => {
+    const { loadSettings, getDatabasePath } = await import('../../../shared/config');
+    const { CapaDatabase } = await import('../../../db/database');
+    const settings = await loadSettings();
+    const db = new CapaDatabase(getDatabasePath(settings));
+    try {
+      db.setGitIntegration('github', {
+        access_token: 'gh',
+        token_type: 'token',
+      });
+      db.setGitIntegration('github-enterprise', {
+        host: 'git.corp.com',
+        access_token: 'ghe',
+        token_type: 'token',
+      });
+    } finally {
+      db.close();
+    }
+
+    const { stdout } = await captureOutput(() => authCommand());
+    expect(stdout).toContain('github.com');
+    expect(stdout).toContain('GitHub Enterprise (git.corp.com)');
+  });
+
   it('exits with a clear error for an invalid provider format', async () => {
     const exitSpy = spyOn(process, 'exit').mockImplementation((() => {}) as typeof process.exit);
     const { stdout } = await captureOutput(() => authCommand('not-a-valid-domain'));

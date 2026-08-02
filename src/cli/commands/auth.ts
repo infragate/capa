@@ -2,10 +2,14 @@ import { loadSettings, getDatabasePath } from '../../shared/config';
 import { CapaDatabase } from '../../db/database';
 import { ensureServer } from '../utils/server-manager';
 import { VERSION } from '../../version';
-import { getGitProviderByHost } from '../../shared/git-providers/registry';
+import {
+  getGitProvider,
+  getGitProviderByHost,
+} from '../../shared/git-providers/registry';
 import { GitIntegrationManager } from '../../server/git-integration-manager';
 import { header, footer, success, info, warn, error, runTasks } from '../ui';
 import type { GitPlatform } from '../../types/git-integration';
+import type { GitIntegration } from '../../types/database';
 
 const SELF_HOSTED_TYPES = ['github-enterprise', 'gitlab-self-managed'] as const;
 type SelfHostedType = (typeof SELF_HOSTED_TYPES)[number];
@@ -215,6 +219,7 @@ export async function authCommand(
     error(`Error: ${message}`);
     db.close();
     process.exit(1);
+    return;
   }
 
   db.close();
@@ -281,6 +286,7 @@ async function authenticateWithAccessToken(
     error(`Error: ${message}`);
     db.close();
     process.exit(1);
+    return;
   }
 
   db.close();
@@ -323,18 +329,18 @@ function isSelfHostedType(value: string): value is SelfHostedType {
 function listConnectedProviders(db: CapaDatabase): void {
   info('Connected Git Providers:');
 
-  const tokens = db.getAllGitOAuthTokens();
-  if (tokens.length === 0) {
+  const integrations = db.getAllGitIntegrations();
+  if (integrations.length === 0) {
     info('  No providers connected yet.');
     return;
   }
 
-  for (const token of tokens) {
-    const providerEmoji = getGitProviderByHost(token.provider)?.emoji ?? '🔗';
-    info(`  ${providerEmoji} ${token.provider}`);
+  for (const integration of integrations) {
+    const { emoji, label } = formatIntegrationLabel(integration);
+    info(`  ${emoji} ${label}`);
 
-    if (token.expires_at) {
-      const expiresAt = new Date(token.expires_at);
+    if (integration.expires_at) {
+      const expiresAt = new Date(integration.expires_at);
       const now = new Date();
       const hoursUntilExpiry = Math.floor(
         (expiresAt.getTime() - now.getTime()) / (1000 * 60 * 60),
@@ -355,7 +361,7 @@ function listConnectedProviders(db: CapaDatabase): void {
         );
       }
 
-      if (token.refresh_token) {
+      if (integration.refresh_token) {
         success('    Auto-refresh enabled');
       } else {
         warn('    No refresh token (will need manual re-auth after expiration)');
@@ -364,6 +370,37 @@ function listConnectedProviders(db: CapaDatabase): void {
       success('    No expiration');
     }
   }
+}
+
+function formatIntegrationLabel(integration: GitIntegration): {
+  emoji: string;
+  label: string;
+} {
+  const gp = getGitProvider(integration.platform);
+  if (gp && !integration.host) {
+    return { emoji: gp.emoji, label: gp.host };
+  }
+
+  if (integration.platform === 'github-enterprise') {
+    return {
+      emoji: '🐙',
+      label: `GitHub Enterprise (${integration.host ?? 'unknown host'})`,
+    };
+  }
+
+  if (integration.platform === 'gitlab-self-managed') {
+    return {
+      emoji: '🦊',
+      label: `GitLab Self-Managed (${integration.host ?? 'unknown host'})`,
+    };
+  }
+
+  return {
+    emoji: '🔗',
+    label: integration.host
+      ? `${integration.platform} (${integration.host})`
+      : integration.platform,
+  };
 }
 
 function isValidProvider(provider: string): boolean {
