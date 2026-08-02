@@ -10,6 +10,7 @@ import {
   syncTopLevelSymlinks,
 } from './symlink-workspace';
 import { installWrapProviderNoiseRule } from './provider-noise-rule';
+import { syncWrapProviderConfig } from './provider-config-sync';
 import { installCommand } from '../../commands/install';
 import { parseCapabilitiesFile } from '../../../shared/capabilities';
 import { collectWrapExclusionProviderIds } from '../../../shared/providers';
@@ -260,6 +261,7 @@ export function startWrapWatchers(opts: WatchOpts): WrapWatchers {
         persistProviders: false,
       });
       try {
+        syncWrapProviderConfig(wsRoot, realRoot, opts.providerId);
         installWrapProviderNoiseRule(wsRoot, opts.providerId, providerIds);
       } catch {
         // quiet
