@@ -18,6 +18,11 @@ import {
 import { getProjectPluginsDir } from '../../shared/plugin-paths';
 import { getProvider } from '../../shared/providers';
 import { getGitProvider } from '../../shared/git-providers/registry';
+import { assertSafeRepoPath } from '../../shared/repo-file';
+import {
+  describeUnsafeCapabilityId,
+  isSafeCapabilityId,
+} from '../../shared/safe-id';
 import { toCanonicalOrScopedHookOn } from '../utils/hooks/provider-map';
 import { coalescePluginHook } from '../utils/hooks/plugin-hook-merge';
 import {
@@ -193,12 +198,26 @@ export async function resolvePlugins(
 
   function installSkillTree(entryId: string, srcSkillDir: string, pluginName: string): void {
     if (!existsSync(join(srcSkillDir, 'SKILL.md'))) return;
+    if (!isSafeCapabilityId(entryId)) {
+      warnings.push(
+        `Plugin "${pluginName}": skipping skill "${entryId}" — ${describeUnsafeCapabilityId('Skill', entryId)}`,
+      );
+      return;
+    }
 
     for (const client of providers) {
       const providerEntry = getProvider(client);
       if (!providerEntry) continue;
       const skillsBaseDir = join(projectPath, providerEntry.skillsDir);
-      const destSkillDir = join(skillsBaseDir, entryId);
+      let destSkillDir: string;
+      try {
+        destSkillDir = assertSafeRepoPath(skillsBaseDir, entryId);
+      } catch {
+        warnings.push(
+          `Plugin "${pluginName}": skill "${entryId}" for ${client} resolves outside the skills directory; skipping.`,
+        );
+        continue;
+      }
       try {
         if (existsSync(destSkillDir)) {
           if (!trackManaged) {
@@ -402,10 +421,23 @@ export async function resolvePlugins(
     // Materialize legacy commands/ into skill dirs on the stable plugin copy
     const commandSkillEntries: { id: string; relativePath: string }[] = [];
     for (const cmd of manifest.commandEntries ?? []) {
-      const destRel = join('.capa-commands', cmd.id);
-      const destDir = join(pluginStablePath, destRel);
+      if (!isSafeCapabilityId(cmd.id)) {
+        warnings.push(
+          `Plugin "${manifest.name}": skipping command "${cmd.id}" — ${describeUnsafeCapabilityId('Command', cmd.id)}`,
+        );
+        continue;
+      }
+      let destDir: string;
+      try {
+        destDir = assertSafeRepoPath(join(pluginStablePath, '.capa-commands'), cmd.id);
+      } catch {
+        warnings.push(
+          `Plugin "${manifest.name}": command "${cmd.id}" resolves outside the plugin copy; skipping.`,
+        );
+        continue;
+      }
       if (materializeCommandAsSkill(pluginStablePath, cmd, destDir)) {
-        commandSkillEntries.push({ id: cmd.id, relativePath: destRel });
+        commandSkillEntries.push({ id: cmd.id, relativePath: join('.capa-commands', cmd.id) });
       }
     }
 
@@ -415,6 +447,12 @@ export async function resolvePlugins(
     ];
 
     for (const entry of allSkillEntries) {
+      if (!isSafeCapabilityId(entry.id)) {
+        warnings.push(
+          `Plugin "${manifest.name}": skipping skill "${entry.id}" — ${describeUnsafeCapabilityId('Skill', entry.id)}`,
+        );
+        continue;
+      }
       const srcSkillDir = join(pluginStablePath, entry.relativePath);
       if (!existsSync(join(srcSkillDir, 'SKILL.md'))) continue;
 
@@ -493,6 +531,12 @@ export async function resolvePlugins(
     const pluginSkillIdSet = new Set(pluginSkillIds);
 
     for (const agent of manifest.agentEntries ?? []) {
+      if (!isSafeCapabilityId(agent.id)) {
+        warnings.push(
+          `Plugin "${manifest.name}": skipping subagent "${agent.id}" — ${describeUnsafeCapabilityId('Sub-agent', agent.id)}`,
+        );
+        continue;
+      }
       if (registeredSubagentIds.has(agent.id)) {
         warnings.push(
           `Plugin subagent id "${agent.id}" collides with an existing subagent; skipping.`,
@@ -581,6 +625,12 @@ export async function resolvePlugins(
     }
 
     for (const ruleEntry of manifest.ruleEntries ?? []) {
+      if (!isSafeCapabilityId(ruleEntry.id)) {
+        warnings.push(
+          `Plugin "${manifest.name}": skipping rule "${ruleEntry.id}" — ${describeUnsafeCapabilityId('Rule', ruleEntry.id)}`,
+        );
+        continue;
+      }
       if (registeredRuleIds.has(ruleEntry.id)) {
         warnings.push(
           `Plugin rule id "${ruleEntry.id}" collides with an existing rule; skipping.`,

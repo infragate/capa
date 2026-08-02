@@ -8,6 +8,10 @@ import { getProvider, getAllProviders } from '../../../../shared/providers';
 import { getGitProvider } from '../../../../shared/git-providers/registry';
 import { LockfileBuilder } from '../../../../shared/lockfile';
 import { assertSafeRepoPath } from '../../../../shared/repo-file';
+import {
+  describeUnsafeCapabilityId,
+  isSafeCapabilityId,
+} from '../../../../shared/safe-id';
 import { copySkillTree } from '../../../../shared/skill-copy';
 import { parseRepoString } from '../../../../shared/repo-string';
 import {
@@ -64,6 +68,10 @@ export async function installOneSkill(
 ): Promise<SkillInstallOutcome> {
   const trackManaged = opts?.trackManaged !== false;
   const authFetch = createAuthenticatedFetch(db);
+
+  if (!isSafeCapabilityId(skill.id)) {
+    throw new Error(describeUnsafeCapabilityId('Skill', skill.id));
+  }
 
   let skillMarkdown: string;
   let additionalFiles: Map<string, string> = new Map();
@@ -302,7 +310,7 @@ export async function installOneSkill(
     }
 
     const skillsBaseDir = join(projectPath, providerEntry.skillsDir);
-    const skillDir = join(skillsBaseDir, skill.id);
+    const skillDir = assertSafeRepoPath(skillsBaseDir, skill.id);
     const skillMdPath = join(skillDir, 'SKILL.md');
 
     if (existsSync(skillDir)) {
@@ -335,7 +343,7 @@ export async function installOneSkill(
       writeFileSync(skillMdPath, skillMarkdown, 'utf-8');
       for (const [filePath, content] of additionalFiles) {
         if (!isTextFile(filePath)) continue;
-        const fullPath = join(skillDir, filePath);
+        const fullPath = assertSafeRepoPath(skillDir, filePath);
         mkdirSync(dirname(fullPath), { recursive: true });
         writeFileSync(fullPath, content, 'utf-8');
       }
@@ -343,7 +351,7 @@ export async function installOneSkill(
       mkdirSync(skillDir, { recursive: true });
       writeFileSync(skillMdPath, skillMarkdown, 'utf-8');
       for (const [filePath, content] of additionalFiles) {
-        const fullPath = join(skillDir, filePath);
+        const fullPath = assertSafeRepoPath(skillDir, filePath);
         const fileDir = dirname(fullPath);
         if (!existsSync(fileDir)) {
           mkdirSync(fileDir, { recursive: true });

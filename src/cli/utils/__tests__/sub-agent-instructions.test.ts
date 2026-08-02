@@ -305,4 +305,16 @@ describe('removeSubAgentInstructions', () => {
     removeSubAgentInstructions(tempDir, 'ghost-agent', ['claude-code']);
     removeSubAgentInstructions(tempDir, 'ghost-agent', ['cursor']);
   });
+
+  it('skips sub-agent ids that would leave the agents directory', () => {
+    const escapeId = '../../../../tmp/capa-should-not-exist-agent';
+    const subAgent: SubAgent = {
+      id: escapeId,
+      description: 'should not write',
+      skills: [],
+      tools: [],
+    };
+    installSubAgentInstructions(tempDir, subAgent, capabilities, ['cursor']);
+    expect(existsSync(join(tempDir, '.cursor', 'agents', `${escapeId}.md`))).toBe(false);
+  });
 });

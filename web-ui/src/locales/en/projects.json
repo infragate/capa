@@ -20,7 +20,7 @@
   },
   "detail": {
     "title": "Project Configuration",
-    "subtitle": "Configure credentials and OAuth connections for this project",
+    "subtitle": "Edit capabilities, credentials, and activity for this project",
     "noProjectId": "No project ID specified",
     "plugins": "Plugins",
     "pluginsDescription": "Installed from remote repositories. Skills and servers from these plugins appear in the sections below.",

@@ -1,11 +1,16 @@
 import { existsSync, mkdirSync, writeFileSync, unlinkSync } from 'fs';
-import { isAbsolute, join, relative, resolve } from 'path';
+import { join } from 'path';
 import type { SubAgent, Capabilities } from '../../../types/capabilities';
 import { getProvider } from '../../../shared/providers';
 import {
   buildSubAgentFile as buildSubAgentFileContent,
   renderSubAgentSkillsAndTools,
 } from '../../../shared/providers/handlers';
+import { assertSafeRepoPath } from '../../../shared/repo-file';
+import {
+  describeUnsafeCapabilityId,
+  isSafeCapabilityId,
+} from '../../../shared/safe-id';
 import { taskLog } from '../../ui';
 import { readMdFile, writeMdFile } from './md-io';
 import { upsertSnippet, removeSnippet } from './snippets';
@@ -72,16 +77,23 @@ function writeSubAgentFile(
   const provider = getProvider(providerId);
   if (!provider?.subagents) return;
 
+  if (!isSafeCapabilityId(subAgent.id)) {
+    taskLog(
+      `  ⚠ Skipping subagent "${subAgent.id}": ${describeUnsafeCapabilityId('Sub-agent', subAgent.id)}`,
+    );
+    return;
+  }
+
   const { subagents: sa } = provider;
   const agentsDir = join(projectPath, sa.dir);
   mkdirSync(agentsDir, { recursive: true });
 
-  const agentsDirResolved = resolve(agentsDir);
-  const filePath = resolve(agentsDir, `${subAgent.id}${sa.extension}`);
-  const rel = relative(agentsDirResolved, filePath);
-  if (!rel || rel.startsWith('..') || isAbsolute(rel)) {
+  let filePath: string;
+  try {
+    filePath = assertSafeRepoPath(agentsDir, `${subAgent.id}${sa.extension}`);
+  } catch {
     taskLog(
-      `  ⚠ Skipping subagent "${subAgent.id}": id escapes ${sa.dir} (refusing path traversal)`,
+      `  ⚠ Skipping subagent "${subAgent.id}": id resolves outside ${sa.dir}`,
     );
     return;
   }
@@ -95,9 +107,18 @@ function writeSubAgentFile(
 function removeSubAgentFile(projectPath: string, providerId: string, agentId: string): void {
   const provider = getProvider(providerId);
   if (!provider?.subagents) return;
+  if (!isSafeCapabilityId(agentId)) return;
 
   const { subagents: sa } = provider;
-  const filePath = join(projectPath, sa.dir, `${agentId}${sa.extension}`);
+  let filePath: string;
+  try {
+    filePath = assertSafeRepoPath(
+      join(projectPath, sa.dir),
+      `${agentId}${sa.extension}`,
+    );
+  } catch {
+    return;
+  }
   if (existsSync(filePath)) {
     unlinkSync(filePath);
     taskLog(`  ✓ Removed ${sa.dir}/${agentId}${sa.extension}`);
