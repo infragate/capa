@@ -126,14 +126,22 @@ describe("normalizeActivityHookPayload", () => {
 		expect(out.skip).toBe(true);
 	});
 
-	it("keeps non-capa MCP", () => {
-		const out = normalizeActivityHookPayload(
-			"afterMcpCall",
-			{ tool_name: "brave_search", server: "brave" },
-			"claude-code",
-		);
+	it("skips capa MCP payloads that only nest under mcpServers.capa", () => {
+		const out = normalizeActivityHookPayload("afterMcpCall", {
+			tool_name: "list_tools",
+			mcpServers: { capa: { url: "http://127.0.0.1:5912/p/mcp" } },
+		});
+		expect(out.skip).toBe(true);
+	});
+
+	it("does not stringify large unrelated fields when detecting capa MCP", () => {
+		const huge = "x".repeat(200_000);
+		const out = normalizeActivityHookPayload("afterMcpCall", {
+			tool_name: "brave_search",
+			server: "brave",
+			transcript: huge,
+		});
 		expect(out.skip).toBe(false);
 		expect(out.kind).toBe("agent_mcp");
-		expect(out.toolName).toBe("brave_search");
 	});
 });

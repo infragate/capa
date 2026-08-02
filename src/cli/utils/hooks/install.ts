@@ -47,6 +47,8 @@ export interface InstallHooksOptions {
    * Pass `''` for passthrough so `capa clean` will not remove these entries.
    */
   nameTagPrefix?: string;
+  /** When true, suppress CLI progress lines (server / quiet callers). */
+  quiet?: boolean;
 }
 
 export interface InstallHooksResult {
@@ -179,7 +181,9 @@ export async function installHooks(opts: InstallHooksOptions): Promise<InstallHo
           });
         }
         installed++;
-        taskLog(`  ✓ Installed hook "${hook.id}" → ${provider.displayName} (${eventName})`);
+        if (!opts.quiet) {
+          taskLog(`  ✓ Installed hook "${hook.id}" → ${provider.displayName} (${eventName})`);
+        }
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         warnings.push(`Hook "${hook.id}" → ${provider.displayName}: ${msg}`);

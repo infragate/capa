@@ -42,6 +42,14 @@ async function resolveAgentActivityEnabled(
 	projectId: string,
 	projectPath: string,
 ): Promise<boolean> {
+	// Prefer in-memory session caps (updated by configure / file watcher).
+	// Avoid disk I/O + YAML parse on every high-frequency ingest event.
+	try {
+		const live = deps.sessionManager.getProjectCapabilities(projectId);
+		if (live) return isAgentActivityEnabled(live.options);
+	} catch {
+		/* fall through */
+	}
 	try {
 		const file = await detectCapabilitiesFile(projectPath);
 		if (file) {
@@ -49,10 +57,9 @@ async function resolveAgentActivityEnabled(
 			return isAgentActivityEnabled(disk.options);
 		}
 	} catch {
-		/* fall through */
+		/* fail-open to enabled default */
 	}
-	const caps = deps.sessionManager.getProjectCapabilities(projectId);
-	return isAgentActivityEnabled(caps?.options);
+	return isAgentActivityEnabled(undefined);
 }
 
 export async function handlePostProjectActivityEvent(
@@ -143,22 +150,20 @@ export async function handleSyncActivityHooks(
 	}
 
 	const capabilities = await parseCapabilitiesFile(file.path, file.format);
-	const providers = resolveProvidersForClean({
+	let providers = resolveProvidersForClean({
 		capabilitiesProviders: capabilities.providers,
 		db: deps.db,
 		projectId,
 	});
+	// When the capabilities file / DB have no providers (common after wrap with
+	// persistProviders=false), still sync against providers that already have
+	// managed hooks so pruneOrphanHooks can remove stale capa-sys-activity entries.
 	if (providers.length === 0) {
-		return new Response(
-			JSON.stringify({
-				success: true,
-				enabled: isAgentActivityEnabled(capabilities.options),
-				installed: 0,
-				removed: 0,
-				warnings: ["No providers configured — nothing to sync"],
-			}),
-			{ headers: JSON_HEADERS },
-		);
+		providers = [
+			...new Set(
+				deps.db.getManagedHooks(projectId).map((row) => row.providerId),
+			),
+		];
 	}
 
 	try {
@@ -169,6 +174,7 @@ export async function handleSyncActivityHooks(
 			capabilities,
 			providers,
 			db: deps.db,
+			quiet: true,
 		});
 
 		const liveCaps = deps.sessionManager.getProjectCapabilities(projectId);
@@ -180,13 +186,18 @@ export async function handleSyncActivityHooks(
 			deps.sessionManager.setProjectCapabilities(projectId, liveCaps);
 		}
 
+		const warnings = [...result.warnings];
+		if (providers.length === 0) {
+			warnings.push("No providers configured — pruned managed hooks only");
+		}
+
 		return new Response(
 			JSON.stringify({
 				success: true,
 				enabled: result.enabled,
 				installed: result.installed,
 				removed: result.removed,
-				warnings: result.warnings,
+				warnings,
 			}),
 			{ headers: JSON_HEADERS },
 		);

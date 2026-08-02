@@ -80,16 +80,7 @@ describe("handlePostProjectActivityEvent", () => {
 	});
 
 	it("returns 204 when agentActivity is disabled", async () => {
-		writeFileSync(
-			join(dir, "capabilities.yaml"),
-			[
-				"providers: [cursor]",
-				"options:",
-				"  toolExposure: on-demand",
-				"  agentActivity: false",
-				"skills: []",
-			].join("\n"),
-		);
+		// Session caps are the fast path; disk is not consulted when session is warm.
 		sessionManager.setProjectCapabilities("proj-1", {
 			providers: ["cursor"],
 			options: { agentActivity: false },
@@ -113,5 +104,38 @@ describe("handlePostProjectActivityEvent", () => {
 		);
 		expect(res.status).toBe(204);
 		expect(db.listToolCalls("proj-1", { limit: 10 }).calls.length).toBe(0);
+	});
+
+	it("falls back to disk when session capabilities are missing", async () => {
+		const diskDir = mkdtempSync(join(tmpdir(), "capa-activity-disk-"));
+		try {
+			writeFileSync(
+				join(diskDir, "capabilities.yaml"),
+				[
+					"providers: [cursor]",
+					"options:",
+					"  toolExposure: on-demand",
+					"  agentActivity: false",
+					"skills: []",
+				].join("\n"),
+			);
+			db.upsertProject({ id: "proj-disk-only", path: diskDir });
+			const res = await handlePostProjectActivityEvent(
+				deps,
+				"proj-disk-only",
+				new Request("http://localhost/x", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({
+						kind: "shell",
+						toolName: "echo hi",
+						status: "ok",
+					}),
+				}),
+			);
+			expect(res.status).toBe(204);
+		} finally {
+			rmSync(diskDir, { recursive: true, force: true });
+		}
 	});
 });

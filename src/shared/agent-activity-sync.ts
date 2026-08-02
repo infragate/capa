@@ -30,6 +30,8 @@ export async function syncSystemActivityHooks(opts: {
 	capabilities: Capabilities;
 	providers: string[];
 	db: CapaDatabase;
+	/** Suppress CLI-style install logs (server / API callers). */
+	quiet?: boolean;
 }): Promise<SyncSystemActivityHooksResult> {
 	const warnings: string[] = [];
 	const enabled = isAgentActivityEnabled(opts.capabilities.options);
@@ -69,6 +71,7 @@ export async function syncSystemActivityHooks(opts: {
 				providers: [providerId],
 				db: opts.db,
 				authFetch,
+				quiet: opts.quiet,
 				getRepoSnapshot: async () => {
 					throw new Error("system activity hooks do not fetch remote sources");
 				},

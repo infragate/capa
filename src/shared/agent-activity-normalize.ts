@@ -287,23 +287,35 @@ function isCapaMcpPayload(
 		if (!/^mcp__/i.test(name) && !/capa/i.test(name)) return false;
 	}
 
-	const haystack = JSON.stringify(obj);
-	if (CAPA_MCP_RE.test(haystack)) return true;
+	const candidates = [
+		stringField(obj, "server"),
+		stringField(obj, "mcp_server"),
+		stringField(obj, "mcpServer"),
+		stringField(obj, "url"),
+		stringField(obj, "endpoint"),
+		stringField(obj, "tool_name"),
+		stringField(obj, "toolName"),
+		stringField(obj, "name"),
+		nestedString(obj, ["server", "url"]),
+		nestedString(obj, ["server", "name"]),
+		nestedString(obj, ["mcp_server", "url"]),
+		nestedString(obj, ["mcpServer", "url"]),
+		nestedString(obj, ["tool_input", "server"]),
+		nestedString(obj, ["input", "server"]),
+	];
+	for (const value of candidates) {
+		if (!value) continue;
+		if (/^capa\b/i.test(value) || CAPA_MCP_RE.test(value)) return true;
+		if (/^mcp__capa/i.test(value)) return true;
+	}
 
-	const server =
-		stringField(obj, "server") ||
-		stringField(obj, "mcp_server") ||
-		stringField(obj, "url") ||
-		"";
-	if (/^capa\b/i.test(server) || CAPA_MCP_RE.test(server)) return true;
-
-	const toolName =
-		stringField(obj, "tool_name") ||
-		stringField(obj, "toolName") ||
-		stringField(obj, "name") ||
-		"";
-	// Claude-style mcp__capa__* or mcp__<project>__*
-	if (/^mcp__capa/i.test(toolName)) return true;
+	// Config-shaped payloads sometimes nest capa under mcpServers without a URL.
+	const mcpServers = obj.mcpServers ?? obj.mcp_servers;
+	if (mcpServers && typeof mcpServers === "object" && !Array.isArray(mcpServers)) {
+		for (const key of Object.keys(mcpServers as Record<string, unknown>)) {
+			if (/^capa\b/i.test(key) || CAPA_MCP_RE.test(key)) return true;
+		}
+	}
 
 	return false;
 }
