@@ -4,7 +4,7 @@
 import { existsSync } from "fs";
 import { join } from "path";
 import type { ProviderIntegration } from "../../../types/providers";
-import { configHome, home } from "../paths";
+import { home } from "../paths";
 
 export const partialIntegrationProviders: Record<string, ProviderIntegration> =
 	{

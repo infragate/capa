@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "fs";
-import { isAbsolute, join, relative, resolve } from "path";
+import { isAbsolute, relative, resolve } from "path";
 import {
 	isAbsolute as isWinAbsolute,
 	resolve as winResolve,
