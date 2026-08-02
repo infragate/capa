@@ -58,6 +58,7 @@ export function ActivitySection({ projectId }: ActivitySectionProps) {
           hasMore={hasMore}
           loadingMore={loadingMore}
           onLoadMore={() => void loadMore()}
+          live={live}
         />
       )}
     </div>

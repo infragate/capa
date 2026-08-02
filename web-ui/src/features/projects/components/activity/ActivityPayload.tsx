@@ -77,12 +77,15 @@ export function PayloadBlock({
   showSize = false,
   originalBytes,
   originalTokens,
+  /** Raise z-index when opened from inside another dialog. */
+  nested = false,
 }: {
   label: string;
   text: string;
   showSize?: boolean;
   originalBytes?: number | null;
   originalTokens?: number | null;
+  nested?: boolean;
 }) {
   const { t } = useTranslation('projects');
   const [copied, setCopied] = useState(false);
@@ -96,6 +99,9 @@ export function PayloadBlock({
     if (typeof originalTokens === 'number') return originalTokens;
     return estimateTokens(text);
   }, [originalTokens, text]);
+
+  const overlayZ = nested ? 'z-[60]' : 'z-40';
+  const contentZ = nested ? 'z-[70]' : 'z-50';
 
   return (
     <div className="overflow-hidden rounded-md border border-border-secondary bg-bg-secondary">
@@ -152,10 +158,16 @@ export function PayloadBlock({
 
       <Dialog.Root open={dialogOpen} onOpenChange={setDialogOpen}>
         <Dialog.Portal>
-          <Dialog.Overlay className="ui-overlay fixed inset-0 z-40 bg-black/40" />
+          <Dialog.Overlay
+            className={cn('ui-overlay fixed inset-0 bg-black/40', overlayZ)}
+          />
           <Dialog.Content
-            className="ui-dialog fixed z-50 flex max-h-[min(90vh,720px)] w-[min(720px,94vw)] flex-col rounded-lg border border-border-primary bg-bg-secondary p-5 shadow-lg"
+            className={cn(
+              'ui-dialog fixed flex max-h-[min(90vh,720px)] w-[min(720px,94vw)] flex-col rounded-lg border border-border-primary bg-bg-secondary p-5 shadow-lg',
+              contentZ,
+            )}
             onClick={(e) => e.stopPropagation()}
+            onOpenAutoFocus={(e) => e.preventDefault()}
           >
             <div className="mb-3 flex shrink-0 items-center justify-between gap-3">
               <div className="min-w-0">

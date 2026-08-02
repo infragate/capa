@@ -252,7 +252,7 @@
   },
   "activity": {
     "heading": "Activity",
-    "subtitle": "Trace tree of agent runs — expand a span for inputs and outputs",
+    "subtitle": "Opening events for each agent run — open a run to follow spans live",
     "traces": "Runs",
     "title": "Agent activity",
     "live": "live",
@@ -263,7 +263,7 @@
     "shellVsMcp": "shell / other",
     "chartAria": "Agent activity events per minute over the last hour",
     "chartWindow": "last hour",
-    "empty": "No runs yet. Chat with an agent in this project to see a trace tree here.",
+    "empty": "No runs yet. Chat with an agent in this project to see runs here.",
     "loading": "Loading activity…",
     "loadMore": "Load more",
     "viewFull": "View full",
@@ -288,7 +288,11 @@
     "result": "Outputs",
     "error": "Error",
     "timestamp": "Time",
-    "tokens": "tokens"
+    "tokens": "tokens",
+    "followLatest": "Follow latest",
+    "followingLatest": "Following",
+    "closeRun": "Close run",
+    "runOk": "ok"
   },
   "tool": {
     "from": "from",
