@@ -140,6 +140,16 @@ export function formatRelative(ts: number): string {
   return `${hours}h ago`;
 }
 
+/** Local wall-clock time for span rows (HH:mm:ss). */
+export function formatClockTime(ts: number): string {
+  return new Date(ts).toLocaleTimeString(undefined, {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+}
+
 export function kindLabel(kind: string): string {
   switch (kind) {
     case 'agent_tool':

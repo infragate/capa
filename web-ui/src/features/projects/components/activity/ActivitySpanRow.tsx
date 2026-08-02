@@ -4,15 +4,19 @@ import type { ToolCallRecord } from '../../../../types/api';
 import { cn } from '../../../../lib/utils';
 import { PayloadBlock, formatArgsSummary } from './ActivityPayload';
 import {
+  formatClockTime,
   formatDuration,
   formatRelative,
   isCapaToolCall,
 } from './groupActivityRuns';
-import { KindBadge, LatencyBar, sourceLabelText, statusDotClass } from './ActivityShared';
+import { KindBadge, SpanTimelineBar, sourceLabelText, statusDotClass } from './ActivityShared';
 
 interface ActivitySpanRowProps {
   call: ToolCallRecord;
-  maxMs: number;
+  /** Inclusive run timeline start (ms epoch). */
+  runStart: number;
+  /** Inclusive run timeline end (ms epoch). */
+  runEnd: number;
   /** Called when the user expands a span (e.g. to pause follow-latest). */
   onInspect?: () => void;
   /** Nested payload dialogs sit above the run dialog. */
@@ -21,7 +25,8 @@ interface ActivitySpanRowProps {
 
 export function ActivitySpanRow({
   call,
-  maxMs,
+  runStart,
+  runEnd,
   onInspect,
   nestedPayload = false,
 }: ActivitySpanRowProps) {
@@ -29,6 +34,8 @@ export function ActivitySpanRow({
   const [open, setOpen] = useState(false);
   const summary = useMemo(() => formatArgsSummary(call.args_json), [call.args_json]);
   const capa = isCapaToolCall(call);
+  const errored = call.status === 'error';
+  const running = call.status === 'running';
 
   return (
     <div className="group/span">
@@ -45,15 +52,19 @@ export function ActivitySpanRow({
         className={cn(
           'flex w-full items-center gap-2.5 px-3 py-1.5 text-left cursor-pointer',
           'transition-colors duration-100',
+          errored && 'bg-error-bg hover:bg-error-bg',
           capa
             ? cn(
-                'border-l-2 border-l-accent-primary bg-accent-primary/[0.04]',
-                'hover:bg-accent-primary/[0.08]',
-                open && 'bg-accent-primary/[0.1]',
+                'border-l-2 border-l-accent-primary',
+                !errored && 'bg-accent-primary/[0.04] hover:bg-accent-primary/[0.08]',
+                open && !errored && 'bg-accent-primary/[0.1]',
+                open && errored && 'bg-error-bg',
               )
             : cn(
-                'border-l-2 border-l-transparent hover:bg-hover-bg/70',
-                open && 'bg-bg-tertiary/40',
+                'border-l-2 border-l-transparent',
+                !errored && 'hover:bg-hover-bg/70',
+                open && !errored && 'bg-bg-tertiary/40',
+                errored && 'border-l-error-text/50',
               ),
         )}
       >
@@ -79,14 +90,23 @@ export function ActivitySpanRow({
             </span>
           ) : null}
         </span>
-        <LatencyBar
-          ms={call.duration_ms}
-          maxMs={maxMs}
-          errored={call.status === 'error'}
+        <SpanTimelineBar
+          runStart={runStart}
+          runEnd={runEnd}
+          startedAt={call.started_at}
+          durationMs={call.duration_ms}
+          running={running}
+          errored={errored}
           capa={capa}
         />
         <span className="w-12 shrink-0 text-right text-[11px] tabular-nums text-text-tertiary">
           {formatDuration(call.duration_ms)}
+        </span>
+        <span
+          className="w-[4.75rem] shrink-0 text-right text-[11px] tabular-nums text-text-tertiary"
+          title={new Date(call.started_at).toLocaleString()}
+        >
+          {formatClockTime(call.started_at)}
         </span>
       </button>
 
@@ -94,9 +114,11 @@ export function ActivitySpanRow({
         <div
           className={cn(
             'border-y px-3 py-3',
-            capa
-              ? 'border-accent-primary/20 bg-accent-primary/[0.03]'
-              : 'border-border-secondary/80 bg-bg-primary/50',
+            errored
+              ? 'border-error-border/60 bg-error-bg/70'
+              : capa
+                ? 'border-accent-primary/20 bg-accent-primary/[0.03]'
+                : 'border-border-secondary/80 bg-bg-primary/50',
           )}
         >
           <div className="mb-2.5 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-text-tertiary">

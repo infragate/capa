@@ -76,3 +76,59 @@ export function LatencyBar({
     </div>
   );
 }
+
+/**
+ * Gantt-style bar: segment position/width within the parent run timeline
+ * so each span shows where it sits relative to the others.
+ */
+export function SpanTimelineBar({
+  runStart,
+  runEnd,
+  startedAt,
+  durationMs,
+  running,
+  errored,
+  capa,
+}: {
+  runStart: number;
+  runEnd: number;
+  startedAt: number;
+  durationMs: number | null | undefined;
+  running?: boolean;
+  errored?: boolean;
+  capa?: boolean;
+}) {
+  const total = Math.max(runEnd - runStart, 1);
+  const spanEnd =
+    durationMs != null
+      ? startedAt + durationMs
+      : running
+        ? Math.max(startedAt, Math.min(Date.now(), runEnd))
+        : startedAt;
+  const leftPct = Math.max(0, Math.min(100, ((startedAt - runStart) / total) * 100));
+  const rawWidth = ((Math.max(spanEnd, startedAt) - startedAt) / total) * 100;
+  // Keep a visible stub for instant spans; clamp so it never overflows the track.
+  const widthPct = Math.max(rawWidth < 0.8 ? 0.8 : rawWidth, 0.8);
+  const clampedWidth = Math.min(widthPct, 100 - leftPct);
+
+  return (
+    <div
+      className="relative hidden h-1.5 w-32 shrink-0 overflow-hidden rounded-full bg-border-secondary md:block"
+      title={`${Math.round(leftPct)}% → ${Math.round(leftPct + clampedWidth)}% of run`}
+    >
+      <div
+        className={cn(
+          'absolute top-0 h-full rounded-full transition-[left,width] duration-300 ease-out',
+          errored
+            ? 'bg-error-text/75'
+            : running
+              ? 'bg-accent-primary/80'
+              : capa
+                ? 'bg-accent-primary/70'
+                : 'bg-text-tertiary/65',
+        )}
+        style={{ left: `${leftPct}%`, width: `${clampedWidth}%` }}
+      />
+    </div>
+  );
+}

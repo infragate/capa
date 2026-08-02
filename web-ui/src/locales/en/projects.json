@@ -276,6 +276,7 @@
     "colSource": "Source",
     "colSpans": "Spans",
     "colLatency": "Latency",
+    "colTimeline": "Timeline",
     "colTime": "Time",
     "capaBadge": "capa",
     "noInput": "No input",

@@ -8,7 +8,6 @@ import {
   type ActivityRun,
   formatDuration,
   formatRelative,
-  maxSpanDuration,
 } from './groupActivityRuns';
 import { ActivitySpanRow } from './ActivitySpanRow';
 import { sourceLabelText } from './ActivityShared';
@@ -32,6 +31,27 @@ function runIsLive(run: ActivityRun): boolean {
   return runEvents(run).some((e) => e.status === 'running');
 }
 
+/** Absolute [start, end] of the run timeline for Gantt positioning. */
+function runTimelineBounds(run: ActivityRun, events: ToolCallRecord[]): {
+  start: number;
+  end: number;
+} {
+  const start = run.started_at;
+  let end = start + (run.duration_ms ?? 0);
+  const now = Date.now();
+  for (const e of events) {
+    const spanEnd =
+      e.duration_ms != null
+        ? e.started_at + e.duration_ms
+        : e.status === 'running'
+          ? Math.max(e.started_at, now)
+          : e.started_at;
+    end = Math.max(end, spanEnd);
+  }
+  if (runIsLive(run)) end = Math.max(end, now);
+  return { start, end: Math.max(end, start + 1) };
+}
+
 export function ActivityRunDialog({
   run,
   open,
@@ -45,8 +65,11 @@ export function ActivityRunDialog({
   const eventCount = run ? runEvents(run).length : 0;
   const prevCountRef = useRef(eventCount);
 
-  const maxMs = useMemo(() => (run ? maxSpanDuration([run]) : 1), [run]);
   const events = useMemo(() => (run ? runEvents(run) : []), [run]);
+  const timeline = useMemo(
+    () => (run ? runTimelineBounds(run, events) : { start: 0, end: 1 }),
+    [run, events],
+  );
   const errors = run ? runErrorCount(run) : 0;
   const running = run ? runIsLive(run) : false;
 
@@ -88,7 +111,7 @@ export function ActivityRunDialog({
         <Dialog.Overlay className="ui-overlay fixed inset-0 z-40 bg-black/45" />
         <Dialog.Content
           className={cn(
-            'ui-dialog fixed z-50 flex w-[min(920px,96vw)] flex-col',
+            'ui-dialog fixed z-50 flex w-[min(1180px,98vw)] flex-col',
             'max-h-[min(92vh,880px)] overflow-hidden rounded-lg',
             'border border-border-primary bg-bg-secondary shadow-lg',
           )}
@@ -171,17 +194,21 @@ export function ActivityRunDialog({
                 onScroll={onScroll}
                 className="min-h-0 flex-1 overflow-y-auto"
               >
-                <div className="sticky top-0 z-[1] flex items-center gap-2 border-b border-border-secondary bg-bg-secondary/95 px-3 py-1.5 text-[10px] font-medium uppercase tracking-[0.07em] text-text-tertiary backdrop-blur-sm">
+                <div className="sticky top-0 z-[1] flex items-center gap-2.5 border-b border-border-secondary bg-bg-secondary/95 px-3 py-1.5 text-[10px] font-medium uppercase tracking-[0.07em] text-text-tertiary backdrop-blur-sm">
                   <span className="w-4 shrink-0" />
                   <span className="min-w-0 flex-1">{t('activity.colName')}</span>
-                  <span className="hidden md:inline w-14 shrink-0" />
+                  <span className="hidden md:inline w-32 shrink-0 text-center">
+                    {t('activity.colTimeline')}
+                  </span>
                   <span className="w-12 shrink-0 text-right">{t('activity.colLatency')}</span>
+                  <span className="w-[4.75rem] shrink-0 text-right">{t('activity.colTime')}</span>
                 </div>
                 {events.map((ev) => (
                   <ActivitySpanRow
                     key={ev.id}
                     call={ev}
-                    maxMs={maxMs}
+                    runStart={timeline.start}
+                    runEnd={timeline.end}
                     nestedPayload
                     onInspect={() => setFollowLatest(false)}
                   />
