@@ -160,6 +160,84 @@ describe("ToolCallsRepo prune", () => {
 		expect(next.calls.map((c) => c.id)).toEqual(["page-3", "page-2"]);
 	});
 
+	it("expands a mid-run page back to the prompt opener", () => {
+		const rows: Array<Pick<ToolCallRecord, "id" | "kind" | "tool_name" | "started_at">> = [
+			{ id: "p", kind: "prompt", tool_name: "hello", started_at: 100 },
+			{ id: "t1", kind: "tool", tool_name: "read", started_at: 110 },
+			{ id: "t2", kind: "tool", tool_name: "edit", started_at: 120 },
+			{ id: "t3", kind: "tool", tool_name: "shell", started_at: 130 },
+			{ id: "s", kind: "stop", tool_name: "stop", started_at: 140 },
+		];
+		for (const r of rows) {
+			repo.insert({
+				id: r.id,
+				project_id: "proj-1",
+				session_id: null,
+				started_at: r.started_at,
+				duration_ms: 1,
+				status: "ok",
+				source: "mcp",
+				kind: r.kind,
+				tool_name: r.tool_name,
+				meta_tool: null,
+				args_json: null,
+				result_preview: null,
+				result_bytes: null,
+				result_tokens: null,
+				error_message: null,
+				agent_id: null,
+			});
+		}
+
+		const page = repo.listRecent("proj-1", { limit: 2 });
+		expect(page.calls.map((c) => c.id)).toEqual(["s", "t3", "t2", "t1", "p"]);
+		expect(page.hasMore).toBe(false);
+	});
+
+	it("expands only the newest run and leaves older runs for the next page", () => {
+		const rows: Array<Pick<ToolCallRecord, "id" | "kind" | "tool_name" | "started_at">> = [
+			{ id: "a-p", kind: "prompt", tool_name: "first", started_at: 100 },
+			{ id: "a-t", kind: "tool", tool_name: "tool-a", started_at: 110 },
+			{ id: "a-s", kind: "stop", tool_name: "stop", started_at: 120 },
+			{ id: "b-p", kind: "prompt", tool_name: "second", started_at: 200 },
+			{ id: "b-t1", kind: "tool", tool_name: "tool-b1", started_at: 210 },
+			{ id: "b-t2", kind: "tool", tool_name: "tool-b2", started_at: 220 },
+		];
+		for (const r of rows) {
+			repo.insert({
+				id: r.id,
+				project_id: "proj-1",
+				session_id: null,
+				started_at: r.started_at,
+				duration_ms: 1,
+				status: "ok",
+				source: "mcp",
+				kind: r.kind,
+				tool_name: r.tool_name,
+				meta_tool: null,
+				args_json: null,
+				result_preview: null,
+				result_bytes: null,
+				result_tokens: null,
+				error_message: null,
+				agent_id: null,
+			});
+		}
+
+		const first = repo.listRecent("proj-1", { limit: 2 });
+		expect(first.calls.map((c) => c.id)).toEqual(["b-t2", "b-t1", "b-p"]);
+		expect(first.hasMore).toBe(true);
+
+		const oldest = first.calls[first.calls.length - 1]!;
+		const next = repo.listRecent("proj-1", {
+			limit: 2,
+			beforeStartedAt: oldest.started_at,
+			beforeId: oldest.id,
+		});
+		expect(next.calls.map((c) => c.id)).toEqual(["a-s", "a-t", "a-p"]);
+		expect(next.hasMore).toBe(false);
+	});
+
 	it("does not skip same-ms ties at a page boundary", () => {
 		const ts = 5000;
 		for (const id of ["a", "b", "c", "d"]) {
