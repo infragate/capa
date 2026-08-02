@@ -472,6 +472,12 @@ export function usePatchOptions(projectId: string) {
   });
 }
 
+export function useSyncActivityHooks(projectId: string) {
+  return useMutation({
+    mutationFn: () => projectsApi.syncActivityHooks(projectId),
+  });
+}
+
 export function usePutAgents(projectId: string) {
   const qc = useQueryClient();
   return useMutation({

@@ -443,7 +443,10 @@ function assertPermutation(
 }
 
 export type OptionsPatch = Partial<
-	Pick<CapabilitiesOptions, "toolExposure" | "requiresCommands" | "security">
+	Pick<
+		CapabilitiesOptions,
+		"toolExposure" | "requiresCommands" | "security" | "agentActivity"
+	>
 >;
 
 /**

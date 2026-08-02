@@ -1,9 +1,8 @@
 import { useTranslation } from 'react-i18next';
-import { Activity as ActivityIcon, ListTree } from 'lucide-react';
+import { Activity as ActivityIcon } from 'lucide-react';
 import { Spinner } from '../../../../components/common/Spinner';
 import { Alert } from '../../../../components/common/Alert';
 import { useProjectActivity } from '../../hooks';
-import { CapabilityCollapsible } from '../CapabilityCollapsible';
 import { ActivityChart } from './ActivityChart';
 import { ActivityFeed } from './ActivityFeed';
 import { ActivityStatsBar } from './ActivityStats';
@@ -26,38 +25,40 @@ export function ActivitySection({ projectId }: ActivitySectionProps) {
   } = useProjectActivity(projectId);
 
   return (
-    <div id="activity-section" className="mb-6 rounded-lg border border-border-primary bg-bg-secondary p-6">
-      <div className="mb-4 border-b border-border-secondary pb-4">
-        <h2 className="flex items-center gap-2 text-base font-medium text-text-primary">
-          <ActivityIcon size={18} />
-          {t('activity.heading')}
-        </h2>
-        <p className="mt-1 text-xs text-text-tertiary">{t('activity.subtitle')}</p>
+    <div
+      id="activity-section"
+      className="mb-6 overflow-hidden rounded-lg border border-border-primary bg-bg-secondary"
+    >
+      <div className="flex flex-wrap items-end justify-between gap-3 border-b border-border-secondary px-5 py-4">
+        <div>
+          <h2 className="flex items-center gap-2 text-base font-medium text-text-primary">
+            <ActivityIcon size={16} className="text-text-tertiary" strokeWidth={1.75} />
+            {t('activity.heading')}
+          </h2>
+          <p className="mt-0.5 text-xs text-text-tertiary">{t('activity.subtitle')}</p>
+        </div>
+        <ActivityStatsBar stats={stats} live={live} />
       </div>
 
-      <ActivityStatsBar stats={stats} live={live} />
-      <ActivityChart buckets={stats?.buckets} />
+      <div className="border-b border-border-secondary px-5 py-3">
+        <ActivityChart buckets={stats?.buckets} />
+      </div>
 
       {isLoading ? (
-        <div className="py-4">
+        <div className="px-5 py-8">
           <Spinner label={t('activity.loading')} />
         </div>
       ) : error ? (
-        <Alert type="error">{(error as Error).message}</Alert>
+        <div className="px-5 py-4">
+          <Alert type="error">{(error as Error).message}</Alert>
+        </div>
       ) : (
-        <CapabilityCollapsible
-          title={t('activity.traces')}
-          icon={ListTree}
-          count={calls.length}
-          defaultOpen={false}
-        >
-          <ActivityFeed
-            calls={calls}
-            hasMore={hasMore}
-            loadingMore={loadingMore}
-            onLoadMore={() => void loadMore()}
-          />
-        </CapabilityCollapsible>
+        <ActivityFeed
+          calls={calls}
+          hasMore={hasMore}
+          loadingMore={loadingMore}
+          onLoadMore={() => void loadMore()}
+        />
       )}
     </div>
   );

@@ -1,11 +1,16 @@
 import type { Task } from '../../ui';
 import { pruneOrphanHooks } from '../../utils/hooks-installer';
 import { validateHooks } from '../../../shared/hooks-validate';
+import {
+  buildSystemActivityHooks,
+  isAgentActivityEnabled,
+} from '../../../shared/agent-activity';
 import type { InstallCtx } from './context';
 
 /**
  * Drop any `managed_hooks` entries whose hook is no longer declared in
- * `capabilities.hooks` or whose provider is no longer in the active set.
+ * `capabilities.hooks` (plus capa system activity hooks when enabled)
+ * or whose provider is no longer in the active set.
  *
  * Runs *before* `install-hooks` so installs always converge on the
  * requested state — a hook moved from `cursor` to `claude-code` results
@@ -20,7 +25,11 @@ export function pruneOrphanHooksTask(): Task<InstallCtx> {
       const rawHooks = ctx.capabilitiesToUse.hooks ?? [];
       // Validate at this point too so an invalid hook doesn't make the
       // prune think it's still desired (and skip the orphan).
-      const { valid: desiredHooks } = validateHooks(rawHooks as unknown[]);
+      const { valid: userHooks } = validateHooks(rawHooks as unknown[]);
+      const systemHooks = isAgentActivityEnabled(ctx.capabilitiesToUse.options)
+        ? buildSystemActivityHooks(ctx.projectId)
+        : [];
+      const desiredHooks = [...userHooks, ...systemHooks];
       try {
         const { removed, warnings } = pruneOrphanHooks(
           ctx.projectPath,

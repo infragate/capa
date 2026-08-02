@@ -4,6 +4,10 @@ import { CapaDatabase } from '../../../db/database';
 import type { Capabilities } from '../../../types/capabilities';
 import { isUnderWrapWorkspacesDir } from '../../../shared/workspaces/paths';
 import { CAPA_RAW_ARG } from '../../../server/tool-formatter';
+import {
+  CAPA_CLIENT_HEADER,
+  CAPA_SHELL_CLIENT,
+} from '../../../server/tool-call-tracer';
 import type { ShellCommand, ShellToolInfo } from './registry';
 import { buildArgSlugs } from './args';
 
@@ -145,9 +149,13 @@ export async function executeToolViaMCP(
   rawMode = false
 ): Promise<string> {
   const callArgs = rawMode ? { ...args, [CAPA_RAW_ARG]: true } : args;
+  const clientHeaders = {
+    'Content-Type': 'application/json',
+    [CAPA_CLIENT_HEADER]: CAPA_SHELL_CLIENT,
+  };
   await fetch(`${serverUrl}/${projectId}/mcp`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: clientHeaders,
     body: JSON.stringify({
       jsonrpc: '2.0',
       id: 1,
@@ -155,7 +163,7 @@ export async function executeToolViaMCP(
       params: {
         protocolVersion: '2024-11-05',
         capabilities: {},
-        clientInfo: { name: 'capa-shell', version: '1.0' },
+        clientInfo: { name: CAPA_SHELL_CLIENT, version: '1.0' },
       },
     }),
     signal: AbortSignal.timeout(10000),
@@ -163,7 +171,7 @@ export async function executeToolViaMCP(
 
   const response = await fetch(`${serverUrl}/${projectId}/mcp`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: clientHeaders,
     body: JSON.stringify({
       jsonrpc: '2.0',
       id: 2,

@@ -7,8 +7,10 @@ import { CapaDatabase } from "../../db/database";
 import { ToolCallsRepo } from "../../db/tool-calls";
 import { initSchema } from "../../db/schema";
 import {
+	getMcpRequestClientName,
 	redactText,
 	resolveToolCallSource,
+	runWithMcpRequestClient,
 	serializeForPreview,
 	ToolCallTracer,
 	truncateText,
@@ -17,13 +19,30 @@ import { notifyToolCall } from "../project-routes";
 import type { ToolCallRecord } from "../../types/database";
 
 describe("tool-call-tracer helpers", () => {
-	it("maps tool type to shell/mcp source (capa-shell is still MCP client)", () => {
-		expect(resolveToolCallSource("capa-shell", "command")).toBe("shell");
-		expect(resolveToolCallSource("capa-shell", "mcp")).toBe("mcp");
-		expect(resolveToolCallSource("capa-shell")).toBe("mcp");
+	it("maps MCP client name to shell/mcp source", () => {
+		expect(resolveToolCallSource("capa-shell")).toBe("shell");
 		expect(resolveToolCallSource("cursor-ide")).toBe("cursor-ide");
 		expect(resolveToolCallSource(null)).toBe("mcp");
 		expect(resolveToolCallSource(undefined)).toBe("mcp");
+		expect(resolveToolCallSource("")).toBe("mcp");
+	});
+
+	it("prefers per-request capa-shell override via ALS", () => {
+		expect(getMcpRequestClientName()).toBeNull();
+		const inside = runWithMcpRequestClient("capa-shell", () => {
+			expect(getMcpRequestClientName()).toBe("capa-shell");
+			return resolveToolCallSource(getMcpRequestClientName());
+		});
+		expect(inside).toBe("shell");
+		expect(getMcpRequestClientName()).toBeNull();
+	});
+
+	it("keeps ALS client across await inside run()", async () => {
+		const source = await runWithMcpRequestClient("capa-shell", async () => {
+			await Promise.resolve();
+			return resolveToolCallSource(getMcpRequestClientName());
+		});
+		expect(source).toBe("shell");
 	});
 
 	it("truncates long text", () => {

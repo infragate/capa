@@ -1,0 +1,156 @@
+import type { ToolCallRecord } from '../../../../types/api';
+
+/** A LangSmith-style “run”: a user prompt (optional) + the spans that followed. */
+export interface ActivityRun {
+  id: string;
+  title: string;
+  prompt: ToolCallRecord | null;
+  spans: ToolCallRecord[];
+  started_at: number;
+  source: string | null;
+  hasError: boolean;
+  duration_ms: number | null;
+}
+
+/**
+ * Group a newest-first activity feed into runs.
+ * A `prompt` opens a run; `stop` closes it. Orphan spans become singleton runs.
+ */
+export function groupActivityRuns(calls: ToolCallRecord[]): ActivityRun[] {
+  const chronological = [...calls].sort((a, b) => a.started_at - b.started_at);
+  const groups: ActivityRun[] = [];
+  let current: ActivityRun | null = null;
+
+  const flush = () => {
+    if (!current) return;
+    finalizeRun(current);
+    groups.push(current);
+    current = null;
+  };
+
+  for (const call of chronological) {
+    if (call.kind === 'prompt') {
+      flush();
+      current = {
+        id: call.id,
+        title: call.tool_name || 'prompt',
+        prompt: call,
+        spans: [],
+        started_at: call.started_at,
+        source: call.source,
+        hasError: call.status === 'error',
+        duration_ms: null,
+      };
+      continue;
+    }
+
+    if (call.kind === 'session' && /start/i.test(call.tool_name)) {
+      flush();
+      current = {
+        id: call.id,
+        title: call.tool_name,
+        prompt: null,
+        spans: [call],
+        started_at: call.started_at,
+        source: call.source,
+        hasError: call.status === 'error',
+        duration_ms: null,
+      };
+      continue;
+    }
+
+    if (!current) {
+      current = {
+        id: call.id,
+        title: call.tool_name,
+        prompt: null,
+        spans: [call],
+        started_at: call.started_at,
+        source: call.source,
+        hasError: call.status === 'error',
+        duration_ms: null,
+      };
+    } else {
+      current.spans.push(call);
+      if (call.source && !current.source) current.source = call.source;
+      if (call.status === 'error') current.hasError = true;
+    }
+
+    if (call.kind === 'stop' || (call.kind === 'session' && /end/i.test(call.tool_name))) {
+      flush();
+    }
+  }
+  flush();
+
+  // Newest runs first (matches feed order users expect).
+  return groups.reverse();
+}
+
+function finalizeRun(run: ActivityRun): void {
+  const points = [
+    ...(run.prompt ? [run.prompt] : []),
+    ...run.spans,
+  ];
+  if (points.length === 0) return;
+
+  let minStart = points[0]!.started_at;
+  let maxEnd = points[0]!.started_at + (points[0]!.duration_ms ?? 0);
+  for (const p of points) {
+    minStart = Math.min(minStart, p.started_at);
+    maxEnd = Math.max(maxEnd, p.started_at + (p.duration_ms ?? 0));
+  }
+  run.started_at = minStart;
+  run.duration_ms = Math.max(0, maxEnd - minStart);
+
+  if (!run.prompt && run.spans.length === 1) {
+    run.title = run.spans[0]!.tool_name;
+  }
+}
+
+export function maxSpanDuration(runs: ActivityRun[]): number {
+  let max = 1;
+  for (const run of runs) {
+    for (const span of run.spans) {
+      if (typeof span.duration_ms === 'number' && span.duration_ms > max) {
+        max = span.duration_ms;
+      }
+    }
+    if (run.prompt && typeof run.prompt.duration_ms === 'number' && run.prompt.duration_ms > max) {
+      max = run.prompt.duration_ms;
+    }
+  }
+  return max;
+}
+
+export function formatDuration(ms: number | null | undefined): string {
+  if (ms == null) return '—';
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 10_000) return `${(ms / 1000).toFixed(1)}s`;
+  return `${Math.round(ms / 1000)}s`;
+}
+
+export function formatRelative(ts: number): string {
+  const diff = Math.max(0, Date.now() - ts);
+  const secs = Math.floor(diff / 1000);
+  if (secs < 5) return 'just now';
+  if (secs < 60) return `${secs}s ago`;
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  return `${hours}h ago`;
+}
+
+export function kindLabel(kind: string): string {
+  switch (kind) {
+    case 'agent_tool':
+      return 'tool';
+    case 'agent_mcp':
+      return 'mcp';
+    case 'setup_tools':
+      return 'setup';
+    case 'call_tool':
+      return 'call';
+    default:
+      return kind;
+  }
+}

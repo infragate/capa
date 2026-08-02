@@ -5,7 +5,10 @@ import { ensureServer } from '../utils/server-manager';
 import { loadSettings, getDatabasePath } from '../../shared/config';
 import { CapaDatabase } from '../../db/database';
 import { VERSION } from '../../version';
-import { resolveProvidersForInstall } from '../../shared/providers/resolve';
+import {
+  resolveProvidersForInstall,
+  validateProvider,
+} from '../../shared/providers/resolve';
 import { LockfileBuilder, loadLockfile } from '../../shared/lockfile';
 import { runTasks, summary, info, warn, error, setFlags, getFlags } from '../ui';
 import { buildInstallTasks } from './install-tasks';
@@ -160,9 +163,11 @@ async function installCommandBody(opts: {
   const mcpUrl = `${serverStatus.url}/${projectId}/mcp`;
 
   let resolvedProviders: string[];
+  let configureProviders: string[];
   try {
     // Always store the real project path for MCP tool cwd / identity.
     db.upsertProject({ id: projectId, path: idPath });
+    const authoredProviders = [...(capabilities.providers ?? [])];
     resolvedProviders = await resolveProvidersForInstall({
       flagProvider,
       capabilitiesProviders: capabilities.providers,
@@ -175,6 +180,25 @@ async function installCommandBody(opts: {
     // `capa wrap claude` would make a later `capa install` target Claude.
     if (persistProviders) {
       db.setProjectProviders(projectId, resolvedProviders);
+    }
+
+    // Shadow wrap: local file writes use `resolvedProviders` (e.g. claude-code),
+    // but POST /configure must keep the identity project's authored providers
+    // so the real repo / live session stay on cursor (or whatever the file says).
+    const isWrapInstall =
+      !!identityPath &&
+      (process.platform === 'win32'
+        ? resolve(identityPath).toLowerCase() !== resolve(projectPath).toLowerCase()
+        : resolve(identityPath) !== resolve(projectPath));
+    if (isWrapInstall) {
+      if (authoredProviders.length > 0) {
+        configureProviders = authoredProviders.map((p) => validateProvider(p));
+      } else {
+        const stored = db.getProjectProviders(projectId);
+        configureProviders = stored.length > 0 ? stored : [];
+      }
+    } else {
+      configureProviders = resolvedProviders;
     }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
@@ -199,6 +223,7 @@ async function installCommandBody(opts: {
     settings,
     serverStatus: { running: true, url: serverStatus.url },
     resolvedProviders,
+    configureProviders,
     lockBuilder,
     mcpUrl,
     resolvedRepos: new Map(),

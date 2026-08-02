@@ -1,0 +1,412 @@
+/**
+ * Normalize provider hook stdin JSON into a capa activity ingest payload.
+ * Fail-soft: unknown shapes still produce a best-effort event.
+ */
+
+import type { ToolCallKind, ToolCallStatus } from "../types/database";
+import type { CanonicalHookEvent } from "../types/hooks";
+
+export interface NormalizedActivityEvent {
+	kind: ToolCallKind;
+	toolName: string;
+	status: ToolCallStatus;
+	source: string | null;
+	args?: unknown;
+	resultPreview?: unknown;
+	errorMessage?: string | null;
+	/** When true, caller should drop the event (capa MCP dedup). */
+	skip: boolean;
+	skipReason?: string;
+}
+
+const CAPA_MCP_RE =
+	/localhost:5912|127\.0\.0\.1:5912|\/mcp\b|capa-.*\/mcp|mcpServers\.capa\b/i;
+
+export function normalizeActivityHookPayload(
+	event: CanonicalHookEvent,
+	raw: unknown,
+	providerHint?: string | null,
+): NormalizedActivityEvent {
+	const obj = asRecord(raw) ?? {};
+	const provider =
+		providerHint ||
+		stringField(obj, "provider") ||
+		stringField(obj, "provider_id") ||
+		inferProvider(obj) ||
+		null;
+
+	if (isCapaMcpPayload(obj, event)) {
+		return {
+			kind: "agent_mcp",
+			toolName: "capa-mcp",
+			status: "ok",
+			source: provider,
+			skip: true,
+			skipReason: "capa MCP (already traced via MCP handler)",
+		};
+	}
+
+	// Outcome-only: ignore lifecycle "before" noise (except file reads).
+	if (
+		event === "beforeTool" ||
+		event === "beforeShell" ||
+		event === "beforeMcpCall"
+	) {
+		return {
+			kind: "agent_tool",
+			toolName: event,
+			status: "ok",
+			source: provider,
+			skip: true,
+			skipReason: "before-hook (outcome-only activity)",
+		};
+	}
+
+	const kind = kindForEvent(event, obj);
+	const toolName = nameForEvent(event, kind, obj);
+	const status = statusForEvent(event, obj);
+	const args = argsForEvent(event, obj);
+	const resultPreview = resultForEvent(event, obj);
+	const errorMessage = errorForEvent(event, obj);
+
+	// Shell tool wrappers duplicate afterShell / capa MCP rows.
+	if (kind === "agent_tool" && isShellToolName(toolName)) {
+		return {
+			kind,
+			toolName,
+			status,
+			source: provider,
+			skip: true,
+			skipReason: "shell tool wrapper (covered by afterShell / capa tool)",
+		};
+	}
+
+	// `capa sh …` is already traced as a capa tool call via the MCP handler.
+	if (kind === "shell" && isCapaShCommand(toolName)) {
+		return {
+			kind,
+			toolName,
+			status,
+			source: provider,
+			skip: true,
+			skipReason: "capa sh (already traced via MCP handler)",
+		};
+	}
+
+	return {
+		kind,
+		toolName,
+		status,
+		source: provider,
+		args,
+		resultPreview,
+		errorMessage,
+		skip: false,
+	};
+}
+
+function kindForEvent(
+	event: CanonicalHookEvent,
+	obj: Record<string, unknown>,
+): ToolCallKind {
+	if (event === "userPromptSubmit") return "prompt";
+	if (event === "beforeShell" || event === "afterShell") return "shell";
+	if (event === "beforeFileRead" || event === "afterFileEdit") {
+		return isSkillMdPath(extractPath(obj)) ? "skill" : "file";
+	}
+	if (event === "beforeMcpCall" || event === "afterMcpCall") return "agent_mcp";
+	if (event === "beforeTool" || event === "afterTool" || event === "afterToolFailure") {
+		if (isSkillMdPath(extractPath(obj))) return "skill";
+		return "agent_tool";
+	}
+	if (event === "sessionStart" || event === "sessionEnd") return "session";
+	if (event === "subagentStart" || event === "subagentStop") return "subagent";
+	if (event === "preCompact") return "compact";
+	if (event === "stop") return "stop";
+	return "agent_tool";
+}
+
+function nameForEvent(
+	event: CanonicalHookEvent,
+	kind: ToolCallKind,
+	obj: Record<string, unknown>,
+): string {
+	if (kind === "skill") {
+		return skillNameFromPath(extractPath(obj)) || "skill";
+	}
+	if (kind === "shell") {
+		return (
+			stringField(obj, "command") ||
+			stringField(obj, "cmd") ||
+			nestedString(obj, ["tool_input", "command"]) ||
+			nestedString(obj, ["input", "command"]) ||
+			nestedString(obj, ["args", "command"]) ||
+			"shell"
+		);
+	}
+	if (kind === "prompt") {
+		const prompt =
+			stringField(obj, "prompt") ||
+			stringField(obj, "user_prompt") ||
+			stringField(obj, "content") ||
+			nestedString(obj, ["input", "prompt"]);
+		if (prompt) {
+			const trimmed = prompt.trim().replace(/\s+/g, " ");
+			return trimmed.length > 80 ? `${trimmed.slice(0, 77)}…` : trimmed;
+		}
+		return "prompt";
+	}
+	if (kind === "file") {
+		return extractPath(obj) || "file";
+	}
+	if (kind === "agent_mcp") {
+		return (
+			stringField(obj, "tool_name") ||
+			stringField(obj, "toolName") ||
+			stringField(obj, "name") ||
+			nestedString(obj, ["tool", "name"]) ||
+			"mcp"
+		);
+	}
+	if (kind === "session") return event;
+	if (kind === "subagent") {
+		return (
+			stringField(obj, "subagent_type") ||
+			stringField(obj, "agent_id") ||
+			stringField(obj, "name") ||
+			event
+		);
+	}
+	if (kind === "compact" || kind === "stop") return event;
+
+	return (
+		stringField(obj, "tool_name") ||
+		stringField(obj, "toolName") ||
+		stringField(obj, "name") ||
+		stringField(obj, "tool") ||
+		nestedString(obj, ["tool", "name"]) ||
+		event
+	);
+}
+
+function statusForEvent(
+	event: CanonicalHookEvent,
+	obj: Record<string, unknown>,
+): ToolCallStatus {
+	if (event.startsWith("before") || event === "sessionStart" || event === "subagentStart") {
+		return "ok";
+	}
+	if (event === "afterToolFailure") return "error";
+
+	const explicit = stringField(obj, "status")?.toLowerCase();
+	if (explicit === "error" || explicit === "failed" || explicit === "failure") {
+		return "error";
+	}
+	if (obj.error != null || obj.error_message != null || obj.errorMessage != null) {
+		return "error";
+	}
+	const exitCode = obj.exit_code ?? obj.exitCode ?? nested(obj, ["output", "exit_code"]);
+	if (typeof exitCode === "number" && exitCode !== 0) return "error";
+
+	return "ok";
+}
+
+function argsForEvent(
+	event: CanonicalHookEvent,
+	obj: Record<string, unknown>,
+): unknown {
+	if (event === "userPromptSubmit") {
+		return {
+			prompt:
+				stringField(obj, "prompt") ||
+				stringField(obj, "user_prompt") ||
+				stringField(obj, "content") ||
+				null,
+		};
+	}
+	if (event === "beforeShell" || event === "afterShell") {
+		return {
+			command:
+				stringField(obj, "command") ||
+				nestedString(obj, ["tool_input", "command"]) ||
+				nestedString(obj, ["input", "command"]) ||
+				null,
+			cwd: stringField(obj, "cwd") || stringField(obj, "working_directory") || null,
+		};
+	}
+	const toolInput =
+		obj.tool_input ?? obj.toolInput ?? obj.input ?? obj.arguments ?? obj.args;
+	if (toolInput != null) return toolInput;
+	const path = extractPath(obj);
+	if (path) return { path };
+	return summarizeRaw(obj);
+}
+
+function resultForEvent(
+	event: CanonicalHookEvent,
+	obj: Record<string, unknown>,
+): unknown {
+	if (event.startsWith("before")) return undefined;
+	return (
+		obj.tool_output ??
+		obj.toolOutput ??
+		obj.output ??
+		obj.result ??
+		obj.response ??
+		undefined
+	);
+}
+
+function errorForEvent(
+	event: CanonicalHookEvent,
+	obj: Record<string, unknown>,
+): string | null {
+	if (event !== "afterToolFailure" && statusForEvent(event, obj) !== "error") {
+		return null;
+	}
+	return (
+		stringField(obj, "error_message") ||
+		stringField(obj, "errorMessage") ||
+		(typeof obj.error === "string" ? obj.error : null) ||
+		stringField(obj, "message") ||
+		"error"
+	);
+}
+
+function isCapaMcpPayload(
+	obj: Record<string, unknown>,
+	event: CanonicalHookEvent,
+): boolean {
+	if (event !== "beforeMcpCall" && event !== "afterMcpCall") {
+		// Also catch generic tool events that are capa MCP wrappers
+		const name =
+			stringField(obj, "tool_name") ||
+			stringField(obj, "toolName") ||
+			stringField(obj, "name") ||
+			"";
+		if (!/^mcp__/i.test(name) && !/capa/i.test(name)) return false;
+	}
+
+	const haystack = JSON.stringify(obj);
+	if (CAPA_MCP_RE.test(haystack)) return true;
+
+	const server =
+		stringField(obj, "server") ||
+		stringField(obj, "mcp_server") ||
+		stringField(obj, "url") ||
+		"";
+	if (/^capa\b/i.test(server) || CAPA_MCP_RE.test(server)) return true;
+
+	const toolName =
+		stringField(obj, "tool_name") ||
+		stringField(obj, "toolName") ||
+		stringField(obj, "name") ||
+		"";
+	// Claude-style mcp__capa__* or mcp__<project>__*
+	if (/^mcp__capa/i.test(toolName)) return true;
+
+	return false;
+}
+
+/** Cursor/Claude/Gemini shell tool wrappers — covered by afterShell. */
+function isShellToolName(name: string): boolean {
+	const n = name.trim().toLowerCase();
+	return (
+		n === "shell" ||
+		n === "bash" ||
+		n === "zsh" ||
+		n === "run_terminal_cmd" ||
+		n === "run_shell_command" ||
+		n === "terminal" ||
+		n === "powershell"
+	);
+}
+
+/** Shell invocations of capa tools — MCP tracer already records the tool. */
+function isCapaShCommand(command: string): boolean {
+	const c = command.trim().toLowerCase();
+	// Match `capa sh …` / `capa.exe sh …` even with a quoted absolute path.
+	return /(?:^|[\s"'\\/])capa(\.exe)?["']?\s+sh\b/.test(c);
+}
+
+function extractPath(obj: Record<string, unknown>): string | null {
+	return (
+		stringField(obj, "file_path") ||
+		stringField(obj, "filePath") ||
+		stringField(obj, "path") ||
+		nestedString(obj, ["tool_input", "file_path"]) ||
+		nestedString(obj, ["tool_input", "path"]) ||
+		nestedString(obj, ["input", "file_path"]) ||
+		nestedString(obj, ["input", "path"]) ||
+		null
+	);
+}
+
+function isSkillMdPath(path: string | null): boolean {
+	if (!path) return false;
+	return /(^|[/\\])SKILL\.md$/i.test(path);
+}
+
+function skillNameFromPath(path: string | null): string | null {
+	if (!path) return null;
+	const parts = path.replace(/\\/g, "/").split("/");
+	const skillIdx = parts.findIndex((p) => p.toLowerCase() === "skill.md");
+	if (skillIdx > 0) return parts[skillIdx - 1] || null;
+	return null;
+}
+
+function inferProvider(obj: Record<string, unknown>): string | null {
+	const hookEvent =
+		stringField(obj, "hook_event_name") || stringField(obj, "hookEventName");
+	if (hookEvent) {
+		if (/^[A-Z]/.test(hookEvent)) return "claude-code";
+		if (/^(before|after|session|pre|stop)/.test(hookEvent)) return "cursor";
+	}
+	return null;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+	if (value && typeof value === "object" && !Array.isArray(value)) {
+		return value as Record<string, unknown>;
+	}
+	return null;
+}
+
+function stringField(
+	obj: Record<string, unknown>,
+	key: string,
+): string | null {
+	const v = obj[key];
+	return typeof v === "string" && v.trim() ? v : null;
+}
+
+function nested(obj: Record<string, unknown>, path: string[]): unknown {
+	let cur: unknown = obj;
+	for (const key of path) {
+		if (!cur || typeof cur !== "object") return undefined;
+		cur = (cur as Record<string, unknown>)[key];
+	}
+	return cur;
+}
+
+function nestedString(
+	obj: Record<string, unknown>,
+	path: string[],
+): string | null {
+	const v = nested(obj, path);
+	return typeof v === "string" && v.trim() ? v : null;
+}
+
+function summarizeRaw(obj: Record<string, unknown>): Record<string, unknown> {
+	const out: Record<string, unknown> = {};
+	for (const [k, v] of Object.entries(obj)) {
+		if (k === "transcript" || k === "conversation") continue;
+		if (typeof v === "string" && v.length > 500) {
+			out[k] = `${v.slice(0, 500)}…`;
+		} else {
+			out[k] = v;
+		}
+		if (Object.keys(out).length >= 12) break;
+	}
+	return out;
+}

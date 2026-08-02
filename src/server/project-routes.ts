@@ -250,7 +250,9 @@ export async function handleGetProject(
 							def: r.def || null,
 							sourcePlugin: r.sourcePlugin || null,
 						})),
-						hooks: (capabilities.hooks || []).map((h) => ({
+						hooks: (capabilities.hooks || [])
+							.filter((h) => !h.id.startsWith("capa-sys-activity-"))
+							.map((h) => ({
 							id: h.id,
 							description: h.description || null,
 							on: h.on,
@@ -302,6 +304,8 @@ export async function handleGetProject(
 						options: capabilities.options
 							? {
 									toolExposure: capabilities.options.toolExposure || null,
+									agentActivity:
+										capabilities.options.agentActivity !== false,
 									security: capabilities.options.security
 										? {
 												blockedPhrases:

@@ -49,7 +49,10 @@ export function resolveProvidersForServer(
 }
 
 /**
- * Expand `plugins` into merged skills/servers/rules/hooks/subagents (in memory only — not written to YAML).
+ * Expand `plugins` into merged skills/servers/rules/hooks/subagents (in memory).
+ * Unpacks plugin trees under `~/.capa/plugins/<projectId>/` but does **not**
+ * copy skills into the project's `.claude/` / `.cursor/` dirs — that only
+ * happens during `capa install` / wrap shadow-workspace install.
  * Returns the authored capabilities unchanged when there are no plugins or providers.
  */
 export async function resolveEffectiveCapabilities(
@@ -90,6 +93,12 @@ export async function resolveEffectiveCapabilities(
 					getRepoSnapshot(platform, repoPath, auth, opts),
 				capabilitiesFilePath,
 				lockBuilder,
+				{
+					// In-memory expand only — never write `.claude/` / `.cursor/`
+					// into the real project from configure / API / wrap side-effects.
+					materializeProjectSkills: false,
+					trackManaged: false,
+				},
 			);
 		for (const dir of tempDirsToCleanup) {
 			try {

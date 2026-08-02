@@ -81,6 +81,11 @@ export const projectsApi = {
       `/api/projects/${encodeURIComponent(projectId)}/activity/stats`,
     ),
 
+  syncActivityHooks: (projectId: string) =>
+    api.post<ActionResponse>(
+      `/api/projects/${encodeURIComponent(projectId)}/activity/hooks/sync`,
+    ),
+
   appendCapability: (projectId: string, section: CapabilitySection, entry: Record<string, unknown>) =>
     api.post<CapabilitiesMutationResponse>(
       `/api/projects/${encodeURIComponent(projectId)}/capabilities/${section}`,

@@ -134,10 +134,26 @@ export async function resolvePlugins(
   getRepoSnapshot: GetRepoSnapshotFn,
   capabilitiesFilePath: string,
   lockBuilder: LockfileBuilder,
-  options: { noCache?: boolean; trackManaged?: boolean; pluginsBaseDir?: string } = {}
+  options: {
+    noCache?: boolean;
+    trackManaged?: boolean;
+    pluginsBaseDir?: string;
+    /**
+     * When true (default), copy each plugin skill into every provider's
+     * project-local skills dir (e.g. `.claude/skills`, `.cursor/skills`).
+     * Plugins are always unpacked under `~/.capa/plugins/<projectId>/`.
+     *
+     * Server-side effective-capabilities expansion must pass `false` so
+     * `capa wrap` / configure never write provider files into the real
+     * project — only `capa install` (and wrap's shadow-workspace install)
+     * materialize project-local skill trees.
+     */
+    materializeProjectSkills?: boolean;
+  } = {}
 ): Promise<ResolvePluginsResult> {
   const noCache = !!options.noCache;
   const trackManaged = options.trackManaged !== false;
+  const materializeProjectSkills = options.materializeProjectSkills !== false;
   const plugins = capabilities.plugins ?? [];
   const mergedSkills: Skill[] = Array.isArray(capabilities.skills) ? [...capabilities.skills] : [];
   // Preserve all explicitly defined servers from the capabilities file; never drop them when merging plugin servers
@@ -403,7 +419,9 @@ export async function resolvePlugins(
       if (!existsSync(join(srcSkillDir, 'SKILL.md'))) continue;
 
       pluginSkillIds.push(entry.id);
-      installSkillTree(entry.id, srcSkillDir, manifest.name);
+      if (materializeProjectSkills) {
+        installSkillTree(entry.id, srcSkillDir, manifest.name);
+      }
 
       const userEntry = userPluginSkills.get(entry.id);
       if (userEntry) {

@@ -87,6 +87,12 @@ export interface CapabilitiesOptions {
    */
   toolExposure?: ToolExposureMode;
   /**
+   * When true (default), capa injects provider hooks that report agent
+   * lifecycle activity into the project Activity feed. Set false to opt out.
+   * @default true
+   */
+  agentActivity?: boolean;
+  /**
    * Security options for skill installation (blocked phrases, character sanitization)
    */
   security?: SecurityOptions;

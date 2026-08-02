@@ -65,6 +65,10 @@ import {
 	reloadProjectCapabilitiesFromDisk,
 } from "./project-routes";
 import {
+	handlePostProjectActivityEvent,
+	handleSyncActivityHooks,
+} from "./activity-routes";
+import {
 	createRegistryHandler,
 	deleteRegistryHandler,
 	listRegistriesHandler,
@@ -75,7 +79,12 @@ import {
 import { type EffectiveCapsCacheEntry } from "./resolve-effective-capabilities";
 import { SessionManager } from "./session-manager";
 import { SubprocessManager } from "./subprocess-manager";
-import { ToolCallTracer } from "./tool-call-tracer";
+import {
+	CAPA_CLIENT_HEADER,
+	CAPA_SHELL_CLIENT,
+	runWithMcpRequestClient,
+	ToolCallTracer,
+} from "./tool-call-tracer";
 import {
 	handleForceTokenRefresh,
 	handleTokenRefreshStatus,
@@ -513,6 +522,27 @@ class CapaServer {
 			return handleGetProjectActivityStats(
 				this.projectRouteDeps(),
 				activityStatsMatch[1],
+			);
+		}
+
+		const activityHooksSyncMatch = path.match(
+			/^\/api\/projects\/([^/]+)\/activity\/hooks\/sync$/,
+		);
+		if (activityHooksSyncMatch && request.method === "POST") {
+			return handleSyncActivityHooks(
+				this.projectRouteDeps(),
+				activityHooksSyncMatch[1],
+			);
+		}
+
+		const activityEventsMatch = path.match(
+			/^\/api\/projects\/([^/]+)\/activity\/events$/,
+		);
+		if (activityEventsMatch && request.method === "POST") {
+			return handlePostProjectActivityEvent(
+				{ ...this.projectRouteDeps(), toolCallTracer: this.toolCallTracer },
+				activityEventsMatch[1],
+				request,
 			);
 		}
 
@@ -1636,7 +1666,7 @@ class CapaServer {
 		const originCheck = isAllowedOrigin(requestOrigin);
 		const corsHeaders: Record<string, string> = {
 			"Access-Control-Allow-Methods": "POST, GET, OPTIONS",
-			"Access-Control-Allow-Headers": "Content-Type",
+			"Access-Control-Allow-Headers": `Content-Type, ${CAPA_CLIENT_HEADER}`,
 		};
 		if (originCheck.origin) {
 			corsHeaders["Access-Control-Allow-Origin"] = originCheck.origin;
@@ -1657,8 +1687,15 @@ class CapaServer {
 					`${message.method || "notification"} (id: ${message.id || "none"})`,
 				);
 
-				// Handle JSON-RPC message
-				const result = await mcpServer.handleMessage(message);
+				const headerClient = request.headers.get(CAPA_CLIENT_HEADER)?.trim();
+				const requestClient =
+					headerClient === CAPA_SHELL_CLIENT ? CAPA_SHELL_CLIENT : null;
+
+				// Handle JSON-RPC message (capa sh sets X-Capa-Client so traces
+				// stay "shell" without sticky-polluting IDE client identity).
+				const result = await runWithMcpRequestClient(requestClient, () =>
+					mcpServer.handleMessage(message),
+				);
 
 				// Return simple JSON response (not SSE)
 				return new Response(JSON.stringify(result), {

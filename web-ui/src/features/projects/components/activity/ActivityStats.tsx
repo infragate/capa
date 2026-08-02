@@ -7,54 +7,56 @@ interface ActivityStatsProps {
   live: boolean;
 }
 
-function Tile({
+function Stat({
   label,
   value,
-  className,
+  warn,
 }: {
   label: string;
   value: string;
-  className?: string;
+  warn?: boolean;
 }) {
   return (
-    <div className={cn('min-w-[4.5rem] text-center', className)}>
-      <div className="text-sm font-medium text-text-primary tabular-nums">{value}</div>
-      <div className="text-[10px] text-text-tertiary">{label}</div>
+    <div className="flex items-baseline gap-1">
+      <span
+        className={cn(
+          'text-[13px] font-medium tabular-nums',
+          warn ? 'text-error-text' : 'text-text-primary',
+        )}
+      >
+        {value}
+      </span>
+      <span className="text-[11px] text-text-tertiary">{label}</span>
     </div>
   );
 }
 
 export function ActivityStatsBar({ stats, live }: ActivityStatsProps) {
   const { t } = useTranslation('projects');
-
   const avg =
     stats?.avg_duration_ms != null ? `${stats.avg_duration_ms}ms` : '—';
 
   return (
-    <div className="mb-2 flex flex-wrap items-center gap-3 rounded-sm border border-border-secondary bg-bg-tertiary px-4 py-3 text-xs text-text-secondary">
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
       <div className="flex items-center gap-1.5">
         <span
           className={cn(
-            'inline-block h-2 w-2 rounded-full',
+            'inline-block h-1.5 w-1.5 rounded-full',
             live ? 'bg-status-connected-dot animate-pulse' : 'bg-text-tertiary',
           )}
           aria-hidden
         />
-        <span className="text-text-tertiary">
+        <span className="text-[11px] text-text-tertiary">
           {live ? t('activity.live') : t('activity.offline')}
         </span>
       </div>
-      <div className="h-6 w-px bg-border-tertiary" />
-      <Tile label={t('activity.calls')} value={stats ? String(stats.total) : '—'} />
-      <div className="h-6 w-px bg-border-tertiary" />
-      <Tile label={t('activity.errors')} value={stats ? String(stats.errors) : '—'} />
-      <div className="h-6 w-px bg-border-tertiary" />
-      <Tile label={t('activity.avgDuration')} value={avg} />
-      <div className="h-6 w-px bg-border-tertiary" />
-      <Tile
-        label={t('activity.shellVsMcp')}
-        value={stats ? `${stats.shell} / ${stats.mcp}` : '—'}
+      <Stat label={t('activity.calls')} value={stats ? String(stats.total) : '—'} />
+      <Stat
+        label={t('activity.errors')}
+        value={stats ? String(stats.errors) : '—'}
+        warn={!!stats && stats.errors > 0}
       />
+      <Stat label={t('activity.avgDuration')} value={avg} />
     </div>
   );
 }

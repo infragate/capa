@@ -45,7 +45,12 @@ export function configureToolsTask(): Task<InstallCtx> {
             // body if it doesn't support streaming.
             Accept: 'application/x-ndjson, application/json',
           },
-          body: JSON.stringify(ctx.capabilitiesToUse),
+          body: JSON.stringify({
+            ...ctx.capabilitiesToUse,
+            // Wrap installs write Claude/etc. only into the shadow workspace;
+            // configure must keep the identity project's authored providers.
+            providers: ctx.configureProviders,
+          }),
         },
       );
 
