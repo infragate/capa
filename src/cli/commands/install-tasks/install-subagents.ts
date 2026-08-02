@@ -2,6 +2,8 @@ import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import type { Task } from '../../ui';
 import { getProvider } from '../../../shared/providers';
+import { assertSafeRepoPath } from '../../../shared/repo-file';
+import { isSafeCapabilityId } from '../../../shared/safe-id';
 import {
   registerSubAgentMCPServer,
   unregisterSubAgentMCPServer,
@@ -43,10 +45,19 @@ function buildSkillDescriptions(
 ): Map<string, string> {
   const map = new Map<string, string>();
   for (const skill of capabilities.skills ?? []) {
+    if (!isSafeCapabilityId(skill.id)) continue;
     for (const pid of providers) {
       const provider = getProvider(pid);
       if (!provider) continue;
-      const skillMdPath = join(projectPath, provider.skillsDir, skill.id, 'SKILL.md');
+      let skillMdPath: string;
+      try {
+        skillMdPath = join(
+          assertSafeRepoPath(join(projectPath, provider.skillsDir), skill.id),
+          'SKILL.md',
+        );
+      } catch {
+        continue;
+      }
       if (!existsSync(skillMdPath)) continue;
       try {
         const { metadata } = parseSkillMd(readFileSync(skillMdPath, 'utf-8'));

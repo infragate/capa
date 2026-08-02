@@ -68,4 +68,88 @@ describe('GitIntegrationManager', () => {
   it('returns null when no integration exists for a platform', async () => {
     expect(await manager.getAccessToken('gitlab')).toBeNull();
   });
+
+  describe('storePAT', () => {
+    const originalFetch = globalThis.fetch;
+    let fetchCalls: Array<{ url: string; authorization: string | null }>;
+
+    beforeEach(() => {
+      fetchCalls = [];
+      globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        const authorization =
+          init?.headers && typeof init.headers === 'object' && !Array.isArray(init.headers)
+            ? ((init.headers as Record<string, string>).Authorization ?? null)
+            : null;
+        fetchCalls.push({ url, authorization });
+
+        if (url.includes('/user') && authorization?.includes('bad-token')) {
+          return new Response('Unauthorized', { status: 401 });
+        }
+        return new Response(JSON.stringify({ login: 'tester' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }) as typeof fetch;
+    });
+
+    afterEach(() => {
+      globalThis.fetch = originalFetch;
+    });
+
+    it('stores a cloud GitHub PAT with null host and clears refresh metadata', async () => {
+      db.setGitIntegration('github', {
+        access_token: 'old-oauth',
+        refresh_token: 'refresh',
+        token_type: 'Bearer',
+        expires_at: Date.now() + 60_000,
+      });
+
+      await manager.storePAT({ platform: 'github', token: 'ghp_valid' });
+
+      const stored = db.getGitIntegration('github');
+      expect(stored?.access_token).toBe('ghp_valid');
+      expect(stored?.host).toBeNull();
+      expect(stored?.refresh_token).toBeNull();
+      expect(stored?.expires_at).toBeNull();
+      expect(stored?.token_type).toBe('token');
+      expect(fetchCalls[0]?.url).toBe('https://api.github.com/user');
+      expect(fetchCalls[0]?.authorization).toBe('token ghp_valid');
+    });
+
+    it('stores a cloud GitLab PAT', async () => {
+      await manager.storePAT({ platform: 'gitlab', token: 'glpat_valid' });
+
+      const stored = db.getGitIntegration('gitlab');
+      expect(stored?.access_token).toBe('glpat_valid');
+      expect(stored?.host).toBeNull();
+      expect(fetchCalls[0]?.url).toBe('https://gitlab.com/api/v4/user');
+      expect(fetchCalls[0]?.authorization).toBe('Bearer glpat_valid');
+    });
+
+    it('stores a GitHub Enterprise PAT at the given host', async () => {
+      await manager.storePAT({
+        platform: 'github-enterprise',
+        host: 'git.example.com',
+        token: 'ghe_valid',
+      });
+
+      const stored = db.getGitIntegration('github-enterprise', 'git.example.com');
+      expect(stored?.access_token).toBe('ghe_valid');
+      expect(stored?.host).toBe('git.example.com');
+      expect(fetchCalls[0]?.url).toBe('https://git.example.com/api/v3/user');
+    });
+
+    it('throws when self-hosted PAT is missing a host', async () => {
+      await expect(
+        manager.storePAT({ platform: 'github-enterprise', token: 'x' }),
+      ).rejects.toThrow(/Host is required/);
+    });
+
+    it('throws when the token fails validation', async () => {
+      await expect(
+        manager.storePAT({ platform: 'github', token: 'bad-token' }),
+      ).rejects.toThrow(/Invalid Personal Access Token/);
+    });
+  });
 });

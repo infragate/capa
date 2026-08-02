@@ -1,20 +1,51 @@
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { Settings, Plus, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { Settings } from 'lucide-react';
-import type { CapabilitiesOptions } from '../../../types/api';
+import type { CapabilitiesOptions, RequiredCommand } from '../../../types/api';
+import { projectDisplayName } from '../../../lib/utils';
+import { useDeleteProject, usePatchOptions, useProject, useSyncActivityHooks } from '../hooks';
 
 interface OptionsSectionProps {
-  options: CapabilitiesOptions;
+  projectId: string;
+  options: CapabilitiesOptions | null;
 }
 
-export function OptionsSection({ options }: OptionsSectionProps) {
+const EXPOSURE_MODES = ['on-demand', 'expose-all', 'none'] as const;
+
+export function OptionsSection({ projectId, options }: OptionsSectionProps) {
   const { t } = useTranslation('projects');
+  const navigate = useNavigate();
+  const { data: project } = useProject(projectId);
+  const patchMutation = usePatchOptions(projectId);
+  const syncActivityHooks = useSyncActivityHooks(projectId);
+  const deleteProject = useDeleteProject();
+  const [cli, setCli] = useState('');
+  const [cliDesc, setCliDesc] = useState('');
 
-  const hasContent =
-    options.toolExposure ||
-    options.security ||
-    options.requiresCommands.length > 0;
+  const toolExposure = options?.toolExposure || 'on-demand';
+  const agentActivity = options?.agentActivity !== false;
+  const requiresCommands: RequiredCommand[] = options?.requiresCommands || [];
+  const displayName = projectDisplayName(project?.path, projectId);
 
-  if (!hasContent) return null;
+  const handleAgentActivityToggle = () => {
+    const next = !agentActivity;
+    patchMutation.mutate(
+      { agentActivity: next },
+      {
+        onSuccess: () => {
+          syncActivityHooks.mutate();
+        },
+      },
+    );
+  };
+
+  const handleDeleteProject = () => {
+    if (!confirm(t('actions.confirmDeleteProject', { name: displayName }))) return;
+    deleteProject.mutate(projectId, {
+      onSuccess: () => navigate('/'),
+    });
+  };
 
   return (
     <div className="mb-6 rounded-lg border border-border-primary bg-bg-secondary p-6">
@@ -26,29 +57,123 @@ export function OptionsSection({ options }: OptionsSectionProps) {
         <p className="mt-1 text-xs text-text-tertiary">{t('options.subtitle')}</p>
       </div>
 
-      <div className="space-y-4">
-        {options.toolExposure && (
-          <div>
-            <h3 className="mb-1 text-xs font-medium text-text-primary">
-              {t('options.toolExposure')}
-            </h3>
-            <span className="rounded-sm bg-bg-tertiary px-2 py-1 text-xs text-text-secondary">
-              {options.toolExposure}
-            </span>
+      <div className="space-y-5">
+        <div>
+          <h3 className="mb-2 text-xs font-medium text-text-primary">{t('options.toolExposure')}</h3>
+          <div className="flex flex-wrap gap-2">
+            {EXPOSURE_MODES.map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                disabled={patchMutation.isPending}
+                onClick={() => patchMutation.mutate({ toolExposure: mode })}
+                className={`rounded-sm px-2.5 py-1.5 text-xs cursor-pointer disabled:opacity-50 ${
+                  toolExposure === mode
+                    ? 'bg-accent-primary/15 text-accent-primary'
+                    : 'bg-bg-tertiary text-text-secondary hover:bg-hover-bg'
+                }`}
+              >
+                {mode}
+              </button>
+            ))}
           </div>
-        )}
+        </div>
 
-        {options.security && (
-          <div>
-            <h3 className="mb-2 text-xs font-medium text-text-primary">
-              {t('options.security')}
-            </h3>
-            <div className="space-y-2 rounded-sm border border-border-tertiary bg-bg-tertiary p-3">
-              {options.security.blockedPhrases.length > 0 && (
-                <div>
-                  <span className="text-xs font-medium text-text-primary">
-                    {t('options.blockedPhrases')}:
+        <div>
+          <h3 className="mb-2 text-xs font-medium text-text-primary">
+            {t('options.agentActivity')}
+          </h3>
+          <p className="mb-2 text-xs text-text-tertiary">{t('options.agentActivityHint')}</p>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={agentActivity}
+            disabled={patchMutation.isPending || syncActivityHooks.isPending}
+            onClick={handleAgentActivityToggle}
+            className={`rounded-sm px-2.5 py-1.5 text-xs cursor-pointer disabled:opacity-50 ${
+              agentActivity
+                ? 'bg-accent-primary/15 text-accent-primary'
+                : 'bg-bg-tertiary text-text-secondary hover:bg-hover-bg'
+            }`}
+          >
+            {agentActivity ? t('options.agentActivityOn') : t('options.agentActivityOff')}
+          </button>
+        </div>
+
+        <div>
+          <h3 className="mb-2 text-xs font-medium text-text-primary">
+            {t('options.requiredCommands')}
+          </h3>
+          <div className="mb-2 space-y-1">
+            {requiresCommands.length === 0 ? (
+              <p className="text-xs text-text-tertiary">{t('actions.emptyCommands')}</p>
+            ) : (
+              requiresCommands.map((cmd) => (
+                <div
+                  key={cmd.cli}
+                  className="flex items-center gap-2 rounded-sm border border-border-tertiary bg-bg-tertiary px-3 py-2"
+                >
+                  <span className="font-mono text-xs text-text-primary">{cmd.cli}</span>
+                  <span className="min-w-0 flex-1 truncate text-xs text-text-secondary">
+                    {cmd.description || '—'}
                   </span>
+                  <button
+                    type="button"
+                    disabled={patchMutation.isPending}
+                    onClick={() =>
+                      patchMutation.mutate({
+                        requiresCommands: requiresCommands.filter((c) => c.cli !== cmd.cli),
+                      })
+                    }
+                    className="rounded-sm p-1 text-text-tertiary hover:bg-error-bg hover:text-error-text cursor-pointer"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <input
+              value={cli}
+              onChange={(e) => setCli(e.target.value)}
+              placeholder="cli"
+              className="w-32 rounded-sm border border-border-tertiary bg-bg-tertiary px-2 py-1.5 font-mono text-xs text-text-primary"
+            />
+            <input
+              value={cliDesc}
+              onChange={(e) => setCliDesc(e.target.value)}
+              placeholder={t('actions.description')}
+              className="min-w-0 flex-1 rounded-sm border border-border-tertiary bg-bg-tertiary px-2 py-1.5 text-xs text-text-primary"
+            />
+            <button
+              type="button"
+              disabled={!cli.trim() || patchMutation.isPending}
+              onClick={() => {
+                const next = [
+                  ...requiresCommands.filter((c) => c.cli !== cli.trim()),
+                  { cli: cli.trim(), description: cliDesc.trim() || null },
+                ];
+                patchMutation.mutate({ requiresCommands: next });
+                setCli('');
+                setCliDesc('');
+              }}
+              className="inline-flex items-center gap-1 rounded-sm border border-border-tertiary px-2.5 py-1.5 text-xs cursor-pointer hover:bg-hover-bg disabled:opacity-50"
+            >
+              <Plus size={14} />
+              {t('actions.add')}
+            </button>
+          </div>
+        </div>
+
+        {options?.security && (
+          <div>
+            <h3 className="mb-2 text-xs font-medium text-text-primary">{t('options.security')}</h3>
+            <div className="space-y-2 rounded-sm border border-border-tertiary bg-bg-tertiary p-3 text-xs text-text-secondary">
+              {Array.isArray(options.security.blockedPhrases) &&
+                options.security.blockedPhrases.length > 0 && (
+                <div>
+                  <span className="font-medium text-text-primary">{t('options.blockedPhrases')}:</span>
                   <div className="mt-1 flex flex-wrap gap-1">
                     {options.security.blockedPhrases.map((phrase) => (
                       <span
@@ -62,51 +187,30 @@ export function OptionsSection({ options }: OptionsSectionProps) {
                 </div>
               )}
               {options.security.allowedCharacters && (
-                <div className="text-xs">
+                <div>
                   <span className="font-medium text-text-primary">
                     {t('options.allowedCharacters')}:
                   </span>{' '}
-                  <span className="font-mono text-text-secondary">
-                    {options.security.allowedCharacters}
-                  </span>
+                  <span className="font-mono">{options.security.allowedCharacters}</span>
                 </div>
               )}
             </div>
           </div>
         )}
 
-        {options.requiresCommands.length > 0 && (
-          <div>
-            <h3 className="mb-2 text-xs font-medium text-text-primary">
-              {t('options.requiredCommands')}
-            </h3>
-            <div className="overflow-hidden rounded-sm border border-border-tertiary">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b border-border-tertiary bg-bg-tertiary">
-                    <th className="px-3 py-2 text-left font-medium text-text-primary">CLI</th>
-                    <th className="px-3 py-2 text-left font-medium text-text-primary">
-                      Description
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {options.requiresCommands.map((cmd) => (
-                    <tr
-                      key={cmd.cli}
-                      className="border-b border-border-tertiary last:border-0"
-                    >
-                      <td className="px-3 py-2 font-mono text-text-primary">{cmd.cli}</td>
-                      <td className="px-3 py-2 text-text-secondary">
-                        {cmd.description || '\u2014'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
+        <div className="border-t border-border-secondary pt-5">
+          <h3 className="mb-1 text-xs font-medium text-error-text">{t('options.dangerZone')}</h3>
+          <p className="mb-3 text-xs text-text-tertiary">{t('options.dangerZoneDescription')}</p>
+          <button
+            type="button"
+            onClick={handleDeleteProject}
+            disabled={deleteProject.isPending}
+            className="inline-flex items-center gap-1.5 rounded-sm bg-error-btn px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-error-btn-hover cursor-pointer disabled:opacity-50"
+          >
+            <Trash2 size={14} />
+            {t('actions.deleteProject')}
+          </button>
+        </div>
       </div>
     </div>
   );

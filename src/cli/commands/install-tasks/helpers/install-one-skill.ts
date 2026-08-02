@@ -8,6 +8,10 @@ import { getProvider, getAllProviders } from '../../../../shared/providers';
 import { getGitProvider } from '../../../../shared/git-providers/registry';
 import { LockfileBuilder } from '../../../../shared/lockfile';
 import { assertSafeRepoPath } from '../../../../shared/repo-file';
+import {
+  describeUnsafeCapabilityId,
+  isSafeCapabilityId,
+} from '../../../../shared/safe-id';
 import { copySkillTree } from '../../../../shared/skill-copy';
 import { parseRepoString } from '../../../../shared/repo-string';
 import {
@@ -60,8 +64,14 @@ export async function installOneSkill(
   lockBuilder: LockfileBuilder,
   noCache: boolean,
   resolvedRepos: Map<string, GetSnapshotResult>,
+  opts?: { trackManaged?: boolean },
 ): Promise<SkillInstallOutcome> {
+  const trackManaged = opts?.trackManaged !== false;
   const authFetch = createAuthenticatedFetch(db);
+
+  if (!isSafeCapabilityId(skill.id)) {
+    throw new Error(describeUnsafeCapabilityId('Skill', skill.id));
+  }
 
   let skillMarkdown: string;
   let additionalFiles: Map<string, string> = new Map();
@@ -300,20 +310,32 @@ export async function installOneSkill(
     }
 
     const skillsBaseDir = join(projectPath, providerEntry.skillsDir);
-    const skillDir = join(skillsBaseDir, skill.id);
+    const skillDir = assertSafeRepoPath(skillsBaseDir, skill.id);
     const skillMdPath = join(skillDir, 'SKILL.md');
 
     if (existsSync(skillDir)) {
-      const managedFiles = db.getManagedFiles(projectId);
-      if (!managedFiles.includes(skillDir)) {
+      if (trackManaged) {
+        const managedFiles = db.getManagedFiles(projectId);
+        if (!managedFiles.includes(skillDir)) {
+          console.error(
+            `  ✗ Directory already exists and is not managed by capa: ${skillDir}`
+          );
+          console.error('    Please delete it manually and run "capa install" again.');
+          try { db.close(); } catch {}
+          process.exit(1);
+        }
+        rmSync(skillDir, { recursive: true, force: true });
+      } else {
+        // Passthrough must not delete directories capa does not own.
         console.error(
-          `  ✗ Directory already exists and is not managed by capa: ${skillDir}`
+          `  ✗ Directory already exists: ${skillDir}`
         );
-        console.error('    Please delete it manually and run "capa install" again.');
+        console.error(
+          '    Passthrough will not overwrite existing skill directories. Delete it manually and retry.',
+        );
         try { db.close(); } catch {}
         process.exit(1);
       }
-      rmSync(skillDir, { recursive: true, force: true });
     }
 
     if (skillSourceDir) {
@@ -321,7 +343,7 @@ export async function installOneSkill(
       writeFileSync(skillMdPath, skillMarkdown, 'utf-8');
       for (const [filePath, content] of additionalFiles) {
         if (!isTextFile(filePath)) continue;
-        const fullPath = join(skillDir, filePath);
+        const fullPath = assertSafeRepoPath(skillDir, filePath);
         mkdirSync(dirname(fullPath), { recursive: true });
         writeFileSync(fullPath, content, 'utf-8');
       }
@@ -329,7 +351,7 @@ export async function installOneSkill(
       mkdirSync(skillDir, { recursive: true });
       writeFileSync(skillMdPath, skillMarkdown, 'utf-8');
       for (const [filePath, content] of additionalFiles) {
-        const fullPath = join(skillDir, filePath);
+        const fullPath = assertSafeRepoPath(skillDir, filePath);
         const fileDir = dirname(fullPath);
         if (!existsSync(fileDir)) {
           mkdirSync(fileDir, { recursive: true });
@@ -338,7 +360,9 @@ export async function installOneSkill(
       }
     }
 
-    db.addManagedFile(projectId, skillDir);
+    if (trackManaged) {
+      db.addManagedFile(projectId, skillDir);
+    }
   }
 
   return 'installed';

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, spyOn } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync, existsSync } from 'fs';
+import { mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import * as yaml from 'js-yaml';
@@ -11,6 +11,7 @@ import {
   emptyLockfile,
   getLockfilePath,
   loadLockfile,
+  lockfilesSemanticallyEqual,
   saveLockfile,
   serializeLockfile,
 } from '../lockfile';
@@ -105,6 +106,50 @@ describe('lockfile', () => {
       expect(parsed.version).toBe(1);
       expect(parsed.skills[0].id).toBe('my-skill');
     });
+
+    it('preserves generatedAt instead of refreshing it', () => {
+      const lf: Lockfile = {
+        ...emptyLockfile(),
+        generatedAt: '2026-01-01T00:00:00.000Z',
+        skills: [sampleSkill],
+      };
+      const text = serializeLockfile(lf, 'yaml');
+      const parsed = yaml.load(text) as Lockfile;
+      expect(parsed.generatedAt).toBe('2026-01-01T00:00:00.000Z');
+    });
+  });
+
+  describe('lockfilesSemanticallyEqual / saveLockfile skip', () => {
+    it('treats timestamp-only differences as equal', () => {
+      const a: Lockfile = {
+        ...emptyLockfile(),
+        generatedAt: '2026-01-01T00:00:00.000Z',
+        skills: [sampleSkill],
+      };
+      const b: Lockfile = {
+        ...a,
+        generatedAt: '2026-06-01T00:00:00.000Z',
+      };
+      expect(lockfilesSemanticallyEqual(a, b)).toBe(true);
+    });
+
+    it('skips rewriting the lockfile when pins are unchanged', async () => {
+      const lf: Lockfile = {
+        ...emptyLockfile(),
+        generatedAt: '2026-01-01T00:00:00.000Z',
+        skills: [sampleSkill],
+      };
+      await saveLockfile(projectDir, lf, 'yaml');
+      const before = readFileSync(join(projectDir, LOCKFILE_NAME), 'utf-8');
+
+      await saveLockfile(
+        projectDir,
+        { ...lf, generatedAt: '2026-12-31T23:59:59.000Z' },
+        'yaml',
+      );
+      const after = readFileSync(join(projectDir, LOCKFILE_NAME), 'utf-8');
+      expect(after).toBe(before);
+    });
   });
 
   describe('saveLockfile + loadLockfile', () => {
@@ -177,6 +222,28 @@ describe('lockfile', () => {
   });
 
   describe('LockfileBuilder', () => {
+    it('preserves generatedAt when pins are unchanged', () => {
+      const initial: Lockfile = {
+        ...emptyLockfile(),
+        generatedAt: '2026-01-01T00:00:00.000Z',
+        skills: [sampleSkill],
+      };
+      const b = new LockfileBuilder(initial);
+      b.upsertSkill(sampleSkill);
+      expect(b.build().generatedAt).toBe('2026-01-01T00:00:00.000Z');
+    });
+
+    it('bumps generatedAt when a pin changes', () => {
+      const initial: Lockfile = {
+        ...emptyLockfile(),
+        generatedAt: '2026-01-01T00:00:00.000Z',
+        skills: [sampleSkill],
+      };
+      const b = new LockfileBuilder(initial);
+      b.upsertSkill({ ...sampleSkill, resolvedRef: 'c'.repeat(40) });
+      expect(b.build().generatedAt).not.toBe('2026-01-01T00:00:00.000Z');
+    });
+
     it('starts empty when given null', () => {
       const b = new LockfileBuilder(null);
       const lf = b.build();
@@ -240,7 +307,7 @@ describe('lockfile', () => {
       const searched: LockPluginEntry = {
         ...samplePlugin,
         id: 'searched-plugin',
-        subpath: 'plugins/code-review', // resolved from a previous walk
+        subpath: 'plugins/code-review',
         requestedSearchName: 'code-review',
       };
       const exact: LockPluginEntry = {
@@ -251,19 +318,14 @@ describe('lockfile', () => {
       };
       const b = new LockfileBuilder({ ...emptyLockfile(), plugins: [searched, exact] });
 
-      // Search query matches the search entry even though we pass subpath: null —
-      // when a search is requested the lockfile shouldn't gate the lookup on a
-      // resolved subpath (which the caller doesn't know yet).
       expect(
         b.findPlugin({ source: 'github', repo: 'owner/plugin', subpath: null, requestedSearchName: 'code-review', requestedVersion: null, requestedRef: null })?.id
       ).toBe('searched-plugin');
 
-      // Exact-path query is unaffected and still matches the non-search entry.
       expect(
         b.findPlugin({ source: 'github', repo: 'owner/plugin', subpath: 'plugins/code-review', requestedSearchName: null, requestedVersion: null, requestedRef: null })?.id
       ).toBe('exact-plugin');
 
-      // A search miss returns null even if the resolved subpath happens to collide.
       expect(
         b.findPlugin({ source: 'github', repo: 'owner/plugin', subpath: null, requestedSearchName: 'debugger', requestedVersion: null, requestedRef: null })
       ).toBeNull();

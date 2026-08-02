@@ -10,33 +10,32 @@
  * exists for a SHA, subsequent installs are network-free.
  */
 
-export type { CachePlatform } from './paths';
 export {
-  getCacheDir,
-  getRepoCacheDir,
-  getRepoMirrorDir,
-  getSnapshotDir,
-} from './paths';
+	ensureMirrorClone,
+	fetchMirror,
+	type ResolveOptions,
+	type ResolveResult,
+	resolveRef,
+} from "./mirror";
+export type { CachePlatform } from "./paths";
+export {
+	getCacheDir,
+	getRepoCacheDir,
+	getRepoMirrorDir,
+	getSnapshotDir,
+} from "./paths";
 
 export {
-  ensureMirrorClone,
-  fetchMirror,
-  resolveRef,
-  type ResolveOptions,
-  type ResolveResult,
-} from './mirror';
+	type GetSnapshotOptions,
+	type GetSnapshotResult,
+	getOrCreateSnapshot,
+	materializeSnapshot,
+} from "./snapshot";
 
 export {
-  materializeSnapshot,
-  getOrCreateSnapshot,
-  type GetSnapshotOptions,
-  type GetSnapshotResult,
-} from './snapshot';
-
-export {
-  getCacheStats,
-  cleanCache,
-  formatBytes,
-  type CachedRepoInfo,
-  type CacheStats,
-} from './stats';
+	type CachedRepoInfo,
+	type CacheStats,
+	cleanCache,
+	formatBytes,
+	getCacheStats,
+} from "./stats";

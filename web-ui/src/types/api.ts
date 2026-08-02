@@ -25,6 +25,9 @@ export interface Skill {
   description: string | null;
   descriptionSource?: 'capabilities' | 'frontmatter' | null;
   requires: string[];
+  content?: string | null;
+  /** Project-relative path for type: local skills (directory containing SKILL.md). */
+  path?: string | null;
   sourcePlugin: SourcePlugin | null;
   /** External origin URL for github / gitlab / remote / plugin skills. */
   sourceUrl?: string | null;
@@ -33,9 +36,12 @@ export interface Skill {
 export interface Tool {
   id: string;
   type: 'mcp' | 'command';
+  description?: string | null;
   sourcePlugin: SourcePlugin | null;
   mcpServer?: string;
   mcpTool?: string;
+  defaults?: Record<string, unknown> | null;
+  formatter?: { cmd: string; timeout?: number } | null;
   command?: string;
   commandArgs?: CommandArg[];
   /** Optional group name for command-type tools. */
@@ -58,11 +64,22 @@ export interface CommandArg {
   type?: string;
   description?: string;
   required?: boolean;
+  default?: unknown;
 }
 
 export interface EnrichedTool extends Tool {
   _description?: string;
   _inputSchema?: ToolInputSchema;
+}
+
+export interface ServerOAuth2Config {
+  clientId: string | null;
+  clientSecret: string | null;
+  authorizationUrl: string | null;
+  tokenUrl: string | null;
+  scopes: string[] | null;
+  redirectUri: string | null;
+  pkce: boolean;
 }
 
 export interface Server {
@@ -71,11 +88,16 @@ export interface Server {
   url: string | null;
   cmd: string | null;
   args: string[] | null;
+  env?: Record<string, string> | null;
+  headers?: Record<string, string> | null;
+  cwd?: string | null;
+  tlsSkipVerify?: boolean;
+  oauth2?: ServerOAuth2Config | null;
   sourcePlugin: SourcePlugin | null;
   displayName: string | null;
   requiresOAuth: boolean;
   isConnected: boolean | null;
-  description?: string;
+  description?: string | null;
 }
 
 export interface ResolvedPlugin {
@@ -87,6 +109,9 @@ export interface ResolvedPlugin {
   skills?: string[];
   /** Capa server IDs (after `as` rename) the plugin contributed. */
   serverIds?: string[];
+  subagentIds?: string[];
+  hookIds?: string[];
+  ruleIds?: string[];
 }
 
 export interface SubAgent {
@@ -95,15 +120,21 @@ export interface SubAgent {
   skills: string[];
   tools: string[];
   instructions: string | null;
+  sourcePlugin: SourcePlugin | null;
 }
 
 export interface Rule {
   id: string;
-  type: 'inline' | 'remote' | 'github' | 'gitlab';
+  type: 'inline' | 'remote' | 'github' | 'gitlab' | 'local';
   description: string | null;
   providers: string[];
   appliesTo: string[];
   alwaysApply: boolean;
+  content?: string | null;
+  url?: string | null;
+  path?: string | null;
+  def?: { repo: string } | null;
+  sourcePlugin: SourcePlugin | null;
 }
 
 export interface InstalledHook {
@@ -126,8 +157,22 @@ export interface Hook {
   sourceType: 'inline' | 'remote' | 'github' | 'gitlab' | 'local' | null;
   command: string | null;
   prompt: string | null;
+  /** Inline `source.content` when body lives under `source` instead of command/prompt. */
+  sourceContent?: string | null;
   /** One row per provider where capa successfully installed this hook. */
   installed: InstalledHook[];
+  sourcePlugin: SourcePlugin | null;
+}
+
+export interface AuthoredPlugin {
+  id: string | null;
+  type: string;
+  def: {
+    repo: string;
+    version?: string;
+    ref?: string;
+    subpath?: string;
+  };
 }
 
 export interface RequiredCommand {
@@ -142,8 +187,50 @@ export interface SecurityOptions {
 
 export interface CapabilitiesOptions {
   toolExposure: string | null;
+  /** Default true when omitted from capabilities file. */
+  agentActivity: boolean;
   security: SecurityOptions | null;
   requiresCommands: RequiredCommand[];
+}
+
+export interface AgentSnippetDef {
+  repo: string;
+}
+
+export interface AgentFileBase {
+  type: string | null;
+  ref: string | null;
+  path: string | null;
+  def: AgentSnippetDef | null;
+}
+
+export interface AgentSnippet {
+  id: string | null;
+  type: 'inline' | 'remote' | 'github' | 'gitlab' | 'local' | string;
+  content: string | null;
+  url: string | null;
+  path: string | null;
+  def: AgentSnippetDef | null;
+}
+
+export interface AgentFileConfig {
+  base: AgentFileBase | null;
+  additional: AgentSnippet[];
+}
+
+export interface ProjectFsEntry {
+  name: string;
+  type: 'file' | 'dir';
+  path: string;
+}
+
+export interface ProjectFsListResponse {
+  path: string;
+  entries: ProjectFsEntry[];
+}
+
+export interface ProjectFsUploadResponse {
+  path: string;
 }
 
 export interface ProjectCapabilities {
@@ -151,10 +238,12 @@ export interface ProjectCapabilities {
   tools: Tool[];
   servers: Server[];
   resolvedPlugins: ResolvedPlugin[] | null;
+  plugins?: AuthoredPlugin[];
   providers: string[];
   subagents: SubAgent[];
   rules: Rule[];
   hooks: Hook[];
+  agents: AgentFileConfig | null;
   options: CapabilitiesOptions | null;
 }
 
@@ -168,8 +257,27 @@ export interface ProjectDetail {
 
 export interface VariablesResponse {
   required: string[];
+  catalog: string[];
   values: Record<string, string>;
 }
+
+export interface CapabilitiesMutationResponse {
+  success: boolean;
+  needsCredentials?: boolean;
+  missingVars?: string[];
+  oauth2Servers?: string[];
+  error?: string;
+  [key: string]: unknown;
+}
+
+export type CapabilitySection =
+  | 'skills'
+  | 'servers'
+  | 'tools'
+  | 'plugins'
+  | 'subagents'
+  | 'rules'
+  | 'hooks';
 
 export interface OAuth2Server {
   serverId: string;
@@ -217,6 +325,66 @@ export interface IntegrationsResponse {
 export interface OAuthStartResponse {
   authorizationUrl?: string;
   error?: string;
+}
+
+export type ToolCallStatus = 'running' | 'ok' | 'error';
+export type ToolCallKind =
+  | 'setup_tools'
+  | 'call_tool'
+  | 'tool'
+  | 'prompt'
+  | 'shell'
+  | 'file'
+  | 'skill'
+  | 'session'
+  | 'subagent'
+  | 'compact'
+  | 'stop'
+  | 'agent_mcp'
+  | 'agent_tool';
+
+export interface ToolCallRecord {
+  id: string;
+  project_id: string;
+  session_id: string | null;
+  started_at: number;
+  duration_ms: number | null;
+  status: ToolCallStatus;
+  source: string | null;
+  kind: ToolCallKind;
+  tool_name: string;
+  meta_tool: string | null;
+  args_json: string | null;
+  result_preview: string | null;
+  result_bytes: number | null;
+  result_tokens: number | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cache_read_tokens: number | null;
+  cache_write_tokens: number | null;
+  error_message: string | null;
+  agent_id: string | null;
+}
+
+export interface ActivityResponse {
+  calls: ToolCallRecord[];
+  total: number;
+  hasMore: boolean;
+}
+
+export interface ActivityBucket {
+  t: number;
+  count: number;
+}
+
+export interface ActivityStats {
+  total: number;
+  errors: number;
+  avg_duration_ms: number | null;
+  shell: number;
+  mcp: number;
+  window_ms: number;
+  buckets: ActivityBucket[];
 }
 
 export interface ActionResponse {

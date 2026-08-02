@@ -5,7 +5,9 @@ import type { InstallCtx } from './context';
 export function pruneOrphanRulesTask(): Task<InstallCtx> {
   return {
     title: 'Pruning orphan rules',
-    enabled: (ctx) => (ctx.capabilitiesToUse.providers ?? ctx.resolvedProviders).length > 0,
+    enabled: (ctx) =>
+      !ctx.isWrapInstall &&
+      (ctx.capabilitiesToUse.providers ?? ctx.resolvedProviders).length > 0,
     task: async (ctx) => {
       const providers = ctx.capabilitiesToUse.providers ?? ctx.resolvedProviders;
       const currentRules = ctx.capabilitiesToUse.rules ?? [];

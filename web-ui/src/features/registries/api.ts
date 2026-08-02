@@ -9,7 +9,7 @@ export interface RegistryManifest {
   capabilities: string[];
 }
 
-export type RegistrySourceType = 'github' | 'gitlab' | 'url';
+export type RegistrySourceType = 'github' | 'gitlab' | 'url' | 'claude-marketplace';
 export type RegistryStatus = 'pending' | 'installed' | 'failed' | 'disabled';
 
 export interface RegistryAdminRecord {
@@ -62,6 +62,7 @@ export interface RegistryPreviewResponse {
   content: string;
   resolvedRef: string | null;
   derivedSlug: string | null;
+  pluginCount?: number;
 }
 
 export interface RegistryMutationResponse {
@@ -99,7 +100,8 @@ export const registriesApi = {
     cursor?: string,
   ) => {
     const params = new URLSearchParams({ capability });
-    if (query) params.set('q', query);
+    // Always send q (including "") so adapters return initial browse results.
+    params.set('q', query ?? '');
     if (limit != null) params.set('limit', String(limit));
     if (cursor) params.set('cursor', cursor);
     return api.get<RegistrySearchResult>(

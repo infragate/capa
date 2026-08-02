@@ -153,6 +153,26 @@ describe('variable-resolver', () => {
         null: null,
       });
     });
+
+    it('should not rewrite plugin-sourced string values', () => {
+      const obj = {
+        subagents: [
+          {
+            id: 'security-analyst',
+            instructions: 'Ask for ${API_KEY}',
+            sourcePlugin: { id: 'p', name: 'P', provider: 'claude' },
+          },
+        ],
+      };
+      const result = resolveVariablesInObject(obj, 'test-project', mockDb as any);
+      expect(result.subagents[0].instructions).toBe('Ask for ${API_KEY}');
+    });
+
+    it('should not rewrite object keys', () => {
+      const obj = { '${API_KEY}': '${BASE_URL}' };
+      const result = resolveVariablesInObject(obj, 'test-project', mockDb as any);
+      expect(result).toEqual({ '${API_KEY}': 'https://api.example.com' });
+    });
   });
 
   describe('hasUnresolvedVariables', () => {
@@ -215,6 +235,59 @@ describe('variable-resolver', () => {
       const variables = extractAllVariables(obj);
       
       expect(variables).toEqual([]);
+    });
+
+    it('should ignore object keys that look like placeholders', () => {
+      const obj = {
+        '${NOT_A_VAR}': 'literal',
+        nested: { '${ALSO_NOT}': true },
+      };
+      expect(extractAllVariables(obj)).toEqual([]);
+      expect(hasUnresolvedVariables(obj)).toBe(false);
+    });
+
+    it('should ignore placeholders inside plugin-sourced entries', () => {
+      const caps = {
+        servers: [
+          {
+            id: 'authored',
+            type: 'mcp',
+            def: { url: 'https://x', headers: { Authorization: 'Bearer ${TOKEN}' } },
+          },
+        ],
+        subagents: [
+          {
+            id: 'security-analyst',
+            instructions: 'Ask for ${email} and ${password}',
+            skills: [],
+            tools: [],
+            sourcePlugin: { id: 'security-analyst', name: 'Security Analyst', provider: 'claude' },
+          },
+        ],
+        hooks: [
+          {
+            id: 'plugin-hook',
+            command: 'echo ${SECRET_FROM_PLUGIN}',
+            sourcePlugin: { id: 'p', name: 'P', provider: 'claude' },
+          },
+        ],
+      };
+      expect(extractAllVariables(caps)).toEqual(['TOKEN']);
+      expect(hasUnresolvedVariables(caps)).toBe(true);
+    });
+
+    it('should still extract from authored entries without sourcePlugin', () => {
+      const caps = {
+        subagents: [
+          {
+            id: 'local-agent',
+            instructions: 'Use ${API_KEY} when calling the API',
+            skills: [],
+            tools: [],
+          },
+        ],
+      };
+      expect(extractAllVariables(caps)).toEqual(['API_KEY']);
     });
   });
 });

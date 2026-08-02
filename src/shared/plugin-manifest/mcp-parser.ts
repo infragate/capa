@@ -1,10 +1,12 @@
-import { existsSync, readFileSync } from 'fs';
-import { join, resolve, isAbsolute, relative } from 'path';
-import type { NormalizedPluginMCPServerDef } from '../../types/plugin';
+import { existsSync, readFileSync } from "fs";
+import { isAbsolute, join, relative, resolve } from "path";
 import {
-  asParsedMcpServerEntry,
-  isPlainObject,
-} from './types-helpers';
+	isAbsolute as isWinAbsolute,
+	resolve as winResolve,
+} from "path/win32";
+import { resolve as posixResolve } from "path/posix";
+import type { NormalizedPluginMCPServerDef } from "../../types/plugin";
+import { asParsedMcpServerEntry, isPlainObject } from "./types-helpers";
 
 /**
  * Pull a value from `obj` matching any of the supplied case-insensitive keys.
@@ -12,16 +14,19 @@ import {
  * spellings for the same OAuth field (Cursor: `CLIENT_ID`, Claude: `clientId`,
  * raw OAuth2 spec: `client_id`), so we normalize them here.
  */
-function pickField(obj: Record<string, unknown>, names: readonly string[]): unknown {
-  const lookup = new Map<string, unknown>();
-  for (const key of Object.keys(obj)) {
-    lookup.set(key.toLowerCase(), obj[key]);
-  }
-  for (const name of names) {
-    const found = lookup.get(name.toLowerCase());
-    if (found !== undefined) return found;
-  }
-  return undefined;
+function pickField(
+	obj: Record<string, unknown>,
+	names: readonly string[],
+): unknown {
+	const lookup = new Map<string, unknown>();
+	for (const key of Object.keys(obj)) {
+		lookup.set(key.toLowerCase(), obj[key]);
+	}
+	for (const name of names) {
+		const found = lookup.get(name.toLowerCase());
+		if (found !== undefined) return found;
+	}
+	return undefined;
 }
 
 /**
@@ -30,58 +35,75 @@ function pickField(obj: Record<string, unknown>, names: readonly string[]): unkn
  * etc. Unknown/extra fields are preserved untouched so per-server quirks can
  * still flow through to downstream consumers.
  */
-function normalizeOAuth2Block(raw: unknown): Record<string, unknown> | undefined {
-  if (!isPlainObject(raw)) return raw === undefined ? undefined : (raw as Record<string, unknown>);
-  const result: Record<string, unknown> = { ...raw };
+function normalizeOAuth2Block(
+	raw: unknown,
+): Record<string, unknown> | undefined {
+	if (!isPlainObject(raw))
+		return raw === undefined ? undefined : (raw as Record<string, unknown>);
+	const result: Record<string, unknown> = { ...raw };
 
-  const clientId = pickField(raw, ['client_id', 'clientId', 'CLIENT_ID']);
-  if (typeof clientId === 'string' && clientId.length > 0) {
-    result.client_id = clientId;
-  }
+	const clientId = pickField(raw, ["client_id", "clientId", "CLIENT_ID"]);
+	if (typeof clientId === "string" && clientId.length > 0) {
+		result.client_id = clientId;
+	}
 
-  const clientSecret = pickField(raw, ['client_secret', 'clientSecret', 'CLIENT_SECRET']);
-  if (typeof clientSecret === 'string' && clientSecret.length > 0) {
-    result.client_secret = clientSecret;
-  }
+	const clientSecret = pickField(raw, [
+		"client_secret",
+		"clientSecret",
+		"CLIENT_SECRET",
+	]);
+	if (typeof clientSecret === "string" && clientSecret.length > 0) {
+		result.client_secret = clientSecret;
+	}
 
-  const callbackPort = pickField(raw, ['callback_port', 'callbackPort', 'CALLBACK_PORT']);
-  if (typeof callbackPort === 'number' && callbackPort > 0) {
-    result.callback_port = callbackPort;
-  } else if (typeof callbackPort === 'string') {
-    const parsed = Number(callbackPort);
-    if (Number.isFinite(parsed) && parsed > 0) {
-      result.callback_port = parsed;
-    }
-  }
+	const callbackPort = pickField(raw, [
+		"callback_port",
+		"callbackPort",
+		"CALLBACK_PORT",
+	]);
+	if (typeof callbackPort === "number" && callbackPort > 0) {
+		result.callback_port = callbackPort;
+	} else if (typeof callbackPort === "string") {
+		const parsed = Number(callbackPort);
+		if (Number.isFinite(parsed) && parsed > 0) {
+			result.callback_port = parsed;
+		}
+	}
 
-  return result;
+	return result;
 }
 
 /**
  * Normalize one MCP server entry from manifest.
  * Supports subprocess (command/cmd + args/env) and remote HTTP (url + headers/oauth).
  */
-export function normalizeMcpServerEntry(entry: unknown): NormalizedPluginMCPServerDef | null {
-  const parsed = asParsedMcpServerEntry(entry);
-  if (!parsed) return null;
+export function normalizeMcpServerEntry(
+	entry: unknown,
+): NormalizedPluginMCPServerDef | null {
+	const parsed = asParsedMcpServerEntry(entry);
+	if (!parsed) return null;
 
-  const url = parsed.url;
-  if (typeof url === 'string' && url.length > 0) {
-    const rawOauth = parsed.oauth2 ?? parsed.oauth ?? parsed.auth;
-    return {
-      url,
-      headers: isPlainObject(parsed.headers) ? (parsed.headers as Record<string, string>) : undefined,
-      oauth2: normalizeOAuth2Block(rawOauth),
-    };
-  }
+	const url = parsed.url;
+	if (typeof url === "string" && url.length > 0) {
+		const rawOauth = parsed.oauth2 ?? parsed.oauth ?? parsed.auth;
+		return {
+			url,
+			headers: isPlainObject(parsed.headers)
+				? (parsed.headers as Record<string, string>)
+				: undefined,
+			oauth2: normalizeOAuth2Block(rawOauth),
+		};
+	}
 
-  const command = parsed.command ?? parsed.cmd;
-  if (typeof command !== 'string') return null;
-  return {
-    cmd: command,
-    args: Array.isArray(parsed.args) ? parsed.args : undefined,
-    env: isPlainObject(parsed.env) ? (parsed.env as Record<string, string>) : undefined,
-  };
+	const command = parsed.command ?? parsed.cmd;
+	if (typeof command !== "string") return null;
+	return {
+		cmd: command,
+		args: Array.isArray(parsed.args) ? parsed.args : undefined,
+		env: isPlainObject(parsed.env)
+			? (parsed.env as Record<string, string>)
+			: undefined,
+	};
 }
 
 /**
@@ -92,17 +114,19 @@ export function normalizeMcpServerEntry(entry: unknown): NormalizedPluginMCPServ
  * rejected by returning `null`.
  */
 function resolveManifestPath(
-  repoRoot: string,
-  manifestDir: string,
-  relPath: string,
+	repoRoot: string,
+	manifestDir: string,
+	relPath: string,
 ): string | null {
-  if (isAbsolute(relPath)) return null;
-  const base = isAbsolute(manifestDir) ? manifestDir : resolve(repoRoot, manifestDir);
-  const candidate = resolve(base, relPath);
-  const absRepo = resolve(repoRoot);
-  const rel = relative(absRepo, candidate);
-  if (rel.startsWith('..') || isAbsolute(rel)) return null;
-  return candidate;
+	if (isAbsolute(relPath)) return null;
+	const base = isAbsolute(manifestDir)
+		? manifestDir
+		: resolve(repoRoot, manifestDir);
+	const candidate = resolve(base, relPath);
+	const absRepo = resolve(repoRoot);
+	const rel = relative(absRepo, candidate);
+	if (rel.startsWith("..") || isAbsolute(rel)) return null;
+	return candidate;
 }
 
 /**
@@ -111,34 +135,34 @@ function resolveManifestPath(
  * referencing manifest (relative to or absolute under `repoRoot`).
  */
 function loadMcpConfigFromPath(
-  repoRoot: string,
-  manifestDir: string,
-  path: string,
+	repoRoot: string,
+	manifestDir: string,
+	path: string,
 ): Record<string, unknown> | null {
-  const fullPath = resolveManifestPath(repoRoot, manifestDir, path);
-  if (!fullPath || !existsSync(fullPath)) return null;
-  try {
-    const content = readFileSync(fullPath, 'utf-8');
-    const data: unknown = JSON.parse(content);
-    if (!isPlainObject(data)) return null;
-    const obj = data.mcpServers ?? data;
-    return isPlainObject(obj) ? obj : null;
-  } catch {
-    return null;
-  }
+	const fullPath = resolveManifestPath(repoRoot, manifestDir, path);
+	if (!fullPath || !existsSync(fullPath)) return null;
+	try {
+		const content = readFileSync(fullPath, "utf-8");
+		const data: unknown = JSON.parse(content);
+		if (!isPlainObject(data)) return null;
+		const obj = data.mcpServers ?? data;
+		return isPlainObject(obj) ? obj : null;
+	} catch {
+		return null;
+	}
 }
 
 /**
  * Merge server entries from an object into result (normalized).
  */
 function mergeMcpEntries(
-  result: Record<string, NormalizedPluginMCPServerDef>,
-  obj: Record<string, unknown>
+	result: Record<string, NormalizedPluginMCPServerDef>,
+	obj: Record<string, unknown>,
 ): void {
-  for (const [key, value] of Object.entries(obj)) {
-    const normalized = normalizeMcpServerEntry(value);
-    if (normalized) result[key] = normalized;
-  }
+	for (const [key, value] of Object.entries(obj)) {
+		const normalized = normalizeMcpServerEntry(value);
+		if (normalized) result[key] = normalized;
+	}
 }
 
 /**
@@ -156,50 +180,54 @@ function mergeMcpEntries(
  * the repo root is also tried.
  */
 export function parseMcpServers(
-  repoRoot: string,
-  manifest: unknown,
-  defaultMcpFallbackPath?: string,
-  manifestDir: string = '.',
+	repoRoot: string,
+	manifest: unknown,
+	defaultMcpFallbackPath?: string,
+	manifestDir: string = ".",
 ): Record<string, NormalizedPluginMCPServerDef> {
-  const result: Record<string, NormalizedPluginMCPServerDef> = {};
-  if (!isPlainObject(manifest)) return result;
+	const result: Record<string, NormalizedPluginMCPServerDef> = {};
+	if (!isPlainObject(manifest)) return result;
 
-  const raw = manifest.mcpServers ?? manifest.mcp;
+	const raw = manifest.mcpServers ?? manifest.mcp;
 
-  if (typeof raw === 'string') {
-    const obj = loadMcpConfigFromPath(repoRoot, manifestDir, raw);
-    if (obj) mergeMcpEntries(result, obj);
-  } else if (Array.isArray(raw)) {
-    for (let i = 0; i < raw.length; i++) {
-      const item = raw[i];
-      if (typeof item === 'string') {
-        const obj = loadMcpConfigFromPath(repoRoot, manifestDir, item);
-        if (obj) mergeMcpEntries(result, obj);
-      } else if (isPlainObject(item)) {
-        const hasCommand = 'command' in item || 'cmd' in item;
-        if (hasCommand) {
-          const normalized = normalizeMcpServerEntry(item);
-          if (normalized) result[`server-${i}`] = normalized;
-        } else {
-          mergeMcpEntries(result, item);
-        }
-      }
-    }
-  } else if (isPlainObject(raw)) {
-    mergeMcpEntries(result, raw);
-  }
+	if (typeof raw === "string") {
+		const obj = loadMcpConfigFromPath(repoRoot, manifestDir, raw);
+		if (obj) mergeMcpEntries(result, obj);
+	} else if (Array.isArray(raw)) {
+		for (let i = 0; i < raw.length; i++) {
+			const item = raw[i];
+			if (typeof item === "string") {
+				const obj = loadMcpConfigFromPath(repoRoot, manifestDir, item);
+				if (obj) mergeMcpEntries(result, obj);
+			} else if (isPlainObject(item)) {
+				const hasCommand = "command" in item || "cmd" in item;
+				if (hasCommand) {
+					const normalized = normalizeMcpServerEntry(item);
+					if (normalized) result[`server-${i}`] = normalized;
+				} else {
+					mergeMcpEntries(result, item);
+				}
+			}
+		}
+	} else if (isPlainObject(raw)) {
+		mergeMcpEntries(result, raw);
+	}
 
-  if (Object.keys(result).length === 0 && defaultMcpFallbackPath) {
-    const defaultObj = loadMcpConfigFromPath(repoRoot, '.', defaultMcpFallbackPath);
-    if (defaultObj) mergeMcpEntries(result, defaultObj);
-  }
+	if (Object.keys(result).length === 0 && defaultMcpFallbackPath) {
+		const defaultObj = loadMcpConfigFromPath(
+			repoRoot,
+			".",
+			defaultMcpFallbackPath,
+		);
+		if (defaultObj) mergeMcpEntries(result, defaultObj);
+	}
 
-  if (Object.keys(result).length === 0) {
-    const fallback = loadMcpConfigFromPath(repoRoot, '.', '.mcp.json');
-    if (fallback) mergeMcpEntries(result, fallback);
-  }
+	if (Object.keys(result).length === 0) {
+		const fallback = loadMcpConfigFromPath(repoRoot, ".", ".mcp.json");
+		if (fallback) mergeMcpEntries(result, fallback);
+	}
 
-  return result;
+	return result;
 }
 
 /**
@@ -212,15 +240,64 @@ export function parseMcpServers(
  * are returned untouched so they resolve from PATH or are interpreted by the
  * launched process. Rewriting them to `<pluginRoot>/<token>` produced
  * non-existent paths and silently broke command-based MCP servers (#94).
+ *
+ * On Windows the expanded root uses forward slashes. Claude Code (and Cursor)
+ * often run hook commands through Git Bash, which treats `\U`, `\T`, etc. as
+ * escapes and strips backslashes — breaking absolute Windows paths.
+ *
+ * Hook commands may include args after the path (`./hooks/run-hook.cmd session-start`);
+ * only the leading path token is resolved in that case.
+ *
+ * Pass `shellQuote: true` for hook commands run via a shell (Claude/Cursor → Git Bash).
+ * Without it, MCP argv/env values keep bare paths so Node spawn does not see literal quotes.
  */
-function resolvePluginRootInString(value: string, pluginRoot: string): string {
-  if (value.includes('${CLAUDE_PLUGIN_ROOT}')) {
-    return value.replace(/\$\{CLAUDE_PLUGIN_ROOT\}/g, pluginRoot);
-  }
-  if (value === '.' || value.startsWith('./') || value.startsWith('../')) {
-    return resolve(pluginRoot, value);
-  }
-  return value;
+/**
+ * Resolve `relPath` against a plugin root using the root's path style.
+ * Windows drive roots must stay absolute even when capa runs on Unix (tests
+ * and cross-platform installs), so `path.resolve` alone is not safe.
+ */
+function resolveUnderPluginRoot(pluginRoot: string, relPath: string): string {
+	const root = pluginRoot.replace(/\\/g, "/");
+	const rel = relPath.replace(/\\/g, "/");
+	if (isWinAbsolute(root)) {
+		return winResolve(root, rel).replace(/\\/g, "/");
+	}
+	return posixResolve(root, rel);
+}
+
+export function resolvePluginRootInString(
+	value: string,
+	pluginRoot: string,
+	opts?: { shellQuote?: boolean },
+): string {
+	const root = pluginRoot.replace(/\\/g, "/");
+	const shellQuote = opts?.shellQuote === true;
+
+	if (value.includes("${CLAUDE_PLUGIN_ROOT}")) {
+		const expanded = value.replace(/\$\{CLAUDE_PLUGIN_ROOT\}/g, root);
+		if (!shellQuote || !/\s/.test(root)) return expanded;
+		// Already quoted around the expanded root (plugin authors often quote the placeholder).
+		if (expanded.includes(`"${root}`)) return expanded;
+		const escapedRoot = root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+		return expanded.replace(
+			new RegExp(`${escapedRoot}[^\\s]*`, "g"),
+			(path) => (/\s/.test(path) ? `"${path}"` : path),
+		);
+	}
+
+	// "./path/to/cmd args..." or "../path args..." — resolve path token only.
+	const relWithArgs = value.match(/^(\.[/\\][^\s]+|\.\.[/\\][^\s]+)(\s+[\s\S]*)?$/);
+	if (relWithArgs) {
+		const abs = resolveUnderPluginRoot(pluginRoot, relWithArgs[1]);
+		const quoted = shellQuote && /\s/.test(abs) ? `"${abs}"` : abs;
+		return `${quoted}${relWithArgs[2] ?? ""}`;
+	}
+
+	if (value === "." || value.startsWith("./") || value.startsWith("../")) {
+		const abs = resolveUnderPluginRoot(pluginRoot, value);
+		return shellQuote && /\s/.test(abs) ? `"${abs}"` : abs;
+	}
+	return value;
 }
 
 /**
@@ -229,32 +306,37 @@ function resolvePluginRootInString(value: string, pluginRoot: string): string {
  * For remote (url): returns url, headers, oauth2 as-is.
  */
 export function resolvePluginServerDef(
-  def: NormalizedPluginMCPServerDef,
-  pluginRoot: string
+	def: NormalizedPluginMCPServerDef,
+	pluginRoot: string,
 ): {
-  cmd?: string;
-  args?: string[];
-  env?: Record<string, string>;
-  url?: string;
-  headers?: Record<string, string>;
-  oauth2?: unknown;
+	cmd?: string;
+	args?: string[];
+	env?: Record<string, string>;
+	url?: string;
+	headers?: Record<string, string>;
+	oauth2?: unknown;
 } {
-  if (def.url) {
-    return {
-      url: def.url,
-      headers: def.headers,
-      oauth2: def.oauth2,
-    };
-  }
-  if (!def.cmd) return {};
-  const cmd = resolvePluginRootInString(def.cmd, pluginRoot);
-  const args = def.args?.map((a) => (typeof a === 'string' ? resolvePluginRootInString(a, pluginRoot) : a));
-  let env: Record<string, string> | undefined;
-  if (def.env && typeof def.env === 'object') {
-    env = {};
-    for (const [k, v] of Object.entries(def.env)) {
-      env[k] = typeof v === 'string' ? resolvePluginRootInString(v, pluginRoot) : String(v);
-    }
-  }
-  return { cmd, args, env };
+	if (def.url) {
+		return {
+			url: def.url,
+			headers: def.headers,
+			oauth2: def.oauth2,
+		};
+	}
+	if (!def.cmd) return {};
+	const cmd = resolvePluginRootInString(def.cmd, pluginRoot);
+	const args = def.args?.map((a) =>
+		typeof a === "string" ? resolvePluginRootInString(a, pluginRoot) : a,
+	);
+	let env: Record<string, string> | undefined;
+	if (def.env && typeof def.env === "object") {
+		env = {};
+		for (const [k, v] of Object.entries(def.env)) {
+			env[k] =
+				typeof v === "string"
+					? resolvePluginRootInString(v, pluginRoot)
+					: String(v);
+		}
+	}
+	return { cmd, args, env };
 }

@@ -49,6 +49,77 @@ export interface Session {
   last_activity: number;
 }
 
+export type ToolCallStatus = 'running' | 'ok' | 'error';
+/** Activity row kind — capa MCP tools plus provider-hook agent events. */
+export const TOOL_CALL_KINDS = [
+  'setup_tools',
+  'call_tool',
+  'tool',
+  'prompt',
+  'shell',
+  'file',
+  'skill',
+  'session',
+  'subagent',
+  'compact',
+  'stop',
+  'agent_mcp',
+  'agent_tool',
+] as const;
+
+export type ToolCallKind = (typeof TOOL_CALL_KINDS)[number];
+
+export interface ToolCallRecord {
+  id: string;
+  project_id: string;
+  session_id: string | null;
+  started_at: number;
+  duration_ms: number | null;
+  status: ToolCallStatus;
+  /**
+   * `shell` for capa sh; MCP client name / `mcp` for capa MCP;
+   * provider id (e.g. `cursor`) for agent-activity hooks.
+   */
+  source: string | null;
+  kind: ToolCallKind;
+  tool_name: string;
+  meta_tool: string | null;
+  args_json: string | null;
+  result_preview: string | null;
+  /** UTF-8 byte length of the original (pre-truncate) result text. */
+  result_bytes: number | null;
+  /** Estimated tokens for the original result (~chars/4). */
+  result_tokens: number | null;
+  /** Provider-reported model input tokens (e.g. Cursor stop hook). */
+  input_tokens: number | null;
+  /** Provider-reported model output tokens. */
+  output_tokens: number | null;
+  /** Provider-reported cache read tokens. */
+  cache_read_tokens: number | null;
+  /** Provider-reported cache write tokens. */
+  cache_write_tokens: number | null;
+  error_message: string | null;
+  agent_id: string | null;
+}
+
+/** One-minute activity bucket for the last-hour chart. */
+export interface ToolCallBucket {
+  /** Start of the minute (epoch ms). */
+  t: number;
+  count: number;
+}
+
+export interface ToolCallStats {
+  total: number;
+  errors: number;
+  avg_duration_ms: number | null;
+  shell: number;
+  mcp: number;
+  window_ms: number;
+  /** 60 one-minute buckets ending at the current minute. */
+  buckets: ToolCallBucket[];
+}
+
 export interface GitIntegration {
   id: number;
   platform: 'github' | 'gitlab' | 'github-enterprise' | 'gitlab-self-managed';
@@ -83,7 +154,7 @@ export interface OAuthFlowStateRow {
   created_at: number;
 }
 
-export type RegistrySourceType = 'github' | 'gitlab' | 'url';
+export type RegistrySourceType = 'github' | 'gitlab' | 'url' | 'claude-marketplace';
 export type RegistryStatus = 'pending' | 'installed' | 'failed' | 'disabled';
 
 export interface RegistryRow {

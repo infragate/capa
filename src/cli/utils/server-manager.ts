@@ -1,5 +1,7 @@
 import { existsSync, readFileSync, unlinkSync } from 'fs';
 import { getPidFilePath, loadSettings } from '../../shared/config';
+import { stopAllWrapSessions } from './wrap/sessions';
+import { isQuiet } from '../ui';
 
 export interface ServerStatus {
   running: boolean;
@@ -88,12 +90,15 @@ export async function startServer(background: boolean = true): Promise<void> {
   const status = await getServerStatus();
   
   if (status.running) {
-    console.log(`Server already running (PID: ${status.pid})`);
+    if (!isQuiet()) {
+      console.log(`Server already running (PID: ${status.pid})`);
+    }
     return;
   }
-  
-  console.log('Starting capa server...');
-  
+
+  if (!isQuiet()) {
+    console.log('Starting capa server...');
+  } 
   // Get the path to the current executable
   const exePath = process.execPath;
   
@@ -113,7 +118,9 @@ export async function startServer(background: boolean = true): Promise<void> {
     
     const newStatus = await getServerStatus();
     if (newStatus.running) {
-      console.log(`✓ Server started at ${newStatus.url}`);
+      if (!isQuiet()) {
+        console.log(`✓ Server started at ${newStatus.url}`);
+      }
     } else {
       console.error('✗ Failed to start server');
       process.exit(1);
@@ -131,41 +138,48 @@ export async function startServer(background: boolean = true): Promise<void> {
 }
 
 /**
- * Stop the capa server
+ * Stop the capa server and any active `capa wrap` sessions.
  */
 export async function stopServer(): Promise<void> {
+  const wrapCount = await stopAllWrapSessions();
+  if (wrapCount > 0) {
+    console.log(`✓ Stopped ${wrapCount} wrap session(s)`);
+  }
+
   const status = await getServerStatus();
-  
+
   if (!status.running || !status.pid) {
-    console.log('Server is not running');
+    if (wrapCount === 0) {
+      console.log('Server is not running');
+    }
     return;
   }
-  
+
   console.log(`Stopping server (PID: ${status.pid})...`);
-  
+
   try {
     process.kill(status.pid, 'SIGTERM');
-    
+
     // Wait for process to exit
     for (let i = 0; i < 50; i++) {
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 100));
       if (!isProcessRunning(status.pid)) {
         break;
       }
     }
-    
+
     // Force kill if still running
     if (isProcessRunning(status.pid)) {
       console.log('Force stopping server...');
       process.kill(status.pid, 'SIGKILL');
     }
-    
+
     // Clean up PID file
     const pidFile = getPidFilePath();
     if (existsSync(pidFile)) {
       unlinkSync(pidFile);
     }
-    
+
     console.log('✓ Server stopped');
   } catch (error) {
     console.error('Failed to stop server:', error);

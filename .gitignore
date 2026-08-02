@@ -88,6 +88,7 @@ capa-docs
 web-ui/dist/
 web-ui/src/.generated/
 .claude/
+.cursor/
 capabilities.yaml
 capabilities.lock
 skills/bootstrap-workspace/

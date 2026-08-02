@@ -17,11 +17,11 @@
  *    verbatim into a `.md` / `.mdc` file.
  */
 
-import { existsSync, readFileSync, readdirSync, type Dirent } from 'fs';
-import { join, posix, relative, resolve, sep, win32 } from 'path';
-import type { AuthenticatedFetch } from './authenticated-fetch';
-import type { CachePlatform, GetSnapshotResult } from './cache';
-import { parseRepoString, type ParsedRepo } from './repo-string';
+import { type Dirent, existsSync, readdirSync, readFileSync } from "fs";
+import { join, posix, relative, resolve, sep, win32 } from "path";
+import type { AuthenticatedFetch } from "./authenticated-fetch";
+import type { CachePlatform, GetSnapshotResult } from "./cache";
+import { type ParsedRepo, parseRepoString } from "./repo-string";
 
 /**
  * Reject repo-relative paths that would escape the snapshot directory when
@@ -35,45 +35,47 @@ import { parseRepoString, type ParsedRepo } from './repo-string';
  * normalized absolute path inside `rootDir` otherwise.
  */
 export function assertSafeRepoPath(rootDir: string, target: string): string {
-  if (!target) {
-    throw new Error(`Invalid empty path inside repository.`);
-  }
-  // Reject absolute paths regardless of the host OS so a Windows-style path
-  // can't slip past on Linux and vice versa. Includes:
-  //   - POSIX absolute (`/etc/passwd`)
-  //   - Windows absolute (`C:\…`, `\\server\share\…`)
-  //   - "Root-relative" paths starting with a single separator
-  //   - Bare drive-letter prefixes (`C:`, `D:`)
-  if (
-    posix.isAbsolute(target) ||
-    win32.isAbsolute(target) ||
-    /^[a-zA-Z]:/.test(target) ||
-    target.startsWith('/') ||
-    target.startsWith('\\')
-  ) {
-    throw new Error(
-      `Invalid repository path "${target}": absolute paths are not allowed.`
-    );
-  }
-  // Catches `..` and `..\` segments before they're collapsed by `resolve`.
-  const segments = target.split(/[\\/]/);
-  if (segments.some((s) => s === '..')) {
-    throw new Error(
-      `Invalid repository path "${target}": parent-directory segments ("..") are not allowed.`
-    );
-  }
-  const resolved = resolve(rootDir, target);
-  // Defense in depth: even if the segment check above somehow let something
-  // through (encoding, OS-specific quirks), require the resolved path to
-  // sit inside `rootDir`.
-  const rootResolved = resolve(rootDir);
-  const rootWithSep = rootResolved.endsWith(sep) ? rootResolved : rootResolved + sep;
-  if (resolved !== rootResolved && !resolved.startsWith(rootWithSep)) {
-    throw new Error(
-      `Invalid repository path "${target}": resolves outside the repository root.`
-    );
-  }
-  return resolved;
+	if (!target) {
+		throw new Error(`Invalid empty path inside repository.`);
+	}
+	// Reject absolute paths regardless of the host OS so a Windows-style path
+	// can't slip past on Linux and vice versa. Includes:
+	//   - POSIX absolute (`/etc/passwd`)
+	//   - Windows absolute (`C:\…`, `\\server\share\…`)
+	//   - "Root-relative" paths starting with a single separator
+	//   - Bare drive-letter prefixes (`C:`, `D:`)
+	if (
+		posix.isAbsolute(target) ||
+		win32.isAbsolute(target) ||
+		/^[a-zA-Z]:/.test(target) ||
+		target.startsWith("/") ||
+		target.startsWith("\\")
+	) {
+		throw new Error(
+			`Invalid repository path "${target}": absolute paths are not allowed.`,
+		);
+	}
+	// Catches `..` and `..\` segments before they're collapsed by `resolve`.
+	const segments = target.split(/[\\/]/);
+	if (segments.some((s) => s === "..")) {
+		throw new Error(
+			`Invalid repository path "${target}": parent-directory segments ("..") are not allowed.`,
+		);
+	}
+	const resolved = resolve(rootDir, target);
+	// Defense in depth: even if the segment check above somehow let something
+	// through (encoding, OS-specific quirks), require the resolved path to
+	// sit inside `rootDir`.
+	const rootResolved = resolve(rootDir);
+	const rootWithSep = rootResolved.endsWith(sep)
+		? rootResolved
+		: rootResolved + sep;
+	if (resolved !== rootResolved && !resolved.startsWith(rootWithSep)) {
+		throw new Error(
+			`Invalid repository path "${target}": resolves outside the repository root.`,
+		);
+	}
+	return resolved;
 }
 
 /**
@@ -82,26 +84,31 @@ export function assertSafeRepoPath(rootDir: string, target: string): string {
  * imported without creating a circular dependency.
  */
 export type RepoSnapshotResolver = (
-  platform: CachePlatform,
-  repoPath: string,
-  authFetch: AuthenticatedFetch,
-  opts?: { version?: string; ref?: string; pinnedSha?: string; noCache?: boolean }
+	platform: CachePlatform,
+	repoPath: string,
+	authFetch: AuthenticatedFetch,
+	opts?: {
+		version?: string;
+		ref?: string;
+		pinnedSha?: string;
+		noCache?: boolean;
+	},
 ) => Promise<GetSnapshotResult>;
 
 export interface FetchRepoFileOptions {
-  /** Forwarded to the snapshot resolver — bypasses the on-disk cache. */
-  noCache?: boolean;
+	/** Forwarded to the snapshot resolver — bypasses the on-disk cache. */
+	noCache?: boolean;
 }
 
 export interface FetchRepoFileResult {
-  /** File contents as UTF-8 text. */
-  content: string;
-  /** Resolved commit SHA the file was read at. */
-  resolvedSha: string;
-  /** Resolved version tag, when one was inferred (e.g. latest semver). */
-  resolvedVersion: string | null;
-  /** Parsed repo reference, exposed for callers that want to log it. */
-  parsed: ParsedRepo;
+	/** File contents as UTF-8 text. */
+	content: string;
+	/** Resolved commit SHA the file was read at. */
+	resolvedSha: string;
+	/** Resolved version tag, when one was inferred (e.g. latest semver). */
+	resolvedVersion: string | null;
+	/** Parsed repo reference, exposed for callers that want to log it. */
+	parsed: ParsedRepo;
 }
 
 /**
@@ -121,88 +128,98 @@ export interface FetchRepoFileResult {
  * @param authFetch       Auth helper used by the snapshot resolver
  */
 export async function fetchRepoFile(
-  platform: CachePlatform,
-  repoString: string,
-  getRepoSnapshot: RepoSnapshotResolver,
-  authFetch: AuthenticatedFetch,
-  options: FetchRepoFileOptions = {}
+	platform: CachePlatform,
+	repoString: string,
+	getRepoSnapshot: RepoSnapshotResolver,
+	authFetch: AuthenticatedFetch,
+	options: FetchRepoFileOptions = {},
 ): Promise<FetchRepoFileResult> {
-  const parsed = parseRepoString(repoString);
+	const parsed = parseRepoString(repoString);
 
-  const snapshot = await getRepoSnapshot(platform, parsed.ownerRepo, authFetch, {
-    version: parsed.version,
-    ref: parsed.sha,
-    noCache: options.noCache,
-  });
+	const snapshot = await getRepoSnapshot(
+		platform,
+		parsed.ownerRepo,
+		authFetch,
+		{
+			version: parsed.version,
+			ref: parsed.sha,
+			noCache: options.noCache,
+		},
+	);
 
-  const resolvedFilePath =
-    parsed.mode === 'exact'
-      ? resolveExactFile(snapshot.snapshotDir, parsed, snapshot.resolvedSha)
-      : resolveBasenameMatch(snapshot.snapshotDir, parsed, snapshot.resolvedSha);
+	const resolvedFilePath =
+		parsed.mode === "exact"
+			? resolveExactFile(snapshot.snapshotDir, parsed, snapshot.resolvedSha)
+			: resolveBasenameMatch(
+					snapshot.snapshotDir,
+					parsed,
+					snapshot.resolvedSha,
+				);
 
-  const content = readFileSync(resolvedFilePath, 'utf-8');
-  return {
-    content,
-    resolvedSha: snapshot.resolvedSha,
-    resolvedVersion: snapshot.resolvedVersion,
-    parsed,
-  };
+	const content = readFileSync(resolvedFilePath, "utf-8");
+	return {
+		content,
+		resolvedSha: snapshot.resolvedSha,
+		resolvedVersion: snapshot.resolvedVersion,
+		parsed,
+	};
 }
 
 function resolveExactFile(
-  snapshotDir: string,
-  parsed: ParsedRepo,
-  resolvedSha: string
+	snapshotDir: string,
+	parsed: ParsedRepo,
+	resolvedSha: string,
 ): string {
-  let filePath: string;
-  try {
-    filePath = assertSafeRepoPath(snapshotDir, parsed.target);
-  } catch (err: any) {
-    throw new Error(
-      `${err.message} (repository: ${parsed.ownerRepo} @ ${resolvedSha.slice(0, 7)})`
-    );
-  }
-  if (!existsSync(filePath)) {
-    throw new Error(
-      `File "${parsed.target}" not found in repository ${parsed.ownerRepo} ` +
-      `at ${resolvedSha.slice(0, 7)}.`
-    );
-  }
-  return filePath;
+	let filePath: string;
+	try {
+		filePath = assertSafeRepoPath(snapshotDir, parsed.target);
+	} catch (err: any) {
+		throw new Error(
+			`${err.message} (repository: ${parsed.ownerRepo} @ ${resolvedSha.slice(0, 7)})`,
+		);
+	}
+	if (!existsSync(filePath)) {
+		throw new Error(
+			`File "${parsed.target}" not found in repository ${parsed.ownerRepo} ` +
+				`at ${resolvedSha.slice(0, 7)}.`,
+		);
+	}
+	return filePath;
 }
 
 function resolveBasenameMatch(
-  snapshotDir: string,
-  parsed: ParsedRepo,
-  resolvedSha: string
+	snapshotDir: string,
+	parsed: ParsedRepo,
+	resolvedSha: string,
 ): string {
-  const wanted = parsed.target;
-  const matches = findFilesByBasename(snapshotDir, wanted);
+	const wanted = parsed.target;
+	const matches = findFilesByBasename(snapshotDir, wanted);
 
-  if (matches.length === 0) {
-    const candidates = findCandidateFiles(snapshotDir, wanted, 8);
-    const candidateHint = candidates.length > 0
-      ? `\n    Files in repo (sample): ${candidates.join(', ')}`
-      : '';
-    throw new Error(
-      `No file named "${wanted}" found in repository ${parsed.ownerRepo} ` +
-      `at ${resolvedSha.slice(0, 7)}.${candidateHint}\n` +
-      `    Tip: Use "${parsed.ownerRepo}::path/to/${wanted}" to reference an exact path.`
-    );
-  }
+	if (matches.length === 0) {
+		const candidates = findCandidateFiles(snapshotDir, wanted, 8);
+		const candidateHint =
+			candidates.length > 0
+				? `\n    Files in repo (sample): ${candidates.join(", ")}`
+				: "";
+		throw new Error(
+			`No file named "${wanted}" found in repository ${parsed.ownerRepo} ` +
+				`at ${resolvedSha.slice(0, 7)}.${candidateHint}\n` +
+				`    Tip: Use "${parsed.ownerRepo}::path/to/${wanted}" to reference an exact path.`,
+		);
+	}
 
-  if (matches.length > 1) {
-    const sample = matches.slice(0, 8).join(', ');
-    const more = matches.length > 8 ? `, … (${matches.length - 8} more)` : '';
-    throw new Error(
-      `Ambiguous reference: ${matches.length} files named "${wanted}" exist ` +
-      `in repository ${parsed.ownerRepo} at ${resolvedSha.slice(0, 7)}.\n` +
-      `    Matches: ${sample}${more}\n` +
-      `    Tip: Use "${parsed.ownerRepo}::<exact-path>" to disambiguate.`
-    );
-  }
+	if (matches.length > 1) {
+		const sample = matches.slice(0, 8).join(", ");
+		const more = matches.length > 8 ? `, … (${matches.length - 8} more)` : "";
+		throw new Error(
+			`Ambiguous reference: ${matches.length} files named "${wanted}" exist ` +
+				`in repository ${parsed.ownerRepo} at ${resolvedSha.slice(0, 7)}.\n` +
+				`    Matches: ${sample}${more}\n` +
+				`    Tip: Use "${parsed.ownerRepo}::<exact-path>" to disambiguate.`,
+		);
+	}
 
-  return join(snapshotDir, matches[0]);
+	return join(snapshotDir, matches[0]);
 }
 
 /**
@@ -213,28 +230,28 @@ function resolveBasenameMatch(
  * locations for skill / rule content).
  */
 function findFilesByBasename(root: string, wanted: string): string[] {
-  const out: string[] = [];
+	const out: string[] = [];
 
-  function walk(dir: string): void {
-    let entries: Dirent[];
-    try {
-      entries = readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const entry of entries) {
-      if (entry.name === '.git' || entry.name === 'node_modules') continue;
-      const full = join(dir, entry.name);
-      if (entry.isDirectory()) {
-        walk(full);
-      } else if (entry.isFile() && entry.name === wanted) {
-        out.push(toRepoPath(root, full));
-      }
-    }
-  }
+	function walk(dir: string): void {
+		let entries: Dirent[];
+		try {
+			entries = readdirSync(dir, { withFileTypes: true });
+		} catch {
+			return;
+		}
+		for (const entry of entries) {
+			if (entry.name === ".git" || entry.name === "node_modules") continue;
+			const full = join(dir, entry.name);
+			if (entry.isDirectory()) {
+				walk(full);
+			} else if (entry.isFile() && entry.name === wanted) {
+				out.push(toRepoPath(root, full));
+			}
+		}
+	}
 
-  walk(root);
-  return out;
+	walk(root);
+	return out;
 }
 
 /**
@@ -242,38 +259,44 @@ function findFilesByBasename(root: string, wanted: string): string[] {
  * repo whose basename shares the wanted file's extension (or is otherwise a
  * plausible candidate) so the user can spot typos quickly.
  */
-function findCandidateFiles(root: string, wanted: string, limit: number): string[] {
-  const wantedExt = wanted.includes('.') ? wanted.slice(wanted.lastIndexOf('.')) : '';
-  const out: string[] = [];
+function findCandidateFiles(
+	root: string,
+	wanted: string,
+	limit: number,
+): string[] {
+	const wantedExt = wanted.includes(".")
+		? wanted.slice(wanted.lastIndexOf("."))
+		: "";
+	const out: string[] = [];
 
-  function walk(dir: string): void {
-    if (out.length >= limit) return;
-    let entries: Dirent[];
-    try {
-      entries = readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const entry of entries) {
-      if (out.length >= limit) return;
-      if (entry.name === '.git' || entry.name === 'node_modules') continue;
-      const full = join(dir, entry.name);
-      if (entry.isDirectory()) {
-        walk(full);
-      } else if (entry.isFile()) {
-        if (!wantedExt || entry.name.endsWith(wantedExt)) {
-          out.push(toRepoPath(root, full));
-        }
-      }
-    }
-  }
+	function walk(dir: string): void {
+		if (out.length >= limit) return;
+		let entries: Dirent[];
+		try {
+			entries = readdirSync(dir, { withFileTypes: true });
+		} catch {
+			return;
+		}
+		for (const entry of entries) {
+			if (out.length >= limit) return;
+			if (entry.name === ".git" || entry.name === "node_modules") continue;
+			const full = join(dir, entry.name);
+			if (entry.isDirectory()) {
+				walk(full);
+			} else if (entry.isFile()) {
+				if (!wantedExt || entry.name.endsWith(wantedExt)) {
+					out.push(toRepoPath(root, full));
+				}
+			}
+		}
+	}
 
-  walk(root);
-  return out;
+	walk(root);
+	return out;
 }
 
 function toRepoPath(root: string, full: string): string {
-  return relative(root, full).split(sep).join('/');
+	return relative(root, full).split(sep).join("/");
 }
 
 /**
@@ -282,30 +305,33 @@ function toRepoPath(root: string, full: string): string {
  * where a private GitLab raw URL silently returns a SAML SSO login page with
  * a 200 status code instead of failing with 401/403.
  */
-export function looksLikeHtmlPage(body: string, contentType: string | null): boolean {
-  if (contentType && /text\/html|application\/xhtml/i.test(contentType)) {
-    return true;
-  }
-  const head = body.slice(0, 512).trimStart().toLowerCase();
-  if (head.startsWith('<!doctype html') || head.startsWith('<!doctype html>')) {
-    return true;
-  }
-  if (/^<html[\s>]/i.test(head)) {
-    return true;
-  }
-  return false;
+export function looksLikeHtmlPage(
+	body: string,
+	contentType: string | null,
+): boolean {
+	if (contentType && /text\/html|application\/xhtml/i.test(contentType)) {
+		return true;
+	}
+	const head = body.slice(0, 512).trimStart().toLowerCase();
+	if (head.startsWith("<!doctype html") || head.startsWith("<!doctype html>")) {
+		return true;
+	}
+	if (/^<html[\s>]/i.test(head)) {
+		return true;
+	}
+	return false;
 }
 
 export interface FetchTextFileOptions {
-  /**
-   * When provided, sends the request through `AuthenticatedFetch` so an
-   * Authorization header is added if the host has a stored token.
-   */
-  authFetch?: AuthenticatedFetch;
-  /**
-   * Source label included in error messages (e.g. `rule "git-conventions"`).
-   */
-  sourceLabel?: string;
+	/**
+	 * When provided, sends the request through `AuthenticatedFetch` so an
+	 * Authorization header is added if the host has a stored token.
+	 */
+	authFetch?: AuthenticatedFetch;
+	/**
+	 * Source label included in error messages (e.g. `rule "git-conventions"`).
+	 */
+	sourceLabel?: string;
 }
 
 /**
@@ -317,42 +343,42 @@ export interface FetchTextFileOptions {
  * source backed by `fetchRepoFile` in that case.
  */
 export async function fetchTextFile(
-  url: string,
-  options: FetchTextFileOptions = {}
+	url: string,
+	options: FetchTextFileOptions = {},
 ): Promise<string> {
-  const { authFetch, sourceLabel } = options;
-  const response = authFetch ? await authFetch.fetch(url) : await fetch(url);
+	const { authFetch, sourceLabel } = options;
+	const response = authFetch ? await authFetch.fetch(url) : await fetch(url);
 
-  if (!response.ok) {
-    throw new Error(
-      `Failed to fetch ${sourceLabel ? `${sourceLabel} from ` : ''}${url}: ` +
-      `${response.status} ${response.statusText}`
-    );
-  }
+	if (!response.ok) {
+		throw new Error(
+			`Failed to fetch ${sourceLabel ? `${sourceLabel} from ` : ""}${url}: ` +
+				`${response.status} ${response.statusText}`,
+		);
+	}
 
-  const contentType = response.headers.get('content-type');
-  const body = await response.text();
+	const contentType = response.headers.get("content-type");
+	const body = await response.text();
 
-  if (looksLikeHtmlPage(body, contentType)) {
-    // Trailing space inside `where` so the message reads
-    // `Refusing to install HTML response for <label> from <url>` (or, when
-    // no label is provided, `Refusing to install HTML response from <url>`)
-    // — without it the label glued straight onto "from".
-    const where = sourceLabel ? `for ${sourceLabel} ` : '';
-    throw new Error(
-      `Refusing to install HTML response ${where}from ${url}.\n` +
-      `    The server returned an HTML page (likely a login / SSO redirect) ` +
-      `instead of the expected markdown.\n` +
-      `    This typically happens when the URL points to a file in a private ` +
-      `GitHub or GitLab repository.\n\n` +
-      `    Fix: Replace the raw URL with a typed source so capa clones the ` +
-      `repo using your stored OAuth token. For example:\n` +
-      `      type: gitlab\n` +
-      `      def:\n` +
-      `        repo: owner/repo::path/to/file.md\n\n` +
-      `    Make sure your account is connected on the integrations page (\`capa start\`).`
-    );
-  }
+	if (looksLikeHtmlPage(body, contentType)) {
+		// Trailing space inside `where` so the message reads
+		// `Refusing to install HTML response for <label> from <url>` (or, when
+		// no label is provided, `Refusing to install HTML response from <url>`)
+		// — without it the label glued straight onto "from".
+		const where = sourceLabel ? `for ${sourceLabel} ` : "";
+		throw new Error(
+			`Refusing to install HTML response ${where}from ${url}.\n` +
+				`    The server returned an HTML page (likely a login / SSO redirect) ` +
+				`instead of the expected markdown.\n` +
+				`    This typically happens when the URL points to a file in a private ` +
+				`GitHub or GitLab repository.\n\n` +
+				`    Fix: Replace the raw URL with a typed source so capa clones the ` +
+				`repo using your stored OAuth token. For example:\n` +
+				`      type: gitlab\n` +
+				`      def:\n` +
+				`        repo: owner/repo::path/to/file.md\n\n` +
+				`    Make sure your account is connected on the integrations page (\`capa start\`).`,
+		);
+	}
 
-  return body;
+	return body;
 }

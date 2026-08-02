@@ -2,20 +2,41 @@ import { loadSettings, getDatabasePath } from '../../shared/config';
 import { CapaDatabase } from '../../db/database';
 import { ensureServer } from '../utils/server-manager';
 import { VERSION } from '../../version';
-import { getGitProviderByHost } from '../../shared/git-providers/registry';
+import {
+  getGitProvider,
+  getGitProviderByHost,
+} from '../../shared/git-providers/registry';
+import { GitIntegrationManager } from '../../server/git-integration-manager';
 import { header, footer, success, info, warn, error, runTasks } from '../ui';
-import type { Task } from '../ui';
+import type { GitPlatform } from '../../types/git-integration';
+import type { GitIntegration } from '../../types/database';
+
+const SELF_HOSTED_TYPES = ['github-enterprise', 'gitlab-self-managed'] as const;
+type SelfHostedType = (typeof SELF_HOSTED_TYPES)[number];
+
+export interface AuthCommandOptions {
+  accessToken?: string;
+  type?: string;
+}
 
 /**
  * Manual authentication command
  * Allows users to authenticate with Git providers preemptively
  */
-export async function authCommand(provider?: string): Promise<void> {
+export async function authCommand(
+  provider?: string,
+  options: AuthCommandOptions = {},
+): Promise<void> {
   header('Git Authentication');
 
   const settings = await loadSettings();
   const dbPath = getDatabasePath(settings);
   const db = new CapaDatabase(dbPath);
+
+  if (options.accessToken) {
+    await authenticateWithAccessToken(db, provider, options);
+    return;
+  }
 
   let serverUrl = '';
 
@@ -41,14 +62,22 @@ export async function authCommand(provider?: string): Promise<void> {
   if (!provider) {
     listConnectedProviders(db);
     info('Usage:');
-    info('  capa auth <provider>  - Authenticate with a Git provider');
+    info('  capa auth <provider>                         - OAuth (browser)');
+    info('  capa auth <provider> --access-token <token>  - PAT / access token');
     info('Examples:');
-    info('  capa auth github.com  - Authenticate with GitHub.com');
-    info('  capa auth gitlab.com  - Authenticate with GitLab.com');
+    info('  capa auth github.com');
+    info('  capa auth github.com --access-token <token>');
+    info('  capa auth gitlab.com --access-token <token>');
     info(
-      'Note: For self-hosted instances (GitHub Enterprise, GitLab Self-Managed),',
+      '  capa auth git.corp.com --access-token <token> --type github-enterprise',
     );
-    info(`      use the web UI at: ${serverUrl}/ui/integrations`);
+    info(
+      '  capa auth git.corp.com --access-token <token> --type gitlab-self-managed',
+    );
+    info(
+      'Note: Self-hosted OAuth is not supported; use --access-token or the web UI:',
+    );
+    info(`      ${serverUrl}/ui/integrations`);
     db.close();
     return;
   }
@@ -90,6 +119,8 @@ export async function authCommand(provider?: string): Promise<void> {
 
       info('To re-authenticate, first disconnect from the provider:');
       info(`  Visit: ${serverUrl}/ui/integrations`);
+      info('Or overwrite with a token:');
+      info(`  capa auth ${provider} --access-token <token>`);
       db.close();
       return;
     }
@@ -103,7 +134,14 @@ export async function authCommand(provider?: string): Promise<void> {
     const gitProvider = getGitProviderByHost(provider);
     if (!gitProvider) {
       error(`Unknown git provider: ${provider}`);
-      error('  For self-hosted instances, use the web UI at:');
+      error('  For self-hosted instances, use an access token:');
+      info(
+        `  capa auth ${provider} --access-token <token> --type github-enterprise`,
+      );
+      info(
+        `  capa auth ${provider} --access-token <token> --type gitlab-self-managed`,
+      );
+      info('  Or use the web UI at:');
       info(`  ${serverUrl}/ui/integrations`);
       db.close();
       process.exit(1);
@@ -181,26 +219,128 @@ export async function authCommand(provider?: string): Promise<void> {
     error(`Error: ${message}`);
     db.close();
     process.exit(1);
+    return;
   }
 
   db.close();
 }
 
+async function authenticateWithAccessToken(
+  db: CapaDatabase,
+  provider: string | undefined,
+  options: AuthCommandOptions,
+): Promise<void> {
+  const accessToken = options.accessToken!;
+
+  if (!provider) {
+    error('Provider is required when using --access-token');
+    error('Example: capa auth github.com --access-token <token>');
+    db.close();
+    process.exit(1);
+    return;
+  }
+
+  if (!isValidProvider(provider)) {
+    error(`Invalid provider: ${provider}`);
+    error('Provider must be a domain name (e.g., github.com, gitlab.com)');
+    db.close();
+    process.exit(1);
+    return;
+  }
+
+  let platform: GitPlatform;
+  let host: string | undefined;
+
+  try {
+    ({ platform, host } = resolveTokenAuthTarget(provider, options.type));
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    error(message);
+    db.close();
+    process.exit(1);
+    return;
+  }
+
+  const displayHost = host ?? provider;
+  info(`Authenticating with access token: ${displayHost}`);
+
+  try {
+    await runTasks([
+      {
+        title: 'Validate and store access token',
+        task: async () => {
+          const manager = new GitIntegrationManager(db);
+          await manager.storePAT({
+            platform,
+            host,
+            token: accessToken,
+          });
+        },
+      },
+    ]);
+
+    success(`Authenticated with ${displayHost} using access token`);
+    footer(`You can now access private repositories from ${displayHost}`);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    error(`Error: ${message}`);
+    db.close();
+    process.exit(1);
+    return;
+  }
+
+  db.close();
+}
+
+function resolveTokenAuthTarget(
+  provider: string,
+  typeOption?: string,
+): { platform: GitPlatform; host?: string } {
+  const gitProvider = getGitProviderByHost(provider);
+
+  if (gitProvider) {
+    if (typeOption) {
+      throw new Error(
+        `--type is not needed for ${provider} (inferred as ${gitProvider.id}). Omit --type for cloud hosts.`,
+      );
+    }
+    return { platform: gitProvider.id as 'github' | 'gitlab' };
+  }
+
+  if (!typeOption) {
+    throw new Error(
+      `Unknown git provider: ${provider}. For self-hosted instances, pass --type github-enterprise or --type gitlab-self-managed.`,
+    );
+  }
+
+  if (!isSelfHostedType(typeOption)) {
+    throw new Error(
+      `Invalid --type: ${typeOption}. Expected github-enterprise or gitlab-self-managed.`,
+    );
+  }
+
+  return { platform: typeOption, host: provider };
+}
+
+function isSelfHostedType(value: string): value is SelfHostedType {
+  return (SELF_HOSTED_TYPES as readonly string[]).includes(value);
+}
+
 function listConnectedProviders(db: CapaDatabase): void {
   info('Connected Git Providers:');
 
-  const tokens = db.getAllGitOAuthTokens();
-  if (tokens.length === 0) {
+  const integrations = db.getAllGitIntegrations();
+  if (integrations.length === 0) {
     info('  No providers connected yet.');
     return;
   }
 
-  for (const token of tokens) {
-    const providerEmoji = getGitProviderByHost(token.provider)?.emoji ?? '🔗';
-    info(`  ${providerEmoji} ${token.provider}`);
+  for (const integration of integrations) {
+    const { emoji, label } = formatIntegrationLabel(integration);
+    info(`  ${emoji} ${label}`);
 
-    if (token.expires_at) {
-      const expiresAt = new Date(token.expires_at);
+    if (integration.expires_at) {
+      const expiresAt = new Date(integration.expires_at);
       const now = new Date();
       const hoursUntilExpiry = Math.floor(
         (expiresAt.getTime() - now.getTime()) / (1000 * 60 * 60),
@@ -221,7 +361,7 @@ function listConnectedProviders(db: CapaDatabase): void {
         );
       }
 
-      if (token.refresh_token) {
+      if (integration.refresh_token) {
         success('    Auto-refresh enabled');
       } else {
         warn('    No refresh token (will need manual re-auth after expiration)');
@@ -230,6 +370,37 @@ function listConnectedProviders(db: CapaDatabase): void {
       success('    No expiration');
     }
   }
+}
+
+function formatIntegrationLabel(integration: GitIntegration): {
+  emoji: string;
+  label: string;
+} {
+  const gp = getGitProvider(integration.platform);
+  if (gp && !integration.host) {
+    return { emoji: gp.emoji ?? '🔗', label: gp.host };
+  }
+
+  if (integration.platform === 'github-enterprise') {
+    return {
+      emoji: '🐙',
+      label: `GitHub Enterprise (${integration.host ?? 'unknown host'})`,
+    };
+  }
+
+  if (integration.platform === 'gitlab-self-managed') {
+    return {
+      emoji: '🦊',
+      label: `GitLab Self-Managed (${integration.host ?? 'unknown host'})`,
+    };
+  }
+
+  return {
+    emoji: '🔗',
+    label: integration.host
+      ? `${integration.platform} (${integration.host})`
+      : integration.platform,
+  };
 }
 
 function isValidProvider(provider: string): boolean {

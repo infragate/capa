@@ -104,7 +104,8 @@ function ToolCard({ tool, search }: { tool: ToolSchema; search: string }) {
       >
         <ChevronRight
           size={14}
-          className={`mt-px shrink-0 text-text-tertiary transition-transform duration-150 ${expanded ? 'rotate-90' : ''}`}
+          className="ui-chevron mt-px shrink-0 text-text-tertiary"
+          data-open={expanded ? 'true' : 'false'}
         />
         <div className="min-w-0 flex-1">
           <span
@@ -123,7 +124,7 @@ function ToolCard({ tool, search }: { tool: ToolSchema; search: string }) {
       </button>
 
       {expanded && (
-        <div className="border-t border-border-tertiary px-2.5 pb-2.5 pt-2">
+        <div className="ui-panel-enter border-t border-border-tertiary px-2.5 pb-2.5 pt-2">
           {tool.description && (
             <p
               className="mb-2 break-words text-[11px] leading-relaxed text-text-secondary"

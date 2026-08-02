@@ -1,30 +1,36 @@
-import { join } from 'path';
-import { homedir } from 'os';
-import { validateRepoPath } from './validate';
+import { homedir } from "os";
+import { join } from "path";
+import { validateRepoPath } from "./validate";
 
-export type CachePlatform = 'github' | 'gitlab';
+export type CachePlatform = "github" | "gitlab";
 
 /** Root cache directory. Override via CAPA_CACHE_DIR for tests. */
 export function getCacheDir(): string {
-  return process.env.CAPA_CACHE_DIR ?? join(homedir(), '.capa', 'cache');
+	return process.env.CAPA_CACHE_DIR ?? join(homedir(), ".capa", "cache");
 }
 
 /** Per-repo directory: ~/.capa/cache/git/<platform>/<owner>/<repo>/ */
-export function getRepoCacheDir(platform: CachePlatform, repoPath: string): string {
-  validateRepoPath(repoPath);
-  return join(getCacheDir(), 'git', platform, repoPath);
+export function getRepoCacheDir(
+	platform: CachePlatform,
+	repoPath: string,
+): string {
+	validateRepoPath(repoPath);
+	return join(getCacheDir(), "git", platform, repoPath);
 }
 
 /** Mirror (bare) clone path for a repo. */
-export function getRepoMirrorDir(platform: CachePlatform, repoPath: string): string {
-  return join(getRepoCacheDir(platform, repoPath), 'mirror');
+export function getRepoMirrorDir(
+	platform: CachePlatform,
+	repoPath: string,
+): string {
+	return join(getRepoCacheDir(platform, repoPath), "mirror");
 }
 
 /** Snapshot path for a specific SHA. */
 export function getSnapshotDir(
-  platform: CachePlatform,
-  repoPath: string,
-  sha: string
+	platform: CachePlatform,
+	repoPath: string,
+	sha: string,
 ): string {
-  return join(getRepoCacheDir(platform, repoPath), 'snapshots', sha);
+	return join(getRepoCacheDir(platform, repoPath), "snapshots", sha);
 }

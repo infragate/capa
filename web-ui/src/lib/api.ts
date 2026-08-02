@@ -39,6 +39,13 @@ export const api = {
       body: body ? JSON.stringify(body) : undefined,
     }),
 
+  put: <T>(url: string, body?: unknown) =>
+    request<T>(url, {
+      method: 'PUT',
+      headers: body ? { 'Content-Type': 'application/json' } : undefined,
+      body: body ? JSON.stringify(body) : undefined,
+    }),
+
   patch: <T>(url: string, body?: unknown) =>
     request<T>(url, {
       method: 'PATCH',

@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { MCPProxy } from '../mcp-proxy';
+import { fileURLToPath } from 'node:url';
+import { MCPProxy, mcpServerLaunchFingerprint } from '../mcp-proxy';
 import { shouldSkipTlsVerify } from '../../shared/tls-skip-verify';
 import type { CapaDatabase } from '../../db/database';
 import type { MCPServerDefinition } from '../../types/capabilities';
@@ -202,6 +203,179 @@ describe('mcp-proxy', () => {
       expect(result.success).toBe(false);
       expect(result.error).toMatch(/Authentication failed for "atlassian"\. Please reconnect OAuth2/);
       expect(result.error).not.toMatch(/Failed to connect/);
+    });
+  });
+
+  describe('stdio crash fail-fast', () => {
+    it('executeTool fails within 2s when the child exits mid tools/call', async () => {
+      const proxy = new MCPProxy(makeMockDb(), 'proj-crash', process.cwd());
+      const fixturePath = fileURLToPath(
+        new URL('./fixtures/crash-on-call-mcp.ts', import.meta.url),
+      );
+      const serverDef: MCPServerDefinition = {
+        cmd: process.execPath,
+        args: [fixturePath],
+      };
+
+      const started = Date.now();
+      const result = await proxy.executeTool(
+        'crash.boom',
+        { server: 'crash', tool: 'boom' },
+        serverDef,
+        {},
+      );
+      const elapsed = Date.now() - started;
+
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/exited unexpectedly|connection closed|panicked/i);
+      expect(result.error).toMatch(/crash/);
+      expect(result.error).toMatch(/boom/);
+      expect(elapsed).toBeLessThan(2000);
+
+      // Cached client must be dropped so a later call can respawn.
+      expect((proxy as any).clients.has('crash')).toBe(false);
+    });
+
+    it('executeTool fails within 2s when child panics on stderr but stays alive', async () => {
+      const proxy = new MCPProxy(makeMockDb(), 'proj-hang-panic', process.cwd());
+      const fixturePath = fileURLToPath(
+        new URL('./fixtures/hang-after-panic-mcp.ts', import.meta.url),
+      );
+      const serverDef: MCPServerDefinition = {
+        cmd: process.execPath,
+        args: [fixturePath],
+      };
+
+      const started = Date.now();
+      const result = await proxy.executeTool(
+        'hang.boom',
+        { server: 'hang', tool: 'boom' },
+        serverDef,
+        {},
+      );
+      const elapsed = Date.now() - started;
+
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/panicked|exited unexpectedly|connection closed/i);
+      expect(result.error).toMatch(/hang/);
+      expect(elapsed).toBeLessThan(2000);
+      expect((proxy as any).clients.has('hang')).toBe(false);
+    });
+  });
+
+  describe('launch fingerprint / version swap', () => {
+    const fixturePath = fileURLToPath(
+      new URL('./fixtures/version-echo-mcp.ts', import.meta.url),
+    );
+
+    function versionDef(token: string): MCPServerDefinition {
+      return {
+        cmd: process.execPath,
+        args: [fixturePath, '--version-token', token],
+      };
+    }
+
+    it('mcpServerLaunchFingerprint changes when args change', () => {
+      expect(mcpServerLaunchFingerprint(versionDef('1.0.14'))).not.toBe(
+        mcpServerLaunchFingerprint(versionDef('1.0.15')),
+      );
+      expect(mcpServerLaunchFingerprint(versionDef('1.0.15'))).toBe(
+        mcpServerLaunchFingerprint(versionDef('1.0.15')),
+      );
+    });
+
+    it('reuses the cached client when the launch fingerprint is unchanged', async () => {
+      const proxy = new MCPProxy(makeMockDb(), 'proj-fp', process.cwd());
+      const def = versionDef('1.0.14');
+      const first = await proxy.executeTool(
+        'echo.echo_version',
+        { server: 'echo', tool: 'echo_version' },
+        def,
+        {},
+      );
+      expect(first.success).toBe(true);
+      expect(JSON.stringify(first.result)).toContain('1.0.14');
+
+      const second = await proxy.executeTool(
+        'echo.echo_version',
+        { server: 'echo', tool: 'echo_version' },
+        def,
+        {},
+      );
+      expect(second.success).toBe(true);
+      expect(JSON.stringify(second.result)).toContain('1.0.14');
+      expect((proxy as any).clients.size).toBe(1);
+
+      await proxy.closeAll();
+    });
+
+    it('respawns when args change without closeAll', async () => {
+      const proxy = new MCPProxy(makeMockDb(), 'proj-swap', process.cwd());
+      const v14 = await proxy.executeTool(
+        'echo.echo_version',
+        { server: 'echo', tool: 'echo_version' },
+        versionDef('1.0.14'),
+        {},
+      );
+      expect(v14.success).toBe(true);
+      expect(JSON.stringify(v14.result)).toContain('1.0.14');
+
+      const v15 = await proxy.executeTool(
+        'echo.echo_version',
+        { server: 'echo', tool: 'echo_version' },
+        versionDef('1.0.15'),
+        {},
+      );
+      expect(v15.success).toBe(true);
+      expect(JSON.stringify(v15.result)).toContain('1.0.15');
+      expect(JSON.stringify(v15.result)).not.toContain('1.0.14');
+
+      await proxy.closeAll();
+    });
+
+    it('syncCachedServers closes clients whose def fingerprint changed', async () => {
+      const proxy = new MCPProxy(makeMockDb(), 'proj-sync', process.cwd());
+      await proxy.executeTool(
+        'echo.echo_version',
+        { server: 'echo', tool: 'echo_version' },
+        versionDef('1.0.14'),
+        {},
+      );
+      expect((proxy as any).clients.has('echo')).toBe(true);
+
+      await proxy.syncCachedServers(
+        [{ id: 'echo', def: versionDef('1.0.15') }],
+        [{ id: 'echo', def: versionDef('1.0.14') }],
+      );
+      expect((proxy as any).clients.has('echo')).toBe(false);
+
+      const after = await proxy.executeTool(
+        'echo.echo_version',
+        { server: 'echo', tool: 'echo_version' },
+        versionDef('1.0.15'),
+        {},
+      );
+      expect(after.success).toBe(true);
+      expect(JSON.stringify(after.result)).toContain('1.0.15');
+      await proxy.closeAll();
+    });
+
+    it('syncCachedServers keeps warm clients when def is unchanged', async () => {
+      const proxy = new MCPProxy(makeMockDb(), 'proj-warm', process.cwd());
+      const def = versionDef('1.0.15');
+      await proxy.executeTool(
+        'echo.echo_version',
+        { server: 'echo', tool: 'echo_version' },
+        def,
+        {},
+      );
+      const clientBefore = (proxy as any).clients.get('echo');
+      await proxy.syncCachedServers(
+        [{ id: 'echo', def }],
+        [{ id: 'echo', def }],
+      );
+      expect((proxy as any).clients.get('echo')).toBe(clientBefore);
+      await proxy.closeAll();
     });
   });
 });
