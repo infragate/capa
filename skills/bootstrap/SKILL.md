@@ -99,7 +99,7 @@ If the project's own conventions designate `.claude/skills/` (or similar provide
 1. **Which items to migrate into shared dirs**, and what they'll become:
    - `.claude/skills/foo/` → `skills/foo/` referenced as `type: local`, `def.path: ./skills/foo`
    - `.cursor/skills/bar/` → `skills/bar/` (or merged with an existing one of the same name; flag the conflict)
-   - `.cursor/rules/*.mdc` → `rules/*.md` referenced as `type: inline` (small) or moved with a `path:` (for now, capa supports inline/remote/github/gitlab — there is no `type: local` for rules, so the bootstrap default is `type: inline` with the file content embedded; flag this trade-off with the user if files are large)
+   - `.cursor/rules/*.mdc` → `rules/*.md` referenced as `type: local` with `path: ./rules/<id>.md` (preferred for anything non-trivial). Small one-liners can stay `type: inline` with `content:` embedded.
    - `.claude/agents/*.md` → entries in the top-level `subagents:` section (capa regenerates the file on install)
    - Hooks in `.claude/settings.json` / `.cursor/hooks.json` → top-level `hooks:` entries, using canonical event names. For non-trivial hook scripts, move the script under `hooks/<id>.sh` and reference via `source: { type: local, path: ./hooks/<id>.sh }`. Inline one-liners stay inline.
    - MCP servers from `.cursor/mcp.json`, `.claude/settings.json` `mcpServers`, `.codex/config.toml` `mcp_servers` → top-level `servers:` entries. Merge duplicates by id; flag mismatched configs (e.g., two providers point a server with the same id at different commands).
@@ -119,7 +119,7 @@ If the project's own conventions designate `.claude/skills/` (or similar provide
 4. **Conflicts and ambiguities** — call them out explicitly:
    - Two skills with the same name in different provider dirs (likely the same skill installed twice — confirm before merging)
    - A symlinked config dir (user probably wants this preserved, not moved)
-   - A rule with provider-specific frontmatter that won't round-trip into capa's inline form (note the loss and ask)
+   - A rule with provider-specific frontmatter that won't round-trip cleanly into capa's `type: local` / `type: inline` form (note any lost Cursor-only fields like complex globs and ask)
    - A submodule that itself ships skills (probably should become a plugin or a github-typed skill — don't auto-vendor it)
 
 **Wait for confirmation** before Phase 4. The user may want to skip some items, rename others, or change the target layout. Don't move files without sign-off — bootstrap's whole value is being the careful path.
@@ -160,7 +160,7 @@ Rules of composition:
 - **Sort entries by `id`** within each section. Stable order makes future diffs readable.
 - **Don't invent ids.** Use the directory or file basename for discovered items, kebab-cased.
 - **For each MCP server**, prefer the most complete config from any source (e.g., if `.cursor/mcp.json` has env vars and `.claude/settings.json` doesn't, take Cursor's). Replace literal secrets with `${VarName}` placeholders and warn the user that capa will prompt for them on `capa install`.
-- **For rules**, default to `type: inline` with `content:` — capa doesn't currently have a `type: local` for rules. If the rule file is big (> ~100 lines), ask the user whether to keep it inline (simple) or push it to a github repo (cleaner but requires a follow-up).
+- **For rules**, prefer `type: local` with `path:` pointing at the migrated file under `rules/` — capa re-reads it on each install. Use `type: inline` with `content:` only for short one-liners. Remote github/gitlab sources are fine when the rule already lives in another repo.
 - **For hooks**, translate provider event names to canonical names using the table in `references/event-mapping.md`. If a hook's provider event has no canonical mapping, keep the provider-scoped form (`cursor:beforeShellExecution`) — don't drop it.
 - **Don't include empty sections** unless they're useful as placeholders. `servers: []` and `tools: []` belong (so users know where to add things); `subagents: []` only belongs if you actually expect them to add some.
 
@@ -243,7 +243,7 @@ If they say yes: delete the entry (and any trailing comment that explained it), 
 
 Do not auto-remove without asking. The skill never edits `capabilities.yaml` silently after Phase 5 — every change since gets the user's sign-off, and self-removal is no exception.
 
-End with a one-paragraph summary: which branch you're on, what was migrated, what tools got added (and which servers are pending auth), what to do next (commit, `capa restart`, open PR).
+End with a one-paragraph summary: which branch you're on, what was migrated, what tools got added (and which servers are pending auth), what to do next (commit, `capa restart`, open PR). Optionally mention `capa wrap <provider>` if the user wants to try an agent without committing provider dirs, and the Web UI at `http://localhost:5912` for the capabilities editor and Activity feed.
 
 ## What this skill never does
 
