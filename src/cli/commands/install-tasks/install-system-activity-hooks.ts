@@ -22,6 +22,7 @@ export function installSystemActivityHooksTask(): Task<InstallCtx> {
 					capabilities: ctx.capabilitiesToUse,
 					providers,
 					db: ctx.db,
+					skipPrune: ctx.isWrapInstall,
 				});
 				for (const w of result.warnings) ctx.warnings.push(w);
 				if (!result.enabled) {

@@ -17,7 +17,10 @@ import {
   type WorkspaceMarker,
 } from '../../../shared/workspaces/paths';
 import { parseCapabilitiesFile } from '../../../shared/capabilities';
-import { collectWrapExclusionProviderIds } from '../../../shared/providers';
+import {
+  collectWrapExclusionProviderIds,
+  detectProviderIdsFromProjectTree,
+} from '../../../shared/providers';
 import { buildSymlinkWorkspace, syncTopLevelSymlinks } from './symlink-workspace';
 import { applyWrapShadowExtras } from './shadow-extras';
 import { installCommand } from '../../commands/install';
@@ -197,6 +200,31 @@ async function dbHasProject(realProjectPath: string): Promise<boolean> {
   }
 }
 
+async function loadWrapExclusionProviderIds(
+  realProjectPath: string,
+  wrapProviderId: string,
+  capabilitiesProviders?: string[] | null,
+): Promise<string[]> {
+  const extras: string[] = detectProviderIdsFromProjectTree(realProjectPath);
+  try {
+    const settings = await loadSettings();
+    const db = new CapaDatabase(getDatabasePath(settings));
+    try {
+      const id = generateProjectId(realProjectPath);
+      extras.push(...db.getProjectProviders(id));
+    } finally {
+      db.close();
+    }
+  } catch {
+    // DB unavailable — on-disk detection still covers existing provider dirs.
+  }
+  return collectWrapExclusionProviderIds(
+    wrapProviderId,
+    capabilitiesProviders,
+    extras,
+  );
+}
+
 function cacheLooksLikeWrap(cachePath: string): boolean {
   // Marker lives on the cache root (above the nested working dir).
   return existsSync(join(cachePath, WORKSPACE_MARKER));
@@ -260,7 +288,8 @@ export async function prepareWorkspace(
   const workspacePath = join(cachePath, workName);
 
   const capabilities = await parseCapabilitiesFile(caps.path, caps.format);
-  const exclusionProviderIds = collectWrapExclusionProviderIds(
+  const exclusionProviderIds = await loadWrapExclusionProviderIds(
+    real,
     provider.id,
     capabilities.providers,
   );

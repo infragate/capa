@@ -1,3 +1,5 @@
+import { readdirSync } from "fs";
+import { resolve } from "path";
 import type {
 	ProviderIntegration,
 	WrapLaunchConfig,
@@ -194,22 +196,59 @@ export function resolveProviderId(raw: string): string | undefined {
 
 /**
  * Provider ids whose owned paths wrap should shadow (not symlink):
- * the launched wrap provider plus every entry in `capabilities.providers`.
+ * the launched wrap provider, every entry in `capabilities.providers`,
+ * and any extra ids (e.g. DB-stored install providers, providers detected
+ * from existing project dirs like `.cursor`).
  */
 export function collectWrapExclusionProviderIds(
 	wrapProviderId: string,
 	capabilitiesProviders?: string[] | null,
+	extraProviderIds?: string[] | null,
 ): string[] {
 	const ids = new Set<string>();
 	const wrapId =
 		resolveProviderId(wrapProviderId) ?? wrapProviderId.toLowerCase();
 	ids.add(wrapId);
-	for (const raw of capabilitiesProviders ?? []) {
+	for (const raw of [...(capabilitiesProviders ?? []), ...(extraProviderIds ?? [])]) {
 		if (typeof raw !== "string") continue;
 		const id = resolveProviderId(raw);
 		if (id) ids.add(id);
 	}
 	return [...ids];
+}
+
+/**
+ * Providers that already own a top-level path present in `projectPath`
+ * (e.g. `.cursor` → cursor). Used so wrap never junctions another agent's
+ * config tree into the shadow workspace just because `capabilities.providers`
+ * was left empty after an interactive install.
+ */
+export function detectProviderIdsFromProjectTree(projectPath: string): string[] {
+	const root = resolve(projectPath);
+	let entries: string[];
+	try {
+		entries = readdirSync(root);
+	} catch {
+		return [];
+	}
+	const present = new Set(
+		process.platform === "win32"
+			? entries.map((e) => e.toLowerCase())
+			: entries,
+	);
+	const found = new Set<string>();
+	for (const p of getAllProviders()) {
+		const owned = new Set<string>();
+		addProviderOwnedTopLevelNames(p, owned);
+		for (const name of owned) {
+			const key = process.platform === "win32" ? name.toLowerCase() : name;
+			if (present.has(key)) {
+				found.add(p.id);
+				break;
+			}
+		}
+	}
+	return [...found];
 }
 
 /**

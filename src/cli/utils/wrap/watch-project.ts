@@ -12,7 +12,10 @@ import {
 import { applyWrapShadowExtras } from './shadow-extras';
 import { installCommand } from '../../commands/install';
 import { parseCapabilitiesFile } from '../../../shared/capabilities';
-import { collectWrapExclusionProviderIds } from '../../../shared/providers';
+import {
+  collectWrapExclusionProviderIds,
+  detectProviderIdsFromProjectTree,
+} from '../../../shared/providers';
 import { isVerbose } from '../../ui';
 
 /** Coalesce burst writes only — keep sync as close to real-time as possible. */
@@ -228,7 +231,14 @@ export function startWrapWatchers(opts: WatchOpts): WrapWatchers {
       const capsPath = resolve(opts.capabilitiesPath);
       const format = capsPath.endsWith('.json') ? 'json' : 'yaml';
       const capabilities = await parseCapabilitiesFile(capsPath, format);
-      providerIds = collectWrapExclusionProviderIds(opts.providerId, capabilities.providers);
+      // Re-detect on-disk provider dirs + keep any extras already in the
+      // session exclusion set (e.g. DB-stored providers from prepareWorkspace).
+      const detected = detectProviderIdsFromProjectTree(realRoot);
+      providerIds = collectWrapExclusionProviderIds(
+        opts.providerId,
+        capabilities.providers,
+        [...opts.exclusionProviderIds, ...detected],
+      );
       excluded = getWrapExclusionSet(providerIds);
     } catch {
       // Keep last good exclusion set.

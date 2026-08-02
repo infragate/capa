@@ -29,8 +29,8 @@ export interface InstallCtx {
   configureProviders: string[];
   /**
    * True when writing into a wrap shadow workspace under a different identity
-   * path. Install prune/cleanup must not mutate the real project: only paths
-   * under `projectPath` (the shadow) may be written or deleted.
+   * path. Wrap installs only materialize the wrap provider into the shadow;
+   * they never run orphan prune/cleanup against the shared project identity.
    */
   isWrapInstall: boolean;
   lockBuilder: LockfileBuilder;

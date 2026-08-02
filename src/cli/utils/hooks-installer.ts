@@ -10,5 +10,6 @@ export {
   type InstallHooksOptions,
   type InstallHooksResult,
   type PruneOrphanHooksResult,
+  type PruneOrphanHooksOptions,
   type SnapshotResolver,
 } from './hooks';

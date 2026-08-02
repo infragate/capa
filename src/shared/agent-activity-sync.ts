@@ -32,6 +32,12 @@ export async function syncSystemActivityHooks(opts: {
 	db: CapaDatabase;
 	/** Suppress CLI-style install logs (server / API callers). */
 	quiet?: boolean;
+	/**
+	 * When true, skip orphan prune and only install/update activity hooks for
+	 * `providers`. Used by wrap shadow installs so shared project identity
+	 * (e.g. Cursor hooks) is never cleaned up.
+	 */
+	skipPrune?: boolean;
 }): Promise<SyncSystemActivityHooksResult> {
 	const warnings: string[] = [];
 	const enabled = isAgentActivityEnabled(opts.capabilities.options);
@@ -43,20 +49,24 @@ export async function syncSystemActivityHooks(opts: {
 		warnings.push(`${prefix}${issue.message} (skipped from activity sync)`);
 	}
 
-	const systemHooks = enabled
-		? // Ids only for prune desired-set (command text is per-provider below).
-			buildSystemActivityHooks(opts.projectId)
-		: [];
-	const desiredHooks = [...userHooks, ...systemHooks];
+	let removed = 0;
+	if (!opts.skipPrune) {
+		const systemHooks = enabled
+			? // Ids only for prune desired-set (command text is per-provider below).
+				buildSystemActivityHooks(opts.projectId)
+			: [];
+		const desiredHooks = [...userHooks, ...systemHooks];
 
-	const prune = pruneOrphanHooks(
-		opts.projectPath,
-		opts.projectId,
-		desiredHooks,
-		opts.providers,
-		opts.db,
-	);
-	warnings.push(...prune.warnings);
+		const prune = pruneOrphanHooks(
+			opts.projectPath,
+			opts.projectId,
+			desiredHooks,
+			opts.providers,
+			opts.db,
+		);
+		warnings.push(...prune.warnings);
+		removed = prune.removed;
+	}
 
 	let installed = 0;
 	if (enabled && opts.providers.length > 0) {
@@ -84,7 +94,7 @@ export async function syncSystemActivityHooks(opts: {
 	return {
 		enabled,
 		installed,
-		removed: prune.removed,
+		removed,
 		warnings,
 	};
 }
