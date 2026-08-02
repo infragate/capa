@@ -206,6 +206,10 @@ export function initSchema(db: Database): void {
         result_preview TEXT,
         result_bytes INTEGER,
         result_tokens INTEGER,
+        input_tokens INTEGER,
+        output_tokens INTEGER,
+        cache_read_tokens INTEGER,
+        cache_write_tokens INTEGER,
         error_message TEXT,
         agent_id TEXT,
         FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
@@ -214,6 +218,10 @@ export function initSchema(db: Database): void {
 
 	ensureColumn(db, "tool_calls", "result_bytes", "INTEGER");
 	ensureColumn(db, "tool_calls", "result_tokens", "INTEGER");
+	ensureColumn(db, "tool_calls", "input_tokens", "INTEGER");
+	ensureColumn(db, "tool_calls", "output_tokens", "INTEGER");
+	ensureColumn(db, "tool_calls", "cache_read_tokens", "INTEGER");
+	ensureColumn(db, "tool_calls", "cache_write_tokens", "INTEGER");
 
 	db.run(`
       CREATE INDEX IF NOT EXISTS idx_tool_calls_project_started

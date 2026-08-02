@@ -75,3 +75,88 @@ export function extractPath(obj: Record<string, unknown>): string | null {
 		null
 	);
 }
+
+/** Model token usage from provider hooks (e.g. Cursor `stop`). */
+export interface TokenUsage {
+	input_tokens: number | null;
+	output_tokens: number | null;
+	cache_read_tokens: number | null;
+	cache_write_tokens: number | null;
+}
+
+function nonNegInt(value: unknown): number | null {
+	if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+		return Math.floor(value);
+	}
+	if (typeof value === "string" && value.trim()) {
+		const n = Number(value);
+		if (Number.isFinite(n) && n >= 0) return Math.floor(n);
+	}
+	return null;
+}
+
+function pickToken(
+	sources: Array<Record<string, unknown> | null | undefined>,
+	keys: string[],
+): number | null {
+	for (const src of sources) {
+		if (!src) continue;
+		for (const key of keys) {
+			const n = nonNegInt(src[key]);
+			if (n != null) return n;
+		}
+	}
+	return null;
+}
+
+/**
+ * Pull input/output/cache token counts from a hook payload.
+ * Supports Cursor stop fields and nested `usage` objects (Claude-style).
+ */
+export function tokenUsageFrom(obj: Record<string, unknown>): TokenUsage | null {
+	const usage = asRecord(obj.usage) ?? asRecord(obj.token_usage);
+	const sources = [obj, usage];
+
+	const input_tokens = pickToken(sources, [
+		"input_tokens",
+		"inputTokens",
+		"prompt_tokens",
+		"promptTokens",
+	]);
+	const output_tokens = pickToken(sources, [
+		"output_tokens",
+		"outputTokens",
+		"completion_tokens",
+		"completionTokens",
+	]);
+	const cache_read_tokens = pickToken(sources, [
+		"cache_read_tokens",
+		"cacheReadTokens",
+		"cache_read_input_tokens",
+		"cache_read",
+	]);
+	const cache_write_tokens = pickToken(sources, [
+		"cache_write_tokens",
+		"cacheWriteTokens",
+		"cache_creation_input_tokens",
+		"cache_creation_tokens",
+		"cache_write",
+	]);
+
+	if (
+		input_tokens == null &&
+		output_tokens == null &&
+		cache_read_tokens == null &&
+		cache_write_tokens == null
+	) {
+		return null;
+	}
+
+	return {
+		input_tokens,
+		output_tokens,
+		cache_read_tokens,
+		cache_write_tokens,
+	};
+}
+

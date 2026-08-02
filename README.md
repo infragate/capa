@@ -221,6 +221,6 @@ capa upgrade
 
 Guides, the full schema reference, and the registry catalog:
 
-**[https://capa.infragate.ai](https://capa.infragate.ai/docs/introduction)**
+**[https://capa.infragate.ai](https://capa.infragate.ai/getting-started/introduction/)**
 
 Maintainer-oriented internals (install pipeline, provider matrix, lockfile semantics) live in [`docs/`](./docs/README.md).

@@ -90,6 +90,14 @@ export interface ToolCallRecord {
   result_bytes: number | null;
   /** Estimated tokens for the original result (~chars/4). */
   result_tokens: number | null;
+  /** Provider-reported model input tokens (e.g. Cursor stop hook). */
+  input_tokens: number | null;
+  /** Provider-reported model output tokens. */
+  output_tokens: number | null;
+  /** Provider-reported cache read tokens. */
+  cache_read_tokens: number | null;
+  /** Provider-reported cache write tokens. */
+  cache_write_tokens: number | null;
   error_message: string | null;
   agent_id: string | null;
 }

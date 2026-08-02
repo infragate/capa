@@ -13,7 +13,9 @@ import {
 	promptTextFrom,
 	shellCommandFrom,
 	stringField,
+	tokenUsageFrom,
 	toolNameFrom,
+	type TokenUsage,
 } from "./agent-activity-fields";
 
 export interface NormalizedActivityEvent {
@@ -24,6 +26,8 @@ export interface NormalizedActivityEvent {
 	args?: unknown;
 	resultPreview?: unknown;
 	errorMessage?: string | null;
+	/** Provider-reported model usage (typically on `stop`). */
+	tokenUsage?: TokenUsage | null;
 	/** When true, caller should drop the event (capa MCP dedup). */
 	skip: boolean;
 	skipReason?: string;
@@ -83,6 +87,7 @@ export function normalizeActivityHookPayload(
 	const args = argsForEvent(event, obj);
 	const resultPreview = resultForEvent(event, obj);
 	const errorMessage = errorForEvent(event, obj);
+	const tokenUsage = tokenUsageFrom(obj);
 
 	// Shell tool wrappers duplicate afterShell / capa MCP rows.
 	if (kind === "agent_tool" && isShellToolName(toolName)) {
@@ -116,6 +121,7 @@ export function normalizeActivityHookPayload(
 		args,
 		resultPreview,
 		errorMessage,
+		tokenUsage,
 		skip: false,
 	};
 }
@@ -218,6 +224,16 @@ function argsForEvent(
 			command: shellCommandFrom(obj),
 			cwd: stringField(obj, "cwd") || stringField(obj, "working_directory") || null,
 		};
+	}
+	if (event === "stop" || event === "sessionEnd") {
+		const usage = tokenUsageFrom(obj);
+		const out: Record<string, unknown> = {};
+		const status = stringField(obj, "status");
+		const model = stringField(obj, "model");
+		if (status) out.status = status;
+		if (model) out.model = model;
+		if (usage) out.usage = usage;
+		if (Object.keys(out).length > 0) return out;
 	}
 	const toolInput =
 		obj.tool_input ?? obj.toolInput ?? obj.input ?? obj.arguments ?? obj.args;

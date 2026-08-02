@@ -7,9 +7,16 @@ import {
   formatClockTime,
   formatDuration,
   formatRelative,
+  hasTokenUsage,
   isCapaToolCall,
 } from './groupActivityRuns';
-import { KindBadge, SpanTimelineBar, sourceLabelText, statusDotClass } from './ActivityShared';
+import {
+  KindBadge,
+  SpanTimelineBar,
+  TokenUsageLabel,
+  sourceLabelText,
+  statusDotClass,
+} from './ActivityShared';
 
 interface ActivitySpanRowProps {
   call: ToolCallRecord;
@@ -21,6 +28,8 @@ interface ActivitySpanRowProps {
   onInspect?: () => void;
   /** Nested payload dialogs sit above the run dialog. */
   nestedPayload?: boolean;
+  /** Soft amber highlight that fades out (new live spans). */
+  fresh?: boolean;
 }
 
 export function ActivitySpanRow({
@@ -29,6 +38,7 @@ export function ActivitySpanRow({
   runEnd,
   onInspect,
   nestedPayload = false,
+  fresh = false,
 }: ActivitySpanRowProps) {
   const { t } = useTranslation('projects');
   const [open, setOpen] = useState(false);
@@ -36,6 +46,7 @@ export function ActivitySpanRow({
   const capa = isCapaToolCall(call);
   const errored = call.status === 'error';
   const running = call.status === 'running';
+  const showUsage = hasTokenUsage(call);
 
   return (
     <div className="group/span">
@@ -52,6 +63,7 @@ export function ActivitySpanRow({
         className={cn(
           'flex w-full items-center gap-2.5 px-3 py-1.5 text-left cursor-pointer',
           'transition-colors duration-100',
+          fresh && 'activity-span-fresh',
           errored && 'bg-error-bg hover:bg-error-bg',
           capa
             ? cn(
@@ -90,6 +102,13 @@ export function ActivitySpanRow({
             </span>
           ) : null}
         </span>
+        {showUsage ? (
+          <TokenUsageLabel
+            totals={call}
+            t={t}
+            className="hidden max-w-[11rem] shrink-0 truncate text-[10px] lg:inline"
+          />
+        ) : null}
         <SpanTimelineBar
           runStart={runStart}
           runEnd={runEnd}
@@ -127,6 +146,7 @@ export function ActivitySpanRow({
             {call.meta_tool && call.meta_tool !== call.tool_name ? (
               <span>{t('activity.via')} {call.meta_tool}</span>
             ) : null}
+            {showUsage ? <TokenUsageLabel totals={call} t={t} /> : null}
           </div>
           <div className="grid gap-2 md:grid-cols-2">
             {call.args_json ? (

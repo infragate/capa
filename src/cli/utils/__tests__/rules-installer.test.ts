@@ -172,4 +172,21 @@ describe('rules-installer', () => {
     expect(result.removedMarkers).toEqual([]);
     expect(existsSync(rulePath)).toBe(true);
   });
+
+  it('installRules skips ids that would leave the rules directory', () => {
+    const relativeEscape = '../../../../tmp/capa-should-not-exist-rule';
+    const rules: Rule[] = [
+      { id: relativeEscape, type: 'inline', content: 'should not write' },
+      { id: 'safe-rule', type: 'inline', content: 'ok' },
+    ];
+    const content = new Map([
+      [relativeEscape, 'should not write'],
+      ['safe-rule', 'ok'],
+    ]);
+
+    installRules(projectPath, rules, ['cursor'], content);
+
+    expect(existsSync(join(projectPath, '.cursor', 'rules', 'safe-rule.mdc'))).toBe(true);
+    expect(existsSync(join(projectPath, '.cursor', 'rules', `${relativeEscape}.mdc`))).toBe(false);
+  });
 });

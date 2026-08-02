@@ -13,6 +13,7 @@ import { type CachePlatform, getOrCreateSnapshot } from "../shared/cache";
 import { getProvider } from "../shared/providers";
 import { assertSafeRepoPath } from "../shared/repo-file";
 import { parseRepoString } from "../shared/repo-string";
+import { isSafeCapabilityId } from "../shared/safe-id";
 import { fetchPublicHttpsText } from "../shared/safe-remote-url";
 import { parseSkillMd, type SkillMetadata } from "../shared/skill-md";
 import type { Capabilities, Skill } from "../types/capabilities";
@@ -172,18 +173,25 @@ export function resolveSkillContent(
 	}
 
 	// Installed / github / gitlab / remote / plugin: look under provider skillsDirs
+	if (!isSafeCapabilityId(skill.id)) {
+		return null;
+	}
 	for (const pid of providers) {
 		const provider = getProvider(pid);
 		if (!provider) continue;
-		const skillMdPath = join(
-			projectPath,
-			provider.skillsDir,
-			skill.id,
-			"SKILL.md",
-		);
+		let skillMdPath: string;
+		let skillRoot: string;
+		try {
+			skillRoot = assertSafeRepoPath(
+				join(projectPath, provider.skillsDir),
+				skill.id,
+			);
+			skillMdPath = join(skillRoot, "SKILL.md");
+		} catch {
+			continue;
+		}
 		if (!existsSync(skillMdPath)) continue;
 		try {
-			const skillRoot = join(projectPath, provider.skillsDir, skill.id);
 			return tryParse(
 				readFileSync(skillMdPath, "utf-8"),
 				collectFiles(skillRoot),

@@ -2,7 +2,7 @@
 
 This folder is for people working **on** capa, not people using it. End-user docs
 (getting started, the capabilities schema reference, the registry catalog) live
-in a separate repo and are published at <https://capa.infragate.ai>. Anything
+in a separate repo and are published at <https://capa.infragate.ai/getting-started/introduction/>. Anything
 that explains how capa is wired together internally — install pipeline ordering,
 per-provider quirks, lockfile semantics, the database schema, etc. — belongs
 here.

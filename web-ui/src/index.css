@@ -452,6 +452,20 @@
   }
 }
 
+/* Fresh activity span — soft amber wash that settles away. */
+@keyframes activity-span-fresh {
+  0% {
+    box-shadow: inset 0 0 0 9999px color-mix(in srgb, #fde68a 70%, transparent);
+  }
+  100% {
+    box-shadow: inset 0 0 0 9999px transparent;
+  }
+}
+
+.activity-span-fresh {
+  animation: activity-span-fresh 2.4s var(--ease-enter) both;
+}
+
 /* Radix Dialog overlay — fade; Presence waits on animationend */
 .ui-overlay[data-state="open"] {
   animation: ui-overlay-in var(--dur-overlay) var(--ease-enter) both;
@@ -516,7 +530,8 @@ button.bg-accent-primary:not(:disabled):active {
   .ui-dialog[data-state="open"],
   .ui-dialog[data-state="closed"],
   .ui-dropdown,
-  .ui-panel-enter {
+  .ui-panel-enter,
+  .activity-span-fresh {
     animation: none !important;
   }
   .ui-dialog {

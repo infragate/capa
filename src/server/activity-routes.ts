@@ -21,6 +21,12 @@ export interface ActivityIngestBody {
 	errorMessage?: string | null;
 	sessionId?: string | null;
 	agentId?: string | null;
+	tokenUsage?: {
+		input_tokens?: number | null;
+		output_tokens?: number | null;
+		cache_read_tokens?: number | null;
+		cache_write_tokens?: number | null;
+	} | null;
 }
 
 async function resolveAgentActivityEnabled(
@@ -107,6 +113,10 @@ export async function handlePostProjectActivityEvent(
 		status: status === "running" ? "ok" : status,
 		resultPreview: body.resultPreview,
 		errorMessage: body.errorMessage ?? null,
+		inputTokens: body.tokenUsage?.input_tokens ?? null,
+		outputTokens: body.tokenUsage?.output_tokens ?? null,
+		cacheReadTokens: body.tokenUsage?.cache_read_tokens ?? null,
+		cacheWriteTokens: body.tokenUsage?.cache_write_tokens ?? null,
 	});
 
 	return new Response(JSON.stringify({ ok: true, id }), {

@@ -1,5 +1,23 @@
-import { cn } from '../../../../lib/utils';
-import { kindLabel } from './groupActivityRuns';
+import type { LucideIcon } from 'lucide-react';
+import {
+  Bot,
+  FileText,
+  MessageSquare,
+  Minimize2,
+  Server,
+  Sparkles,
+  Square,
+  Terminal,
+  Wrench,
+  CircleDot,
+} from 'lucide-react';
+import { cn, formatTokenCount } from '../../../../lib/utils';
+import type { ToolCallRecord } from '../../../../types/api';
+import {
+  hasTokenUsage,
+  kindLabel,
+  type RunTokenTotals,
+} from './groupActivityRuns';
 
 export function statusDotClass(status: string): string {
   if (status === 'running') return 'bg-accent-primary animate-pulse';
@@ -17,9 +35,43 @@ export function sourceLabelText(
   return t('activity.sourceUnknown');
 }
 
-/** Soft kind chip — muted, LangSmith-style. */
+/** Icons aligned with CapabilitiesSection / plugin stats where possible. */
+export function kindIcon(kind: string): LucideIcon {
+  switch (kind) {
+    case 'prompt':
+      return MessageSquare;
+    case 'shell':
+      return Terminal;
+    case 'file':
+    case 'read':
+    case 'write':
+      return FileText;
+    case 'skill':
+      return Sparkles;
+    case 'subagent':
+      return Bot;
+    case 'session':
+      return CircleDot;
+    case 'compact':
+      return Minimize2;
+    case 'stop':
+      return Square;
+    case 'agent_mcp':
+      return Server;
+    case 'setup_tools':
+    case 'call_tool':
+    case 'tool':
+    case 'agent_tool':
+      return Wrench;
+    default:
+      return Wrench;
+  }
+}
+
+/** Soft kind chip — muted, LangSmith-style, with a type icon. */
 export function KindBadge({ kind, capa }: { kind: string; capa?: boolean }) {
   const label = kindLabel(kind);
+  const Icon = kindIcon(kind);
   const tone = capa
     ? 'bg-info-bg text-info-text'
     : kind === 'prompt'
@@ -28,21 +80,25 @@ export function KindBadge({ kind, capa }: { kind: string; capa?: boolean }) {
         ? 'bg-bg-tertiary text-text-secondary'
         : kind === 'file' || kind === 'read' || kind === 'write'
           ? 'bg-bg-tertiary text-text-secondary'
-          : kind === 'error' || kind === 'stop'
-            ? 'bg-error-bg text-error-text'
-            : kind === 'session'
-              ? 'bg-bg-tertiary text-text-tertiary'
-              : 'bg-success-bg text-success-text';
+          : kind === 'skill'
+            ? 'bg-info-bg text-info-text'
+            : kind === 'error' || kind === 'stop'
+              ? 'bg-error-bg text-error-text'
+              : kind === 'session'
+                ? 'bg-bg-tertiary text-text-tertiary'
+                : 'bg-success-bg text-success-text';
 
   return (
     <span
       className={cn(
-        'inline-flex shrink-0 items-center rounded px-1.5 py-0.5',
+        'inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5',
         'text-[10px] font-medium leading-none tracking-wide',
         tone,
       )}
+      title={label}
     >
-      {label}
+      <Icon size={11} strokeWidth={2} className="shrink-0 opacity-90" aria-hidden />
+      <span>{label}</span>
     </span>
   );
 }
@@ -130,5 +186,56 @@ export function SpanTimelineBar({
         style={{ left: `${leftPct}%`, width: `${clampedWidth}%` }}
       />
     </div>
+  );
+}
+
+type TokenT = (key: string, opts?: Record<string, string | number>) => string;
+
+/** Compact in/out · cache r/w chip for dialog header or span rows. */
+export function TokenUsageLabel({
+  totals,
+  t,
+  className,
+}: {
+  totals: RunTokenTotals | Pick<
+    ToolCallRecord,
+    'input_tokens' | 'output_tokens' | 'cache_read_tokens' | 'cache_write_tokens'
+  >;
+  t: TokenT;
+  className?: string;
+}) {
+  const normalized: RunTokenTotals =
+    'hasAny' in totals
+      ? totals
+      : {
+          input: totals.input_tokens ?? 0,
+          output: totals.output_tokens ?? 0,
+          cacheRead: totals.cache_read_tokens ?? 0,
+          cacheWrite: totals.cache_write_tokens ?? 0,
+          hasAny: hasTokenUsage(totals),
+        };
+
+  if (!normalized.hasAny) return null;
+
+  const hasCache = normalized.cacheRead > 0 || normalized.cacheWrite > 0;
+  const label = hasCache
+    ? t('activity.tokenUsageWithCache', {
+        in: formatTokenCount(normalized.input),
+        out: formatTokenCount(normalized.output),
+        cacheRead: formatTokenCount(normalized.cacheRead),
+        cacheWrite: formatTokenCount(normalized.cacheWrite),
+      })
+    : t('activity.tokenUsage', {
+        in: formatTokenCount(normalized.input),
+        out: formatTokenCount(normalized.output),
+      });
+
+  return (
+    <span
+      className={cn('tabular-nums text-text-tertiary', className)}
+      title={label}
+    >
+      {label}
+    </span>
   );
 }

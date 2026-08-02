@@ -358,6 +358,10 @@ export interface ToolCallRecord {
   result_preview: string | null;
   result_bytes: number | null;
   result_tokens: number | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cache_read_tokens: number | null;
+  cache_write_tokens: number | null;
   error_message: string | null;
   agent_id: string | null;
 }
