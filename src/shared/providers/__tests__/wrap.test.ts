@@ -124,6 +124,23 @@ describe('wrap provider helpers', () => {
     }
   });
 
+  it('detectProviderIdsFromProjectTree does not treat a root skills/ folder as openclaw', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'capa-detect-skills-'));
+    try {
+      mkdirSync(join(dir, 'skills'));
+      expect(detectProviderIdsFromProjectTree(dir)).not.toContain('openclaw');
+      // Still exclude skills when openclaw is explicitly in the wrap set.
+      expect(getProviderOwnedTopLevelNames(['openclaw']).has('skills')).toBe(true);
+      expect(
+        getProviderOwnedTopLevelNames(
+          collectWrapExclusionProviderIds('claude-code', undefined, []),
+        ).has('skills'),
+      ).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('getProviderOwnedTopLevelNames is scoped to the given providers', () => {
     const cursor = getProviderOwnedTopLevelNames(['cursor']);
     expect(cursor.has('.cursor')).toBe(true);

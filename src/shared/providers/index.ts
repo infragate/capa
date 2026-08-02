@@ -222,6 +222,10 @@ export function collectWrapExclusionProviderIds(
  * (e.g. `.cursor` → cursor). Used so wrap never junctions another agent's
  * config tree into the shadow workspace just because `capabilities.providers`
  * was left empty after an interactive install.
+ *
+ * Only distinctive paths count: dotted dirs (`.cursor`), instruction/config
+ * files (`CLAUDE.md`, `.mcp.json`). Bare names like `skills` are too ambiguous
+ * (many projects keep a real `skills/` folder that is not openclaw's).
  */
 export function detectProviderIdsFromProjectTree(projectPath: string): string[] {
 	const root = resolve(projectPath);
@@ -241,6 +245,7 @@ export function detectProviderIdsFromProjectTree(projectPath: string): string[] 
 		const owned = new Set<string>();
 		addProviderOwnedTopLevelNames(p, owned);
 		for (const name of owned) {
+			if (!isDistinctiveProviderTopLevel(name)) continue;
 			const key = process.platform === "win32" ? name.toLowerCase() : name;
 			if (present.has(key)) {
 				found.add(p.id);
@@ -249,6 +254,18 @@ export function detectProviderIdsFromProjectTree(projectPath: string): string[] 
 		}
 	}
 	return [...found];
+}
+
+/**
+ * True when a top-level name is specific enough to imply a provider is in use.
+ * Bare folders like `skills` are project content until a provider is listed in
+ * capabilities / the install DB.
+ */
+function isDistinctiveProviderTopLevel(name: string): boolean {
+	if (!name) return false;
+	if (name.startsWith(".")) return true;
+	const lower = name.toLowerCase();
+	return lower.endsWith(".md") || lower.endsWith(".json") || lower.endsWith(".toml");
 }
 
 /**
