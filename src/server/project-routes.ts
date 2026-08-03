@@ -142,6 +142,7 @@ export async function handleGetProject(
 									project.path,
 									s,
 									capabilities.providers || [],
+									{ projectId },
 								);
 							return {
 								id: s.id,
