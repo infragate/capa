@@ -68,9 +68,6 @@ function RunRow({
       <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-text-primary">
         {run.title}
       </span>
-      <span className="hidden sm:inline shrink-0 rounded bg-bg-tertiary px-1.5 py-0.5 text-[10px] text-text-tertiary">
-        {sourceLabelText(run.source, t)}
-      </span>
       {tokenTotals.hasAny ? (
         <TokenUsageLabel
           totals={tokenTotals}
@@ -103,32 +100,36 @@ function ConversationBlock({
 }) {
   const { t } = useTranslation('projects');
   const multi = conversation.generations.length > 1;
-  const showHeader = Boolean(conversation.id) && !conversation.id.startsWith('orphan:');
+  const isOrphan = conversation.id.startsWith('orphan:');
+  const title = isOrphan
+    ? t('activity.ungrouped', { defaultValue: 'Activity' })
+    : t('activity.conversation', {
+        defaultValue: 'Conversation {{id}}',
+        id: shortConversationLabel(conversation.id),
+      });
 
   return (
     <div className="border-b border-border-secondary/90 last:border-b-0">
-      {showHeader ? (
-        <div className="flex items-center gap-2 bg-bg-tertiary/40 px-3 py-1.5 text-[10px] font-medium uppercase tracking-[0.06em] text-text-tertiary">
-          <span className="min-w-0 flex-1 truncate">
-            {t('activity.conversation', {
-              defaultValue: 'Conversation {{id}}',
-              id: shortConversationLabel(conversation.id),
-            })}
+      <div className="flex items-center gap-2 bg-bg-tertiary/40 px-3 py-1.5 text-[10px] font-medium uppercase tracking-[0.06em] text-text-tertiary">
+        <span className="min-w-0 flex-1 truncate">{title}</span>
+        {conversation.source ? (
+          <span className="shrink-0 rounded bg-bg-secondary px-1.5 py-0.5 text-[10px] font-medium normal-case tracking-normal text-text-secondary">
+            {sourceLabelText(conversation.source, t)}
           </span>
-          <span className="shrink-0 tabular-nums">
-            {conversation.generations.length}{' '}
-            {conversation.generations.length === 1
-              ? t('activity.generation', { defaultValue: 'turn' })
-              : t('activity.generations', { defaultValue: 'turns' })}
-          </span>
-        </div>
-      ) : null}
+        ) : null}
+        <span className="shrink-0 tabular-nums">
+          {conversation.generations.length}{' '}
+          {conversation.generations.length === 1
+            ? t('activity.generation', { defaultValue: 'turn' })
+            : t('activity.generations', { defaultValue: 'turns' })}
+        </span>
+      </div>
       {conversation.generations.map((run) => (
         <RunRow
           key={run.id}
           run={run}
           maxMs={maxMs}
-          nested={showHeader && multi}
+          nested={multi}
           onOpen={() => onOpenRun(run.id)}
         />
       ))}
@@ -174,9 +175,6 @@ export function ActivityFeed({
         <div className="sticky top-0 z-[1] flex items-center gap-2 border-b border-border-secondary bg-bg-secondary/95 px-3 py-1.5 text-[10px] font-medium uppercase tracking-[0.07em] text-text-tertiary backdrop-blur-sm">
           <span className="w-4 shrink-0" />
           <span className="min-w-0 flex-1">{t('activity.colName')}</span>
-          <span className="hidden sm:inline w-16 shrink-0 text-right">
-            {t('activity.colSource')}
-          </span>
           <span className="w-14 shrink-0 text-right">{t('activity.colSpans')}</span>
           <span className="hidden md:inline w-14 shrink-0" />
           <span className="w-12 shrink-0 text-right">{t('activity.colLatency')}</span>
