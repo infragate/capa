@@ -440,6 +440,42 @@ describe("ToolCallTracer", () => {
 		expect(row?.generation_id).toBe("gen-turn-1");
 	});
 
+	it("does not inherit correlation when inheritCorrelation is false", () => {
+		db.insertToolCall({
+			id: "hook-1",
+			project_id: "proj-1",
+			session_id: null,
+			started_at: Date.now() - 1_000,
+			duration_ms: 10,
+			status: "ok",
+			source: "claude-code",
+			kind: "session",
+			tool_name: "sessionStart",
+			meta_tool: null,
+			args_json: "{}",
+			result_preview: null,
+			result_bytes: null,
+			result_tokens: null,
+			error_message: null,
+			agent_id: null,
+			conversation_id: "conv-claude",
+			generation_id: "gen-turn-1",
+		});
+
+		const tracer = new ToolCallTracer(db);
+		const id = tracer.start({
+			projectId: "proj-1",
+			source: "cursor",
+			kind: "session",
+			toolName: "sessionStart",
+			inheritCorrelation: false,
+		});
+
+		const row = db.getToolCall(id);
+		expect(row?.conversation_id).toBeNull();
+		expect(row?.generation_id).toBeNull();
+	});
+
 	it("does not override explicit conversation correlation", () => {
 		db.insertToolCall({
 			id: "hook-1",

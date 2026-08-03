@@ -78,11 +78,7 @@ async function runIngest(parsed: {
 	const stdinText = await readStdin();
 	let raw: unknown = null;
 	if (stdinText.trim()) {
-		try {
-			raw = JSON.parse(stdinText);
-		} catch {
-			raw = { raw: stdinText.slice(0, 4000) };
-		}
+		raw = parseHookStdinJson(stdinText);
 	}
 
 	const normalized = normalizeActivityHookPayload(event, raw, provider);
@@ -91,7 +87,10 @@ async function runIngest(parsed: {
 	const status = await getServerStatus();
 	if (!status.running || !status.url) {
 		const settings = await loadSettings();
-		const fallback = `http://127.0.0.1:${settings.server.port}`;
+		const fallback = clientConnectOrigin(
+			settings.server.host,
+			settings.server.port,
+		);
 		await postEvent(fallback, projectId, normalized);
 		return;
 	}
@@ -163,4 +162,45 @@ async function readStdin(): Promise<string> {
 	} catch {
 		return "";
 	}
+}
+
+/**
+ * Parse provider hook stdin JSON.
+ * Cursor Agent on Windows often prefixes UTF-8 BOM (`U+FEFF`); strip it so
+ * `JSON.parse` succeeds and correlation / attributes / tokens are extracted.
+ */
+export function parseHookStdinJson(stdinText: string): unknown {
+	const trimmed = stripBom(stdinText).trim();
+	if (!trimmed) return null;
+	try {
+		return JSON.parse(trimmed);
+	} catch {
+		return { raw: trimmed.slice(0, 4000) };
+	}
+}
+
+function stripBom(text: string): string {
+	// UTF-8 BOM decoded as U+FEFF. Also strip UTF-16 BOMs if a host mis-decodes.
+	if (
+		text.charCodeAt(0) === 0xfeff ||
+		text.charCodeAt(0) === 0xfffe
+	) {
+		return text.slice(1);
+	}
+	return text;
+}
+
+/**
+ * Build a client-connectable HTTP origin from server settings.
+ * Bind wildcards (`0.0.0.0` / `::`) are not routable as clients; IPv6 literals
+ * need brackets in URLs.
+ */
+export function clientConnectOrigin(host: string, port: number): string {
+	let h = host.trim();
+	if (!h || h === "0.0.0.0" || h === "::" || h === "[::]") {
+		h = "127.0.0.1";
+	} else if (h.includes(":") && !h.startsWith("[")) {
+		h = `[${h}]`;
+	}
+	return `http://${h}:${port}`;
 }

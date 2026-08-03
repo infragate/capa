@@ -144,6 +144,49 @@ describe("handlePostProjectActivityEvent", () => {
 		});
 	});
 
+	it("does not inherit another provider's conversation when ids are missing", async () => {
+		db.insertToolCall({
+			id: "claude-1",
+			project_id: "proj-1",
+			session_id: null,
+			started_at: Date.now() - 1_000,
+			duration_ms: 10,
+			status: "ok",
+			source: "claude-code",
+			kind: "session",
+			tool_name: "sessionStart",
+			meta_tool: null,
+			args_json: "{}",
+			result_preview: null,
+			result_bytes: null,
+			result_tokens: null,
+			error_message: null,
+			agent_id: null,
+			conversation_id: "conv-claude",
+			generation_id: "gen-claude",
+		});
+
+		const res = await handlePostProjectActivityEvent(
+			deps,
+			"proj-1",
+			new Request("http://localhost/x", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					kind: "session",
+					toolName: "sessionStart",
+					status: "ok",
+					source: "cursor",
+				}),
+			}),
+		);
+		expect(res.status).toBe(201);
+		const row = db.listToolCalls("proj-1", { limit: 1 }).calls[0];
+		expect(row.source).toBe("cursor");
+		expect(row.conversation_id).toBeNull();
+		expect(row.generation_id).toBeNull();
+	});
+
 	it("returns 204 when agentActivity is disabled", async () => {
 		// Session caps are the fast path; disk is not consulted when session is warm.
 		sessionManager.setProjectCapabilities("proj-1", {

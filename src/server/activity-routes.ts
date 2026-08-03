@@ -129,6 +129,9 @@ export async function handlePostProjectActivityEvent(
 		kind,
 		toolName,
 		args: body.args,
+		// Hook payloads carry their own correlation; never steal another
+		// provider's conversation when stdin parse fails (Windows BOM, etc.).
+		inheritCorrelation: false,
 	});
 
 	// Tracer finish already notifies SSE via ToolCallTracer constructor notify.
