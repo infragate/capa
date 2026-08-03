@@ -48,7 +48,22 @@ export async function activityIngestCommand(args: string[]): Promise<void> {
 		/* fail-open */
 	} finally {
 		const gate = activityIngestGateStdout(parsed.event);
-		if (gate) process.stdout.write(`${gate}\n`);
+		if (gate) writeGateStdout(`${gate}\n`);
+	}
+}
+
+/**
+ * Fail-open stdout write for gate JSON. Broken pipes / closed stdout must not
+ * escape the ingest command and fail the provider hook.
+ */
+function writeGateStdout(line: string): void {
+	try {
+		process.stdout.once("error", () => {
+			/* swallow stream errors (e.g. EPIPE) */
+		});
+		process.stdout.write(line);
+	} catch {
+		/* synchronous write failure — fail-open */
 	}
 }
 

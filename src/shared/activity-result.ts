@@ -2,8 +2,8 @@
  * Provider-configured extraction of tool/shell result payloads from hook stdin.
  */
 
-import { getProvider } from "./providers";
 import { asRecord } from "./agent-activity-fields";
+import { getProvider } from "./providers";
 
 /**
  * Read the result/output field using the provider's `hooks.activityResultFields`

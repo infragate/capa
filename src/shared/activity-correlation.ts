@@ -3,8 +3,8 @@
  */
 
 import type { ActivityCorrelationIntegration } from "../types/providers";
-import { getProvider } from "./providers";
 import { asRecord, stringField } from "./agent-activity-fields";
+import { getProvider } from "./providers";
 
 export interface ActivityCorrelationIds {
 	conversationId: string | null;

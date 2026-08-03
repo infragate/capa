@@ -66,9 +66,7 @@ export function buildSystemActivityHooks(
 	projectId: string,
 	providerId?: string,
 ): Hook[] {
-	const providerArg = providerId
-		? ` --provider ${shellQuote(providerId)}`
-		: "";
+	const providerArg = providerId ? ` --provider ${shellQuote(providerId)}` : "";
 	const events = providerId
 		? SYSTEM_ACTIVITY_EVENTS.filter((event) =>
 				providerMapsActivityEvent(providerId, event),

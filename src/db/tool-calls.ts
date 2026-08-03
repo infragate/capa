@@ -337,8 +337,7 @@ export class ToolCallsRepo {
 				TOOL_CALLS_PAGE_SIZE_MAX,
 			),
 		);
-		const beforeStartedAt =
-			options.beforeStartedAt ?? options.before ?? null;
+		const beforeStartedAt = options.beforeStartedAt ?? options.before ?? null;
 		const beforeId = options.beforeId ?? null;
 
 		const fetched = (

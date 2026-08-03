@@ -1,12 +1,16 @@
-import { detectCapabilitiesFile } from "../shared/paths";
-import { parseCapabilitiesFile } from "../shared/capabilities";
+import { serializeActivityAttributes } from "../shared/activity-attributes";
 import { isAgentActivityEnabled } from "../shared/agent-activity";
 import { syncSystemActivityHooks } from "../shared/agent-activity-sync";
-import { serializeActivityAttributes } from "../shared/activity-attributes";
+import { parseCapabilitiesFile } from "../shared/capabilities";
+import { detectCapabilitiesFile } from "../shared/paths";
 import { resolveProvidersForClean } from "../shared/providers/resolve";
-import { TOOL_CALL_KINDS, type ToolCallKind, type ToolCallStatus } from "../types/database";
-import type { ToolCallTracer } from "./tool-call-tracer";
+import {
+	TOOL_CALL_KINDS,
+	type ToolCallKind,
+	type ToolCallStatus,
+} from "../types/database";
 import { type ProjectRouteDeps } from "./project-routes";
+import type { ToolCallTracer } from "./tool-call-tracer";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
@@ -99,9 +103,7 @@ export async function handlePostProjectActivityEvent(
 	}
 
 	const status: ToolCallStatus =
-		body.status === "error" || body.status === "running"
-			? body.status
-			: "ok";
+		body.status === "error" || body.status === "running" ? body.status : "ok";
 
 	const id = deps.toolCallTracer.start({
 		projectId,

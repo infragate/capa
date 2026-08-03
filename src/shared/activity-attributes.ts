@@ -7,8 +7,8 @@ import type {
 	ActivityAttributeField,
 	ActivityAttributesIntegration,
 } from "../types/providers";
-import { getProvider } from "./providers";
 import { asRecord, stringField } from "./agent-activity-fields";
+import { getProvider } from "./providers";
 
 /** Soft cap so attributes stay metadata-sized (not tool output dumps). */
 export const ACTIVITY_ATTRIBUTES_MAX_JSON_CHARS = 16_000;
@@ -101,7 +101,11 @@ function readAttribute(
 			continue;
 		}
 		// json — keep serializable values; skip functions/symbols
-		if (typeof raw === "string" || typeof raw === "number" || typeof raw === "boolean") {
+		if (
+			typeof raw === "string" ||
+			typeof raw === "number" ||
+			typeof raw === "boolean"
+		) {
 			return raw;
 		}
 		if (Array.isArray(raw) || (typeof raw === "object" && raw !== null)) {

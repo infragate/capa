@@ -90,4 +90,14 @@ describe("activityIngestCommand gate stdout", () => {
 
 		expect(JSON.parse(writes.join("").trim())).toEqual({ continue: true });
 	});
+
+	it("stays fail-open when stdout.write throws", async () => {
+		writeSpy = spyOn(process.stdout, "write").mockImplementation((() => {
+			throw new Error("EPIPE");
+		}) as typeof process.stdout.write);
+
+		await expect(
+			activityIngestCommand(["--event", "beforeFileRead", "--provider", "cursor"]),
+		).resolves.toBeUndefined();
+	});
 });

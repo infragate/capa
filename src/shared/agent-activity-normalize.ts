@@ -5,11 +5,11 @@
 
 import type { ToolCallKind, ToolCallStatus } from "../types/database";
 import type { CanonicalHookEvent } from "../types/hooks";
-import { extractActivityCorrelation } from "./activity-correlation";
 import {
-	extractActivityAttributes,
 	type ActivityAttributes,
+	extractActivityAttributes,
 } from "./activity-attributes";
+import { extractActivityCorrelation } from "./activity-correlation";
 import { extractActivityResult } from "./activity-result";
 import {
 	asRecord,
@@ -19,9 +19,9 @@ import {
 	promptTextFrom,
 	shellCommandFrom,
 	stringField,
+	type TokenUsage,
 	tokenUsageFrom,
 	toolNameFrom,
-	type TokenUsage,
 } from "./agent-activity-fields";
 
 export interface NormalizedActivityEvent {
@@ -151,7 +151,11 @@ function kindForEvent(
 		return isSkillMdPath(extractPath(obj)) ? "skill" : "file";
 	}
 	if (event === "beforeMcpCall" || event === "afterMcpCall") return "agent_mcp";
-	if (event === "beforeTool" || event === "afterTool" || event === "afterToolFailure") {
+	if (
+		event === "beforeTool" ||
+		event === "afterTool" ||
+		event === "afterToolFailure"
+	) {
 		if (isSkillMdPath(extractPath(obj))) return "skill";
 		return "agent_tool";
 	}
@@ -198,18 +202,18 @@ function nameForEvent(
 	}
 	if (kind === "compact" || kind === "stop") return event;
 
-	return (
-		toolNameFrom(obj) ||
-		stringField(obj, "tool") ||
-		event
-	);
+	return toolNameFrom(obj) || stringField(obj, "tool") || event;
 }
 
 function statusForEvent(
 	event: CanonicalHookEvent,
 	obj: Record<string, unknown>,
 ): ToolCallStatus {
-	if (event.startsWith("before") || event === "sessionStart" || event === "subagentStart") {
+	if (
+		event.startsWith("before") ||
+		event === "sessionStart" ||
+		event === "subagentStart"
+	) {
 		return "ok";
 	}
 	if (event === "afterToolFailure") return "error";
@@ -218,10 +222,15 @@ function statusForEvent(
 	if (explicit === "error" || explicit === "failed" || explicit === "failure") {
 		return "error";
 	}
-	if (obj.error != null || obj.error_message != null || obj.errorMessage != null) {
+	if (
+		obj.error != null ||
+		obj.error_message != null ||
+		obj.errorMessage != null
+	) {
 		return "error";
 	}
-	const exitCode = obj.exit_code ?? obj.exitCode ?? nested(obj, ["output", "exit_code"]);
+	const exitCode =
+		obj.exit_code ?? obj.exitCode ?? nested(obj, ["output", "exit_code"]);
 	if (typeof exitCode === "number" && exitCode !== 0) return "error";
 
 	return "ok";
@@ -237,7 +246,10 @@ function argsForEvent(
 	if (event === "beforeShell" || event === "afterShell") {
 		return {
 			command: shellCommandFrom(obj),
-			cwd: stringField(obj, "cwd") || stringField(obj, "working_directory") || null,
+			cwd:
+				stringField(obj, "cwd") ||
+				stringField(obj, "working_directory") ||
+				null,
 		};
 	}
 	if (event === "stop" || event === "sessionEnd") {
@@ -326,7 +338,11 @@ function isCapaMcpPayload(
 
 	// Config-shaped payloads sometimes nest capa under mcpServers without a URL.
 	const mcpServers = obj.mcpServers ?? obj.mcp_servers;
-	if (mcpServers && typeof mcpServers === "object" && !Array.isArray(mcpServers)) {
+	if (
+		mcpServers &&
+		typeof mcpServers === "object" &&
+		!Array.isArray(mcpServers)
+	) {
 		for (const key of Object.keys(mcpServers as Record<string, unknown>)) {
 			if (/^capa\b/i.test(key) || CAPA_MCP_RE.test(key)) return true;
 		}
