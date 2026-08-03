@@ -149,9 +149,67 @@ export function resolveSkillSourceUrl(
 	return null;
 }
 
+/** In-memory skill index for unpacked plugin trees (avoids re-scanning per skill). */
+const pluginSkillIndexCache = new Map<
+	string,
+	{ mtimeMs: number; index: Map<string, string> }
+>();
+
+function readPluginRootMtime(pluginRoot: string): number | null {
+	try {
+		return statSync(pluginRoot).mtimeMs;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Build (or reuse) an id → SKILL.md path index for an unpacked plugin tree.
+ * Prefer `skills/` then `.capa-commands/`, then a full-tree scan for odd layouts.
+ */
+function getCachedPluginSkillIndex(pluginRoot: string): Map<string, string> {
+	const mtimeMs = readPluginRootMtime(pluginRoot);
+	if (mtimeMs == null) return new Map();
+
+	const cached = pluginSkillIndexCache.get(pluginRoot);
+	if (cached && cached.mtimeMs === mtimeMs) return cached.index;
+
+	const index = new Map<string, string>();
+
+	const skillsSub = join(pluginRoot, "skills");
+	if (existsSync(skillsSub)) {
+		for (const [id, skillMdPath] of findSkillsInDirectory(skillsSub)) {
+			index.set(id, skillMdPath);
+		}
+	}
+
+	const commandsRoot = join(pluginRoot, ".capa-commands");
+	if (existsSync(commandsRoot)) {
+		try {
+			for (const entry of readdirSync(commandsRoot, { withFileTypes: true })) {
+				if (!entry.isDirectory()) continue;
+				const skillMdPath = join(commandsRoot, entry.name, "SKILL.md");
+				if (existsSync(skillMdPath) && !index.has(entry.name)) {
+					index.set(entry.name, skillMdPath);
+				}
+			}
+		} catch {
+			// ignore unreadable command dirs
+		}
+	}
+
+	// Odd layouts (e.g. nested non-skills paths) — fill gaps only.
+	for (const [id, skillMdPath] of findSkillsInDirectory(pluginRoot)) {
+		if (!index.has(id)) index.set(id, skillMdPath);
+	}
+
+	pluginSkillIndexCache.set(pluginRoot, { mtimeMs, index });
+	return index;
+}
+
 /**
  * Locate SKILL.md for a skill id inside an unpacked plugin tree.
- * Checks common layouts, then falls back to a recursive scan.
+ * Checks common layouts, then falls back to a cached recursive scan.
  */
 function findPluginSkillMd(
 	pluginRoot: string,
@@ -166,11 +224,7 @@ function findPluginSkillMd(
 		if (existsSync(candidate)) return candidate;
 	}
 
-	const found = findSkillsInDirectory(pluginRoot);
-	const fromScan = found.get(skillId);
-	if (fromScan) return fromScan;
-
-	return null;
+	return getCachedPluginSkillIndex(pluginRoot).get(skillId) ?? null;
 }
 
 function resolvePluginSkillContent(
@@ -246,12 +300,7 @@ export function resolveSkillContent(
 		}
 	}
 
-	// Plugin skills: read from the unpacked tree under ~/.capa/plugins/<projectId>/
-	// (populated when the plugin is added / effective caps are resolved — before install).
-	const fromPlugin = resolvePluginSkillContent(skill, options);
-	if (fromPlugin) return fromPlugin;
-
-	// Installed / github / gitlab / remote / plugin: look under provider skillsDirs
+	// Prefer provider-installed copies (may include install-time sanitization).
 	if (!isSafeCapabilityId(skill.id)) {
 		return null;
 	}
@@ -280,7 +329,9 @@ export function resolveSkillContent(
 		}
 	}
 
-	return null;
+	// Pre-install fallback: unpacked plugin tree under ~/.capa/plugins/<projectId>/
+	// (populated when the plugin is added / effective caps are resolved).
+	return resolvePluginSkillContent(skill, options);
 }
 
 /**

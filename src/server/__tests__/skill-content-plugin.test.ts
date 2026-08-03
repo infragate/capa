@@ -122,4 +122,55 @@ describe("resolveSkillContent plugin unpack", () => {
 		expect(result).not.toBeNull();
 		expect(result!.content).toContain("Cmd body.");
 	});
+it("prefers installed provider copy over unpacked plugin tree after install", () => {
+		const installedDir = join(projectPath, ".claude", "skills", "hello-skill");
+		mkdirSync(installedDir, { recursive: true });
+		writeFileSync(
+			join(installedDir, "SKILL.md"),
+			"---\nname: hello-skill\ndescription: Installed sanitized\n---\n\nInstalled body.\n",
+		);
+
+		const result = resolveSkillContent(projectPath, pluginSkill, ["claude-code"], {
+			projectId,
+			pluginsBaseDir: pluginsBase,
+		});
+
+		expect(result).not.toBeNull();
+		expect(result!.content).toContain("Installed body.");
+		expect(result!.content).not.toContain("Plugin body.");
+		expect(result!.metadata.description).toBe("Installed sanitized");
+	});
+
+	it("finds nested nonstandard skill layouts via cached plugin scan", () => {
+		const nestedDir = join(pluginsBase, pluginId, "extras", "nested-skill");
+		mkdirSync(nestedDir, { recursive: true });
+		writeFileSync(
+			join(nestedDir, "SKILL.md"),
+			"---\nname: nested-skill\ndescription: Nested\n---\n\nNested body.\n",
+		);
+
+		const skill: Skill = {
+			id: "nested-skill",
+			type: "plugin",
+			def: {},
+			sourcePlugin: {
+				id: pluginId,
+				name: "Fixture Plugin",
+				provider: "claude",
+			},
+		};
+
+		const first = resolveSkillContent(projectPath, skill, ["claude-code"], {
+			projectId,
+			pluginsBaseDir: pluginsBase,
+		});
+		const second = resolveSkillContent(projectPath, skill, ["claude-code"], {
+			projectId,
+			pluginsBaseDir: pluginsBase,
+		});
+
+		expect(first).not.toBeNull();
+		expect(first!.content).toContain("Nested body.");
+		expect(second!.content).toContain("Nested body.");
+	});
 });
