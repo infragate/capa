@@ -16,12 +16,20 @@ export type ToolCallInsert = Omit<
 	| "output_tokens"
 	| "cache_read_tokens"
 	| "cache_write_tokens"
+	| "conversation_id"
+	| "generation_id"
+	| "model"
+	| "attributes_json"
 > & {
 	duration_ms?: number | null;
 	input_tokens?: number | null;
 	output_tokens?: number | null;
 	cache_read_tokens?: number | null;
 	cache_write_tokens?: number | null;
+	conversation_id?: string | null;
+	generation_id?: string | null;
+	model?: string | null;
+	attributes_json?: string | null;
 };
 
 export type ToolCallFinish = {
@@ -55,6 +63,13 @@ export type ToolCallListResult = {
 	hasMore: boolean;
 };
 
+/** Correlation ids from a recent provider-hook activity row. */
+export type ActivityCorrelationLookup = {
+	conversation_id: string;
+	generation_id: string | null;
+	source: string | null;
+};
+
 export { isActivityRunCloser, isActivityRunOpener };
 
 /** Cap how far we walk older rows to complete a cut-off run. */
@@ -69,8 +84,9 @@ export class ToolCallsRepo {
         id, project_id, session_id, started_at, duration_ms, status, source,
         kind, tool_name, meta_tool, args_json, result_preview, result_bytes,
         result_tokens, input_tokens, output_tokens, cache_read_tokens,
-        cache_write_tokens, error_message, agent_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        cache_write_tokens, error_message, agent_id, conversation_id,
+        generation_id, model, attributes_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			[
 				row.id,
 				row.project_id,
@@ -92,6 +108,10 @@ export class ToolCallsRepo {
 				row.cache_write_tokens ?? null,
 				row.error_message,
 				row.agent_id,
+				row.conversation_id ?? null,
+				row.generation_id ?? null,
+				row.model ?? null,
+				row.attributes_json ?? null,
 			],
 		);
 		this.prune(row.project_id);
@@ -129,6 +149,40 @@ export class ToolCallsRepo {
 		return this.db
 			.query("SELECT * FROM tool_calls WHERE id = ?")
 			.get(id) as ToolCallRecord | null;
+	}
+
+	/**
+	 * Latest provider-hook correlation for a project (used so capa MCP traces
+	 * can join the active conversation/generation).
+	 */
+	findLatestCorrelation(
+		projectId: string,
+		withinMs = 60 * 60 * 1000,
+		nowMs = Date.now(),
+	): ActivityCorrelationLookup | null {
+		const since = nowMs - withinMs;
+		const row = this.db
+			.query(
+				`SELECT conversation_id, generation_id, source
+         FROM tool_calls
+         WHERE project_id = ?
+           AND conversation_id IS NOT NULL
+           AND conversation_id <> ''
+           AND started_at >= ?
+         ORDER BY started_at DESC, id DESC
+         LIMIT 1`,
+			)
+			.get(projectId, since) as {
+			conversation_id: string;
+			generation_id: string | null;
+			source: string | null;
+		} | null;
+		if (!row?.conversation_id) return null;
+		return {
+			conversation_id: row.conversation_id,
+			generation_id: row.generation_id,
+			source: row.source,
+		};
 	}
 
 	count(projectId: string): number {
@@ -173,11 +227,9 @@ export class ToolCallsRepo {
 	}
 
 	/**
-	 * If the page's oldest row is mid-run, pull older rows until the run
-	 * opener (prompt / session start). Stops before a prior run's closer.
-	 * If no run boundary is found within the expand budget (e.g. unstructured
-	 * tool-only history), leaves the original page unchanged so pagination
-	 * still works.
+	 * If the page's oldest row is mid-generation (or mid-heuristic-run), pull
+	 * older rows until the generation / run opener. Prefer provider generation
+	 * ids when present; fall back to prompt/stop heuristics.
 	 */
 	private expandOlderToRunBoundary(
 		projectId: string,
@@ -185,6 +237,15 @@ export class ToolCallsRepo {
 	): ToolCallRecord[] {
 		if (page.length === 0) return page;
 		const oldest = page[page.length - 1]!;
+
+		if (oldest.generation_id) {
+			return this.expandOlderMatching(
+				projectId,
+				page,
+				(row) => row.generation_id === oldest.generation_id,
+			);
+		}
+
 		if (isActivityRunOpener(oldest)) return page;
 
 		const expanded = [...page];
@@ -201,15 +262,12 @@ export class ToolCallsRepo {
 				batchSize,
 			);
 			if (batch.length === 0) {
-				// Start of history with no opener — leave the page as-is so
-				// unstructured tool-only feeds still paginate.
 				break;
 			}
 
 			for (const row of batch) {
 				walked += 1;
 				if (isActivityRunCloser(row)) {
-					// Prior run ended here; do not attach it to this page's group.
 					foundBoundary = true;
 					break;
 				}
@@ -229,6 +287,45 @@ export class ToolCallsRepo {
 		return foundBoundary ? expanded : page;
 	}
 
+	/** Pull older rows while `matches` stays true (e.g. same generation_id). */
+	private expandOlderMatching(
+		projectId: string,
+		page: ToolCallRecord[],
+		matches: (row: ToolCallRecord) => boolean,
+	): ToolCallRecord[] {
+		const expanded = [...page];
+		let walked = 0;
+
+		while (walked < RUN_BOUNDARY_EXPAND_MAX) {
+			const tip = expanded[expanded.length - 1]!;
+			const batchSize = Math.min(50, RUN_BOUNDARY_EXPAND_MAX - walked);
+			const batch = this.listBefore(
+				projectId,
+				tip.started_at,
+				tip.id,
+				batchSize,
+			);
+			if (batch.length === 0) break;
+
+			let hitMismatch = false;
+			for (const row of batch) {
+				walked += 1;
+				if (!matches(row)) {
+					hitMismatch = true;
+					break;
+				}
+				expanded.push(row);
+				if (walked >= RUN_BOUNDARY_EXPAND_MAX) break;
+			}
+
+			if (hitMismatch) break;
+			if (batch.length < batchSize) break;
+			if (walked >= RUN_BOUNDARY_EXPAND_MAX) break;
+		}
+
+		return expanded;
+	}
+
 	listRecent(
 		projectId: string,
 		options: ToolCallListOptions = {},
@@ -240,8 +337,7 @@ export class ToolCallsRepo {
 				TOOL_CALLS_PAGE_SIZE_MAX,
 			),
 		);
-		const beforeStartedAt =
-			options.beforeStartedAt ?? options.before ?? null;
+		const beforeStartedAt = options.beforeStartedAt ?? options.before ?? null;
 		const beforeId = options.beforeId ?? null;
 
 		const fetched = (

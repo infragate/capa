@@ -26,6 +26,7 @@ import { initSchema } from "./schema";
 import { SessionsRepo } from "./sessions";
 import { SubAgentsRepo } from "./sub-agents";
 import {
+	type ActivityCorrelationLookup,
 	type ToolCallFinish,
 	type ToolCallInsert,
 	type ToolCallListOptions,
@@ -406,6 +407,13 @@ export class CapaDatabase {
 
 	getToolCall(id: string): ToolCallRecord | null {
 		return this.toolCalls.get(id);
+	}
+
+	findLatestActivityCorrelation(
+		projectId: string,
+		withinMs?: number,
+	): ActivityCorrelationLookup | null {
+		return this.toolCalls.findLatestCorrelation(projectId, withinMs);
 	}
 
 	listToolCalls(
