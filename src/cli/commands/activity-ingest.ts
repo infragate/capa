@@ -104,6 +104,8 @@ async function postEvent(
 				resultPreview: normalized.resultPreview,
 				errorMessage: normalized.errorMessage,
 				tokenUsage: normalized.tokenUsage ?? null,
+				conversationId: normalized.conversationId ?? null,
+				generationId: normalized.generationId ?? null,
 			}),
 			signal: AbortSignal.timeout(5000),
 		});

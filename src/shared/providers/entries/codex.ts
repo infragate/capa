@@ -58,6 +58,11 @@ export const codex: ProviderIntegration = {
 		},
 		shape: "claude",
 		supportsNameTag: true,
+		// Codex hook payloads mirror Claude's common fields (session_id).
+		activityCorrelation: {
+			conversationIdFields: ["session_id"],
+			generationIdFields: ["prompt_id"],
+		},
 		eventMap: {
 			sessionStart: { event: "SessionStart" },
 			userPromptSubmit: { event: "UserPromptSubmit" },

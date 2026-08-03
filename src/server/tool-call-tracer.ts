@@ -41,6 +41,8 @@ export interface ToolCallStartInput {
 	projectId: string;
 	sessionId?: string | null;
 	agentId?: string | null;
+	conversationId?: string | null;
+	generationId?: string | null;
 	source?: string | null;
 	kind: ToolCallKind;
 	toolName: string;
@@ -93,6 +95,8 @@ export class ToolCallTracer {
 			cache_write_tokens: null,
 			error_message: null,
 			agent_id: input.agentId ?? null,
+			conversation_id: input.conversationId ?? null,
+			generation_id: input.generationId ?? null,
 		});
 		this.notify?.(input.projectId, record);
 		return id;

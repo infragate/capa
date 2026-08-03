@@ -150,6 +150,26 @@ export type HooksStorage =
   | { kind: 'directory'; dir: string; extension: '.json' };
 
 /**
+ * How to pull capa's activity correlation keys from provider hook stdin JSON.
+ *
+ * Pure data — `extractActivityCorrelation()` walks these field names (tried
+ * in order; first non-empty string wins). Onboard a provider by declaring its
+ * payload keys here; do not hardcode provider field names in the ingest path.
+ *
+ * - Cursor: `conversation_id` + `generation_id`
+ * - Claude Code: `session_id` + `prompt_id`
+ */
+export interface ActivityCorrelationIntegration {
+  /** Fields that identify a conversation / chat / session. */
+  conversationIdFields: readonly string[];
+  /**
+   * Fields that identify a turn / generation within a conversation.
+   * Empty when the provider has no turn id — UI falls back to heuristic runs.
+   */
+  generationIdFields: readonly string[];
+}
+
+/**
  * Per-provider hooks integration descriptor.
  *
  * Pure data — every behavior is derived from these fields by the shared
@@ -178,6 +198,11 @@ export interface HooksIntegration {
    * user-authored entries).
    */
   supportsNameTag: boolean;
+  /**
+   * Maps provider hook stdin fields → capa activity conversation/generation
+   * ids. Omit until the provider's payload keys are known.
+   */
+  activityCorrelation?: ActivityCorrelationIntegration;
 }
 
 /**

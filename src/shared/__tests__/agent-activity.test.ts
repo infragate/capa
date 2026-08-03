@@ -63,12 +63,19 @@ describe("normalizeActivityHookPayload", () => {
 	it("uses provider hint when payload has no provider field", () => {
 		const out = normalizeActivityHookPayload(
 			"afterTool",
-			{ tool_name: "Read", tool_input: { path: "a.ts" } },
+			{
+				tool_name: "Read",
+				tool_input: { path: "a.ts" },
+				conversation_id: "c1",
+				generation_id: "g1",
+			},
 			"cursor",
 		);
 		expect(out.skip).toBe(false);
 		expect(out.kind).toBe("agent_tool");
 		expect(out.source).toBe("cursor");
+		expect(out.conversationId).toBe("c1");
+		expect(out.generationId).toBe("g1");
 	});
 
 	it("skips before-hooks and Shell tool wrappers", () => {

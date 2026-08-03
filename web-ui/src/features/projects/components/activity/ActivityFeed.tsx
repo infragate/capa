@@ -5,11 +5,13 @@ import type { ToolCallRecord } from '../../../../types/api';
 import { cn } from '../../../../lib/utils';
 import { ActivityRunDialog } from './ActivityRunDialog';
 import {
+  type ActivityConversation,
   type ActivityRun,
   formatDuration,
   formatRelative,
-  groupActivityRuns,
+  groupActivityConversations,
   maxSpanDuration,
+  shortConversationLabel,
   sumRunTokenUsage,
 } from './groupActivityRuns';
 import { LatencyBar, sourceLabelText, TokenUsageLabel } from './ActivityShared';
@@ -26,10 +28,12 @@ function RunRow({
   run,
   maxMs,
   onOpen,
+  nested,
 }: {
   run: ActivityRun;
   maxMs: number;
   onOpen: () => void;
+  nested?: boolean;
 }) {
   const { t } = useTranslation('projects');
   const spanCount = run.spans.length + (run.prompt ? 1 : 0);
@@ -44,7 +48,8 @@ function RunRow({
       type="button"
       onClick={onOpen}
       className={cn(
-        'flex w-full items-center gap-2 px-3 py-2.5 text-left cursor-pointer',
+        'flex w-full items-center gap-2 py-2.5 text-left cursor-pointer',
+        nested ? 'pl-6 pr-3' : 'px-3',
         'border-b border-border-secondary/90 last:border-b-0',
         'hover:bg-hover-bg/60 transition-colors duration-100',
       )}
@@ -87,6 +92,50 @@ function RunRow({
   );
 }
 
+function ConversationBlock({
+  conversation,
+  maxMs,
+  onOpenRun,
+}: {
+  conversation: ActivityConversation;
+  maxMs: number;
+  onOpenRun: (id: string) => void;
+}) {
+  const { t } = useTranslation('projects');
+  const multi = conversation.generations.length > 1;
+  const showHeader = Boolean(conversation.id) && !conversation.id.startsWith('orphan:');
+
+  return (
+    <div className="border-b border-border-secondary/90 last:border-b-0">
+      {showHeader ? (
+        <div className="flex items-center gap-2 bg-bg-tertiary/40 px-3 py-1.5 text-[10px] font-medium uppercase tracking-[0.06em] text-text-tertiary">
+          <span className="min-w-0 flex-1 truncate">
+            {t('activity.conversation', {
+              defaultValue: 'Conversation {{id}}',
+              id: shortConversationLabel(conversation.id),
+            })}
+          </span>
+          <span className="shrink-0 tabular-nums">
+            {conversation.generations.length}{' '}
+            {conversation.generations.length === 1
+              ? t('activity.generation', { defaultValue: 'turn' })
+              : t('activity.generations', { defaultValue: 'turns' })}
+          </span>
+        </div>
+      ) : null}
+      {conversation.generations.map((run) => (
+        <RunRow
+          key={run.id}
+          run={run}
+          maxMs={maxMs}
+          nested={showHeader && multi}
+          onOpen={() => onOpenRun(run.id)}
+        />
+      ))}
+    </div>
+  );
+}
+
 export function ActivityFeed({
   calls,
   hasMore,
@@ -95,7 +144,14 @@ export function ActivityFeed({
   live = false,
 }: ActivityFeedProps) {
   const { t } = useTranslation('projects');
-  const runs = useMemo(() => groupActivityRuns(calls), [calls]);
+  const conversations = useMemo(
+    () => groupActivityConversations(calls),
+    [calls],
+  );
+  const runs = useMemo(
+    () => conversations.flatMap((c) => c.generations),
+    [conversations],
+  );
   const maxMs = useMemo(() => maxSpanDuration(runs), [runs]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
@@ -128,12 +184,12 @@ export function ActivityFeed({
             {t('activity.colTime')}
           </span>
         </div>
-        {runs.map((run) => (
-          <RunRow
-            key={run.id}
-            run={run}
+        {conversations.map((conversation) => (
+          <ConversationBlock
+            key={conversation.id}
+            conversation={conversation}
             maxMs={maxMs}
-            onOpen={() => setSelectedId(run.id)}
+            onOpenRun={setSelectedId}
           />
         ))}
         {hasMore && (

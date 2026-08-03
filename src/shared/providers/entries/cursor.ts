@@ -50,6 +50,12 @@ export const cursor: ProviderIntegration = {
 		},
 		shape: "cursor",
 		supportsNameTag: true,
+		// Cursor common hook stdin: conversation_id (chat) + generation_id (turn).
+		// Docs: https://cursor.com/docs/hooks
+		activityCorrelation: {
+			conversationIdFields: ["conversation_id"],
+			generationIdFields: ["generation_id"],
+		},
 		// Cursor's canonical/provider event surface (see
 		// https://cursor.com/docs/agent/hooks). We map every canonical event
 		// Cursor has a documented equivalent for; provider-only events (e.g.

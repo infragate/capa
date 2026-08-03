@@ -5,6 +5,7 @@
 
 import type { ToolCallKind, ToolCallStatus } from "../types/database";
 import type { CanonicalHookEvent } from "../types/hooks";
+import { extractActivityCorrelation } from "./activity-correlation";
 import {
 	asRecord,
 	extractPath,
@@ -28,6 +29,10 @@ export interface NormalizedActivityEvent {
 	errorMessage?: string | null;
 	/** Provider-reported model usage (typically on `stop`). */
 	tokenUsage?: TokenUsage | null;
+	/** Provider conversation / chat id (from hooks.activityCorrelation). */
+	conversationId?: string | null;
+	/** Provider turn / generation id (from hooks.activityCorrelation). */
+	generationId?: string | null;
 	/** When true, caller should drop the event (capa MCP dedup). */
 	skip: boolean;
 	skipReason?: string;
@@ -89,6 +94,10 @@ export function normalizeActivityHookPayload(
 	const resultPreview = resultForEvent(event, obj);
 	const errorMessage = errorForEvent(event, obj);
 	const tokenUsage = tokenUsageFrom(obj);
+	const { conversationId, generationId } = extractActivityCorrelation(
+		provider,
+		obj,
+	);
 
 	// Shell tool wrappers duplicate afterShell / capa MCP rows.
 	if (kind === "agent_tool" && isShellToolName(toolName)) {
@@ -123,6 +132,8 @@ export function normalizeActivityHookPayload(
 		resultPreview,
 		errorMessage,
 		tokenUsage,
+		conversationId,
+		generationId,
 		skip: false,
 	};
 }

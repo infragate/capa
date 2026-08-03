@@ -4,9 +4,11 @@ import {
   isActivityRunOpener,
 } from '../../../../../../src/shared/activity-run-boundary';
 
-/** A LangSmith-style “run”: a user prompt (optional) + the spans that followed. */
+/** One turn / generation: optional prompt + spans (dialog payload). */
 export interface ActivityRun {
   id: string;
+  conversationId: string | null;
+  generationId: string | null;
   title: string;
   prompt: ToolCallRecord | null;
   spans: ToolCallRecord[];
@@ -16,11 +18,105 @@ export interface ActivityRun {
   duration_ms: number | null;
 }
 
+/** One provider conversation containing generations (turns). */
+export interface ActivityConversation {
+  id: string;
+  generations: ActivityRun[];
+  started_at: number;
+  source: string | null;
+  hasError: boolean;
+  spanCount: number;
+}
+
 /**
- * Group a newest-first activity feed into runs.
- * A `prompt` opens a run; `stop` closes it. Orphan spans become singleton runs.
+ * Group a newest-first activity feed into conversations → generations → spans.
+ *
+ * Prefer provider `conversation_id` / `generation_id` when present. Rows without
+ * those ids fall back to the historical prompt/stop heuristic.
+ */
+export function groupActivityConversations(
+  calls: ToolCallRecord[],
+): ActivityConversation[] {
+  const correlated: ToolCallRecord[] = [];
+  const uncorrelated: ToolCallRecord[] = [];
+  for (const call of calls) {
+    if (call.conversation_id) correlated.push(call);
+    else uncorrelated.push(call);
+  }
+
+  const conversations: ActivityConversation[] = [];
+
+  const byConversation = new Map<string, ToolCallRecord[]>();
+  for (const call of correlated) {
+    const id = call.conversation_id!;
+    const list = byConversation.get(id);
+    if (list) list.push(call);
+    else byConversation.set(id, [call]);
+  }
+
+  for (const [conversationId, rows] of byConversation) {
+    const generations = groupGenerationsForConversation(conversationId, rows);
+    conversations.push(finalizeConversation(conversationId, generations));
+  }
+
+  for (const run of groupActivityRunsHeuristic(uncorrelated)) {
+    conversations.push(
+      finalizeConversation(run.conversationId ?? `orphan:${run.id}`, [run]),
+    );
+  }
+
+  return conversations.sort((a, b) => b.started_at - a.started_at);
+}
+
+/**
+ * Flatten conversations to generations (newest-first). Kept for callers that
+ * only need the turn list.
  */
 export function groupActivityRuns(calls: ToolCallRecord[]): ActivityRun[] {
+  return groupActivityConversations(calls).flatMap((c) => c.generations);
+}
+
+function groupGenerationsForConversation(
+  conversationId: string,
+  calls: ToolCallRecord[],
+): ActivityRun[] {
+  const withGen: ToolCallRecord[] = [];
+  const withoutGen: ToolCallRecord[] = [];
+  for (const call of calls) {
+    if (call.generation_id) withGen.push(call);
+    else withoutGen.push(call);
+  }
+
+  const runs: ActivityRun[] = [];
+  const byGeneration = new Map<string, ToolCallRecord[]>();
+  for (const call of withGen) {
+    const id = call.generation_id!;
+    const list = byGeneration.get(id);
+    if (list) list.push(call);
+    else byGeneration.set(id, [call]);
+  }
+
+  for (const [generationId, rows] of byGeneration) {
+    runs.push(buildRunFromCalls(rows, conversationId, generationId));
+  }
+
+  for (const run of groupActivityRunsHeuristic(withoutGen)) {
+    runs.push({
+      ...run,
+      conversationId,
+      generationId: run.generationId,
+    });
+  }
+
+  return runs.sort((a, b) => b.started_at - a.started_at);
+}
+
+/**
+ * Legacy prompt/stop grouping used when correlation ids are absent.
+ */
+function groupActivityRunsHeuristic(calls: ToolCallRecord[]): ActivityRun[] {
+  if (calls.length === 0) return [];
+
   const chronological = [...calls].sort((a, b) => a.started_at - b.started_at);
   const groups: ActivityRun[] = [];
   let current: ActivityRun | null = null;
@@ -37,6 +133,8 @@ export function groupActivityRuns(calls: ToolCallRecord[]): ActivityRun[] {
       flush();
       current = {
         id: call.id,
+        conversationId: call.conversation_id,
+        generationId: call.generation_id,
         title: call.tool_name || 'prompt',
         prompt: call,
         spans: [],
@@ -52,6 +150,8 @@ export function groupActivityRuns(calls: ToolCallRecord[]): ActivityRun[] {
       flush();
       current = {
         id: call.id,
+        conversationId: call.conversation_id,
+        generationId: call.generation_id,
         title: call.tool_name,
         prompt: null,
         spans: [call],
@@ -66,6 +166,8 @@ export function groupActivityRuns(calls: ToolCallRecord[]): ActivityRun[] {
     if (!current) {
       current = {
         id: call.id,
+        conversationId: call.conversation_id,
+        generationId: call.generation_id,
         title: call.tool_name,
         prompt: null,
         spans: [call],
@@ -86,8 +188,57 @@ export function groupActivityRuns(calls: ToolCallRecord[]): ActivityRun[] {
   }
   flush();
 
-  // Newest runs first (matches feed order users expect).
   return groups.reverse();
+}
+
+function buildRunFromCalls(
+  calls: ToolCallRecord[],
+  conversationId: string,
+  generationId: string,
+): ActivityRun {
+  const chronological = [...calls].sort((a, b) => a.started_at - b.started_at);
+  const prompt =
+    chronological.find((c) => c.kind === 'prompt') ?? null;
+  const spans = chronological.filter((c) => c !== prompt);
+  const first = chronological[0]!;
+  const run: ActivityRun = {
+    id: generationId || first.id,
+    conversationId,
+    generationId,
+    title: prompt?.tool_name || first.tool_name,
+    prompt,
+    spans,
+    started_at: first.started_at,
+    source: chronological.find((c) => c.source)?.source ?? null,
+    hasError: chronological.some((c) => c.status === 'error'),
+    duration_ms: null,
+  };
+  finalizeRun(run);
+  return run;
+}
+
+function finalizeConversation(
+  id: string,
+  generations: ActivityRun[],
+): ActivityConversation {
+  let spanCount = 0;
+  let hasError = false;
+  let source: string | null = null;
+  let started_at = 0;
+  for (const gen of generations) {
+    spanCount += gen.spans.length + (gen.prompt ? 1 : 0);
+    if (gen.hasError) hasError = true;
+    if (gen.source && !source) source = gen.source;
+    started_at = Math.max(started_at, gen.started_at);
+  }
+  return {
+    id,
+    generations,
+    started_at,
+    source,
+    hasError,
+    spanCount,
+  };
 }
 
 function finalizeRun(run: ActivityRun): void {
@@ -244,4 +395,11 @@ export function isCapaToolCall(call: {
   }
   const meta = call.meta_tool;
   return meta === 'call_tool' || meta === 'setup_tools';
+}
+
+/** Short label for conversation headers in the feed. */
+export function shortConversationLabel(id: string): string {
+  if (id.startsWith('orphan:')) return 'Activity';
+  if (id.length <= 12) return id;
+  return `${id.slice(0, 8)}…`;
 }

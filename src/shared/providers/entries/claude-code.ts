@@ -46,6 +46,12 @@ export const claudeCode: ProviderIntegration = {
 		},
 		shape: "claude",
 		supportsNameTag: true,
+		// Claude common hook stdin: session_id (chat) + prompt_id (turn).
+		// Docs: https://code.claude.com/docs/en/hooks
+		activityCorrelation: {
+			conversationIdFields: ["session_id"],
+			generationIdFields: ["prompt_id"],
+		},
 		eventMap: {
 			sessionStart: { event: "SessionStart" },
 			sessionEnd: { event: "SessionEnd" },

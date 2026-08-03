@@ -21,6 +21,8 @@ export interface ActivityIngestBody {
 	errorMessage?: string | null;
 	sessionId?: string | null;
 	agentId?: string | null;
+	conversationId?: string | null;
+	generationId?: string | null;
 	tokenUsage?: {
 		input_tokens?: number | null;
 		output_tokens?: number | null;
@@ -102,6 +104,14 @@ export async function handlePostProjectActivityEvent(
 		projectId,
 		sessionId: body.sessionId ?? null,
 		agentId: body.agentId ?? null,
+		conversationId:
+			typeof body.conversationId === "string" && body.conversationId.trim()
+				? body.conversationId.trim()
+				: null,
+		generationId:
+			typeof body.generationId === "string" && body.generationId.trim()
+				? body.generationId.trim()
+				: null,
 		source: body.source ?? null,
 		kind,
 		toolName,

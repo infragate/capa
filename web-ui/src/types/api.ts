@@ -364,6 +364,8 @@ export interface ToolCallRecord {
   cache_write_tokens: number | null;
   error_message: string | null;
   agent_id: string | null;
+  conversation_id: string | null;
+  generation_id: string | null;
 }
 
 export interface ActivityResponse {

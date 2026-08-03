@@ -109,6 +109,29 @@ describe("handlePostProjectActivityEvent", () => {
 		expect(row.cache_write_tokens).toBe(5);
 	});
 
+	it("persists conversation and generation ids", async () => {
+		const res = await handlePostProjectActivityEvent(
+			deps,
+			"proj-1",
+			new Request("http://localhost/x", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					kind: "agent_tool",
+					toolName: "Read",
+					status: "ok",
+					source: "cursor",
+					conversationId: "conv-abc",
+					generationId: "gen-xyz",
+				}),
+			}),
+		);
+		expect(res.status).toBe(201);
+		const row = db.listToolCalls("proj-1", { limit: 1 }).calls[0];
+		expect(row.conversation_id).toBe("conv-abc");
+		expect(row.generation_id).toBe("gen-xyz");
+	});
+
 	it("returns 204 when agentActivity is disabled", async () => {
 		// Session caps are the fast path; disk is not consulted when session is warm.
 		sessionManager.setProjectCapabilities("proj-1", {
