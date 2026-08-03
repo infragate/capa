@@ -66,6 +66,8 @@ export const claudeCode: ProviderIntegration = {
 				{ key: "source", fields: ["source"] },
 			],
 		},
+		// Claude PostToolUse carries the result as tool_response (not tool_output).
+		activityResultFields: ["tool_response", "tool_output", "output", "result"],
 		eventMap: {
 			sessionStart: { event: "SessionStart" },
 			sessionEnd: { event: "SessionEnd" },

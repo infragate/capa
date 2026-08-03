@@ -72,6 +72,7 @@ export const codex: ProviderIntegration = {
 				{ key: "tool_use_id", fields: ["tool_use_id"] },
 			],
 		},
+		activityResultFields: ["tool_response", "tool_output", "output", "result"],
 		eventMap: {
 			sessionStart: { event: "SessionStart" },
 			userPromptSubmit: { event: "UserPromptSubmit" },

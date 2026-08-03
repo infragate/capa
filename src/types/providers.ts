@@ -236,6 +236,12 @@ export interface HooksIntegration {
    * Omit until the provider's payload keys are known.
    */
   activityAttributes?: ActivityAttributesIntegration;
+  /**
+   * Stdin fields that hold the tool/shell result for after* events.
+   * Tried in order; first present value wins (e.g. Cursor `tool_output`,
+   * Claude Code `tool_response`).
+   */
+  activityResultFields?: readonly string[];
 }
 
 /**

@@ -84,6 +84,8 @@ export const cursor: ProviderIntegration = {
 				{ key: "loop_count", fields: ["loop_count"], kind: "number" },
 			],
 		},
+		// Cursor post-tool / shell: tool_output (tools) or output (afterShellExecution).
+		activityResultFields: ["tool_output", "output", "result", "response"],
 		// Cursor's canonical/provider event surface (see
 		// https://cursor.com/docs/agent/hooks). We map every canonical event
 		// Cursor has a documented equivalent for; provider-only events (e.g.

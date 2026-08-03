@@ -10,6 +10,7 @@ import {
 	extractActivityAttributes,
 	type ActivityAttributes,
 } from "./activity-attributes";
+import { extractActivityResult } from "./activity-result";
 import {
 	asRecord,
 	extractPath,
@@ -99,7 +100,7 @@ export function normalizeActivityHookPayload(
 	const toolName = nameForEvent(event, kind, obj);
 	const status = statusForEvent(event, obj);
 	const args = argsForEvent(event, obj);
-	const resultPreview = resultForEvent(event, obj);
+	const resultPreview = resultForEvent(event, obj, provider);
 	const errorMessage = errorForEvent(event, obj);
 	const tokenUsage = tokenUsageFrom(obj);
 	const { conversationId, generationId } = extractActivityCorrelation(
@@ -269,9 +270,14 @@ function argsForEvent(
 function resultForEvent(
 	event: CanonicalHookEvent,
 	obj: Record<string, unknown>,
+	provider: string | null,
 ): unknown {
 	if (event.startsWith("before")) return undefined;
+	const fromProvider = extractActivityResult(provider, obj);
+	if (fromProvider !== undefined) return fromProvider;
+	// Last-resort keys when the provider has not declared activityResultFields.
 	return (
+		obj.tool_response ??
 		obj.tool_output ??
 		obj.toolOutput ??
 		obj.output ??
