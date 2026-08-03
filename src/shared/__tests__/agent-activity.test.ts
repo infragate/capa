@@ -104,14 +104,21 @@ describe("normalizeActivityHookPayload", () => {
 		).toBe(true);
 	});
 
-	it("skips capa sh shell rows (MCP tracer owns the tool call)", () => {
-		expect(
-			normalizeActivityHookPayload(
-				"afterShell",
-				{ command: "capa sh owl check-consistency" },
-				"cursor",
-			).skip,
-		).toBe(true);
+	it("keeps capa sh shell rows (agent-visible Bash / Shell span)", () => {
+		const out = normalizeActivityHookPayload(
+			"afterShell",
+			{
+				command: "capa sh slack search-public-and-private --query infragate",
+				session_id: "ca8dfbb8-554d-4801-aaf6-01b1d98e406e",
+				prompt_id: "prompt-1",
+			},
+			"claude-code",
+		);
+		expect(out.skip).toBe(false);
+		expect(out.kind).toBe("shell");
+		expect(out.toolName).toContain("capa sh");
+		expect(out.conversationId).toBe("ca8dfbb8-554d-4801-aaf6-01b1d98e406e");
+		expect(out.generationId).toBe("prompt-1");
 	});
 
 	it("maps prompts", () => {

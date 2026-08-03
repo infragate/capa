@@ -402,6 +402,81 @@ describe("ToolCallTracer", () => {
 		expect(notified[1].record.status).toBe("ok");
 	});
 
+	it("inherits conversation/generation from latest provider activity", () => {
+		db.insertToolCall({
+			id: "hook-1",
+			project_id: "proj-1",
+			session_id: null,
+			started_at: Date.now() - 1_000,
+			duration_ms: 10,
+			status: "ok",
+			source: "claude-code",
+			kind: "tool",
+			tool_name: "Bash",
+			meta_tool: null,
+			args_json: "{}",
+			result_preview: null,
+			result_bytes: null,
+			result_tokens: null,
+			error_message: null,
+			agent_id: null,
+			conversation_id: "conv-claude",
+			generation_id: "gen-turn-1",
+		});
+
+		const tracer = new ToolCallTracer(db);
+		const id = tracer.start({
+			projectId: "proj-1",
+			sessionId: "mcp-sess",
+			source: "shell",
+			kind: "tool",
+			toolName: "slack.search_public_and_private",
+			metaTool: "call_tool",
+			args: { query: "hi" },
+		});
+
+		const row = db.getToolCall(id);
+		expect(row?.conversation_id).toBe("conv-claude");
+		expect(row?.generation_id).toBe("gen-turn-1");
+	});
+
+	it("does not override explicit conversation correlation", () => {
+		db.insertToolCall({
+			id: "hook-1",
+			project_id: "proj-1",
+			session_id: null,
+			started_at: Date.now() - 1_000,
+			duration_ms: 10,
+			status: "ok",
+			source: "claude-code",
+			kind: "tool",
+			tool_name: "Bash",
+			meta_tool: null,
+			args_json: "{}",
+			result_preview: null,
+			result_bytes: null,
+			result_tokens: null,
+			error_message: null,
+			agent_id: null,
+			conversation_id: "conv-claude",
+			generation_id: "gen-turn-1",
+		});
+
+		const tracer = new ToolCallTracer(db);
+		const id = tracer.start({
+			projectId: "proj-1",
+			kind: "tool",
+			toolName: "Read",
+			source: "cursor",
+			conversationId: "conv-explicit",
+			generationId: "gen-explicit",
+		});
+
+		const row = db.getToolCall(id);
+		expect(row?.conversation_id).toBe("conv-explicit");
+		expect(row?.generation_id).toBe("gen-explicit");
+	});
+
 	it("measures result size before truncating the stored preview", () => {
 		const tracer = new ToolCallTracer(db);
 		const id = tracer.start({

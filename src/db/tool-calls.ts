@@ -63,6 +63,13 @@ export type ToolCallListResult = {
 	hasMore: boolean;
 };
 
+/** Correlation ids from a recent provider-hook activity row. */
+export type ActivityCorrelationLookup = {
+	conversation_id: string;
+	generation_id: string | null;
+	source: string | null;
+};
+
 export { isActivityRunCloser, isActivityRunOpener };
 
 /** Cap how far we walk older rows to complete a cut-off run. */
@@ -142,6 +149,40 @@ export class ToolCallsRepo {
 		return this.db
 			.query("SELECT * FROM tool_calls WHERE id = ?")
 			.get(id) as ToolCallRecord | null;
+	}
+
+	/**
+	 * Latest provider-hook correlation for a project (used so capa MCP traces
+	 * can join the active conversation/generation).
+	 */
+	findLatestCorrelation(
+		projectId: string,
+		withinMs = 60 * 60 * 1000,
+		nowMs = Date.now(),
+	): ActivityCorrelationLookup | null {
+		const since = nowMs - withinMs;
+		const row = this.db
+			.query(
+				`SELECT conversation_id, generation_id, source
+         FROM tool_calls
+         WHERE project_id = ?
+           AND conversation_id IS NOT NULL
+           AND conversation_id <> ''
+           AND started_at >= ?
+         ORDER BY started_at DESC, id DESC
+         LIMIT 1`,
+			)
+			.get(projectId, since) as {
+			conversation_id: string;
+			generation_id: string | null;
+			source: string | null;
+		} | null;
+		if (!row?.conversation_id) return null;
+		return {
+			conversation_id: row.conversation_id,
+			generation_id: row.generation_id,
+			source: row.source,
+		};
 	}
 
 	count(projectId: string): number {

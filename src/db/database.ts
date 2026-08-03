@@ -30,6 +30,7 @@ import {
 	type ToolCallInsert,
 	type ToolCallListOptions,
 	type ToolCallListResult,
+	type ActivityCorrelationLookup,
 	ToolCallsRepo,
 } from "./tool-calls";
 import { ToolInitStateRepo } from "./tool-init-state";
@@ -406,6 +407,13 @@ export class CapaDatabase {
 
 	getToolCall(id: string): ToolCallRecord | null {
 		return this.toolCalls.get(id);
+	}
+
+	findLatestActivityCorrelation(
+		projectId: string,
+		withinMs?: number,
+	): ActivityCorrelationLookup | null {
+		return this.toolCalls.findLatestCorrelation(projectId, withinMs);
 	}
 
 	listToolCalls(

@@ -109,7 +109,10 @@ export function normalizeActivityHookPayload(
 	);
 	const { attributes, model } = extractActivityAttributes(provider, obj);
 
-	// Shell tool wrappers duplicate afterShell / capa MCP rows.
+	// Shell tool wrappers duplicate afterShell (Cursor Shell / Claude Bash).
+	// Keep afterShell even for `capa sh …` — MCP still traces the tool call,
+	// but dropping the shell span hides what the agent actually ran (help,
+	// group listing, passthrough, and the capa sh invocation itself).
 	if (kind === "agent_tool" && isShellToolName(toolName)) {
 		return {
 			kind,
@@ -117,19 +120,7 @@ export function normalizeActivityHookPayload(
 			status,
 			source: provider,
 			skip: true,
-			skipReason: "shell tool wrapper (covered by afterShell / capa tool)",
-		};
-	}
-
-	// `capa sh …` is already traced as a capa tool call via the MCP handler.
-	if (kind === "shell" && isCapaShCommand(toolName)) {
-		return {
-			kind,
-			toolName,
-			status,
-			source: provider,
-			skip: true,
-			skipReason: "capa sh (already traced via MCP handler)",
+			skipReason: "shell tool wrapper (covered by afterShell)",
 		};
 	}
 
@@ -356,13 +347,6 @@ function isShellToolName(name: string): boolean {
 		n === "terminal" ||
 		n === "powershell"
 	);
-}
-
-/** Shell invocations of capa tools — MCP tracer already records the tool. */
-function isCapaShCommand(command: string): boolean {
-	const c = command.trim().toLowerCase();
-	// Match `capa sh …` / `capa.exe sh …` even with a quoted absolute path.
-	return /(?:^|[\s"'\\/])capa(\.exe)?["']?\s+sh\b/.test(c);
 }
 
 function isSkillMdPath(path: string | null): boolean {

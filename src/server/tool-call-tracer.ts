@@ -76,6 +76,19 @@ export class ToolCallTracer {
 	start(input: ToolCallStartInput): string {
 		const id = nanoid();
 		const secrets = this.secretValues(input.projectId);
+
+		let conversationId = input.conversationId ?? null;
+		let generationId = input.generationId ?? null;
+		// Capa MCP / shell traces do not see provider hook stdin. Inherit the
+		// active conversation/generation so they group with the agent turn.
+		if (!conversationId) {
+			const inherited = this.db.findLatestActivityCorrelation(input.projectId);
+			if (inherited) {
+				conversationId = inherited.conversation_id;
+				generationId = inherited.generation_id;
+			}
+		}
+
 		const record = this.db.insertToolCall({
 			id,
 			project_id: input.projectId,
@@ -97,8 +110,8 @@ export class ToolCallTracer {
 			cache_write_tokens: null,
 			error_message: null,
 			agent_id: input.agentId ?? null,
-			conversation_id: input.conversationId ?? null,
-			generation_id: input.generationId ?? null,
+			conversation_id: conversationId,
+			generation_id: generationId,
 			model: input.model ?? null,
 			attributes_json: input.attributesJson ?? null,
 		});
