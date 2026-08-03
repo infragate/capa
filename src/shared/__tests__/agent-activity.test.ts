@@ -22,7 +22,8 @@ describe("agent-activity helpers", () => {
 		expect(hooks.some((h) => h.on === "beforeShell")).toBe(false);
 		expect(hooks.some((h) => h.on === "afterShell")).toBe(true);
 		expect(hooks.some((h) => h.on === "afterTool")).toBe(true);
-		expect(hooks.some((h) => h.on === "beforeFileRead")).toBe(true);
+		expect(hooks.some((h) => h.on === "beforeFileRead")).toBe(false);
+		expect(hooks.some((h) => h.on === "afterFileEdit")).toBe(true);
 		for (const h of hooks) {
 			expect(isSystemActivityHookId(h.id)).toBe(true);
 			expect(h.id.startsWith(SYSTEM_ACTIVITY_HOOK_PREFIX)).toBe(true);
@@ -34,7 +35,7 @@ describe("agent-activity helpers", () => {
 		}
 	});
 
-	it("omits events Claude Code does not map (e.g. beforeFileRead)", () => {
+	it("omits events Claude Code does not map", () => {
 		const hooks = buildSystemActivityHooks("my-project", "claude-code");
 		expect(hooks.some((h) => h.on === "afterTool")).toBe(true);
 		expect(hooks.some((h) => h.on === "afterToolFailure")).toBe(true);
@@ -77,6 +78,13 @@ describe("normalizeActivityHookPayload", () => {
 		).toBe(true);
 		expect(
 			normalizeActivityHookPayload(
+				"beforeFileRead",
+				{ file_path: "/proj/a.ts" },
+				"cursor",
+			).skip,
+		).toBe(true);
+		expect(
+			normalizeActivityHookPayload(
 				"afterTool",
 				{ tool_name: "Shell", tool_input: { command: "ls" } },
 				"cursor",
@@ -102,10 +110,12 @@ describe("normalizeActivityHookPayload", () => {
 		expect(out.toolName).toContain("Please fix");
 	});
 
-	it("detects SKILL.md reads as skill", () => {
-		const out = normalizeActivityHookPayload("beforeFileRead", {
-			file_path: "/proj/.cursor/skills/bootstrap/SKILL.md",
+	it("detects SKILL.md reads as skill via afterTool", () => {
+		const out = normalizeActivityHookPayload("afterTool", {
+			tool_name: "Read",
+			tool_input: { path: "/proj/.cursor/skills/bootstrap/SKILL.md" },
 		});
+		expect(out.skip).toBe(false);
 		expect(out.kind).toBe("skill");
 		expect(out.toolName).toBe("bootstrap");
 	});

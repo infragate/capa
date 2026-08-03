@@ -64,12 +64,13 @@ export function normalizeActivityHookPayload(
 		};
 	}
 
-	// Outcome-only: ignore lifecycle "before" noise (except file reads).
+	// Outcome-only: ignore lifecycle "before" noise.
 	// Kept even though SYSTEM_ACTIVITY_EVENTS omits these — CLI may still receive them.
 	if (
 		event === "beforeTool" ||
 		event === "beforeShell" ||
-		event === "beforeMcpCall"
+		event === "beforeMcpCall" ||
+		event === "beforeFileRead"
 	) {
 		return {
 			kind: "agent_tool",
@@ -132,7 +133,7 @@ function kindForEvent(
 ): ToolCallKind {
 	if (event === "userPromptSubmit") return "prompt";
 	if (event === "beforeShell" || event === "afterShell") return "shell";
-	if (event === "beforeFileRead" || event === "afterFileEdit") {
+	if (event === "afterFileEdit") {
 		return isSkillMdPath(extractPath(obj)) ? "skill" : "file";
 	}
 	if (event === "beforeMcpCall" || event === "afterMcpCall") return "agent_mcp";
