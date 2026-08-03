@@ -54,6 +54,7 @@ export function resolveProvidersForServer(
  * copy skills into the project's `.claude/` / `.cursor/` dirs — that only
  * happens during `capa install` / wrap shadow-workspace install.
  * Returns the authored capabilities unchanged when there are no plugins or providers.
+ * Individual plugin failures are collected as warnings; healthy plugins still expand.
  */
 export async function resolveEffectiveCapabilities(
 	authored: Capabilities,
