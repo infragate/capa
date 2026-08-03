@@ -11,7 +11,6 @@ import {
   formatRelative,
   groupActivityConversations,
   maxSpanDuration,
-  shortConversationLabel,
   sumRunTokenUsage,
 } from './groupActivityRuns';
 import { LatencyBar, sourceLabelText, TokenUsageLabel } from './ActivityShared';
@@ -105,13 +104,15 @@ function ConversationBlock({
     ? t('activity.ungrouped', { defaultValue: 'Activity' })
     : t('activity.conversation', {
         defaultValue: 'Conversation {{id}}',
-        id: shortConversationLabel(conversation.id),
+        id: conversation.id,
       });
 
   return (
     <div className="border-b border-border-secondary/90 last:border-b-0">
       <div className="flex items-center gap-2 bg-bg-tertiary/40 px-3 py-1.5 text-[10px] font-medium uppercase tracking-[0.06em] text-text-tertiary">
-        <span className="min-w-0 flex-1 truncate">{title}</span>
+        <span className="min-w-0 flex-1 truncate" title={isOrphan ? undefined : conversation.id}>
+          {title}
+        </span>
         {conversation.source ? (
           <span className="shrink-0 rounded bg-bg-secondary px-1.5 py-0.5 text-[10px] font-medium normal-case tracking-normal text-text-secondary">
             {sourceLabelText(conversation.source, t)}
