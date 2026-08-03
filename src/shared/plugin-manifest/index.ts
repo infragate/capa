@@ -3,6 +3,7 @@ export {
 	detectAndParseManifest,
 	discoverPluginEntries,
 	findPluginInDirectory,
+	resolveNestedPluginById,
 } from "./detect";
 
 export { resolvePluginServerDef, resolvePluginRootInString } from "./mcp-parser";

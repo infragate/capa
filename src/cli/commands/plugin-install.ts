@@ -11,6 +11,7 @@ import {
   detectAndParseManifest,
   discoverPluginEntries,
   findPluginInDirectory,
+  resolveNestedPluginById,
   resolvePluginServerDef,
   resolvePluginRootInString,
   materializeCommandAsSkill,
@@ -351,10 +352,10 @@ export async function resolvePlugins(
       resolvedSubpath = subpath;
       manifest = detectAndParseManifest(manifestRoot, providers);
       // Multi-plugin monorepos often only have a marketplace catalog at the
-      // repo root. When the capa entry has an id, search the tree for a
-      // nested plugin whose directory or manifest name matches that id.
+      // repo root. When the capa entry has an id, resolve via direct child
+      // path or root marketplace.json (bounded — no full-tree walk).
       if (!manifest && !subpath && pluginRef.id) {
-        const located = findPluginInDirectory(
+        const located = resolveNestedPluginById(
           snapshot.snapshotDir,
           pluginRef.id,
           providers,

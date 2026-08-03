@@ -401,3 +401,85 @@ export function findPluginInDirectory(
 	if (!manifest) return null;
 	return { entry: target, manifest };
 }
+
+/**
+ * Bounded lookup for a nested plugin by capa entry id when the repo root has
+ * no plugin manifest (typical marketplace monorepo). Avoids a full-tree walk:
+ * 1) try `<repoRoot>/<id>` as a direct child
+ * 2) read Cursor/Claude marketplace catalogs at the root and map name → source
+ */
+export function resolveNestedPluginById(
+	repoRoot: string,
+	pluginId: string,
+	preferredProviders: string[],
+): { entry: DiscoveredPluginEntry; manifest: UnifiedPluginManifest } | null {
+	if (
+		!pluginId ||
+		pluginId.includes("/") ||
+		pluginId.includes("\\") ||
+		pluginId.includes("..")
+	) {
+		return null;
+	}
+
+	const tryAt = (
+		relPath: string,
+	): { entry: DiscoveredPluginEntry; manifest: UnifiedPluginManifest } | null => {
+		const cleaned = relPath
+			.replace(/\\/g, "/")
+			.replace(/^\/+/, "")
+			.replace(/\/+$/, "");
+		if (
+			!cleaned ||
+			cleaned.split("/").some((seg) => !seg || seg === "." || seg === "..")
+		) {
+			return null;
+		}
+		const pluginRoot = join(repoRoot, cleaned);
+		if (!existsSync(pluginRoot)) return null;
+		const manifest = detectAndParseManifest(pluginRoot, preferredProviders);
+		if (!manifest) return null;
+		const dirName = cleaned.split("/").filter(Boolean).pop() ?? cleaned;
+		return {
+			entry: {
+				subpath: cleaned,
+				manifestName: manifest.name || dirName,
+				dirName,
+				manifestFile: "",
+			},
+			manifest,
+		};
+	};
+
+	const direct = tryAt(pluginId);
+	if (direct) return direct;
+
+	const catalogRels = [
+		".cursor-plugin/marketplace.json",
+		".claude-plugin/marketplace.json",
+	];
+	for (const catalogRel of catalogRels) {
+		const catalogPath = join(repoRoot, catalogRel);
+		if (!existsSync(catalogPath)) continue;
+		try {
+			const data = JSON.parse(readFileSync(catalogPath, "utf8")) as {
+				plugins?: unknown;
+			};
+			const plugins = Array.isArray(data.plugins) ? data.plugins : [];
+			for (const raw of plugins) {
+				if (!raw || typeof raw !== "object") continue;
+				const p = raw as { name?: unknown; source?: unknown };
+				const name = typeof p.name === "string" ? p.name : "";
+				const source = typeof p.source === "string" ? p.source : "";
+				if (name !== pluginId && source !== pluginId) continue;
+				if (!source) continue;
+				const located = tryAt(source);
+				if (located) return located;
+			}
+		} catch {
+			// ignore malformed catalogs
+		}
+	}
+
+	return null;
+}

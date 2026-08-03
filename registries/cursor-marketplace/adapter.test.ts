@@ -1,5 +1,5 @@
-﻿import { describe, expect, it } from 'bun:test';
-import { pluginDef } from './adapter.ts';
+import { describe, expect, it } from 'bun:test';
+import { pluginDef } from './adapter';
 
 describe('cursor-marketplace pluginDef', () => {
   it('maps a root-level GitHub plugin without gitPath', () => {
