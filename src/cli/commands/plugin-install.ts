@@ -270,6 +270,16 @@ export async function resolvePlugins(
     const pluginLabel = pluginRef.id ?? pluginRef.def.repo;
     // Isolate per-plugin failures so one bad entry (marketplace repo root,
     // missing manifest, clone error, …) cannot wipe expansions from the rest.
+    let pluginInstallId: string | undefined;
+    const mergeSnap = {
+      skills: mergedSkills.length,
+      servers: mergedServers.length,
+      tools: mergedTools.length,
+      subagents: mergedSubagents.length,
+      hooks: mergedHooks.length,
+      rules: mergedRules.length,
+      resolved: resolvedPlugins.length,
+    };
     try {
       const validated = validatePluginDef(pluginRef);
       if ('error' in validated) {
@@ -346,7 +356,7 @@ export async function resolvePlugins(
       }
     }
 
-    const pluginInstallId = getPluginInstallId(pluginRef.id ?? manifest.name);
+    pluginInstallId = getPluginInstallId(pluginRef.id ?? manifest.name);
     currentPluginIds.add(pluginInstallId);
 
     const pluginStablePath = resolve(join(pluginsBase, pluginInstallId));
@@ -667,6 +677,38 @@ export async function resolvePlugins(
         throw err;
       }
       const message = err instanceof Error ? err.message : String(err);
+      if (pluginInstallId) {
+        currentPluginIds.delete(pluginInstallId);
+        lockBuilder.removePlugin(pluginInstallId);
+        mergedSkills.length = mergeSnap.skills;
+        mergedServers.length = mergeSnap.servers;
+        mergedTools.length = mergeSnap.tools;
+        mergedSubagents.length = mergeSnap.subagents;
+        mergedHooks.length = mergeSnap.hooks;
+        mergedRules.length = mergeSnap.rules;
+        resolvedPlugins.length = mergeSnap.resolved;
+        for (const skill of mergedSkills) {
+          if (skill.sourcePlugin?.id === pluginInstallId) {
+            delete skill.sourcePlugin;
+          }
+        }
+        registeredServerIds.clear();
+        for (const server of mergedServers) registeredServerIds.add(server.id);
+        registeredSubagentIds.clear();
+        for (const agent of mergedSubagents) registeredSubagentIds.add(agent.id);
+        registeredHookIds.clear();
+        for (const hook of mergedHooks) registeredHookIds.add(hook.id);
+        registeredRuleIds.clear();
+        for (const rule of mergedRules) registeredRuleIds.add(rule.id);
+        const partialDir = resolve(join(pluginsBase, pluginInstallId));
+        if (existsSync(partialDir)) {
+          try {
+            rmSync(partialDir, { recursive: true, force: true });
+          } catch {
+            // best-effort cleanup of a partially copied plugin tree
+          }
+        }
+      }
       warnings.push(
         `Plugin "${pluginLabel}" failed to resolve and was skipped: ${message}`,
       );

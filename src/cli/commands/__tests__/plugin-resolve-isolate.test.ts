@@ -195,4 +195,81 @@ describe('resolvePlugins isolates per-plugin failures', () => {
       ),
     ).toBe(true);
   });
+
+  it('rolls back partial state when a plugin fails after lock upsert begins', async () => {
+    const caps: Capabilities = {
+      providers: ['claude-code'],
+      skills: [],
+      servers: [],
+      tools: [],
+      plugins: [
+        {
+          id: 'good-plugin',
+          type: 'github',
+          def: { repo: 'owner/good-plugin' },
+        },
+        {
+          id: 'fail-late',
+          type: 'github',
+          def: { repo: 'owner/fail-late' },
+        },
+      ],
+    };
+
+    const lockBuilder = new LockfileBuilder(null);
+    const origUpsert = lockBuilder.upsertPlugin.bind(lockBuilder);
+    lockBuilder.upsertPlugin = (entry) => {
+      if (entry.id === 'fail-late') {
+        throw new Error('simulated late lock failure');
+      }
+      return origUpsert(entry);
+    };
+
+    const result = await resolvePlugins(
+      caps,
+      projectPath,
+      'proj-isolate',
+      (async () => new Response()) as never,
+      db,
+      async (_platform, repoPath) => {
+        // Both plugins resolve to the same valid snapshot; fail-late dies at upsert.
+        void repoPath;
+        return {
+          snapshotDir: goodSnapshot,
+          resolvedSha: 'a'.repeat(40),
+          resolvedVersion: null,
+        };
+      },
+      join(projectPath, 'capabilities.yaml'),
+      lockBuilder,
+      {
+        materializeProjectSkills: false,
+        pluginsBaseDir: pluginsBase,
+        trackManaged: false,
+      },
+    );
+
+    expect(
+      result.mergedCapabilities.skills.some((s) => s.id === 'hello-skill'),
+    ).toBe(true);
+    expect(
+      result.mergedCapabilities.resolvedPlugins?.some((p) => p.id === 'good-plugin'),
+    ).toBe(true);
+    expect(
+      result.mergedCapabilities.resolvedPlugins?.some((p) => p.id === 'fail-late'),
+    ).toBe(false);
+    expect(existsSync(join(pluginsBase, 'fail-late'))).toBe(false);
+    expect(
+      result.warnings.some(
+        (w) =>
+          w.includes('fail-late') &&
+          w.includes('simulated late lock failure'),
+      ),
+    ).toBe(true);
+
+    const built = lockBuilder.build();
+    expect(built.plugins.some((p) => p.id === 'good-plugin')).toBe(true);
+    expect(built.plugins.some((p) => p.id === 'fail-late')).toBe(false);
+  });
+
 });
