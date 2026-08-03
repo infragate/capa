@@ -1,6 +1,10 @@
 /**
  * `capa activity-ingest` — fail-open reporter for provider lifecycle hooks.
  * Reads JSON from stdin, normalizes, POSTs to the local capa server.
+ *
+ * Gate hooks (beforeFileRead, subagentStart, …) require valid JSON on stdout.
+ * Always emit an allow/continue decision so Cursor never treats empty stdout
+ * as invalid JSON and blocks the action.
  */
 
 import { CANONICAL_HOOK_EVENTS, type CanonicalHookEvent } from "../../types/hooks";
@@ -8,20 +12,52 @@ import { loadSettings } from "../../shared/config";
 import { normalizeActivityHookPayload } from "../../shared/agent-activity-normalize";
 import { getServerStatus } from "../utils/server-manager";
 
-export async function activityIngestCommand(
-	args: string[],
-): Promise<void> {
+/** Cursor (and similar) gate events that require a permission decision on stdout. */
+const PERMISSION_GATE_EVENTS = new Set<CanonicalHookEvent>([
+	"beforeFileRead",
+	"beforeTool",
+	"beforeShell",
+	"beforeMcpCall",
+	"subagentStart",
+]);
+
+/**
+ * Stdout payload for provider gate hooks. Observational events return null
+ * (empty stdout is fine). Must stay valid JSON — empty string is not.
+ */
+export function activityIngestGateStdout(
+	event: CanonicalHookEvent | null,
+): string | null {
+	if (!event) return null;
+	if (PERMISSION_GATE_EVENTS.has(event)) {
+		return JSON.stringify({ permission: "allow" });
+	}
+	if (event === "userPromptSubmit") {
+		return JSON.stringify({ continue: true });
+	}
+	return null;
+}
+
+export async function activityIngestCommand(args: string[]): Promise<void> {
+	const parsed = parseArgs(args);
 	// Always exit 0 from the process wrapper — this function may throw only
 	// for programmer errors; soft failures return normally.
 	try {
-		await runIngest(args);
+		await runIngest(parsed);
 	} catch {
 		/* fail-open */
+	} finally {
+		const gate = activityIngestGateStdout(parsed.event);
+		if (gate) process.stdout.write(`${gate}\n`);
 	}
 }
 
-async function runIngest(args: string[]): Promise<void> {
-	const { projectId, event, provider } = parseArgs(args);
+async function runIngest(parsed: {
+	projectId: string | null;
+	event: CanonicalHookEvent | null;
+	provider: string | null;
+}): Promise<void> {
+	const { projectId, event, provider } = parsed;
 	if (!projectId || !event) return;
 
 	const stdinText = await readStdin();
