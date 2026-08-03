@@ -2,6 +2,7 @@ import { detectCapabilitiesFile } from "../shared/paths";
 import { parseCapabilitiesFile } from "../shared/capabilities";
 import { isAgentActivityEnabled } from "../shared/agent-activity";
 import { syncSystemActivityHooks } from "../shared/agent-activity-sync";
+import { serializeActivityAttributes } from "../shared/activity-attributes";
 import { resolveProvidersForClean } from "../shared/providers/resolve";
 import { TOOL_CALL_KINDS, type ToolCallKind, type ToolCallStatus } from "../types/database";
 import type { ToolCallTracer } from "./tool-call-tracer";
@@ -23,6 +24,8 @@ export interface ActivityIngestBody {
 	agentId?: string | null;
 	conversationId?: string | null;
 	generationId?: string | null;
+	model?: string | null;
+	attributes?: Record<string, unknown> | null;
 	tokenUsage?: {
 		input_tokens?: number | null;
 		output_tokens?: number | null;
@@ -111,6 +114,14 @@ export async function handlePostProjectActivityEvent(
 		generationId:
 			typeof body.generationId === "string" && body.generationId.trim()
 				? body.generationId.trim()
+				: null,
+		model:
+			typeof body.model === "string" && body.model.trim()
+				? body.model.trim()
+				: null,
+		attributesJson:
+			body.attributes && typeof body.attributes === "object"
+				? serializeActivityAttributes(body.attributes)
 				: null,
 		source: body.source ?? null,
 		kind,

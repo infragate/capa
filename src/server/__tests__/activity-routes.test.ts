@@ -123,6 +123,12 @@ describe("handlePostProjectActivityEvent", () => {
 					source: "cursor",
 					conversationId: "conv-abc",
 					generationId: "gen-xyz",
+					model: "claude-opus-4",
+					attributes: {
+						model: "claude-opus-4",
+						model_id: "claude-opus-4-7",
+						provider_version: "1.7.2",
+					},
 				}),
 			}),
 		);
@@ -130,6 +136,12 @@ describe("handlePostProjectActivityEvent", () => {
 		const row = db.listToolCalls("proj-1", { limit: 1 }).calls[0];
 		expect(row.conversation_id).toBe("conv-abc");
 		expect(row.generation_id).toBe("gen-xyz");
+		expect(row.model).toBe("claude-opus-4");
+		expect(JSON.parse(row.attributes_json!)).toEqual({
+			model: "claude-opus-4",
+			model_id: "claude-opus-4-7",
+			provider_version: "1.7.2",
+		});
 	});
 
 	it("returns 204 when agentActivity is disabled", async () => {

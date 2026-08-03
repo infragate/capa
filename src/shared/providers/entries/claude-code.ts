@@ -52,6 +52,20 @@ export const claudeCode: ProviderIntegration = {
 			conversationIdFields: ["session_id"],
 			generationIdFields: ["prompt_id"],
 		},
+		activityAttributes: {
+			attributes: [
+				{ key: "model", fields: ["model"] },
+				{ key: "cwd", fields: ["cwd"] },
+				{ key: "permission_mode", fields: ["permission_mode"] },
+				{ key: "transcript_path", fields: ["transcript_path"] },
+				{ key: "hook_event_name", fields: ["hook_event_name"] },
+				{ key: "tool_use_id", fields: ["tool_use_id"] },
+				{ key: "agent_type", fields: ["agent_type"] },
+				{ key: "agent_id", fields: ["agent_id"] },
+				{ key: "session_reason", fields: ["reason"] },
+				{ key: "source", fields: ["source"] },
+			],
+		},
 		eventMap: {
 			sessionStart: { event: "SessionStart" },
 			sessionEnd: { event: "SessionEnd" },

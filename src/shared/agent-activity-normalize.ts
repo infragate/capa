@@ -7,6 +7,10 @@ import type { ToolCallKind, ToolCallStatus } from "../types/database";
 import type { CanonicalHookEvent } from "../types/hooks";
 import { extractActivityCorrelation } from "./activity-correlation";
 import {
+	extractActivityAttributes,
+	type ActivityAttributes,
+} from "./activity-attributes";
+import {
 	asRecord,
 	extractPath,
 	nested,
@@ -33,6 +37,10 @@ export interface NormalizedActivityEvent {
 	conversationId?: string | null;
 	/** Provider turn / generation id (from hooks.activityCorrelation). */
 	generationId?: string | null;
+	/** Denormalized model slug when present on the hook envelope. */
+	model?: string | null;
+	/** Provider envelope attributes (model_id, versions, …). */
+	attributes?: ActivityAttributes | null;
 	/** When true, caller should drop the event (capa MCP dedup). */
 	skip: boolean;
 	skipReason?: string;
@@ -98,6 +106,7 @@ export function normalizeActivityHookPayload(
 		provider,
 		obj,
 	);
+	const { attributes, model } = extractActivityAttributes(provider, obj);
 
 	// Shell tool wrappers duplicate afterShell / capa MCP rows.
 	if (kind === "agent_tool" && isShellToolName(toolName)) {
@@ -134,6 +143,8 @@ export function normalizeActivityHookPayload(
 		tokenUsage,
 		conversationId,
 		generationId,
+		model,
+		attributes: Object.keys(attributes).length > 0 ? attributes : null,
 		skip: false,
 	};
 }

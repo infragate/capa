@@ -28,6 +28,8 @@ function call(
     agent_id: null,
     conversation_id: null,
     generation_id: null,
+    model: null,
+    attributes_json: null,
     ...partial,
   };
 }

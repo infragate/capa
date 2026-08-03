@@ -170,6 +170,34 @@ export interface ActivityCorrelationIntegration {
 }
 
 /**
+ * One stdin field → capa activity attribute mapping.
+ *
+ * Attribute keys are capa-stable (for future telemetry fan-out). Field names
+ * are provider-specific and tried in order; first present value wins.
+ */
+export interface ActivityAttributeField {
+  /** Stable capa attribute key (e.g. `model`, `provider_version`). */
+  key: string;
+  /** Provider stdin JSON keys to read. */
+  fields: readonly string[];
+  /**
+   * Coercion:
+   * - `string` (default): trim non-empty string
+   * - `number` / `boolean`: typed primitives
+   * - `json`: objects/arrays/primitives kept as JSON-serializable values
+   */
+  kind?: 'string' | 'number' | 'boolean' | 'json';
+}
+
+/**
+ * Extra hook-stdin metadata to capture on every activity event.
+ * Keep this to envelope / identity fields — not large tool outputs.
+ */
+export interface ActivityAttributesIntegration {
+  attributes: readonly ActivityAttributeField[];
+}
+
+/**
  * Per-provider hooks integration descriptor.
  *
  * Pure data — every behavior is derived from these fields by the shared
@@ -203,6 +231,11 @@ export interface HooksIntegration {
    * ids. Omit until the provider's payload keys are known.
    */
   activityCorrelation?: ActivityCorrelationIntegration;
+  /**
+   * Maps provider hook stdin fields → capa activity attributes (model, etc.).
+   * Omit until the provider's payload keys are known.
+   */
+  activityAttributes?: ActivityAttributesIntegration;
 }
 
 /**

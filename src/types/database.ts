@@ -104,6 +104,10 @@ export interface ToolCallRecord {
   conversation_id: string | null;
   /** Provider turn / generation id (from hooks.activityCorrelation). */
   generation_id: string | null;
+  /** Denormalized model slug from hook envelope attributes. */
+  model: string | null;
+  /** JSON object of provider envelope attributes (model_id, versions, …). */
+  attributes_json: string | null;
 }
 
 /** One-minute activity bucket for the last-hour chart. */

@@ -68,6 +68,8 @@ describe("normalizeActivityHookPayload", () => {
 				tool_input: { path: "a.ts" },
 				conversation_id: "c1",
 				generation_id: "g1",
+				model: "composer-1.5",
+				model_id: "composer-1",
 			},
 			"cursor",
 		);
@@ -76,6 +78,9 @@ describe("normalizeActivityHookPayload", () => {
 		expect(out.source).toBe("cursor");
 		expect(out.conversationId).toBe("c1");
 		expect(out.generationId).toBe("g1");
+		expect(out.model).toBe("composer-1.5");
+		expect(out.attributes?.model).toBe("composer-1.5");
+		expect(out.attributes?.model_id).toBe("composer-1");
 	});
 
 	it("skips before-hooks and Shell tool wrappers", () => {

@@ -18,6 +18,8 @@ export type ToolCallInsert = Omit<
 	| "cache_write_tokens"
 	| "conversation_id"
 	| "generation_id"
+	| "model"
+	| "attributes_json"
 > & {
 	duration_ms?: number | null;
 	input_tokens?: number | null;
@@ -26,6 +28,8 @@ export type ToolCallInsert = Omit<
 	cache_write_tokens?: number | null;
 	conversation_id?: string | null;
 	generation_id?: string | null;
+	model?: string | null;
+	attributes_json?: string | null;
 };
 
 export type ToolCallFinish = {
@@ -74,8 +78,8 @@ export class ToolCallsRepo {
         kind, tool_name, meta_tool, args_json, result_preview, result_bytes,
         result_tokens, input_tokens, output_tokens, cache_read_tokens,
         cache_write_tokens, error_message, agent_id, conversation_id,
-        generation_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        generation_id, model, attributes_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			[
 				row.id,
 				row.project_id,
@@ -99,6 +103,8 @@ export class ToolCallsRepo {
 				row.agent_id,
 				row.conversation_id ?? null,
 				row.generation_id ?? null,
+				row.model ?? null,
+				row.attributes_json ?? null,
 			],
 		);
 		this.prune(row.project_id);

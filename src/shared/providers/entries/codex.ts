@@ -63,6 +63,15 @@ export const codex: ProviderIntegration = {
 			conversationIdFields: ["session_id"],
 			generationIdFields: ["prompt_id"],
 		},
+		activityAttributes: {
+			attributes: [
+				{ key: "model", fields: ["model"] },
+				{ key: "cwd", fields: ["cwd"] },
+				{ key: "transcript_path", fields: ["transcript_path"] },
+				{ key: "hook_event_name", fields: ["hook_event_name"] },
+				{ key: "tool_use_id", fields: ["tool_use_id"] },
+			],
+		},
 		eventMap: {
 			sessionStart: { event: "SessionStart" },
 			userPromptSubmit: { event: "UserPromptSubmit" },

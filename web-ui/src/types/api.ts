@@ -366,6 +366,8 @@ export interface ToolCallRecord {
   agent_id: string | null;
   conversation_id: string | null;
   generation_id: string | null;
+  model: string | null;
+  attributes_json: string | null;
 }
 
 export interface ActivityResponse {
