@@ -10,6 +10,7 @@ import {
 } from "../cli/commands/install-tasks/helpers/skill-discovery";
 import type { AuthenticatedFetch } from "../shared/authenticated-fetch";
 import { type CachePlatform, getOrCreateSnapshot } from "../shared/cache";
+import { getProjectPluginsDir } from "../shared/plugin-paths";
 import { getProvider } from "../shared/providers";
 import { assertSafeRepoPath } from "../shared/repo-file";
 import { parseRepoString } from "../shared/repo-string";
@@ -23,6 +24,13 @@ export interface SkillContentResult {
 	content: string;
 	metadata: SkillMetadata;
 	files: string[];
+}
+
+/** Options for locating unpacked plugin trees under `~/.capa/plugins/<projectId>/`. */
+export interface SkillContentResolveOptions {
+	projectId?: string;
+	/** Override for tests; defaults to `getProjectPluginsDir(projectId)`. */
+	pluginsBaseDir?: string;
 }
 
 function stripSurroundingQuotes(value: string): string {
@@ -142,6 +150,71 @@ export function resolveSkillSourceUrl(
 }
 
 /**
+ * Locate SKILL.md for a skill id inside an unpacked plugin tree.
+ * Checks common layouts, then falls back to a recursive scan.
+ */
+function findPluginSkillMd(
+	pluginRoot: string,
+	skillId: string,
+): string | null {
+	const candidates = [
+		join(pluginRoot, skillId, "SKILL.md"),
+		join(pluginRoot, "skills", skillId, "SKILL.md"),
+		join(pluginRoot, ".capa-commands", skillId, "SKILL.md"),
+	];
+	for (const candidate of candidates) {
+		if (existsSync(candidate)) return candidate;
+	}
+
+	const found = findSkillsInDirectory(pluginRoot);
+	const fromScan = found.get(skillId);
+	if (fromScan) return fromScan;
+
+	return null;
+}
+
+function resolvePluginSkillContent(
+	skill: Skill,
+	options?: SkillContentResolveOptions,
+): SkillContentResult | null {
+	if (skill.type !== "plugin" && !skill.sourcePlugin) return null;
+	const pluginId = skill.sourcePlugin?.id;
+	if (
+		!pluginId ||
+		!isSafeCapabilityId(skill.id) ||
+		!isSafeCapabilityId(pluginId)
+	) {
+		return null;
+	}
+
+	const pluginsBase =
+		options?.pluginsBaseDir ??
+		(options?.projectId ? getProjectPluginsDir(options.projectId) : null);
+	if (!pluginsBase) return null;
+
+	let pluginRoot: string;
+	try {
+		pluginRoot = assertSafeRepoPath(pluginsBase, pluginId);
+	} catch {
+		return null;
+	}
+	if (!existsSync(pluginRoot)) return null;
+
+	const skillMdPath = findPluginSkillMd(pluginRoot, skill.id);
+	if (!skillMdPath) return null;
+
+	try {
+		const skillRoot = skillMdPath.replace(/[/\\]SKILL\.md$/i, "");
+		return tryParse(
+			readFileSync(skillMdPath, "utf-8"),
+			collectFiles(skillRoot),
+		);
+	} catch {
+		return null;
+	}
+}
+
+/**
  * Resolve SKILL.md content for a skill from inline content, a local path,
  * or an installed copy under a provider's skillsDir.
  */
@@ -149,6 +222,7 @@ export function resolveSkillContent(
 	projectPath: string,
 	skill: Skill,
 	providers: string[],
+	options?: SkillContentResolveOptions,
 ): SkillContentResult | null {
 	// Inline skills embed SKILL.md in def.content
 	if (skill.type === "inline" && skill.def?.content) {
@@ -171,6 +245,11 @@ export function resolveSkillContent(
 			}
 		}
 	}
+
+	// Plugin skills: read from the unpacked tree under ~/.capa/plugins/<projectId>/
+	// (populated when the plugin is added / effective caps are resolved — before install).
+	const fromPlugin = resolvePluginSkillContent(skill, options);
+	if (fromPlugin) return fromPlugin;
 
 	// Installed / github / gitlab / remote / plugin: look under provider skillsDirs
 	if (!isSafeCapabilityId(skill.id)) {
@@ -214,11 +293,12 @@ export async function resolveSkillContentById(
 	capabilities: Capabilities,
 	skillId: string,
 	authFetch?: AuthenticatedFetch,
+	options?: SkillContentResolveOptions,
 ): Promise<SkillContentResult | null> {
 	const skill = (capabilities.skills ?? []).find((s) => s.id === skillId);
 	if (!skill) return null;
 	const providers = capabilities.providers ?? [];
-	const local = resolveSkillContent(projectPath, skill, providers);
+	const local = resolveSkillContent(projectPath, skill, providers, options);
 	if (local) return local;
 	if (authFetch) {
 		return fetchUninstalledSkillContent(skill, authFetch);
@@ -299,6 +379,7 @@ export function resolveSkillDescription(
 	projectPath: string,
 	skill: Skill,
 	providers: string[],
+	options?: SkillContentResolveOptions,
 ): {
 	description: string | null;
 	descriptionSource: "capabilities" | "frontmatter" | null;
@@ -308,7 +389,7 @@ export function resolveSkillDescription(
 		return { description: fromCaps, descriptionSource: "capabilities" };
 	}
 
-	const resolved = resolveSkillContent(projectPath, skill, providers);
+	const resolved = resolveSkillContent(projectPath, skill, providers, options);
 	const fromFrontmatter = resolved?.metadata?.description?.trim();
 	if (fromFrontmatter) {
 		return { description: fromFrontmatter, descriptionSource: "frontmatter" };
