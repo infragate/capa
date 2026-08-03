@@ -2,6 +2,7 @@ import { describe, expect, it, spyOn, afterEach } from "bun:test";
 import {
 	activityIngestCommand,
 	activityIngestGateStdout,
+	parseHookStdinJson,
 } from "../activity-ingest";
 
 describe("activityIngestGateStdout", () => {
@@ -34,6 +35,23 @@ describe("activityIngestGateStdout", () => {
 		expect(activityIngestGateStdout("afterFileEdit")).toBeNull();
 		expect(activityIngestGateStdout("sessionEnd")).toBeNull();
 		expect(activityIngestGateStdout(null)).toBeNull();
+	});
+});
+
+describe("parseHookStdinJson", () => {
+	it("parses Cursor Agent Windows stdin that starts with UTF-8 BOM", () => {
+		const payload = {
+			conversation_id: "32ef633c-d2fa-458b-b8e6-b9981226ad15",
+			generation_id: "8ceb8fb5-5f5b-4a6e-afb4-0b7c65e46082",
+			prompt: "hi",
+			hook_event_name: "beforeSubmitPrompt",
+		};
+		const withBom = `\uFEFF${JSON.stringify(payload)}\r\n`;
+		expect(parseHookStdinJson(withBom)).toEqual(payload);
+	});
+
+	it("falls back to raw wrapper when JSON is invalid", () => {
+		expect(parseHookStdinJson("not-json")).toEqual({ raw: "not-json" });
 	});
 });
 
