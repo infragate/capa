@@ -11,6 +11,7 @@ import {
   detectAndParseManifest,
   discoverPluginEntries,
   findPluginInDirectory,
+  resolveNestedPluginById,
   resolvePluginServerDef,
   resolvePluginRootInString,
   materializeCommandAsSkill,
@@ -315,10 +316,12 @@ export async function resolvePlugins(
         );
       }
 
-    // Resolve the manifest root. Three modes:
+    // Resolve the manifest root:
     //   • `search`  — walk the snapshot for a manifest dir matching the name.
     //   • `subpath` — exact path inside the repo (already provided by the user).
-    //   • neither   — the repo root itself is the plugin.
+    //   • neither   — the repo root itself is the plugin; if that has no
+    //                 manifest and the entry has an id, search the tree by id
+    //                 (multi-plugin marketplace monorepos).
     let manifestRoot: string;
     let resolvedSubpath: string;
     let manifest: UnifiedPluginManifest | null;
@@ -348,10 +351,30 @@ export async function resolvePlugins(
       }
       resolvedSubpath = subpath;
       manifest = detectAndParseManifest(manifestRoot, providers);
+      // Multi-plugin monorepos often only have a marketplace catalog at the
+      // repo root. When the capa entry has an id, resolve via direct child
+      // path or root marketplace.json (bounded — no full-tree walk).
+      if (!manifest && !subpath && pluginRef.id) {
+        const located = resolveNestedPluginById(
+          snapshot.snapshotDir,
+          pluginRef.id,
+          providers,
+        );
+        if (located) {
+          manifestRoot = located.entry.subpath
+            ? join(snapshot.snapshotDir, located.entry.subpath)
+            : snapshot.snapshotDir;
+          resolvedSubpath = located.entry.subpath;
+          manifest = located.manifest;
+        }
+      }
       if (!manifest) {
         throw new Error(
           `No plugin manifest found in ${repoPath}${subpath ? `/${subpath}` : ''}.\n` +
-          `    Expected one of: .claude-plugin/plugin.json, .cursor-plugin/plugin.json.`
+          `    Expected one of: .claude-plugin/plugin.json, .cursor-plugin/plugin.json.` +
+          (pluginRef.id
+            ? `\n    Tip: for monorepos, pin the plugin with "${repoPath}@${pluginRef.id}" or "${repoPath}::${pluginRef.id}".`
+            : '')
         );
       }
     }
