@@ -87,7 +87,10 @@ async function runIngest(parsed: {
 	const status = await getServerStatus();
 	if (!status.running || !status.url) {
 		const settings = await loadSettings();
-		const fallback = `http://${settings.server.host}:${settings.server.port}`;
+		const fallback = clientConnectOrigin(
+			settings.server.host,
+			settings.server.port,
+		);
 		await postEvent(fallback, projectId, normalized);
 		return;
 	}
@@ -185,4 +188,19 @@ function stripBom(text: string): string {
 		return text.slice(1);
 	}
 	return text;
+}
+
+/**
+ * Build a client-connectable HTTP origin from server settings.
+ * Bind wildcards (`0.0.0.0` / `::`) are not routable as clients; IPv6 literals
+ * need brackets in URLs.
+ */
+export function clientConnectOrigin(host: string, port: number): string {
+	let h = host.trim();
+	if (!h || h === "0.0.0.0" || h === "::" || h === "[::]") {
+		h = "127.0.0.1";
+	} else if (h.includes(":") && !h.startsWith("[")) {
+		h = `[${h}]`;
+	}
+	return `http://${h}:${port}`;
 }

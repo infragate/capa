@@ -8,9 +8,8 @@ import { startWrapWatchers } from '../utils/wrap/watch-project';
 import { launchProvider } from '../utils/wrap/launch';
 import { waitForInterrupt } from '../utils/wrap/wait-for-interrupt';
 import { clearWrapSession, writeWrapSession } from '../utils/wrap/session-file';
-import { ensureServer } from '../utils/server-manager';
-import { VERSION } from '../../version';
 import { ensureWrapBinaryOnPath } from './wrap-ensure-binary';
+import { ensureWrapServerRunning } from './wrap-ensure-server';
 import { resolveWrapProviderArg } from './wrap-prompt';
 import { info, error } from '../ui';
 
@@ -105,9 +104,10 @@ export async function wrapCommand(
 
   // Warm wrap reuses the shadow workspace without install — still need the
   // server for MCP tools, capa sh, and activity/telemetry hooks.
-  const serverStatus = await ensureServer(VERSION);
-  if (!serverStatus.running || !serverStatus.url) {
-    error('Failed to start server');
+  try {
+    await ensureWrapServerRunning();
+  } catch (err) {
+    error(err instanceof Error ? err.message : String(err));
     process.exit(1);
   }
 

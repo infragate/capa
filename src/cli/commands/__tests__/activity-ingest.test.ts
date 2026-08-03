@@ -2,6 +2,7 @@ import { describe, expect, it, spyOn, afterEach } from "bun:test";
 import {
 	activityIngestCommand,
 	activityIngestGateStdout,
+	clientConnectOrigin,
 	parseHookStdinJson,
 } from "../activity-ingest";
 
@@ -52,6 +53,23 @@ describe("parseHookStdinJson", () => {
 
 	it("falls back to raw wrapper when JSON is invalid", () => {
 		expect(parseHookStdinJson("not-json")).toEqual({ raw: "not-json" });
+	});
+});
+
+describe("clientConnectOrigin", () => {
+	it("maps wildcard bind hosts to loopback", () => {
+		expect(clientConnectOrigin("0.0.0.0", 5912)).toBe("http://127.0.0.1:5912");
+		expect(clientConnectOrigin("::", 5912)).toBe("http://127.0.0.1:5912");
+		expect(clientConnectOrigin("[::]", 5912)).toBe("http://127.0.0.1:5912");
+	});
+
+	it("brackets bare IPv6 literals", () => {
+		expect(clientConnectOrigin("::1", 5912)).toBe("http://[::1]:5912");
+	});
+
+	it("keeps localhost and IPv4 as-is", () => {
+		expect(clientConnectOrigin("localhost", 5912)).toBe("http://localhost:5912");
+		expect(clientConnectOrigin("127.0.0.1", 5912)).toBe("http://127.0.0.1:5912");
 	});
 });
 
