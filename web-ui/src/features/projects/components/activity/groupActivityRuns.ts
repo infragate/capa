@@ -1,4 +1,5 @@
 import type { ToolCallRecord } from '../../../../types/api';
+import { reconcileCursorActivityConversationIds } from '../../../../../../src/shared/activity-correlation-reconcile';
 import {
   isActivityRunCloser,
   isActivityRunOpener,
@@ -37,9 +38,10 @@ export interface ActivityConversation {
 export function groupActivityConversations(
   calls: ToolCallRecord[],
 ): ActivityConversation[] {
+  const normalized = reconcileCursorActivityConversationIds(calls);
   const correlated: ToolCallRecord[] = [];
   const uncorrelated: ToolCallRecord[] = [];
-  for (const call of calls) {
+  for (const call of normalized) {
     if (call.conversation_id) correlated.push(call);
     else uncorrelated.push(call);
   }
