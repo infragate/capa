@@ -72,8 +72,8 @@ function pathKeySelected(
   selectedPathKeys?: ReadonlySet<string> | readonly string[],
 ): boolean {
   if (pathKey == null || selectedPathKeys == null) return false;
-  if (selectedPathKeys instanceof Set) return selectedPathKeys.has(pathKey);
-  return selectedPathKeys.includes(pathKey);
+  if (Array.isArray(selectedPathKeys)) return selectedPathKeys.includes(pathKey);
+  return (selectedPathKeys as ReadonlySet<string>).has(pathKey);
 }
 
 function FileTreeNode({

@@ -38,7 +38,9 @@ function parseAttributesJson(
 }
 
 function transcriptPathFromRow(row: ActivityCorrelationRow): string | null {
-	const attrs = parseAttributesJson(row.attributes_json);
+	const raw = row.attributes_json;
+	if (!raw?.trim() || !raw.includes("transcript_path")) return null;
+	const attrs = parseAttributesJson(raw);
 	const path = attrs?.transcript_path;
 	return typeof path === "string" ? path : null;
 }
@@ -74,7 +76,7 @@ export function reconcileCursorActivityConversationIds<
 		if (call.kind === "prompt" && call.conversation_id?.trim()) {
 			chatId = call.conversation_id.trim();
 		}
-		if (!chatId) {
+		if (!chatId && call.kind === "stop") {
 			chatId = chatConversationIdFromTranscriptPath(
 				transcriptPathFromRow(call),
 			);
