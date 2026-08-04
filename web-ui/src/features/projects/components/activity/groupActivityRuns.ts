@@ -5,6 +5,18 @@ import {
   isActivityRunOpener,
 } from '../../../../../../src/shared/activity-run-boundary';
 
+/** Stable run key for feed selection (unique across conversations). */
+export function activityRunSelectionId(
+  conversationId: string | null,
+  generationId: string | null,
+  fallbackId: string,
+): string {
+  if (conversationId?.trim() && generationId?.trim()) {
+    return `${conversationId.trim()}:${generationId.trim()}`;
+  }
+  return generationId?.trim() || fallbackId;
+}
+
 /** One turn / generation: optional prompt + spans (dialog payload). */
 export interface ActivityRun {
   id: string;
@@ -204,7 +216,7 @@ function buildRunFromCalls(
   const spans = chronological.filter((c) => c !== prompt);
   const first = chronological[0]!;
   const run: ActivityRun = {
-    id: generationId || first.id,
+    id: activityRunSelectionId(conversationId, generationId, first.id),
     conversationId,
     generationId,
     title: prompt?.tool_name || first.tool_name,

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import {
+	ACTIVITY_ATTRIBUTES_MAX_JSON_CHARS,
 	extractActivityAttributes,
 	serializeActivityAttributes,
 } from "../activity-attributes";
@@ -58,6 +59,20 @@ describe("serializeActivityAttributes", () => {
 	it("round-trips a small bag", () => {
 		expect(serializeActivityAttributes({ model: "x", duration_ms: 1 })).toBe(
 			JSON.stringify({ model: "x", duration_ms: 1 }),
+		);
+	});
+
+	it("returns valid JSON or null when over the size cap", () => {
+		const huge = "x".repeat(ACTIVITY_ATTRIBUTES_MAX_JSON_CHARS + 500);
+		const serialized = serializeActivityAttributes({
+			model: "small",
+			dump: huge,
+			keep: "yes",
+		});
+		if (serialized === null) return;
+		expect(() => JSON.parse(serialized)).not.toThrow();
+		expect(serialized.length).toBeLessThanOrEqual(
+			ACTIVITY_ATTRIBUTES_MAX_JSON_CHARS,
 		);
 	});
 });

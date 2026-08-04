@@ -76,6 +76,35 @@ describe("reconcileCursorActivityConversationIds", () => {
 		expect(out[1]!.conversation_id).toBe(chatId);
 	});
 
+	it("does not rewrite when the same generation_id maps to conflicting chat ids", () => {
+		const generationId = "gen-1";
+		const rows = [
+			{
+				source: "cursor",
+				kind: "prompt",
+				conversation_id: "chat-a",
+				generation_id: generationId,
+				attributes_json: null,
+			},
+			{
+				source: "cursor",
+				kind: "prompt",
+				conversation_id: "chat-b",
+				generation_id: generationId,
+				attributes_json: null,
+			},
+			{
+				source: "cursor",
+				kind: "agent_tool",
+				conversation_id: "agent-session",
+				generation_id: generationId,
+				attributes_json: null,
+			},
+		];
+		const out = reconcileCursorActivityConversationIds(rows);
+		expect(out[2]!.conversation_id).toBe("agent-session");
+	});
+
 	it("does not rewrite non-cursor sources", () => {
 		const rows = [
 			{

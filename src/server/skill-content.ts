@@ -231,7 +231,7 @@ function resolvePluginSkillContent(
 	skill: Skill,
 	options?: SkillContentResolveOptions,
 ): SkillContentResult | null {
-	if (skill.type !== "plugin" && !skill.sourcePlugin) return null;
+	if (skill.type !== "plugin" || !skill.sourcePlugin) return null;
 	const pluginId = skill.sourcePlugin?.id;
 	if (
 		!pluginId ||

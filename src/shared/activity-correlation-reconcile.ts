@@ -51,7 +51,19 @@ export function reconcileCursorActivityConversationIds<
 	T extends ActivityCorrelationRow,
 >(calls: readonly T[]): T[] {
 	const chatByGeneration = new Map<string, string>();
+	const ambiguousGenerations = new Set<string>();
 	const chatByAgentSession = new Map<string, string>();
+
+	const noteChatForGeneration = (generationId: string, chatId: string) => {
+		if (ambiguousGenerations.has(generationId)) return;
+		const existing = chatByGeneration.get(generationId);
+		if (existing && existing !== chatId) {
+			chatByGeneration.delete(generationId);
+			ambiguousGenerations.add(generationId);
+			return;
+		}
+		chatByGeneration.set(generationId, chatId);
+	};
 
 	for (const call of calls) {
 		if (call.source !== "cursor") continue;
@@ -67,7 +79,7 @@ export function reconcileCursorActivityConversationIds<
 				transcriptPathFromRow(call),
 			);
 		}
-		if (chatId) chatByGeneration.set(generationId, chatId);
+		if (chatId) noteChatForGeneration(generationId, chatId);
 	}
 
 	if (chatByGeneration.size === 0) return [...calls];
@@ -75,7 +87,7 @@ export function reconcileCursorActivityConversationIds<
 	const reconciled = calls.map((call) => {
 		if (call.source !== "cursor") return call;
 		const generationId = call.generation_id?.trim();
-		if (!generationId) return call;
+		if (!generationId || ambiguousGenerations.has(generationId)) return call;
 		const chatId = chatByGeneration.get(generationId);
 		if (!chatId || call.conversation_id === chatId) return call;
 		const priorSession = call.conversation_id?.trim();

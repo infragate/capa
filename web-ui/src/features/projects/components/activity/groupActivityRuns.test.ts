@@ -181,6 +181,48 @@ describe('groupActivityRuns', () => {
     expect(run.prompt?.id).toBe('prompt-1');
     expect(run.spans.map((s) => s.id)).toEqual(['tool-1']);
     expect(run.title).toBe('fix the alert');
+    expect(run.id).toBe(`${chatId}:${generationId}`);
+  });
+
+  it('namespaces run ids when generation_id collides across conversations', () => {
+    const sharedGen = 'gen-shared';
+    const calls = [
+      call({
+        id: 'b-tool',
+        kind: 'agent_tool',
+        tool_name: 'Read',
+        started_at: 200,
+        conversation_id: 'conv-b',
+        generation_id: sharedGen,
+      }),
+      call({
+        id: 'b-prompt',
+        kind: 'prompt',
+        tool_name: 'chat b',
+        started_at: 190,
+        conversation_id: 'conv-b',
+        generation_id: sharedGen,
+      }),
+      call({
+        id: 'a-tool',
+        kind: 'agent_tool',
+        tool_name: 'Grep',
+        started_at: 100,
+        conversation_id: 'conv-a',
+        generation_id: sharedGen,
+      }),
+      call({
+        id: 'a-prompt',
+        kind: 'prompt',
+        tool_name: 'chat a',
+        started_at: 90,
+        conversation_id: 'conv-a',
+        generation_id: sharedGen,
+      }),
+    ];
+    const runs = groupActivityConversations(calls).flatMap((c) => c.generations);
+    expect(runs.find((r) => r.id === 'conv-a:gen-shared')?.title).toBe('chat a');
+    expect(runs.find((r) => r.id === 'conv-b:gen-shared')?.title).toBe('chat b');
   });
 });
 

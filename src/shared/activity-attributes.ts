@@ -65,9 +65,15 @@ export function serializeActivityAttributes(
 ): string | null {
 	if (!attributes || Object.keys(attributes).length === 0) return null;
 	try {
-		const json = JSON.stringify(attributes);
-		if (json.length <= ACTIVITY_ATTRIBUTES_MAX_JSON_CHARS) return json;
-		return `${json.slice(0, ACTIVITY_ATTRIBUTES_MAX_JSON_CHARS - 1)}…`;
+		const working: ActivityAttributes = { ...attributes };
+		const dropOrder = Object.keys(working);
+		while (dropOrder.length > 0) {
+			const json = JSON.stringify(working);
+			if (json.length <= ACTIVITY_ATTRIBUTES_MAX_JSON_CHARS) return json;
+			const key = dropOrder.pop();
+			if (key) delete working[key];
+		}
+		return null;
 	} catch {
 		return null;
 	}
@@ -108,7 +114,10 @@ function readAttribute(
 		) {
 			return raw;
 		}
-		if (Array.isArray(raw) || (typeof raw === "object" && raw !== null)) {
+		if (Array.isArray(raw)) {
+			return raw;
+		}
+		if (typeof raw === "object") {
 			return raw;
 		}
 	}
