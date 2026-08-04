@@ -40,6 +40,14 @@ export const SYSTEM_ACTIVITY_EVENTS: readonly CanonicalHookEvent[] = [
 	"stop",
 ] as const;
 
+/**
+ * Cursor CLI fires `postToolUse` only for a subset of tools (Read, Shell, …).
+ * Dynamic tools (`CallDynamicTool` → WebSearch/WebFetch) and Glob are visible
+ * on `preToolUse` instead — ingest those without doubling covered tools.
+ */
+export const CURSOR_SUPPLEMENTAL_ACTIVITY_EVENTS: readonly CanonicalHookEvent[] =
+	["beforeTool"];
+
 export function isSystemActivityHookId(id: string): boolean {
 	return id.startsWith(SYSTEM_ACTIVITY_HOOK_PREFIX);
 }
@@ -67,11 +75,21 @@ export function buildSystemActivityHooks(
 	providerId?: string,
 ): Hook[] {
 	const providerArg = providerId ? ` --provider ${shellQuote(providerId)}` : "";
-	const events = providerId
+	let events: CanonicalHookEvent[] = providerId
 		? SYSTEM_ACTIVITY_EVENTS.filter((event) =>
 				providerMapsActivityEvent(providerId, event),
 			)
-		: SYSTEM_ACTIVITY_EVENTS;
+		: [...SYSTEM_ACTIVITY_EVENTS];
+	if (providerId === "cursor") {
+		for (const event of CURSOR_SUPPLEMENTAL_ACTIVITY_EVENTS) {
+			if (
+				providerMapsActivityEvent(providerId, event) &&
+				!events.includes(event)
+			) {
+				events.push(event);
+			}
+		}
+	}
 	return events.map((event) => ({
 		id: systemActivityHookId(event),
 		on: event,
