@@ -10,6 +10,7 @@ import {
 } from "../cli/commands/install-tasks/helpers/skill-discovery";
 import type { AuthenticatedFetch } from "../shared/authenticated-fetch";
 import { type CachePlatform, getOrCreateSnapshot } from "../shared/cache";
+import { getProjectPluginsDir } from "../shared/plugin-paths";
 import { getProvider } from "../shared/providers";
 import { assertSafeRepoPath } from "../shared/repo-file";
 import { parseRepoString } from "../shared/repo-string";
@@ -23,6 +24,13 @@ export interface SkillContentResult {
 	content: string;
 	metadata: SkillMetadata;
 	files: string[];
+}
+
+/** Options for locating unpacked plugin trees under `~/.capa/plugins/<projectId>/`. */
+export interface SkillContentResolveOptions {
+	projectId?: string;
+	/** Override for tests; defaults to `getProjectPluginsDir(projectId)`. */
+	pluginsBaseDir?: string;
 }
 
 function stripSurroundingQuotes(value: string): string {
@@ -141,6 +149,125 @@ export function resolveSkillSourceUrl(
 	return null;
 }
 
+/** In-memory skill index for unpacked plugin trees (avoids re-scanning per skill). */
+const pluginSkillIndexCache = new Map<
+	string,
+	{ mtimeMs: number; index: Map<string, string> }
+>();
+
+function readPluginRootMtime(pluginRoot: string): number | null {
+	try {
+		return statSync(pluginRoot).mtimeMs;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Build (or reuse) an id → SKILL.md path index for an unpacked plugin tree.
+ * Prefer `skills/` then `.capa-commands/`, then a full-tree scan for odd layouts.
+ */
+function getCachedPluginSkillIndex(pluginRoot: string): Map<string, string> {
+	const mtimeMs = readPluginRootMtime(pluginRoot);
+	if (mtimeMs == null) return new Map();
+
+	const cached = pluginSkillIndexCache.get(pluginRoot);
+	if (cached && cached.mtimeMs === mtimeMs) return cached.index;
+
+	const index = new Map<string, string>();
+
+	const skillsSub = join(pluginRoot, "skills");
+	if (existsSync(skillsSub)) {
+		for (const [id, skillMdPath] of findSkillsInDirectory(skillsSub)) {
+			index.set(id, skillMdPath);
+		}
+	}
+
+	const commandsRoot = join(pluginRoot, ".capa-commands");
+	if (existsSync(commandsRoot)) {
+		try {
+			for (const entry of readdirSync(commandsRoot, { withFileTypes: true })) {
+				if (!entry.isDirectory()) continue;
+				const skillMdPath = join(commandsRoot, entry.name, "SKILL.md");
+				if (existsSync(skillMdPath) && !index.has(entry.name)) {
+					index.set(entry.name, skillMdPath);
+				}
+			}
+		} catch {
+			// ignore unreadable command dirs
+		}
+	}
+
+	// Odd layouts (e.g. nested non-skills paths) — fill gaps only.
+	for (const [id, skillMdPath] of findSkillsInDirectory(pluginRoot)) {
+		if (!index.has(id)) index.set(id, skillMdPath);
+	}
+
+	pluginSkillIndexCache.set(pluginRoot, { mtimeMs, index });
+	return index;
+}
+
+/**
+ * Locate SKILL.md for a skill id inside an unpacked plugin tree.
+ * Checks common layouts, then falls back to a cached recursive scan.
+ */
+function findPluginSkillMd(
+	pluginRoot: string,
+	skillId: string,
+): string | null {
+	const candidates = [
+		join(pluginRoot, skillId, "SKILL.md"),
+		join(pluginRoot, "skills", skillId, "SKILL.md"),
+		join(pluginRoot, ".capa-commands", skillId, "SKILL.md"),
+	];
+	for (const candidate of candidates) {
+		if (existsSync(candidate)) return candidate;
+	}
+
+	return getCachedPluginSkillIndex(pluginRoot).get(skillId) ?? null;
+}
+
+function resolvePluginSkillContent(
+	skill: Skill,
+	options?: SkillContentResolveOptions,
+): SkillContentResult | null {
+	if (skill.type !== "plugin" && !skill.sourcePlugin) return null;
+	const pluginId = skill.sourcePlugin?.id;
+	if (
+		!pluginId ||
+		!isSafeCapabilityId(skill.id) ||
+		!isSafeCapabilityId(pluginId)
+	) {
+		return null;
+	}
+
+	const pluginsBase =
+		options?.pluginsBaseDir ??
+		(options?.projectId ? getProjectPluginsDir(options.projectId) : null);
+	if (!pluginsBase) return null;
+
+	let pluginRoot: string;
+	try {
+		pluginRoot = assertSafeRepoPath(pluginsBase, pluginId);
+	} catch {
+		return null;
+	}
+	if (!existsSync(pluginRoot)) return null;
+
+	const skillMdPath = findPluginSkillMd(pluginRoot, skill.id);
+	if (!skillMdPath) return null;
+
+	try {
+		const skillRoot = skillMdPath.replace(/[/\\]SKILL\.md$/i, "");
+		return tryParse(
+			readFileSync(skillMdPath, "utf-8"),
+			collectFiles(skillRoot),
+		);
+	} catch {
+		return null;
+	}
+}
+
 /**
  * Resolve SKILL.md content for a skill from inline content, a local path,
  * or an installed copy under a provider's skillsDir.
@@ -149,6 +276,7 @@ export function resolveSkillContent(
 	projectPath: string,
 	skill: Skill,
 	providers: string[],
+	options?: SkillContentResolveOptions,
 ): SkillContentResult | null {
 	// Inline skills embed SKILL.md in def.content
 	if (skill.type === "inline" && skill.def?.content) {
@@ -172,7 +300,7 @@ export function resolveSkillContent(
 		}
 	}
 
-	// Installed / github / gitlab / remote / plugin: look under provider skillsDirs
+	// Prefer provider-installed copies (may include install-time sanitization).
 	if (!isSafeCapabilityId(skill.id)) {
 		return null;
 	}
@@ -201,7 +329,9 @@ export function resolveSkillContent(
 		}
 	}
 
-	return null;
+	// Pre-install fallback: unpacked plugin tree under ~/.capa/plugins/<projectId>/
+	// (populated when the plugin is added / effective caps are resolved).
+	return resolvePluginSkillContent(skill, options);
 }
 
 /**
@@ -214,11 +344,12 @@ export async function resolveSkillContentById(
 	capabilities: Capabilities,
 	skillId: string,
 	authFetch?: AuthenticatedFetch,
+	options?: SkillContentResolveOptions,
 ): Promise<SkillContentResult | null> {
 	const skill = (capabilities.skills ?? []).find((s) => s.id === skillId);
 	if (!skill) return null;
 	const providers = capabilities.providers ?? [];
-	const local = resolveSkillContent(projectPath, skill, providers);
+	const local = resolveSkillContent(projectPath, skill, providers, options);
 	if (local) return local;
 	if (authFetch) {
 		return fetchUninstalledSkillContent(skill, authFetch);
@@ -299,6 +430,7 @@ export function resolveSkillDescription(
 	projectPath: string,
 	skill: Skill,
 	providers: string[],
+	options?: SkillContentResolveOptions,
 ): {
 	description: string | null;
 	descriptionSource: "capabilities" | "frontmatter" | null;
@@ -308,7 +440,7 @@ export function resolveSkillDescription(
 		return { description: fromCaps, descriptionSource: "capabilities" };
 	}
 
-	const resolved = resolveSkillContent(projectPath, skill, providers);
+	const resolved = resolveSkillContent(projectPath, skill, providers, options);
 	const fromFrontmatter = resolved?.metadata?.description?.trim();
 	if (fromFrontmatter) {
 		return { description: fromFrontmatter, descriptionSource: "frontmatter" };

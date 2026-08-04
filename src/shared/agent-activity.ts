@@ -17,9 +17,10 @@ export const SYSTEM_ACTIVITY_HOOK_PREFIX = "capa-sys-activity-";
 
 /**
  * Lifecycle events we install for observability.
- * Intentionally omits most `before*` hooks — those double every action without
- * adding user-facing value. `beforeFileRead` is kept because Cursor has no
- * after-read equivalent and skill loads show up there.
+ * Intentionally omits all `before*` hooks — those double every action
+ * (e.g. Cursor `beforeReadFile` + `postToolUse`/`Read`) without adding
+ * user-facing value. File reads/skills show up via `afterTool`; edits via
+ * `afterFileEdit`.
  *
  * Per-provider install filters this list to events the provider actually maps
  * (see {@link buildSystemActivityHooks}) so wrap/install stays quiet.
@@ -31,7 +32,6 @@ export const SYSTEM_ACTIVITY_EVENTS: readonly CanonicalHookEvent[] = [
 	"afterTool",
 	"afterToolFailure",
 	"afterShell",
-	"beforeFileRead",
 	"afterFileEdit",
 	"afterMcpCall",
 	"subagentStart",
@@ -66,9 +66,7 @@ export function buildSystemActivityHooks(
 	projectId: string,
 	providerId?: string,
 ): Hook[] {
-	const providerArg = providerId
-		? ` --provider ${shellQuote(providerId)}`
-		: "";
+	const providerArg = providerId ? ` --provider ${shellQuote(providerId)}` : "";
 	const events = providerId
 		? SYSTEM_ACTIVITY_EVENTS.filter((event) =>
 				providerMapsActivityEvent(providerId, event),

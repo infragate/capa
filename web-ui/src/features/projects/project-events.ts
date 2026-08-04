@@ -16,6 +16,19 @@ type ProjectEventSubscription = {
 const subscriptions = new Map<string, Set<ProjectEventSubscription>>();
 const sources = new Map<string, EventSource>();
 
+/** Test-only: drop shared sockets between cases. */
+export function _resetProjectEventsForTests(): void {
+  for (const es of sources.values()) {
+    try {
+      es.close();
+    } catch {
+      // ignore
+    }
+  }
+  sources.clear();
+  subscriptions.clear();
+}
+
 function ensureSource(projectId: string): EventSource {
   const existing = sources.get(projectId);
   if (existing) return existing;
@@ -74,7 +87,18 @@ export function subscribeProjectEvents(
     subscriptions.set(projectId, set);
   }
   set.add(sub);
-  ensureSource(projectId);
+  const es = ensureSource(projectId);
+
+  // EventSource.onopen only fires on CONNECTING → OPEN. A late subscriber
+  // (activity after capabilities sync) joining an already-open shared socket
+  // would otherwise stay on "reconnecting…" forever.
+  if (es.readyState === EventSource.OPEN) {
+    queueMicrotask(() => {
+      if (!subscriptions.get(projectId)?.has(sub)) return;
+      if (sources.get(projectId)?.readyState !== EventSource.OPEN) return;
+      sub.handlers.onOpen?.();
+    });
+  }
 
   return () => {
     set!.delete(sub);

@@ -22,7 +22,8 @@ describe("agent-activity helpers", () => {
 		expect(hooks.some((h) => h.on === "beforeShell")).toBe(false);
 		expect(hooks.some((h) => h.on === "afterShell")).toBe(true);
 		expect(hooks.some((h) => h.on === "afterTool")).toBe(true);
-		expect(hooks.some((h) => h.on === "beforeFileRead")).toBe(true);
+		expect(hooks.some((h) => h.on === "beforeFileRead")).toBe(false);
+		expect(hooks.some((h) => h.on === "afterFileEdit")).toBe(true);
 		for (const h of hooks) {
 			expect(isSystemActivityHookId(h.id)).toBe(true);
 			expect(h.id.startsWith(SYSTEM_ACTIVITY_HOOK_PREFIX)).toBe(true);
@@ -34,7 +35,7 @@ describe("agent-activity helpers", () => {
 		}
 	});
 
-	it("omits events Claude Code does not map (e.g. beforeFileRead)", () => {
+	it("omits events Claude Code does not map", () => {
 		const hooks = buildSystemActivityHooks("my-project", "claude-code");
 		expect(hooks.some((h) => h.on === "afterTool")).toBe(true);
 		expect(hooks.some((h) => h.on === "afterToolFailure")).toBe(true);
@@ -62,18 +63,37 @@ describe("normalizeActivityHookPayload", () => {
 	it("uses provider hint when payload has no provider field", () => {
 		const out = normalizeActivityHookPayload(
 			"afterTool",
-			{ tool_name: "Read", tool_input: { path: "a.ts" } },
+			{
+				tool_name: "Read",
+				tool_input: { path: "a.ts" },
+				conversation_id: "c1",
+				generation_id: "g1",
+				model: "composer-1.5",
+				model_id: "composer-1",
+			},
 			"cursor",
 		);
 		expect(out.skip).toBe(false);
 		expect(out.kind).toBe("agent_tool");
 		expect(out.source).toBe("cursor");
+		expect(out.conversationId).toBe("c1");
+		expect(out.generationId).toBe("g1");
+		expect(out.model).toBe("composer-1.5");
+		expect(out.attributes?.model).toBe("composer-1.5");
+		expect(out.attributes?.model_id).toBe("composer-1");
 	});
 
 	it("skips before-hooks and Shell tool wrappers", () => {
 		expect(
 			normalizeActivityHookPayload("beforeShell", { command: "ls" }, "cursor")
 				.skip,
+		).toBe(true);
+		expect(
+			normalizeActivityHookPayload(
+				"beforeFileRead",
+				{ file_path: "/proj/a.ts" },
+				"cursor",
+			).skip,
 		).toBe(true);
 		expect(
 			normalizeActivityHookPayload(
@@ -84,14 +104,21 @@ describe("normalizeActivityHookPayload", () => {
 		).toBe(true);
 	});
 
-	it("skips capa sh shell rows (MCP tracer owns the tool call)", () => {
-		expect(
-			normalizeActivityHookPayload(
-				"afterShell",
-				{ command: "capa sh owl check-consistency" },
-				"cursor",
-			).skip,
-		).toBe(true);
+	it("keeps capa sh shell rows (agent-visible Bash / Shell span)", () => {
+		const out = normalizeActivityHookPayload(
+			"afterShell",
+			{
+				command: "capa sh slack search-public-and-private --query infragate",
+				session_id: "ca8dfbb8-554d-4801-aaf6-01b1d98e406e",
+				prompt_id: "prompt-1",
+			},
+			"claude-code",
+		);
+		expect(out.skip).toBe(false);
+		expect(out.kind).toBe("shell");
+		expect(out.toolName).toContain("capa sh");
+		expect(out.conversationId).toBe("ca8dfbb8-554d-4801-aaf6-01b1d98e406e");
+		expect(out.generationId).toBe("prompt-1");
 	});
 
 	it("maps prompts", () => {
@@ -102,10 +129,12 @@ describe("normalizeActivityHookPayload", () => {
 		expect(out.toolName).toContain("Please fix");
 	});
 
-	it("detects SKILL.md reads as skill", () => {
-		const out = normalizeActivityHookPayload("beforeFileRead", {
-			file_path: "/proj/.cursor/skills/bootstrap/SKILL.md",
+	it("detects SKILL.md reads as skill via afterTool", () => {
+		const out = normalizeActivityHookPayload("afterTool", {
+			tool_name: "Read",
+			tool_input: { path: "/proj/.cursor/skills/bootstrap/SKILL.md" },
 		});
+		expect(out.skip).toBe(false);
 		expect(out.kind).toBe("skill");
 		expect(out.toolName).toBe("bootstrap");
 	});

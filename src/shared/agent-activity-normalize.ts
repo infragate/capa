@@ -6,6 +6,12 @@
 import type { ToolCallKind, ToolCallStatus } from "../types/database";
 import type { CanonicalHookEvent } from "../types/hooks";
 import {
+	type ActivityAttributes,
+	extractActivityAttributes,
+} from "./activity-attributes";
+import { extractActivityCorrelation } from "./activity-correlation";
+import { extractActivityResult } from "./activity-result";
+import {
 	asRecord,
 	extractPath,
 	nested,
@@ -13,9 +19,9 @@ import {
 	promptTextFrom,
 	shellCommandFrom,
 	stringField,
+	type TokenUsage,
 	tokenUsageFrom,
 	toolNameFrom,
-	type TokenUsage,
 } from "./agent-activity-fields";
 
 export interface NormalizedActivityEvent {
@@ -28,6 +34,14 @@ export interface NormalizedActivityEvent {
 	errorMessage?: string | null;
 	/** Provider-reported model usage (typically on `stop`). */
 	tokenUsage?: TokenUsage | null;
+	/** Provider conversation / chat id (from hooks.activityCorrelation). */
+	conversationId?: string | null;
+	/** Provider turn / generation id (from hooks.activityCorrelation). */
+	generationId?: string | null;
+	/** Denormalized model slug when present on the hook envelope. */
+	model?: string | null;
+	/** Provider envelope attributes (model_id, versions, …). */
+	attributes?: ActivityAttributes | null;
 	/** When true, caller should drop the event (capa MCP dedup). */
 	skip: boolean;
 	skipReason?: string;
@@ -64,12 +78,13 @@ export function normalizeActivityHookPayload(
 		};
 	}
 
-	// Outcome-only: ignore lifecycle "before" noise (except file reads).
+	// Outcome-only: ignore lifecycle "before" noise.
 	// Kept even though SYSTEM_ACTIVITY_EVENTS omits these — CLI may still receive them.
 	if (
 		event === "beforeTool" ||
 		event === "beforeShell" ||
-		event === "beforeMcpCall"
+		event === "beforeMcpCall" ||
+		event === "beforeFileRead"
 	) {
 		return {
 			kind: "agent_tool",
@@ -85,11 +100,19 @@ export function normalizeActivityHookPayload(
 	const toolName = nameForEvent(event, kind, obj);
 	const status = statusForEvent(event, obj);
 	const args = argsForEvent(event, obj);
-	const resultPreview = resultForEvent(event, obj);
+	const resultPreview = resultForEvent(event, obj, provider);
 	const errorMessage = errorForEvent(event, obj);
 	const tokenUsage = tokenUsageFrom(obj);
+	const { conversationId, generationId } = extractActivityCorrelation(
+		provider,
+		obj,
+	);
+	const { attributes, model } = extractActivityAttributes(provider, obj);
 
-	// Shell tool wrappers duplicate afterShell / capa MCP rows.
+	// Shell tool wrappers duplicate afterShell (Cursor Shell / Claude Bash).
+	// Keep afterShell even for `capa sh …` — MCP still traces the tool call,
+	// but dropping the shell span hides what the agent actually ran (help,
+	// group listing, passthrough, and the capa sh invocation itself).
 	if (kind === "agent_tool" && isShellToolName(toolName)) {
 		return {
 			kind,
@@ -97,19 +120,7 @@ export function normalizeActivityHookPayload(
 			status,
 			source: provider,
 			skip: true,
-			skipReason: "shell tool wrapper (covered by afterShell / capa tool)",
-		};
-	}
-
-	// `capa sh …` is already traced as a capa tool call via the MCP handler.
-	if (kind === "shell" && isCapaShCommand(toolName)) {
-		return {
-			kind,
-			toolName,
-			status,
-			source: provider,
-			skip: true,
-			skipReason: "capa sh (already traced via MCP handler)",
+			skipReason: "shell tool wrapper (covered by afterShell)",
 		};
 	}
 
@@ -122,6 +133,10 @@ export function normalizeActivityHookPayload(
 		resultPreview,
 		errorMessage,
 		tokenUsage,
+		conversationId,
+		generationId,
+		model,
+		attributes: Object.keys(attributes).length > 0 ? attributes : null,
 		skip: false,
 	};
 }
@@ -132,11 +147,15 @@ function kindForEvent(
 ): ToolCallKind {
 	if (event === "userPromptSubmit") return "prompt";
 	if (event === "beforeShell" || event === "afterShell") return "shell";
-	if (event === "beforeFileRead" || event === "afterFileEdit") {
+	if (event === "afterFileEdit") {
 		return isSkillMdPath(extractPath(obj)) ? "skill" : "file";
 	}
 	if (event === "beforeMcpCall" || event === "afterMcpCall") return "agent_mcp";
-	if (event === "beforeTool" || event === "afterTool" || event === "afterToolFailure") {
+	if (
+		event === "beforeTool" ||
+		event === "afterTool" ||
+		event === "afterToolFailure"
+	) {
 		if (isSkillMdPath(extractPath(obj))) return "skill";
 		return "agent_tool";
 	}
@@ -183,18 +202,18 @@ function nameForEvent(
 	}
 	if (kind === "compact" || kind === "stop") return event;
 
-	return (
-		toolNameFrom(obj) ||
-		stringField(obj, "tool") ||
-		event
-	);
+	return toolNameFrom(obj) || stringField(obj, "tool") || event;
 }
 
 function statusForEvent(
 	event: CanonicalHookEvent,
 	obj: Record<string, unknown>,
 ): ToolCallStatus {
-	if (event.startsWith("before") || event === "sessionStart" || event === "subagentStart") {
+	if (
+		event.startsWith("before") ||
+		event === "sessionStart" ||
+		event === "subagentStart"
+	) {
 		return "ok";
 	}
 	if (event === "afterToolFailure") return "error";
@@ -203,10 +222,15 @@ function statusForEvent(
 	if (explicit === "error" || explicit === "failed" || explicit === "failure") {
 		return "error";
 	}
-	if (obj.error != null || obj.error_message != null || obj.errorMessage != null) {
+	if (
+		obj.error != null ||
+		obj.error_message != null ||
+		obj.errorMessage != null
+	) {
 		return "error";
 	}
-	const exitCode = obj.exit_code ?? obj.exitCode ?? nested(obj, ["output", "exit_code"]);
+	const exitCode =
+		obj.exit_code ?? obj.exitCode ?? nested(obj, ["output", "exit_code"]);
 	if (typeof exitCode === "number" && exitCode !== 0) return "error";
 
 	return "ok";
@@ -222,7 +246,10 @@ function argsForEvent(
 	if (event === "beforeShell" || event === "afterShell") {
 		return {
 			command: shellCommandFrom(obj),
-			cwd: stringField(obj, "cwd") || stringField(obj, "working_directory") || null,
+			cwd:
+				stringField(obj, "cwd") ||
+				stringField(obj, "working_directory") ||
+				null,
 		};
 	}
 	if (event === "stop" || event === "sessionEnd") {
@@ -246,9 +273,14 @@ function argsForEvent(
 function resultForEvent(
 	event: CanonicalHookEvent,
 	obj: Record<string, unknown>,
+	provider: string | null,
 ): unknown {
 	if (event.startsWith("before")) return undefined;
+	const fromProvider = extractActivityResult(provider, obj);
+	if (fromProvider !== undefined) return fromProvider;
+	// Last-resort keys when the provider has not declared activityResultFields.
 	return (
+		obj.tool_response ??
 		obj.tool_output ??
 		obj.toolOutput ??
 		obj.output ??
@@ -306,7 +338,11 @@ function isCapaMcpPayload(
 
 	// Config-shaped payloads sometimes nest capa under mcpServers without a URL.
 	const mcpServers = obj.mcpServers ?? obj.mcp_servers;
-	if (mcpServers && typeof mcpServers === "object" && !Array.isArray(mcpServers)) {
+	if (
+		mcpServers &&
+		typeof mcpServers === "object" &&
+		!Array.isArray(mcpServers)
+	) {
 		for (const key of Object.keys(mcpServers as Record<string, unknown>)) {
 			if (/^capa\b/i.test(key) || CAPA_MCP_RE.test(key)) return true;
 		}
@@ -327,13 +363,6 @@ function isShellToolName(name: string): boolean {
 		n === "terminal" ||
 		n === "powershell"
 	);
-}
-
-/** Shell invocations of capa tools — MCP tracer already records the tool. */
-function isCapaShCommand(command: string): boolean {
-	const c = command.trim().toLowerCase();
-	// Match `capa sh …` / `capa.exe sh …` even with a quoted absolute path.
-	return /(?:^|[\s"'\\/])capa(\.exe)?["']?\s+sh\b/.test(c);
 }
 
 function isSkillMdPath(path: string | null): boolean {

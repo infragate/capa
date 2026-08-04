@@ -46,6 +46,28 @@ export const claudeCode: ProviderIntegration = {
 		},
 		shape: "claude",
 		supportsNameTag: true,
+		// Claude common hook stdin: session_id (chat) + prompt_id (turn).
+		// Docs: https://code.claude.com/docs/en/hooks
+		activityCorrelation: {
+			conversationIdFields: ["session_id"],
+			generationIdFields: ["prompt_id"],
+		},
+		activityAttributes: {
+			attributes: [
+				{ key: "model", fields: ["model"] },
+				{ key: "cwd", fields: ["cwd"] },
+				{ key: "permission_mode", fields: ["permission_mode"] },
+				{ key: "transcript_path", fields: ["transcript_path"] },
+				{ key: "hook_event_name", fields: ["hook_event_name"] },
+				{ key: "tool_use_id", fields: ["tool_use_id"] },
+				{ key: "agent_type", fields: ["agent_type"] },
+				{ key: "agent_id", fields: ["agent_id"] },
+				{ key: "session_reason", fields: ["reason"] },
+				{ key: "source", fields: ["source"] },
+			],
+		},
+		// Claude PostToolUse carries the result as tool_response (not tool_output).
+		activityResultFields: ["tool_response", "tool_output", "output", "result"],
 		eventMap: {
 			sessionStart: { event: "SessionStart" },
 			sessionEnd: { event: "SessionEnd" },

@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'bun:test';
 import type { ToolCallRecord } from '../../../../types/api';
-import { groupActivityRuns, isCapaToolCall } from './groupActivityRuns';
+import {
+  groupActivityConversations,
+  groupActivityRuns,
+  isCapaToolCall,
+} from './groupActivityRuns';
 
 function call(
   partial: Partial<ToolCallRecord> & Pick<ToolCallRecord, 'id' | 'kind' | 'tool_name' | 'started_at'>,
@@ -22,6 +26,10 @@ function call(
     cache_write_tokens: null,
     error_message: null,
     agent_id: null,
+    conversation_id: null,
+    generation_id: null,
+    model: null,
+    attributes_json: null,
     ...partial,
   };
 }
@@ -89,6 +97,58 @@ describe('groupActivityRuns', () => {
     ];
     const runs = groupActivityRuns(calls);
     expect(runs[0]!.hasError).toBe(true);
+  });
+
+  it('groups by conversation then generation when ids are present', () => {
+    const calls = [
+      call({
+        id: '4',
+        kind: 'agent_tool',
+        tool_name: 'Read',
+        started_at: 400,
+        conversation_id: 'conv-a',
+        generation_id: 'gen-2',
+      }),
+      call({
+        id: '3',
+        kind: 'prompt',
+        tool_name: 'second turn',
+        started_at: 300,
+        conversation_id: 'conv-a',
+        generation_id: 'gen-2',
+      }),
+      call({
+        id: '2',
+        kind: 'shell',
+        tool_name: 'ls',
+        started_at: 200,
+        conversation_id: 'conv-a',
+        generation_id: 'gen-1',
+      }),
+      call({
+        id: '1',
+        kind: 'prompt',
+        tool_name: 'first turn',
+        started_at: 100,
+        conversation_id: 'conv-a',
+        generation_id: 'gen-1',
+      }),
+      call({
+        id: '5',
+        kind: 'prompt',
+        tool_name: 'other chat',
+        started_at: 500,
+        conversation_id: 'conv-b',
+        generation_id: 'gen-x',
+      }),
+    ];
+    const conversations = groupActivityConversations(calls);
+    expect(conversations).toHaveLength(2);
+    expect(conversations[0]!.id).toBe('conv-b');
+    expect(conversations[1]!.id).toBe('conv-a');
+    expect(conversations[1]!.generations).toHaveLength(2);
+    expect(conversations[1]!.generations[0]!.title).toBe('second turn');
+    expect(conversations[1]!.generations[1]!.title).toBe('first turn');
   });
 });
 

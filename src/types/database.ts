@@ -100,6 +100,14 @@ export interface ToolCallRecord {
   cache_write_tokens: number | null;
   error_message: string | null;
   agent_id: string | null;
+  /** Provider conversation / chat id (from hooks.activityCorrelation). */
+  conversation_id: string | null;
+  /** Provider turn / generation id (from hooks.activityCorrelation). */
+  generation_id: string | null;
+  /** Denormalized model slug from hook envelope attributes. */
+  model: string | null;
+  /** JSON object of provider envelope attributes (model_id, versions, …). */
+  attributes_json: string | null;
 }
 
 /** One-minute activity bucket for the last-hour chart. */

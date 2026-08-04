@@ -112,6 +112,7 @@ export async function handleGetSkillContent(
 			capabilities,
 			skillId,
 			authFetch,
+			{ projectId },
 		);
 		if (!resolved) {
 			return new Response(

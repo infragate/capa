@@ -1,11 +1,16 @@
-import { detectCapabilitiesFile } from "../shared/paths";
-import { parseCapabilitiesFile } from "../shared/capabilities";
+import { serializeActivityAttributes } from "../shared/activity-attributes";
 import { isAgentActivityEnabled } from "../shared/agent-activity";
 import { syncSystemActivityHooks } from "../shared/agent-activity-sync";
+import { parseCapabilitiesFile } from "../shared/capabilities";
+import { detectCapabilitiesFile } from "../shared/paths";
 import { resolveProvidersForClean } from "../shared/providers/resolve";
-import { TOOL_CALL_KINDS, type ToolCallKind, type ToolCallStatus } from "../types/database";
-import type { ToolCallTracer } from "./tool-call-tracer";
+import {
+	TOOL_CALL_KINDS,
+	type ToolCallKind,
+	type ToolCallStatus,
+} from "../types/database";
 import { type ProjectRouteDeps } from "./project-routes";
+import type { ToolCallTracer } from "./tool-call-tracer";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
@@ -21,6 +26,10 @@ export interface ActivityIngestBody {
 	errorMessage?: string | null;
 	sessionId?: string | null;
 	agentId?: string | null;
+	conversationId?: string | null;
+	generationId?: string | null;
+	model?: string | null;
+	attributes?: Record<string, unknown> | null;
 	tokenUsage?: {
 		input_tokens?: number | null;
 		output_tokens?: number | null;
@@ -94,18 +103,35 @@ export async function handlePostProjectActivityEvent(
 	}
 
 	const status: ToolCallStatus =
-		body.status === "error" || body.status === "running"
-			? body.status
-			: "ok";
+		body.status === "error" || body.status === "running" ? body.status : "ok";
 
 	const id = deps.toolCallTracer.start({
 		projectId,
 		sessionId: body.sessionId ?? null,
 		agentId: body.agentId ?? null,
+		conversationId:
+			typeof body.conversationId === "string" && body.conversationId.trim()
+				? body.conversationId.trim()
+				: null,
+		generationId:
+			typeof body.generationId === "string" && body.generationId.trim()
+				? body.generationId.trim()
+				: null,
+		model:
+			typeof body.model === "string" && body.model.trim()
+				? body.model.trim()
+				: null,
+		attributesJson:
+			body.attributes && typeof body.attributes === "object"
+				? serializeActivityAttributes(body.attributes)
+				: null,
 		source: body.source ?? null,
 		kind,
 		toolName,
 		args: body.args,
+		// Hook payloads carry their own correlation; never steal another
+		// provider's conversation when stdin parse fails (Windows BOM, etc.).
+		inheritCorrelation: false,
 	});
 
 	// Tracer finish already notifies SSE via ToolCallTracer constructor notify.

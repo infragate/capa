@@ -150,6 +150,54 @@ export type HooksStorage =
   | { kind: 'directory'; dir: string; extension: '.json' };
 
 /**
+ * How to pull capa's activity correlation keys from provider hook stdin JSON.
+ *
+ * Pure data — `extractActivityCorrelation()` walks these field names (tried
+ * in order; first non-empty string wins). Onboard a provider by declaring its
+ * payload keys here; do not hardcode provider field names in the ingest path.
+ *
+ * - Cursor: `conversation_id` + `generation_id`
+ * - Claude Code: `session_id` + `prompt_id`
+ */
+export interface ActivityCorrelationIntegration {
+  /** Fields that identify a conversation / chat / session. */
+  conversationIdFields: readonly string[];
+  /**
+   * Fields that identify a turn / generation within a conversation.
+   * Empty when the provider has no turn id — UI falls back to heuristic runs.
+   */
+  generationIdFields: readonly string[];
+}
+
+/**
+ * One stdin field → capa activity attribute mapping.
+ *
+ * Attribute keys are capa-stable (for future telemetry fan-out). Field names
+ * are provider-specific and tried in order; first present value wins.
+ */
+export interface ActivityAttributeField {
+  /** Stable capa attribute key (e.g. `model`, `provider_version`). */
+  key: string;
+  /** Provider stdin JSON keys to read. */
+  fields: readonly string[];
+  /**
+   * Coercion:
+   * - `string` (default): trim non-empty string
+   * - `number` / `boolean`: typed primitives
+   * - `json`: objects/arrays/primitives kept as JSON-serializable values
+   */
+  kind?: 'string' | 'number' | 'boolean' | 'json';
+}
+
+/**
+ * Extra hook-stdin metadata to capture on every activity event.
+ * Keep this to envelope / identity fields — not large tool outputs.
+ */
+export interface ActivityAttributesIntegration {
+  attributes: readonly ActivityAttributeField[];
+}
+
+/**
  * Per-provider hooks integration descriptor.
  *
  * Pure data — every behavior is derived from these fields by the shared
@@ -178,6 +226,22 @@ export interface HooksIntegration {
    * user-authored entries).
    */
   supportsNameTag: boolean;
+  /**
+   * Maps provider hook stdin fields → capa activity conversation/generation
+   * ids. Omit until the provider's payload keys are known.
+   */
+  activityCorrelation?: ActivityCorrelationIntegration;
+  /**
+   * Maps provider hook stdin fields → capa activity attributes (model, etc.).
+   * Omit until the provider's payload keys are known.
+   */
+  activityAttributes?: ActivityAttributesIntegration;
+  /**
+   * Stdin fields that hold the tool/shell result for after* events.
+   * Tried in order; first present value wins (e.g. Cursor `tool_output`,
+   * Claude Code `tool_response`).
+   */
+  activityResultFields?: readonly string[];
 }
 
 /**

@@ -350,6 +350,11 @@ export class LockfileBuilder {
 		this.plugins.set(entry.id, entry);
 	}
 
+	/** Drop a plugin pin (used when per-plugin resolve fails after upsert). */
+	removePlugin(id: string): void {
+		this.plugins.delete(id);
+	}
+
 	upsertHook(entry: LockHookEntry): void {
 		this.hooks.set(entry.id, entry);
 	}

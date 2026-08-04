@@ -62,6 +62,10 @@ interface CursorMarketplacePlugin {
   logoUrl?: string;
   publisher?: unknown;
   gitUrl?: string;
+  /** Path inside the git repo when the listing is a multi-plugin monorepo. */
+  gitPath?: string;
+  /** Optional commit/tag/branch pin from the marketplace listing. */
+  gitRef?: string;
   skills?: CursorMarketplaceSkill[];
   mcpServers?: CursorMarketplaceMcpServer[];
   curatedCategoryKeys?: unknown;
@@ -89,13 +93,54 @@ function strArr(v: unknown): string[] | undefined {
   return v.map((x) => typeof x === 'string' ? x : str(x) ?? '').filter(Boolean);
 }
 
-function pluginDef(gitUrl: string | undefined): { type: 'github' | 'gitlab'; def: { repo: string } } | undefined {
+export type CursorPluginInstallDef = {
+  type: 'github' | 'gitlab';
+  def: { repo: string; ref?: string };
+};
+
+/**
+ * Build a capa plugin install def from Cursor marketplace git coordinates.
+ * Multi-plugin monorepos expose `gitPath`; pin it with capa's `::subpath`
+ * form so resolve finds the plugin manifest inside that directory instead of
+ * failing on a root marketplace catalog (e.g. `.cursor-plugin/marketplace.json`).
+ */
+export function pluginDef(
+  gitUrl: string | undefined,
+  gitPath?: string | undefined,
+  gitRef?: string | undefined,
+): CursorPluginInstallDef | undefined {
   if (!gitUrl) return undefined;
-  const m = gitUrl.match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
-  if (m) return { type: 'github', def: { repo: `${m[1]}/${m[2]}` } };
-  const g = gitUrl.match(/gitlab\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
-  if (g) return { type: 'gitlab', def: { repo: `${g[1]}/${g[2]}` } };
-  return undefined;
+  let ownerRepo: string | undefined;
+  let type: 'github' | 'gitlab' | undefined;
+  const gh = gitUrl.match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
+  if (gh) {
+    type = 'github';
+    ownerRepo = `${gh[1]}/${gh[2]}`;
+  } else {
+    const gl = gitUrl.match(/gitlab\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/);
+    if (gl) {
+      type = 'gitlab';
+      ownerRepo = `${gl[1]}/${gl[2]}`;
+    }
+  }
+  if (!type || !ownerRepo) return undefined;
+
+  const cleanedPath = (gitPath ?? '')
+    .replace(/\\/g, '/')
+    .replace(/^\/+/, '')
+    .replace(/\/+$/, '');
+  if (
+    cleanedPath &&
+    cleanedPath.split('/').some((seg) => !seg || seg === '.' || seg === '..')
+  ) {
+    return undefined;
+  }
+
+  const repo = cleanedPath ? `${ownerRepo}::${cleanedPath}` : ownerRepo;
+  const def: { repo: string; ref?: string } = { repo };
+  const ref = typeof gitRef === 'string' ? gitRef.trim() : '';
+  if (ref) def.ref = ref;
+  return { type, def };
 }
 
 function formatCategory(key: string): string {
@@ -197,7 +242,7 @@ const adapter: RegistryAdapter = {
     const publisherName = str(p.publisher) ?? '';
     const description = str(p.description) ?? '';
     const itemId = p.name ?? String(p.id);
-    const resolved = pluginDef(p.gitUrl);
+    const resolved = pluginDef(p.gitUrl, p.gitPath, p.gitRef);
     if (!resolved) {
       throw new Error(
         `Cursor marketplace plugin "${itemId}" does not expose a supported GitHub or GitLab repository URL.`

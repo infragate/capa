@@ -5,10 +5,11 @@ import type { ToolCallRecord } from '../../../../types/api';
 import { cn } from '../../../../lib/utils';
 import { ActivityRunDialog } from './ActivityRunDialog';
 import {
+  type ActivityConversation,
   type ActivityRun,
   formatDuration,
   formatRelative,
-  groupActivityRuns,
+  groupActivityConversations,
   maxSpanDuration,
   sumRunTokenUsage,
 } from './groupActivityRuns';
@@ -26,10 +27,12 @@ function RunRow({
   run,
   maxMs,
   onOpen,
+  nested,
 }: {
   run: ActivityRun;
   maxMs: number;
   onOpen: () => void;
+  nested?: boolean;
 }) {
   const { t } = useTranslation('projects');
   const spanCount = run.spans.length + (run.prompt ? 1 : 0);
@@ -44,7 +47,8 @@ function RunRow({
       type="button"
       onClick={onOpen}
       className={cn(
-        'flex w-full items-center gap-2 px-3 py-2.5 text-left cursor-pointer',
+        'flex w-full items-center gap-2 py-2.5 text-left cursor-pointer',
+        nested ? 'pl-6 pr-3' : 'px-3',
         'border-b border-border-secondary/90 last:border-b-0',
         'hover:bg-hover-bg/60 transition-colors duration-100',
       )}
@@ -62,9 +66,6 @@ function RunRow({
       />
       <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-text-primary">
         {run.title}
-      </span>
-      <span className="hidden sm:inline shrink-0 rounded bg-bg-tertiary px-1.5 py-0.5 text-[10px] text-text-tertiary">
-        {sourceLabelText(run.source, t)}
       </span>
       {tokenTotals.hasAny ? (
         <TokenUsageLabel
@@ -87,6 +88,56 @@ function RunRow({
   );
 }
 
+function ConversationBlock({
+  conversation,
+  maxMs,
+  onOpenRun,
+}: {
+  conversation: ActivityConversation;
+  maxMs: number;
+  onOpenRun: (id: string) => void;
+}) {
+  const { t } = useTranslation('projects');
+  const multi = conversation.generations.length > 1;
+  const isOrphan = conversation.id.startsWith('orphan:');
+  const title = isOrphan
+    ? t('activity.ungrouped', { defaultValue: 'Activity' })
+    : t('activity.conversation', {
+        defaultValue: 'Conversation {{id}}',
+        id: conversation.id,
+      });
+
+  return (
+    <div className="border-b border-border-secondary/90 last:border-b-0">
+      <div className="flex items-center gap-2 bg-bg-tertiary/40 px-3 py-1.5 text-[10px] font-medium uppercase tracking-[0.06em] text-text-tertiary">
+        <span className="min-w-0 flex-1 truncate" title={isOrphan ? undefined : conversation.id}>
+          {title}
+        </span>
+        {conversation.source ? (
+          <span className="shrink-0 rounded bg-bg-secondary px-1.5 py-0.5 text-[10px] font-medium normal-case tracking-normal text-text-secondary">
+            {sourceLabelText(conversation.source, t)}
+          </span>
+        ) : null}
+        <span className="shrink-0 tabular-nums">
+          {conversation.generations.length}{' '}
+          {conversation.generations.length === 1
+            ? t('activity.generation', { defaultValue: 'turn' })
+            : t('activity.generations', { defaultValue: 'turns' })}
+        </span>
+      </div>
+      {conversation.generations.map((run) => (
+        <RunRow
+          key={run.id}
+          run={run}
+          maxMs={maxMs}
+          nested={multi}
+          onOpen={() => onOpenRun(run.id)}
+        />
+      ))}
+    </div>
+  );
+}
+
 export function ActivityFeed({
   calls,
   hasMore,
@@ -95,7 +146,14 @@ export function ActivityFeed({
   live = false,
 }: ActivityFeedProps) {
   const { t } = useTranslation('projects');
-  const runs = useMemo(() => groupActivityRuns(calls), [calls]);
+  const conversations = useMemo(
+    () => groupActivityConversations(calls),
+    [calls],
+  );
+  const runs = useMemo(
+    () => conversations.flatMap((c) => c.generations),
+    [conversations],
+  );
   const maxMs = useMemo(() => maxSpanDuration(runs), [runs]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
@@ -118,9 +176,6 @@ export function ActivityFeed({
         <div className="sticky top-0 z-[1] flex items-center gap-2 border-b border-border-secondary bg-bg-secondary/95 px-3 py-1.5 text-[10px] font-medium uppercase tracking-[0.07em] text-text-tertiary backdrop-blur-sm">
           <span className="w-4 shrink-0" />
           <span className="min-w-0 flex-1">{t('activity.colName')}</span>
-          <span className="hidden sm:inline w-16 shrink-0 text-right">
-            {t('activity.colSource')}
-          </span>
           <span className="w-14 shrink-0 text-right">{t('activity.colSpans')}</span>
           <span className="hidden md:inline w-14 shrink-0" />
           <span className="w-12 shrink-0 text-right">{t('activity.colLatency')}</span>
@@ -128,12 +183,12 @@ export function ActivityFeed({
             {t('activity.colTime')}
           </span>
         </div>
-        {runs.map((run) => (
-          <RunRow
-            key={run.id}
-            run={run}
+        {conversations.map((conversation) => (
+          <ConversationBlock
+            key={conversation.id}
+            conversation={conversation}
             maxMs={maxMs}
-            onOpen={() => setSelectedId(run.id)}
+            onOpenRun={setSelectedId}
           />
         ))}
         {hasMore && (

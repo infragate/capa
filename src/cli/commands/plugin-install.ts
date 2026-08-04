@@ -11,6 +11,7 @@ import {
   detectAndParseManifest,
   discoverPluginEntries,
   findPluginInDirectory,
+  resolveNestedPluginById,
   resolvePluginServerDef,
   resolvePluginRootInString,
   materializeCommandAsSkill,
@@ -267,49 +268,60 @@ export async function resolvePlugins(
     if (!getGitProvider(pluginRef.type)) continue;
     if (!pluginRef.def?.repo) continue;
 
-    const validated = validatePluginDef(pluginRef);
-    if ('error' in validated) {
-      // The user explicitly listed this plugin — fail loudly rather than skip
-      // it silently and report "install succeeded" with the plugin missing.
-      throw new Error(
-        `Invalid plugin entry ${pluginRef.id ?? pluginRef.def.repo}: ${validated.error}`
-      );
-    }
-
-    const { platform, repoPath, subpath, search, version, ref } = validated;
-
-    let snapshot: GetSnapshotResult;
+    const pluginLabel = pluginRef.id ?? pluginRef.def.repo;
+    // Isolate per-plugin failures so one bad entry (marketplace repo root,
+    // missing manifest, clone error, …) cannot wipe expansions from the rest.
+    let pluginInstallId: string | undefined;
+    const mergeSnap = {
+      skills: mergedSkills.length,
+      servers: mergedServers.length,
+      tools: mergedTools.length,
+      subagents: mergedSubagents.length,
+      hooks: mergedHooks.length,
+      rules: mergedRules.length,
+      resolved: resolvedPlugins.length,
+    };
     try {
-      const lockEntry = noCache
-        ? null
-        : lockBuilder.findPlugin({
-            source: platform,
-            repo: repoPath,
-            subpath: subpath || null,
-            requestedSearchName: search ?? null,
-            requestedVersion: version ?? null,
-            requestedRef: ref ?? null,
-          });
-      const pinnedSha = lockEntry?.resolvedRef;
-      snapshot = await getRepoSnapshot(platform, repoPath, authFetch, {
-        version,
-        ref,
-        pinnedSha,
-        noCache,
-      });
-    } catch (err: any) {
-      // Surface auth / 404 / network failures from `explainGitError` so that
-      // disconnected git integrations and typo'd repo paths fail the install
-      // instead of being silently skipped.
-      throw new Error(
-        `Failed to clone plugin ${repoPath}: ${err.message}`
-      );
-    }
+      const validated = validatePluginDef(pluginRef);
+      if ('error' in validated) {
+        throw new Error(
+          `Invalid plugin entry ${pluginLabel}: ${validated.error}`
+        );
+      }
 
-    // Resolve the manifest root. Three modes:
+      const { platform, repoPath, subpath, search, version, ref } = validated;
+
+      let snapshot: GetSnapshotResult;
+      try {
+        const lockEntry = noCache
+          ? null
+          : lockBuilder.findPlugin({
+              source: platform,
+              repo: repoPath,
+              subpath: subpath || null,
+              requestedSearchName: search ?? null,
+              requestedVersion: version ?? null,
+              requestedRef: ref ?? null,
+            });
+        const pinnedSha = lockEntry?.resolvedRef;
+        snapshot = await getRepoSnapshot(platform, repoPath, authFetch, {
+          version,
+          ref,
+          pinnedSha,
+          noCache,
+        });
+      } catch (err: any) {
+        throw new Error(
+          `Failed to clone plugin ${repoPath}: ${err.message}`
+        );
+      }
+
+    // Resolve the manifest root:
     //   • `search`  — walk the snapshot for a manifest dir matching the name.
     //   • `subpath` — exact path inside the repo (already provided by the user).
-    //   • neither   — the repo root itself is the plugin.
+    //   • neither   — the repo root itself is the plugin; if that has no
+    //                 manifest and the entry has an id, search the tree by id
+    //                 (multi-plugin marketplace monorepos).
     let manifestRoot: string;
     let resolvedSubpath: string;
     let manifest: UnifiedPluginManifest | null;
@@ -339,15 +351,35 @@ export async function resolvePlugins(
       }
       resolvedSubpath = subpath;
       manifest = detectAndParseManifest(manifestRoot, providers);
+      // Multi-plugin monorepos often only have a marketplace catalog at the
+      // repo root. When the capa entry has an id, resolve via direct child
+      // path or root marketplace.json (bounded — no full-tree walk).
+      if (!manifest && !subpath && pluginRef.id) {
+        const located = resolveNestedPluginById(
+          snapshot.snapshotDir,
+          pluginRef.id,
+          providers,
+        );
+        if (located) {
+          manifestRoot = located.entry.subpath
+            ? join(snapshot.snapshotDir, located.entry.subpath)
+            : snapshot.snapshotDir;
+          resolvedSubpath = located.entry.subpath;
+          manifest = located.manifest;
+        }
+      }
       if (!manifest) {
         throw new Error(
           `No plugin manifest found in ${repoPath}${subpath ? `/${subpath}` : ''}.\n` +
-          `    Expected one of: .claude-plugin/plugin.json, .cursor-plugin/plugin.json.`
+          `    Expected one of: .claude-plugin/plugin.json, .cursor-plugin/plugin.json.` +
+          (pluginRef.id
+            ? `\n    Tip: for monorepos, pin the plugin with "${repoPath}@${pluginRef.id}" or "${repoPath}::${pluginRef.id}".`
+            : '')
         );
       }
     }
 
-    const pluginInstallId = getPluginInstallId(pluginRef.id ?? manifest.name);
+    pluginInstallId = getPluginInstallId(pluginRef.id ?? manifest.name);
     currentPluginIds.add(pluginInstallId);
 
     const pluginStablePath = resolve(join(pluginsBase, pluginInstallId));
@@ -662,6 +694,47 @@ export async function resolvePlugins(
           );
         }
       }
+    }
+    } catch (err: unknown) {
+      if (err instanceof BlockedPhraseError) {
+        throw err;
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      if (pluginInstallId) {
+        currentPluginIds.delete(pluginInstallId);
+        lockBuilder.removePlugin(pluginInstallId);
+        mergedSkills.length = mergeSnap.skills;
+        mergedServers.length = mergeSnap.servers;
+        mergedTools.length = mergeSnap.tools;
+        mergedSubagents.length = mergeSnap.subagents;
+        mergedHooks.length = mergeSnap.hooks;
+        mergedRules.length = mergeSnap.rules;
+        resolvedPlugins.length = mergeSnap.resolved;
+        for (const skill of mergedSkills) {
+          if (skill.sourcePlugin?.id === pluginInstallId) {
+            delete skill.sourcePlugin;
+          }
+        }
+        registeredServerIds.clear();
+        for (const server of mergedServers) registeredServerIds.add(server.id);
+        registeredSubagentIds.clear();
+        for (const agent of mergedSubagents) registeredSubagentIds.add(agent.id);
+        registeredHookIds.clear();
+        for (const hook of mergedHooks) registeredHookIds.add(hook.id);
+        registeredRuleIds.clear();
+        for (const rule of mergedRules) registeredRuleIds.add(rule.id);
+        const partialDir = resolve(join(pluginsBase, pluginInstallId));
+        if (existsSync(partialDir)) {
+          try {
+            rmSync(partialDir, { recursive: true, force: true });
+          } catch {
+            // best-effort cleanup of a partially copied plugin tree
+          }
+        }
+      }
+      warnings.push(
+        `Plugin "${pluginLabel}" failed to resolve and was skipped: ${message}`,
+      );
     }
   }
 

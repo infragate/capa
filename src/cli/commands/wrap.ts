@@ -9,6 +9,7 @@ import { launchProvider } from '../utils/wrap/launch';
 import { waitForInterrupt } from '../utils/wrap/wait-for-interrupt';
 import { clearWrapSession, writeWrapSession } from '../utils/wrap/session-file';
 import { ensureWrapBinaryOnPath } from './wrap-ensure-binary';
+import { ensureWrapServerRunning } from './wrap-ensure-server';
 import { resolveWrapProviderArg } from './wrap-prompt';
 import { info, error } from '../ui';
 
@@ -96,6 +97,15 @@ export async function wrapCommand(
   // Fail fast before shadow workspace install when the launch binary is missing.
   try {
     await ensureWrapBinaryOnPath(wrap.binary, providerToken);
+  } catch (err) {
+    error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
+
+  // Warm wrap reuses the shadow workspace without install — still need the
+  // server for MCP tools, capa sh, and activity/telemetry hooks.
+  try {
+    await ensureWrapServerRunning();
   } catch (err) {
     error(err instanceof Error ? err.message : String(err));
     process.exit(1);

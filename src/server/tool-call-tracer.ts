@@ -41,11 +41,23 @@ export interface ToolCallStartInput {
 	projectId: string;
 	sessionId?: string | null;
 	agentId?: string | null;
+	conversationId?: string | null;
+	generationId?: string | null;
+	model?: string | null;
+	attributesJson?: string | null;
 	source?: string | null;
 	kind: ToolCallKind;
 	toolName: string;
 	metaTool?: string | null;
 	args?: unknown;
+	/**
+	 * When conversation/generation are missing, inherit the latest provider
+	 * correlation so capa MCP / `capa sh` spans group with the agent turn.
+	 * Provider hook ingest must pass `false` — otherwise a failed stdin parse
+	 * (e.g. Windows UTF-8 BOM) attaches the previous provider's ids.
+	 * Defaults to `true`.
+	 */
+	inheritCorrelation?: boolean;
 }
 
 export interface ToolCallFinishInput {
@@ -72,6 +84,20 @@ export class ToolCallTracer {
 	start(input: ToolCallStartInput): string {
 		const id = nanoid();
 		const secrets = this.secretValues(input.projectId);
+
+		let conversationId = input.conversationId ?? null;
+		let generationId = input.generationId ?? null;
+		// Capa MCP / shell traces do not see provider hook stdin. Inherit the
+		// active conversation/generation so they group with the agent turn.
+		// Provider hook ingest opts out — missing ids must stay null.
+		if (!conversationId && input.inheritCorrelation !== false) {
+			const inherited = this.db.findLatestActivityCorrelation(input.projectId);
+			if (inherited) {
+				conversationId = inherited.conversation_id;
+				generationId = inherited.generation_id;
+			}
+		}
+
 		const record = this.db.insertToolCall({
 			id,
 			project_id: input.projectId,
@@ -93,6 +119,10 @@ export class ToolCallTracer {
 			cache_write_tokens: null,
 			error_message: null,
 			agent_id: input.agentId ?? null,
+			conversation_id: conversationId,
+			generation_id: generationId,
+			model: input.model ?? null,
+			attributes_json: input.attributesJson ?? null,
 		});
 		this.notify?.(input.projectId, record);
 		return id;
