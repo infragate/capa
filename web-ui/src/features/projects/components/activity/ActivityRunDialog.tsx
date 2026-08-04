@@ -14,6 +14,7 @@ import { ActivitySpanRow } from './ActivitySpanRow';
 import { ActivityRunFileTree } from './ActivityRunFileTree';
 import { ActivityRunSplitPane } from './ActivityRunSplitPane';
 import {
+  buildDisplayPathKeyByEventId,
   collectRunFileChanges,
   displayPathKeyFromSpan,
   spanIdsForDisplayPathKey,
@@ -100,6 +101,11 @@ export function ActivityRunDialog({
     [projectPath],
   );
 
+  const pathKeyByEventId = useMemo(
+    () => buildDisplayPathKeyByEventId(events, fileEntries, pathOptions),
+    [events, fileEntries, pathOptions],
+  );
+
   const selectedPathKeys = useMemo(() => {
     if (pickedFilePathKey) return new Set([pickedFilePathKey]);
     const keys = new Set<string>();
@@ -114,15 +120,8 @@ export function ActivityRunDialog({
 
   const fileLinkedSpanIds = useMemo(() => {
     if (!pickedFilePathKey) return new Set<string>();
-    return new Set(
-      spanIdsForDisplayPathKey(
-        pickedFilePathKey,
-        events,
-        fileEntries,
-        pathOptions,
-      ),
-    );
-  }, [pickedFilePathKey, events, fileEntries, pathOptions]);
+    return new Set(spanIdsForDisplayPathKey(pickedFilePathKey, pathKeyByEventId));
+  }, [pickedFilePathKey, pathKeyByEventId]);
 
   function onSpanExpandedChange(nextOpen: boolean, call: ToolCallRecord) {
     setPickedFilePathKey(null);
@@ -143,12 +142,7 @@ export function ActivityRunDialog({
     setPickedFilePathKey(pathKey);
     setScrollTreePathKey(pathKey);
     setFollowLatest(false);
-    const spanIds = spanIdsForDisplayPathKey(
-      pathKey,
-      events,
-      fileEntries,
-      pathOptions,
-    );
+    const spanIds = spanIdsForDisplayPathKey(pathKey, pathKeyByEventId);
     requestAnimationFrame(() => {
       const first = spanIds[0];
       if (first) {

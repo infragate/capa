@@ -10,6 +10,8 @@ export type RunFileChangeFlags = {
 export type RunFileEntry = RunFileChangeFlags & {
   /** Normalized absolute or project-relative path (posix slashes). */
   path: string;
+  /** Grep/Glob search root — render as folder even when a leaf. */
+  isDirectory?: boolean;
 };
 
 const READ_TOOLS = new Set(['Read', 'read', 'read_file', 'ReadFile']);
@@ -65,7 +67,7 @@ export function normalizePath(raw: string): string {
 function mergeFlags(
   map: Map<string, RunFileEntry>,
   filePath: string,
-  patch: Partial<RunFileChangeFlags>,
+  patch: Partial<RunFileChangeFlags> & { isDirectory?: boolean },
   realProjectPath?: string | null,
 ): void {
   let path = normalizePath(filePath);
@@ -76,12 +78,20 @@ function mergeFlags(
     read: false,
     modified: false,
     deleted: false,
+    isDirectory: false,
   };
+  const isDirectory =
+    patch.isDirectory === true
+      ? true
+      : patch.isDirectory === false
+        ? false
+        : prev.isDirectory;
   map.set(path, {
     ...prev,
     read: prev.read || !!patch.read,
     modified: prev.modified || !!patch.modified,
     deleted: prev.deleted || !!patch.deleted,
+    isDirectory,
   });
 }
 
@@ -119,25 +129,25 @@ export function collectRunFileChanges(
     const fromArgs = pathFromArgs(args);
 
     if (READ_TOOLS.has(tool)) {
-      if (fromArgs) mergeFlags(map, fromArgs, { read: true }, realProjectPath);
-      else if (looksLikePath(tool)) mergeFlags(map, tool, { read: true }, realProjectPath);
+      if (fromArgs) mergeFlags(map, fromArgs, { read: true, isDirectory: false }, realProjectPath);
+      else if (looksLikePath(tool)) mergeFlags(map, tool, { read: true, isDirectory: false }, realProjectPath);
       continue;
     }
 
-    if (tool === 'Grep' || tool === 'grep') {
-      if (fromArgs) mergeFlags(map, fromArgs, { read: true }, realProjectPath);
+    if (tool === 'Grep' || tool === 'grep' || tool === 'Glob' || tool === 'glob') {
+      if (fromArgs) mergeFlags(map, fromArgs, { read: true, isDirectory: true }, realProjectPath);
       continue;
     }
 
     if (tool === 'Delete' || tool === 'delete') {
-      if (fromArgs) mergeFlags(map, fromArgs, { deleted: true }, realProjectPath);
-      else if (looksLikePath(tool)) mergeFlags(map, tool, { deleted: true }, realProjectPath);
+      if (fromArgs) mergeFlags(map, fromArgs, { deleted: true, isDirectory: false }, realProjectPath);
+      else if (looksLikePath(tool)) mergeFlags(map, tool, { deleted: true, isDirectory: false }, realProjectPath);
       continue;
     }
 
     if (WRITE_TOOLS.has(tool)) {
-      if (fromArgs) mergeFlags(map, fromArgs, { modified: true }, realProjectPath);
-      else if (looksLikePath(tool)) mergeFlags(map, tool, { modified: true }, realProjectPath);
+      if (fromArgs) mergeFlags(map, fromArgs, { modified: true, isDirectory: false }, realProjectPath);
+      else if (looksLikePath(tool)) mergeFlags(map, tool, { modified: true, isDirectory: false }, realProjectPath);
     }
   }
 
@@ -211,14 +221,16 @@ export function runFilesForFileTree(
 ): {
   files: string[];
   annotations: Record<string, RunFileChangeFlags>;
+  directoryPathKeys: string[];
 } {
   if (entries.length === 0) {
-    return { files: [], annotations: {} };
+    return { files: [], annotations: {}, directoryPathKeys: [] };
   }
   const paths = entries.map((e) => e.path);
   const prefix = resolveDisplayPrefix(paths, options?.realProjectPath);
   const files: string[] = [];
   const annotations: Record<string, RunFileChangeFlags> = {};
+  const directoryPathKeys: string[] = [];
   for (const entry of entries) {
     const rel = displayPath(entry.path, prefix);
     files.push(rel);
@@ -227,8 +239,9 @@ export function runFilesForFileTree(
       modified: entry.modified,
       deleted: entry.deleted,
     };
+    if (entry.isDirectory) directoryPathKeys.push(rel);
   }
-  return { files, annotations };
+  return { files, annotations, directoryPathKeys };
 }
 
 /** Canonical project path touched by a span, if any. */
@@ -269,20 +282,43 @@ export function displayPathKeyFromSpan(
 }
 
 /** Span ids in `events` that read or wrote `pathKey`. */
+export function buildDisplayPathKeyByEventId(
+  events: ToolCallRecord[],
+  entries: RunFileEntry[],
+  options?: { realProjectPath?: string | null },
+): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const ev of events) {
+    if (ev.kind === 'prompt' || ev.kind === 'stop' || ev.kind === 'session') continue;
+    const key = displayPathKeyFromSpan(ev, entries, options);
+    if (key) map.set(ev.id, key);
+  }
+  return map;
+}
+
 export function spanIdsForDisplayPathKey(
+  pathKey: string,
+  pathKeyByEventId: Map<string, string>,
+): string[] {
+  if (!pathKey.trim()) return [];
+  const ids: string[] = [];
+  for (const [id, key] of pathKeyByEventId) {
+    if (key === pathKey) ids.push(id);
+  }
+  return ids;
+}
+
+/** @deprecated Prefer {@link buildDisplayPathKeyByEventId} + {@link spanIdsForDisplayPathKey}. */
+export function spanIdsForDisplayPathKeyFromEvents(
   pathKey: string,
   events: ToolCallRecord[],
   entries: RunFileEntry[],
   options?: { realProjectPath?: string | null },
 ): string[] {
-  if (!pathKey.trim()) return [];
-  const ids: string[] = [];
-  for (const ev of events) {
-    if (ev.kind === 'prompt' || ev.kind === 'stop' || ev.kind === 'session') continue;
-    const key = displayPathKeyFromSpan(ev, entries, options);
-    if (key === pathKey) ids.push(ev.id);
-  }
-  return ids;
+  return spanIdsForDisplayPathKey(
+    pathKey,
+    buildDisplayPathKeyByEventId(events, entries, options),
+  );
 }
 
 function filterFilesBySearch(files: string[], searchQuery: string): string[] {
@@ -302,7 +338,10 @@ export function runFilesForFileTreeFiltered(
   for (const f of filtered) {
     if (base.annotations[f]) annotations[f] = base.annotations[f]!;
   }
-  return { files: filtered, annotations };
+  const directoryPathKeys = base.directoryPathKeys.filter((d) =>
+    filtered.includes(d),
+  );
+  return { files: filtered, annotations, directoryPathKeys };
 }
 
 /**

@@ -15,21 +15,19 @@ interface TreeNode {
   pathKey: string | null;
 }
 
-const EXTENSIONLESS_FILE_NAMES =
-  /^(Makefile|Dockerfile|LICENSE|README|CHANGELOG|CODEOWNERS)$/i;
-
-function basenameLooksLikeFile(displayPath: string): boolean {
-  const base = displayPath.split('/').filter(Boolean).pop() ?? '';
-  if (!base) return false;
-  if (base.includes('.')) return true;
-  return EXTENSIONLESS_FILE_NAMES.test(base);
+function directoryPathKeySet(
+  directoryPathKeys?: ReadonlySet<string> | readonly string[],
+): Set<string> | null {
+  if (directoryPathKeys == null) return null;
+  if (directoryPathKeys instanceof Set) return directoryPathKeys;
+  return new Set(directoryPathKeys);
 }
 
-function isStrictPathPrefix(full: string, pathSet: Set<string>): boolean {
-  for (const other of pathSet) {
-    if (other !== full && other.startsWith(`${full}/`)) return true;
-  }
-  return false;
+function isDirectoryPathKey(
+  pathKey: string,
+  directoryPathKeys: Set<string> | null,
+): boolean {
+  return directoryPathKeys?.has(pathKey) ?? false;
 }
 
 function normalizeDirectoryNodes(node: TreeNode): void {
@@ -41,11 +39,12 @@ function normalizeDirectoryNodes(node: TreeNode): void {
   }
 }
 
-function buildTree(paths: string[]): TreeNode {
+function buildTree(
+  paths: string[],
+  directoryPathKeys?: ReadonlySet<string> | readonly string[],
+): TreeNode {
   const root: TreeNode = { name: '', children: new Map(), isFile: false, pathKey: null };
-  const pathSet = new Set(
-    paths.map((p) => p.replace(/\\/g, '/').replace(/\/+$/, '')).filter(Boolean),
-  );
+  const directoryKeys = directoryPathKeySet(directoryPathKeys);
 
   for (const raw of paths) {
     const normalized = raw.replace(/\\/g, '/').replace(/\/+$/, '');
@@ -68,9 +67,7 @@ function buildTree(paths: string[]): TreeNode {
       node = node.children.get(seg)!;
       node.pathKey = pathSoFar;
       if (i === segments.length - 1) {
-        node.isFile =
-          !isStrictPathPrefix(pathSoFar, pathSet) &&
-          basenameLooksLikeFile(pathSoFar);
+        node.isFile = !isDirectoryPathKey(pathSoFar, directoryKeys);
       }
     }
   }
@@ -80,8 +77,11 @@ function buildTree(paths: string[]): TreeNode {
 }
 
 /** @internal Exported for unit tests. */
-export function buildFilePathTree(paths: string[]): TreeNode {
-  return buildTree(paths);
+export function buildFilePathTree(
+  paths: string[],
+  directoryPathKeys?: ReadonlySet<string> | readonly string[],
+): TreeNode {
+  return buildTree(paths, directoryPathKeys);
 }
 
 function findTreeNode(root: TreeNode, pathKey: string): TreeNode | null {
@@ -219,52 +219,82 @@ function FileTreeNode({
 
   const meta = node.pathKey ? annotations?.[node.pathKey] : undefined;
   const showAsFile = node.isFile && !hasChildren;
+  const canExpand = hasChildren;
+  const canSelect =
+    Boolean(node.pathKey && onFileSelect) &&
+    (showAsFile || Boolean(meta && !hasChildren && !showAsFile));
+  const isInteractive = canExpand || canSelect;
+
+  const rowClassName = cn(
+    'flex w-full min-w-0 items-center gap-1.5 rounded-sm px-1 py-0.5 text-left text-xs',
+    isInteractive && 'hover:bg-hover-bg',
+    isSelected && 'bg-accent-primary/15 ring-1 ring-inset ring-accent-primary/35',
+    canSelect && 'cursor-pointer',
+  );
+
+  const rowBody = (
+    <>
+      {hasChildren ? (
+        <ChevronRight
+          className="ui-chevron h-3 w-3 shrink-0 text-text-tertiary"
+          data-open={open ? 'true' : 'false'}
+        />
+      ) : (
+        <span className="inline-block w-3 shrink-0" />
+      )}
+      {showAsFile ? (
+        <File className="h-3.5 w-3.5 shrink-0 text-text-tertiary" />
+      ) : (
+        <Folder className="h-3.5 w-3.5 shrink-0 text-accent-primary" />
+      )}
+      <span
+        className={cn(
+          'min-w-0 flex-1 truncate',
+          showAsFile ? 'text-text-secondary' : 'font-medium text-text-primary',
+          isSelected && 'text-text-primary',
+        )}
+      >
+        {node.name}
+      </span>
+      {meta ? <FileMetaBadges meta={meta} /> : null}
+    </>
+  );
 
   return (
     <div>
-      <button
-        ref={rowRef}
-        type="button"
-        className={cn(
-          'flex w-full min-w-0 items-center gap-1.5 rounded-sm px-1 py-0.5 text-left text-xs hover:bg-hover-bg',
-          isSelected && 'bg-accent-primary/15 ring-1 ring-inset ring-accent-primary/35',
-          showAsFile && onFileSelect && 'cursor-pointer',
-        )}
-        style={{ paddingLeft: `${depth * 16 + 4}px` }}
-        onClick={() => {
-          if (showAsFile && node.pathKey) {
-            onFileSelect?.(node.pathKey);
-            return;
-          }
-          if (hasChildren) setOpen((v) => !v);
-        }}
-        title={node.pathKey ?? undefined}
-        aria-current={isSelected ? 'true' : undefined}
-      >
-        {hasChildren ? (
-          <ChevronRight
-            className="ui-chevron h-3 w-3 shrink-0 text-text-tertiary"
-            data-open={open ? 'true' : 'false'}
-          />
-        ) : (
-          <span className="inline-block w-3 shrink-0" />
-        )}
-        {showAsFile ? (
-          <File className="h-3.5 w-3.5 shrink-0 text-text-tertiary" />
-        ) : (
-          <Folder className="h-3.5 w-3.5 shrink-0 text-accent-primary" />
-        )}
-        <span
-          className={cn(
-            'min-w-0 flex-1 truncate',
-            showAsFile ? 'text-text-secondary' : 'font-medium text-text-primary',
-            isSelected && 'text-text-primary',
-          )}
+      {isInteractive ? (
+        <button
+          ref={rowRef}
+          type="button"
+          className={rowClassName}
+          style={{ paddingLeft: `${depth * 16 + 4}px` }}
+          onClick={() => {
+            if (canSelect && showAsFile && node.pathKey) {
+              onFileSelect?.(node.pathKey);
+              return;
+            }
+            if (canSelect && !canExpand && node.pathKey) {
+              onFileSelect?.(node.pathKey);
+              return;
+            }
+            if (canExpand) setOpen((v) => !v);
+          }}
+          title={node.pathKey ?? undefined}
+          aria-expanded={canExpand ? open : undefined}
+          aria-current={isSelected ? 'true' : undefined}
         >
-          {node.name}
-        </span>
-        {meta ? <FileMetaBadges meta={meta} /> : null}
-      </button>
+          {rowBody}
+        </button>
+      ) : (
+        <div
+          className={rowClassName}
+          style={{ paddingLeft: `${depth * 16 + 4}px` }}
+          role="treeitem"
+          title={node.pathKey ?? undefined}
+        >
+          {rowBody}
+        </div>
+      )}
       {open && (
         <div className="ui-panel-enter">
           {sorted.map((child) => (
@@ -306,6 +336,7 @@ export function FileTree({
   searchQuery,
   onFileSelect,
   scrollPathKey,
+  directoryPathKeys,
 }: {
   files: string[];
   annotations?: Record<string, FileTreeFileMeta>;
@@ -315,10 +346,14 @@ export function FileTree({
   selectedPathKeys?: ReadonlySet<string> | readonly string[];
   searchQuery?: string;
   onFileSelect?: (pathKey: string) => void;
-  /** When set, the matching selected file row scrolls into view. */
   scrollPathKey?: string | null;
+  /** Display paths that are directories (e.g. Grep search roots). */
+  directoryPathKeys?: ReadonlySet<string> | readonly string[];
 }) {
-  const tree = useMemo(() => buildTree(files), [files]);
+  const tree = useMemo(
+    () => buildTree(files, directoryPathKeys),
+    [files, directoryPathKeys],
+  );
   if (files.length === 0) return null;
   const inner = (
     <FileTreeNode

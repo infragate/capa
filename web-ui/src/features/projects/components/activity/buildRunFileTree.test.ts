@@ -4,8 +4,10 @@ import {
   buildRunFileTree,
   collectRunFileChanges,
   commonPathPrefix,
+  buildDisplayPathKeyByEventId,
   runFilesForFileTree,
   spanIdsForDisplayPathKey,
+  spanIdsForDisplayPathKeyFromEvents,
 } from './buildRunFileTree';
 
 function call(
@@ -187,10 +189,35 @@ describe('spanIdsForDisplayPathKey', () => {
       }),
     ];
     const entries = collectRunFileChanges(events, { realProjectPath: real });
-    const ids = spanIdsForDisplayPathKey('src/foo.ts', events, entries, {
+    const index = buildDisplayPathKeyByEventId(events, entries, {
       realProjectPath: real,
     });
+    const ids = spanIdsForDisplayPathKey('src/foo.ts', index);
     expect(ids.sort()).toEqual(['read-1', 'write-1']);
+    expect(spanIdsForDisplayPathKeyFromEvents('src/foo.ts', events, entries, {
+      realProjectPath: real,
+    }).sort()).toEqual(['read-1', 'write-1']);
+  });
+
+  it('marks Grep search roots as directories in the file tree payload', () => {
+    const real = '/proj';
+    const events = [
+      call({
+        id: 'grep-1',
+        kind: 'agent_tool',
+        tool_name: 'Grep',
+        args_json: JSON.stringify({ path: `${real}/src` }),
+      }),
+      call({
+        id: 'read-1',
+        kind: 'agent_tool',
+        tool_name: 'Read',
+        args_json: JSON.stringify({ path: `${real}/src/foo.ts` }),
+      }),
+    ];
+    const entries = collectRunFileChanges(events, { realProjectPath: real });
+    const { directoryPathKeys } = runFilesForFileTree(entries, { realProjectPath: real });
+    expect(directoryPathKeys).toContain('src');
   });
 });
 

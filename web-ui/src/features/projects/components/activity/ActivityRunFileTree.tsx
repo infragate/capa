@@ -39,15 +39,17 @@ export function ActivityRunFileTree({
     [events, projectPath],
   );
 
-  const { files, annotations, fileCount } = useMemo(() => {
-    const { files: treeFiles, annotations: treeAnnotations } =
-      runFilesForFileTreeFiltered(entries, search, { realProjectPath: projectPath });
+  const { files, annotations, directoryPathKeys, fileCount } = useMemo(() => {
+    const filtered = runFilesForFileTreeFiltered(entries, search, {
+      realProjectPath: projectPath,
+    });
     return {
-      files: treeFiles,
-      annotations: treeAnnotations,
+      files: filtered.files,
+      annotations: filtered.annotations,
+      directoryPathKeys: filtered.directoryPathKeys,
       fileCount: entries.length,
     };
-  }, [entries, search]);
+  }, [entries, search, projectPath]);
 
   return (
     <aside
@@ -116,6 +118,7 @@ export function ActivityRunFileTree({
             selectedPathKeys={selectedPathKeys}
             searchQuery={search}
             onFileSelect={onFileSelect}
+            directoryPathKeys={directoryPathKeys}
             scrollPathKey={scrollPathKey}
           />
         )}

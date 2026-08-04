@@ -23,17 +23,18 @@ export function ActivityRunSplitPane({
   const startXRef = useRef(0);
   const startWidthRef = useRef(defaultLeftWidth);
 
+  const clampWidth = useCallback(
+    (width: number) => Math.min(maxLeftWidth, Math.max(minLeftWidth, width)),
+    [maxLeftWidth, minLeftWidth],
+  );
+
   const onPointerMove = useCallback(
     (e: PointerEvent) => {
       if (!draggingRef.current) return;
       const delta = e.clientX - startXRef.current;
-      const next = Math.min(
-        maxLeftWidth,
-        Math.max(minLeftWidth, startWidthRef.current + delta),
-      );
-      setLeftWidth(next);
+      setLeftWidth(clampWidth(startWidthRef.current + delta));
     },
-    [maxLeftWidth, minLeftWidth],
+    [clampWidth],
   );
 
   const endDrag = useCallback(() => {
@@ -55,6 +56,10 @@ export function ActivityRunSplitPane({
     window.addEventListener('pointerup', endDrag);
   }
 
+  function nudgeWidth(delta: number) {
+    setLeftWidth((w) => clampWidth(w + delta));
+  }
+
   useEffect(() => () => endDrag(), [endDrag]);
 
   return (
@@ -67,12 +72,26 @@ export function ActivityRunSplitPane({
       </div>
       <div
         role="separator"
+        tabIndex={0}
         aria-orientation="vertical"
+        aria-valuemin={minLeftWidth}
+        aria-valuemax={maxLeftWidth}
         aria-valuenow={leftWidth}
+        aria-label="Resize panels"
         onPointerDown={onHandlePointerDown}
+        onKeyDown={(e) => {
+          if (e.key === 'ArrowLeft') {
+            e.preventDefault();
+            nudgeWidth(-16);
+          } else if (e.key === 'ArrowRight') {
+            e.preventDefault();
+            nudgeWidth(16);
+          }
+        }}
         className={cn(
-          'w-1 shrink-0 cursor-col-resize bg-border-secondary',
+          'w-1 shrink-0 cursor-col-resize bg-border-secondary outline-none',
           'hover:bg-accent-primary/40 active:bg-accent-primary/55',
+          'focus-visible:ring-2 focus-visible:ring-accent-primary/50',
           'transition-colors',
         )}
       />

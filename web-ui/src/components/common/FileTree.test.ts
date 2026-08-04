@@ -6,7 +6,7 @@ import {
 } from './FileTree';
 
 describe('buildFilePathTree', () => {
-  it('renders strict prefix paths as folders when deeper paths exist', () => {
+  it('renders prefix paths as folders when deeper paths exist', () => {
     const root = buildFilePathTree([
       'domains',
       'domains/attn-platform/AGENTS.md',
@@ -16,10 +16,18 @@ describe('buildFilePathTree', () => {
     expect(treeNodeIsFileLeaf(root, 'domains/attn-platform/AGENTS.md')).toBe(true);
   });
 
-  it('renders extensionless Grep roots as folders', () => {
-    const root = buildFilePathTree(['domains/attn-platform/platform-core']);
+  it('renders Grep roots as folders via directoryPathKeys', () => {
+    const root = buildFilePathTree(
+      ['domains/attn-platform/platform-core'],
+      ['domains/attn-platform/platform-core'],
+    );
     expect(treeNodeIsDirectory(root, 'domains/attn-platform/platform-core')).toBe(true);
     expect(treeNodeIsFileLeaf(root, 'domains/attn-platform/platform-core')).toBe(false);
+  });
+
+  it('keeps extensionless files as selectable file leaves', () => {
+    const root = buildFilePathTree(['Gemfile']);
+    expect(treeNodeIsFileLeaf(root, 'Gemfile')).toBe(true);
   });
 
   it('keeps normal files as file leaves', () => {
