@@ -18,7 +18,7 @@ describe("agent-activity helpers", () => {
 	it("builds portable capa activity-ingest commands", () => {
 		const hooks = buildSystemActivityHooks("my-project", "cursor");
 		expect(hooks.length).toBeGreaterThan(5);
-		expect(hooks.some((h) => h.on === "beforeTool")).toBe(false);
+		expect(hooks.some((h) => h.on === "beforeTool")).toBe(true);
 		expect(hooks.some((h) => h.on === "beforeShell")).toBe(false);
 		expect(hooks.some((h) => h.on === "afterShell")).toBe(true);
 		expect(hooks.some((h) => h.on === "afterTool")).toBe(true);
@@ -44,10 +44,54 @@ describe("agent-activity helpers", () => {
 		for (const h of hooks) {
 			expect(h.command).toContain("--provider claude-code");
 		}
+		expect(hooks.some((h) => h.on === "beforeTool")).toBe(false);
 	});
 });
 
 describe("normalizeActivityHookPayload", () => {
+	it("traces Cursor WebSearch via preToolUse CallDynamicTool wrapper", () => {
+		const out = normalizeActivityHookPayload(
+			"beforeTool",
+			{
+				tool_name: "CallDynamicTool",
+				tool_input: {
+					namespace: "cursor",
+					toolName: "WebSearch",
+					arguments: { search_term: "mermaid links" },
+				},
+				conversation_id: "conv-1",
+				generation_id: "gen-1",
+			},
+			"cursor",
+		);
+		expect(out.skip).toBe(false);
+		expect(out.kind).toBe("agent_tool");
+		expect(out.toolName).toBe("WebSearch");
+	});
+
+	it("still skips Cursor preToolUse for Read (postToolUse covers it)", () => {
+		expect(
+			normalizeActivityHookPayload(
+				"beforeTool",
+				{ tool_name: "Read", tool_input: { path: "/a.ts" } },
+				"cursor",
+			).skip,
+		).toBe(true);
+	});
+
+	it("traces Cursor Glob at preToolUse", () => {
+		const out = normalizeActivityHookPayload(
+			"beforeTool",
+			{
+				tool_name: "Glob",
+				tool_input: { glob_pattern: "**/*.md" },
+			},
+			"cursor",
+		);
+		expect(out.skip).toBe(false);
+		expect(out.toolName).toBe("Glob");
+	});
+
 	it("maps shell events", () => {
 		const out = normalizeActivityHookPayload(
 			"afterShell",

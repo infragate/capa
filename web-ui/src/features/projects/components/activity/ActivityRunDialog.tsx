@@ -11,6 +11,13 @@ import {
   sumRunTokenUsage,
 } from './groupActivityRuns';
 import { ActivitySpanRow } from './ActivitySpanRow';
+import { ActivityRunFileTree } from './ActivityRunFileTree';
+import { ActivityRunSplitPane } from './ActivityRunSplitPane';
+import {
+  collectRunFileChanges,
+  displayPathKeyFromSpan,
+  spanIdsForDisplayPathKey,
+} from './buildRunFileTree';
 import { sourceLabelText, TokenUsageLabel } from './ActivityShared';
 
 interface ActivityRunDialogProps {
@@ -18,6 +25,7 @@ interface ActivityRunDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   live?: boolean;
+  projectPath?: string | null;
 }
 
 function runEvents(run: ActivityRun): ToolCallRecord[] {
@@ -58,11 +66,15 @@ export function ActivityRunDialog({
   open,
   onOpenChange,
   live = false,
+  projectPath = null,
 }: ActivityRunDialogProps) {
   const { t } = useTranslation('projects');
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const [followLatest, setFollowLatest] = useState(true);
+  const [expandedSpanIds, setExpandedSpanIds] = useState<Set<string>>(() => new Set());
+  const [pickedFilePathKey, setPickedFilePathKey] = useState<string | null>(null);
+  const [scrollTreePathKey, setScrollTreePathKey] = useState<string | null>(null);
   const eventCount = run ? runEvents(run).length : 0;
   const prevCountRef = useRef(eventCount);
   const seenIdsRef = useRef<Set<string>>(new Set());
@@ -78,6 +90,75 @@ export function ActivityRunDialog({
   const running = run ? runIsLive(run) : false;
   const tokenTotals = useMemo(() => sumRunTokenUsage(events), [events]);
 
+  const fileEntries = useMemo(
+    () => collectRunFileChanges(events, { realProjectPath: projectPath }),
+    [events, projectPath],
+  );
+
+  const pathOptions = useMemo(
+    () => ({ realProjectPath: projectPath }),
+    [projectPath],
+  );
+
+  const selectedPathKeys = useMemo(() => {
+    if (pickedFilePathKey) return new Set([pickedFilePathKey]);
+    const keys = new Set<string>();
+    for (const id of expandedSpanIds) {
+      const ev = events.find((e) => e.id === id);
+      if (!ev) continue;
+      const key = displayPathKeyFromSpan(ev, fileEntries, pathOptions);
+      if (key) keys.add(key);
+    }
+    return keys;
+  }, [pickedFilePathKey, expandedSpanIds, events, fileEntries, pathOptions]);
+
+  const fileLinkedSpanIds = useMemo(() => {
+    if (!pickedFilePathKey) return new Set<string>();
+    return new Set(
+      spanIdsForDisplayPathKey(
+        pickedFilePathKey,
+        events,
+        fileEntries,
+        pathOptions,
+      ),
+    );
+  }, [pickedFilePathKey, events, fileEntries, pathOptions]);
+
+  function onSpanExpandedChange(nextOpen: boolean, call: ToolCallRecord) {
+    setPickedFilePathKey(null);
+    setExpandedSpanIds((prev) => {
+      const next = new Set(prev);
+      if (nextOpen) next.add(call.id);
+      else next.delete(call.id);
+      return next;
+    });
+    if (nextOpen) {
+      setFollowLatest(false);
+      const key = displayPathKeyFromSpan(call, fileEntries, pathOptions);
+      if (key) setScrollTreePathKey(key);
+    }
+  }
+
+  function onFileSelect(pathKey: string) {
+    setPickedFilePathKey(pathKey);
+    setScrollTreePathKey(pathKey);
+    setFollowLatest(false);
+    const spanIds = spanIdsForDisplayPathKey(
+      pathKey,
+      events,
+      fileEntries,
+      pathOptions,
+    );
+    requestAnimationFrame(() => {
+      const first = spanIds[0];
+      if (first) {
+        document
+          .getElementById(`activity-span-${first}`)
+          ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      }
+    });
+  }
+
   function clearFreshTimers() {
     for (const timer of freshTimersRef.current.values()) {
       window.clearTimeout(timer);
@@ -89,6 +170,9 @@ export function ActivityRunDialog({
   useEffect(() => {
     if (!open || !run) return;
     setFollowLatest(true);
+    setExpandedSpanIds(new Set());
+    setPickedFilePathKey(null);
+    setScrollTreePathKey(null);
     prevCountRef.current = eventCount;
     const ids = new Set(runEvents(run).map((e) => e.id));
     seenIdsRef.current = ids;
@@ -163,7 +247,7 @@ export function ActivityRunDialog({
         <Dialog.Overlay className="ui-overlay fixed inset-0 z-40 bg-black/45" />
         <Dialog.Content
           className={cn(
-            'ui-dialog fixed z-50 flex w-[min(1180px,98vw)] flex-col',
+            'ui-dialog fixed z-50 flex w-[min(1320px,98vw)] flex-col',
             'max-h-[min(92vh,880px)] overflow-hidden rounded-lg',
             'border border-border-primary bg-bg-secondary shadow-lg',
           )}
@@ -244,33 +328,49 @@ export function ActivityRunDialog({
                 </div>
               </div>
 
-              <div
-                ref={scrollRef}
-                onScroll={onScroll}
-                className="min-h-0 flex-1 overflow-y-auto"
-              >
-                <div className="sticky top-0 z-[1] flex items-center gap-2.5 border-b border-border-secondary bg-bg-secondary/95 px-3 py-1.5 text-[10px] font-medium uppercase tracking-[0.07em] text-text-tertiary backdrop-blur-sm">
-                  <span className="w-4 shrink-0" />
-                  <span className="min-w-0 flex-1">{t('activity.colName')}</span>
-                  <span className="hidden md:inline w-32 shrink-0 text-center">
-                    {t('activity.colTimeline')}
-                  </span>
-                  <span className="w-12 shrink-0 text-right">{t('activity.colLatency')}</span>
-                  <span className="w-[4.75rem] shrink-0 text-right">{t('activity.colTime')}</span>
-                </div>
-                {events.map((ev) => (
-                  <ActivitySpanRow
-                    key={ev.id}
-                    call={ev}
-                    runStart={timeline.start}
-                    runEnd={timeline.end}
-                    nestedPayload
-                    fresh={freshIds.has(ev.id)}
-                    onInspect={() => setFollowLatest(false)}
+              <ActivityRunSplitPane
+                left={
+                  <ActivityRunFileTree
+                    events={events}
+                    runId={run.id}
+                    projectPath={projectPath}
+                    selectedPathKeys={selectedPathKeys}
+                    scrollPathKey={scrollTreePathKey}
+                    onFileSelect={onFileSelect}
                   />
-                ))}
-                <div ref={bottomRef} className="h-2" aria-hidden />
-              </div>
+                }
+                right={
+                <div
+                  ref={scrollRef}
+                  onScroll={onScroll}
+                  className="min-h-0 h-full overflow-y-auto"
+                >
+                  <div className="sticky top-0 z-[1] flex items-center gap-2.5 border-b border-border-secondary bg-bg-secondary/95 px-3 py-1.5 text-[10px] font-medium uppercase tracking-[0.07em] text-text-tertiary backdrop-blur-sm">
+                    <span className="w-4 shrink-0" />
+                    <span className="min-w-0 flex-1">{t('activity.colName')}</span>
+                    <span className="hidden md:inline w-32 shrink-0 text-center">
+                      {t('activity.colTimeline')}
+                    </span>
+                    <span className="w-12 shrink-0 text-right">{t('activity.colLatency')}</span>
+                    <span className="w-[4.75rem] shrink-0 text-right">{t('activity.colTime')}</span>
+                  </div>
+                  {events.map((ev) => (
+                    <ActivitySpanRow
+                      key={ev.id}
+                      call={ev}
+                      runStart={timeline.start}
+                      runEnd={timeline.end}
+                      nestedPayload
+                      fresh={freshIds.has(ev.id)}
+                      fileLinked={fileLinkedSpanIds.has(ev.id)}
+                      onInspect={() => setFollowLatest(false)}
+                      onExpandedChange={onSpanExpandedChange}
+                    />
+                  ))}
+                  <div ref={bottomRef} className="h-2" aria-hidden />
+                </div>
+                }
+              />
             </>
           ) : null}
         </Dialog.Content>

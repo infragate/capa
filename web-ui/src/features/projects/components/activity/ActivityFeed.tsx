@@ -21,6 +21,7 @@ interface ActivityFeedProps {
   loadingMore: boolean;
   onLoadMore: () => void;
   live?: boolean;
+  projectPath?: string | null;
 }
 
 function RunRow({
@@ -144,6 +145,7 @@ export function ActivityFeed({
   loadingMore,
   onLoadMore,
   live = false,
+  projectPath = null,
 }: ActivityFeedProps) {
   const { t } = useTranslation('projects');
   const conversations = useMemo(
@@ -213,6 +215,7 @@ export function ActivityFeed({
           if (!next) setSelectedId(null);
         }}
         live={live}
+        projectPath={projectPath}
       />
     </>
   );

@@ -2,7 +2,7 @@ import { useTranslation } from 'react-i18next';
 import { Activity as ActivityIcon } from 'lucide-react';
 import { Spinner } from '../../../../components/common/Spinner';
 import { Alert } from '../../../../components/common/Alert';
-import { useProjectActivity } from '../../hooks';
+import { useProjectActivity, useProject } from '../../hooks';
 import { ActivityChart } from './ActivityChart';
 import { ActivityFeed } from './ActivityFeed';
 import { ActivityStatsBar } from './ActivityStats';
@@ -23,6 +23,7 @@ export function ActivitySection({ projectId }: ActivitySectionProps) {
     loadingMore,
     loadMore,
   } = useProjectActivity(projectId);
+  const { data: project } = useProject(projectId);
 
   return (
     <div
@@ -59,6 +60,7 @@ export function ActivitySection({ projectId }: ActivitySectionProps) {
           loadingMore={loadingMore}
           onLoadMore={() => void loadMore()}
           live={live}
+          projectPath={project?.path ?? null}
         />
       )}
     </div>

@@ -440,12 +440,20 @@ export function resolveNestedPluginById(
 		const manifest = detectAndParseManifest(pluginRoot, preferredProviders);
 		if (!manifest) return null;
 		const dirName = cleaned.split("/").filter(Boolean).pop() ?? cleaned;
+		let manifestFile = "";
+		for (const { path } of getManifestSearchOrder(preferredProviders)) {
+			const candidate = join(pluginRoot, path);
+			if (existsSync(candidate)) {
+				manifestFile = candidate;
+				break;
+			}
+		}
 		return {
 			entry: {
 				subpath: cleaned,
 				manifestName: manifest.name || dirName,
 				dirName,
-				manifestFile: "",
+				manifestFile,
 			},
 			manifest,
 		};

@@ -26,10 +26,14 @@ interface ActivitySpanRowProps {
   runEnd: number;
   /** Called when the user expands a span (e.g. to pause follow-latest). */
   onInspect?: () => void;
+  /** Fired when inline payload is expanded or collapsed. */
+  onExpandedChange?: (open: boolean, call: ToolCallRecord) => void;
   /** Nested payload dialogs sit above the run dialog. */
   nestedPayload?: boolean;
   /** Soft amber highlight that fades out (new live spans). */
   fresh?: boolean;
+  /** Linked from a file selection in the run file tree. */
+  fileLinked?: boolean;
 }
 
 export function ActivitySpanRow({
@@ -37,8 +41,10 @@ export function ActivitySpanRow({
   runStart,
   runEnd,
   onInspect,
+  onExpandedChange,
   nestedPayload = false,
   fresh = false,
+  fileLinked = false,
 }: ActivitySpanRowProps) {
   const { t } = useTranslation('projects');
   const [open, setOpen] = useState(false);
@@ -49,13 +55,14 @@ export function ActivitySpanRow({
   const showUsage = hasTokenUsage(call);
 
   return (
-    <div className="group/span">
+    <div className="group/span" id={`activity-span-${call.id}`}>
       <button
         type="button"
         onClick={() => {
           setOpen((v) => {
             const next = !v;
             if (next) onInspect?.();
+            onExpandedChange?.(next, call);
             return next;
           });
         }}
@@ -64,6 +71,9 @@ export function ActivitySpanRow({
           'flex w-full items-center gap-2.5 px-3 py-1.5 text-left cursor-pointer',
           'transition-colors duration-100',
           fresh && 'activity-span-fresh',
+          fileLinked &&
+            'ring-1 ring-inset ring-accent-primary/25',
+          fileLinked && !open && 'bg-accent-primary/[0.08]',
           errored && 'bg-error-bg hover:bg-error-bg',
           capa
             ? cn(
