@@ -122,7 +122,8 @@ describe("resolveSkillContent plugin unpack", () => {
 		expect(result).not.toBeNull();
 		expect(result!.content).toContain("Cmd body.");
 	});
-it("prefers installed provider copy over unpacked plugin tree after install", () => {
+
+	it("prefers installed provider copy over unpacked plugin tree after install", () => {
 		const installedDir = join(projectPath, ".claude", "skills", "hello-skill");
 		mkdirSync(installedDir, { recursive: true });
 		writeFileSync(
@@ -139,6 +140,30 @@ it("prefers installed provider copy over unpacked plugin tree after install", ()
 		expect(result!.content).toContain("Installed body.");
 		expect(result!.content).not.toContain("Plugin body.");
 		expect(result!.metadata.description).toBe("Installed sanitized");
+	});
+
+	it("does not resolve inline skills via plugin unpack when type is not plugin", () => {
+		const inlineWithPluginMeta: Skill = {
+			id: "hello-skill",
+			type: "inline",
+			def: { content: "Inline only." },
+			sourcePlugin: {
+				id: pluginId,
+				name: "Fixture Plugin",
+				provider: "claude",
+			},
+		};
+
+		const result = resolveSkillContent(
+			projectPath,
+			inlineWithPluginMeta,
+			["claude-code"],
+			{ projectId, pluginsBaseDir: pluginsBase },
+		);
+
+		expect(result).not.toBeNull();
+		expect(result!.content).toContain("Inline only.");
+		expect(result!.content).not.toContain("Plugin body.");
 	});
 
 	it("finds nested nonstandard skill layouts via cached plugin scan", () => {

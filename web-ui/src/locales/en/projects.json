@@ -295,7 +295,22 @@
     "followLatest": "Follow latest",
     "followingLatest": "Following",
     "closeRun": "Close run",
-    "runOk": "ok"
+    "runOk": "ok",
+    "runFiles": {
+      "aria": "Files touched in this run",
+      "heading": "Files",
+      "empty": "No file reads or edits detected in this run yet.",
+      "emptyHint": "Read, Write, and edit spans will appear here as they arrive.",
+      "count": "{{count}} file",
+      "count_other": "{{count}} files",
+      "read": "Read",
+      "modified": "Modified",
+      "deleted": "Deleted",
+      "searchPlaceholder": "Filter files…",
+      "expandAll": "Expand all",
+      "collapseAll": "Collapse all",
+      "noSearchResults": "No files match your filter."
+    }
   },
   "tool": {
     "from": "from",

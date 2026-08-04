@@ -78,22 +78,29 @@ export function normalizeActivityHookPayload(
 		};
 	}
 
-	// Outcome-only: ignore lifecycle "before" noise.
-	// Kept even though SYSTEM_ACTIVITY_EVENTS omits these — CLI may still receive them.
+	// Outcome-only: ignore lifecycle "before" noise (except Cursor tools with no postToolUse).
 	if (
 		event === "beforeTool" ||
 		event === "beforeShell" ||
 		event === "beforeMcpCall" ||
 		event === "beforeFileRead"
 	) {
-		return {
-			kind: "agent_tool",
-			toolName: event,
-			status: "ok",
-			source: provider,
-			skip: true,
-			skipReason: "before-hook (outcome-only activity)",
-		};
+		if (
+			event === "beforeTool" &&
+			provider === "cursor" &&
+			cursorPreToolShouldTrace(obj)
+		) {
+			// fall through — traced at preToolUse because postToolUse never fires
+		} else {
+			return {
+				kind: "agent_tool",
+				toolName: event,
+				status: "ok",
+				source: provider,
+				skip: true,
+				skipReason: "before-hook (outcome-only activity)",
+			};
+		}
 	}
 
 	const kind = kindForEvent(event, obj);
@@ -151,8 +158,8 @@ function kindForEvent(
 		return isSkillMdPath(extractPath(obj)) ? "skill" : "file";
 	}
 	if (event === "beforeMcpCall" || event === "afterMcpCall") return "agent_mcp";
+	if (event === "beforeTool") return "agent_tool";
 	if (
-		event === "beforeTool" ||
 		event === "afterTool" ||
 		event === "afterToolFailure"
 	) {
@@ -202,7 +209,42 @@ function nameForEvent(
 	}
 	if (kind === "compact" || kind === "stop") return event;
 
+	const fromProvider = displayToolNameFrom(obj);
+	if (fromProvider) return fromProvider;
 	return toolNameFrom(obj) || stringField(obj, "tool") || event;
+}
+
+/** Cursor tools that already emit `postToolUse` — skip preToolUse to avoid dupes. */
+const CURSOR_POST_TOOL_USE_NAMES = new Set([
+	"Shell",
+	"Read",
+	"Write",
+	"Grep",
+	"Delete",
+	"Task",
+	"ApplyPatch",
+	"EditNotebook",
+]);
+
+export function cursorPreToolShouldTrace(obj: Record<string, unknown>): boolean {
+	const name = toolNameFrom(obj)?.trim();
+	if (!name) return false;
+	if (CURSOR_POST_TOOL_USE_NAMES.has(name)) return false;
+	if (/^mcp:/i.test(name)) return false;
+	return true;
+}
+
+function displayToolNameFrom(obj: Record<string, unknown>): string | null {
+	const wrapper = toolNameFrom(obj)?.trim();
+	if (wrapper === "CallDynamicTool") {
+		const inner =
+			nestedString(obj, ["tool_input", "toolName"]) ||
+			nestedString(obj, ["tool_input", "tool_name"]) ||
+			nestedString(obj, ["input", "toolName"]) ||
+			nestedString(obj, ["input", "tool_name"]);
+		if (inner?.trim()) return inner.trim();
+	}
+	return null;
 }
 
 function statusForEvent(

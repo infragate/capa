@@ -1,8 +1,21 @@
 import type { ToolCallRecord } from '../../../../types/api';
+import { reconcileCursorActivityConversationIds } from '../../../../../../src/shared/activity-correlation-reconcile';
 import {
   isActivityRunCloser,
   isActivityRunOpener,
 } from '../../../../../../src/shared/activity-run-boundary';
+
+/** Stable run key for feed selection (unique across conversations). */
+export function activityRunSelectionId(
+  conversationId: string | null,
+  generationId: string | null,
+  fallbackId: string,
+): string {
+  if (conversationId?.trim() && generationId?.trim()) {
+    return `${conversationId.trim()}:${generationId.trim()}`;
+  }
+  return generationId?.trim() || fallbackId;
+}
 
 /** One turn / generation: optional prompt + spans (dialog payload). */
 export interface ActivityRun {
@@ -37,9 +50,10 @@ export interface ActivityConversation {
 export function groupActivityConversations(
   calls: ToolCallRecord[],
 ): ActivityConversation[] {
+  const normalized = reconcileCursorActivityConversationIds(calls);
   const correlated: ToolCallRecord[] = [];
   const uncorrelated: ToolCallRecord[] = [];
-  for (const call of calls) {
+  for (const call of normalized) {
     if (call.conversation_id) correlated.push(call);
     else uncorrelated.push(call);
   }
@@ -202,7 +216,7 @@ function buildRunFromCalls(
   const spans = chronological.filter((c) => c !== prompt);
   const first = chronological[0]!;
   const run: ActivityRun = {
-    id: generationId || first.id,
+    id: activityRunSelectionId(conversationId, generationId, first.id),
     conversationId,
     generationId,
     title: prompt?.tool_name || first.tool_name,
