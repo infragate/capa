@@ -15,31 +15,98 @@ interface TreeNode {
   pathKey: string | null;
 }
 
+const EXTENSIONLESS_FILE_NAMES =
+  /^(Makefile|Dockerfile|LICENSE|README|CHANGELOG|CODEOWNERS)$/i;
+
+function basenameLooksLikeFile(displayPath: string): boolean {
+  const base = displayPath.split('/').filter(Boolean).pop() ?? '';
+  if (!base) return false;
+  if (base.includes('.')) return true;
+  return EXTENSIONLESS_FILE_NAMES.test(base);
+}
+
+function isStrictPathPrefix(full: string, pathSet: Set<string>): boolean {
+  for (const other of pathSet) {
+    if (other !== full && other.startsWith(`${full}/`)) return true;
+  }
+  return false;
+}
+
+function normalizeDirectoryNodes(node: TreeNode): void {
+  for (const child of node.children.values()) {
+    normalizeDirectoryNodes(child);
+  }
+  if (node.children.size > 0) {
+    node.isFile = false;
+  }
+}
+
 function buildTree(paths: string[]): TreeNode {
   const root: TreeNode = { name: '', children: new Map(), isFile: false, pathKey: null };
-  for (const p of paths) {
-    const segments = p.replace(/\\/g, '/').split('/').filter(Boolean);
+  const pathSet = new Set(
+    paths.map((p) => p.replace(/\\/g, '/').replace(/\/+$/, '')).filter(Boolean),
+  );
+
+  for (const raw of paths) {
+    const normalized = raw.replace(/\\/g, '/').replace(/\/+$/, '');
+    const segments = normalized.split('/').filter(Boolean);
+    if (segments.length === 0) continue;
+
     let node = root;
     let pathSoFar = '';
     for (let i = 0; i < segments.length; i++) {
-      const seg = segments[i];
+      const seg = segments[i]!;
       pathSoFar = pathSoFar ? `${pathSoFar}/${seg}` : seg;
       if (!node.children.has(seg)) {
         node.children.set(seg, {
           name: seg,
           children: new Map(),
-          isFile: i === segments.length - 1,
-          pathKey: i === segments.length - 1 ? pathSoFar : null,
+          isFile: false,
+          pathKey: pathSoFar,
         });
       }
       node = node.children.get(seg)!;
+      node.pathKey = pathSoFar;
       if (i === segments.length - 1) {
-        node.isFile = true;
-        node.pathKey = pathSoFar;
+        node.isFile =
+          !isStrictPathPrefix(pathSoFar, pathSet) &&
+          basenameLooksLikeFile(pathSoFar);
       }
     }
   }
+
+  normalizeDirectoryNodes(root);
   return root;
+}
+
+/** @internal Exported for unit tests. */
+export function buildFilePathTree(paths: string[]): TreeNode {
+  return buildTree(paths);
+}
+
+function findTreeNode(root: TreeNode, pathKey: string): TreeNode | null {
+  const segments = pathKey.split('/').filter(Boolean);
+  let node = root;
+  for (const seg of segments) {
+    const next = node.children.get(seg);
+    if (!next) return null;
+    node = next;
+  }
+  return node;
+}
+
+/** @internal */
+export function treeNodeIsFileLeaf(root: TreeNode, pathKey: string): boolean {
+  const node = findTreeNode(root, pathKey);
+  if (!node) return false;
+  return node.isFile && node.children.size === 0;
+}
+
+/** @internal */
+export function treeNodeIsDirectory(root: TreeNode, pathKey: string): boolean {
+  const node = findTreeNode(root, pathKey);
+  if (!node) return false;
+  return !node.isFile || node.children.size > 0;
 }
 
 function FileMetaBadges({ meta }: { meta: FileTreeFileMeta }) {
@@ -150,8 +217,8 @@ function FileTreeNode({
     );
   }
 
-  const meta =
-    node.isFile && node.pathKey ? annotations?.[node.pathKey] : undefined;
+  const meta = node.pathKey ? annotations?.[node.pathKey] : undefined;
+  const showAsFile = node.isFile && !hasChildren;
 
   return (
     <div>
@@ -161,11 +228,11 @@ function FileTreeNode({
         className={cn(
           'flex w-full min-w-0 items-center gap-1.5 rounded-sm px-1 py-0.5 text-left text-xs hover:bg-hover-bg',
           isSelected && 'bg-accent-primary/15 ring-1 ring-inset ring-accent-primary/35',
-          node.isFile && onFileSelect && 'cursor-pointer',
+          showAsFile && onFileSelect && 'cursor-pointer',
         )}
         style={{ paddingLeft: `${depth * 16 + 4}px` }}
         onClick={() => {
-          if (node.isFile && node.pathKey) {
+          if (showAsFile && node.pathKey) {
             onFileSelect?.(node.pathKey);
             return;
           }
@@ -182,7 +249,7 @@ function FileTreeNode({
         ) : (
           <span className="inline-block w-3 shrink-0" />
         )}
-        {node.isFile ? (
+        {showAsFile ? (
           <File className="h-3.5 w-3.5 shrink-0 text-text-tertiary" />
         ) : (
           <Folder className="h-3.5 w-3.5 shrink-0 text-accent-primary" />
@@ -190,7 +257,7 @@ function FileTreeNode({
         <span
           className={cn(
             'min-w-0 flex-1 truncate',
-            node.isFile ? 'text-text-secondary' : 'font-medium text-text-primary',
+            showAsFile ? 'text-text-secondary' : 'font-medium text-text-primary',
             isSelected && 'text-text-primary',
           )}
         >
