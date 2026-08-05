@@ -1,6 +1,10 @@
+import { mkdtempSync, rmSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
 import { describe, it, expect } from 'bun:test';
 import {
   findWrapPids,
+  findWrapPidsForProject,
   isPidRunning,
   stopAllWrapSessions,
   commandLineMatchesProject,
@@ -16,6 +20,18 @@ describe('wrap process discovery', () => {
   it('findWrapPids does not include the current (non-wrap) process', async () => {
     const pids = await findWrapPids();
     expect(pids.includes(process.pid)).toBe(false);
+  });
+
+  it('findWrapPidsForProject skips process scan when project has no wrap workspace', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'capa-wrap-scan-skip-'));
+    try {
+      const pids = await findWrapPidsForProject(dir);
+      expect(pids).toEqual([]);
+    } finally {
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch {}
+    }
   });
 
   it('stopAllWrapSessions is a no-op when nothing is wrapping', async () => {
