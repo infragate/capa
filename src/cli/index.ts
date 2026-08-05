@@ -53,8 +53,13 @@ if (process.argv[2] === '__server__') {
   (async () => {
     try {
     // Start version check in the background while the command runs
-    const isUpgradeCommand = process.argv[2] === 'upgrade';
-    const updateCheckPromise = isUpgradeCommand ? Promise.resolve(null) : checkForUpdates();
+    const subcommand = process.argv[2];
+    // Hook subprocesses (activity-ingest) must own stdout — only valid JSON for gate events.
+    const skipVersionCheck =
+      subcommand === 'upgrade' || subcommand === 'activity-ingest';
+    const updateCheckPromise = skipVersionCheck
+      ? Promise.resolve(null)
+      : checkForUpdates();
 
     const program = new Command();
 
@@ -436,7 +441,7 @@ if (process.argv[2] === '__server__') {
 
     // Show update notice after the command completes (if a newer version is available)
     const updateInfo = await updateCheckPromise;
-    if (updateInfo?.hasUpdate) {
+    if (!skipVersionCheck && updateInfo?.hasUpdate) {
       console.log(`\n  A new version of capa is available: ${updateInfo.latestVersion} (current: ${updateInfo.currentVersion})`);
       console.log('  Run "capa upgrade" to update.\n');
     }
