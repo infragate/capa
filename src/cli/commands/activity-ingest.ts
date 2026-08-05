@@ -10,7 +10,6 @@
 import { CANONICAL_HOOK_EVENTS, type CanonicalHookEvent } from "../../types/hooks";
 import { loadSettings } from "../../shared/config";
 import { normalizeActivityHookPayload } from "../../shared/agent-activity-normalize";
-import { getServerStatus } from "../utils/server-manager";
 
 /** Cursor (and similar) gate events that require a permission decision on stdout. */
 const PERMISSION_GATE_EVENTS = new Set<CanonicalHookEvent>([
@@ -20,6 +19,9 @@ const PERMISSION_GATE_EVENTS = new Set<CanonicalHookEvent>([
 	"beforeMcpCall",
 	"subagentStart",
 ]);
+
+/** Max time to wait for hook stdin before giving up (fail-open). */
+const STDIN_READ_TIMEOUT_MS = 2_000;
 
 /**
  * Stdout payload for provider gate hooks. Observational events return null
@@ -40,15 +42,15 @@ export function activityIngestGateStdout(
 
 export async function activityIngestCommand(args: string[]): Promise<void> {
 	const parsed = parseArgs(args);
-	// Always exit 0 from the process wrapper — this function may throw only
-	// for programmer errors; soft failures return normally.
+	// Emit gate JSON first so Cursor never blocks while we read stdin / POST.
+	const gate = activityIngestGateStdout(parsed.event);
+	if (gate) writeGateStdout(`${gate}\n`);
+
+	// Soft failures only — never throw out of the hook subprocess.
 	try {
 		await runIngest(parsed);
 	} catch {
 		/* fail-open */
-	} finally {
-		const gate = activityIngestGateStdout(parsed.event);
-		if (gate) writeGateStdout(`${gate}\n`);
 	}
 }
 
@@ -84,18 +86,13 @@ async function runIngest(parsed: {
 	const normalized = normalizeActivityHookPayload(event, raw, provider);
 	if (normalized.skip) return;
 
-	const status = await getServerStatus();
-	if (!status.running || !status.url) {
-		const settings = await loadSettings();
-		const fallback = clientConnectOrigin(
-			settings.server.host,
-			settings.server.port,
-		);
-		await postEvent(fallback, projectId, normalized);
-		return;
-	}
-
-	await postEvent(status.url, projectId, normalized);
+	const settings = await loadSettings();
+	// Always derive a client-routable origin (0.0.0.0 / :: are not fetchable).
+	const serverUrl = clientConnectOrigin(
+		settings.server.host,
+		settings.server.port,
+	);
+	await postEvent(serverUrl, projectId, normalized);
 }
 
 async function postEvent(
@@ -158,7 +155,13 @@ function parseArgs(args: string[]): {
 async function readStdin(): Promise<string> {
 	try {
 		if (process.stdin.isTTY) return "";
-		return await Bun.stdin.text();
+		// Hook hosts usually write stdin then close; don't hang forever if they don't.
+		return await Promise.race([
+			Bun.stdin.text(),
+			new Promise<string>((resolve) => {
+				setTimeout(() => resolve(""), STDIN_READ_TIMEOUT_MS);
+			}),
+		]);
 	} catch {
 		return "";
 	}

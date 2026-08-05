@@ -54,8 +54,7 @@ if (process.argv[2] === '__server__') {
       process.exit(1);
     });
 } else {
-  (async () => {
-    try {
+  try {
     // Start version check in the background while the command runs
     const subcommand = cliSubcommandFromArgv(process.argv);
     // Hook subprocesses (activity-ingest) must own stdout — only valid JSON for gate events.
@@ -448,10 +447,9 @@ if (process.argv[2] === '__server__') {
       console.log(`\n  A new version of capa is available: ${updateInfo.latestVersion} (current: ${updateInfo.currentVersion})`);
       console.log('  Run "capa upgrade" to update.\n');
     }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      error(message);
-      process.exit(ExitCode.SYSTEM_ERROR);
-    }
-  })();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    error(message);
+    process.exit(ExitCode.SYSTEM_ERROR);
+  }
 }
