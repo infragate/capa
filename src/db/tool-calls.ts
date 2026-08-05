@@ -20,7 +20,6 @@ export type ToolCallInsert = Omit<
 	| "generation_id"
 	| "model"
 	| "attributes_json"
-	| "result_fingerprint"
 > & {
 	duration_ms?: number | null;
 	input_tokens?: number | null;
@@ -31,7 +30,6 @@ export type ToolCallInsert = Omit<
 	generation_id?: string | null;
 	model?: string | null;
 	attributes_json?: string | null;
-	result_fingerprint?: string | null;
 };
 
 export type ToolCallFinish = {
@@ -40,7 +38,6 @@ export type ToolCallFinish = {
 	result_preview?: string | null;
 	result_bytes?: number | null;
 	result_tokens?: number | null;
-	result_fingerprint?: string | null;
 	input_tokens?: number | null;
 	output_tokens?: number | null;
 	cache_read_tokens?: number | null;
@@ -88,8 +85,8 @@ export class ToolCallsRepo {
         kind, tool_name, meta_tool, args_json, result_preview, result_bytes,
         result_tokens, input_tokens, output_tokens, cache_read_tokens,
         cache_write_tokens, error_message, agent_id, conversation_id,
-        generation_id, model, attributes_json, result_fingerprint
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        generation_id, model, attributes_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			[
 				row.id,
 				row.project_id,
@@ -115,7 +112,6 @@ export class ToolCallsRepo {
 				row.generation_id ?? null,
 				row.model ?? null,
 				row.attributes_json ?? null,
-				row.result_fingerprint ?? null,
 			],
 		);
 		this.prune(row.project_id);
@@ -126,7 +122,7 @@ export class ToolCallsRepo {
 		this.db.run(
 			`UPDATE tool_calls
        SET status = ?, duration_ms = ?, result_preview = ?, result_bytes = ?,
-           result_tokens = ?, result_fingerprint = COALESCE(?, result_fingerprint),
+           result_tokens = ?,
            input_tokens = COALESCE(?, input_tokens),
            output_tokens = COALESCE(?, output_tokens),
            cache_read_tokens = COALESCE(?, cache_read_tokens),
@@ -139,7 +135,6 @@ export class ToolCallsRepo {
 				update.result_preview ?? null,
 				update.result_bytes ?? null,
 				update.result_tokens ?? null,
-				update.result_fingerprint ?? null,
 				update.input_tokens ?? null,
 				update.output_tokens ?? null,
 				update.cache_read_tokens ?? null,
@@ -165,61 +160,6 @@ export class ToolCallsRepo {
 			[correlation.conversation_id, correlation.generation_id, id],
 		);
 		return this.get(id);
-	}
-
-	findProviderShellHooksForFingerprint(input: {
-		projectId: string;
-		fingerprint: string;
-		since: number;
-		until: number;
-	}): ToolCallRecord[] {
-		return this.db
-			.query(
-				`SELECT * FROM tool_calls
-         WHERE project_id = ?
-           AND result_fingerprint = ?
-           AND kind = 'shell'
-           AND source IS NOT NULL
-           AND source NOT IN ('shell', 'mcp')
-           AND conversation_id IS NOT NULL
-           AND TRIM(conversation_id) <> ''
-           AND started_at >= ?
-           AND started_at <= ?
-         ORDER BY started_at DESC, id DESC`,
-			)
-			.all(
-				input.projectId,
-				input.fingerprint,
-				input.since,
-				input.until,
-			) as ToolCallRecord[];
-	}
-
-	findCapaShellTracesForFingerprint(input: {
-		projectId: string;
-		fingerprint: string;
-		since: number;
-		until: number;
-		centerStartedAt: number;
-	}): ToolCallRecord[] {
-		return this.db
-			.query(
-				`SELECT * FROM tool_calls
-         WHERE project_id = ?
-           AND result_fingerprint = ?
-           AND source = 'shell'
-           AND (conversation_id IS NULL OR TRIM(conversation_id) = '')
-           AND started_at >= ?
-           AND started_at <= ?
-         ORDER BY ABS(started_at - ?) ASC, id DESC`,
-			)
-			.all(
-				input.projectId,
-				input.fingerprint,
-				input.since,
-				input.until,
-				input.centerStartedAt,
-			) as ToolCallRecord[];
 	}
 
 	findUncorrelatedCapaShellTracesInWindow(input: {

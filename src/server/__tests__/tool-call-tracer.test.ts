@@ -16,7 +16,6 @@ import {
 	truncateText,
 } from "../tool-call-tracer";
 import { notifyToolCall } from "../project-routes";
-import { fingerprintActivityOutput } from "../../shared/activity-output-fingerprint";
 import type { ToolCallRecord } from "../../types/database";
 
 describe("tool-call-tracer helpers", () => {
@@ -479,51 +478,6 @@ describe("ToolCallTracer", () => {
 		expect(row?.generation_id).toBeNull();
 	});
 
-	it("links capa shell trace to provider shell hook by matching output fingerprint", () => {
-		const output = "search results line 1\n";
-		const started = Date.now();
-
-		db.insertToolCall({
-			id: "hook-shell",
-			project_id: "proj-1",
-			session_id: null,
-			started_at: started - 50,
-			duration_ms: 10,
-			status: "ok",
-			source: "cursor",
-			kind: "shell",
-			tool_name: "capa sh slack search-public-and-private --query hi",
-			meta_tool: null,
-			args_json: null,
-			result_preview: output,
-			result_bytes: null,
-			result_tokens: null,
-			error_message: null,
-			agent_id: null,
-			conversation_id: "conv-chat",
-			generation_id: "gen-1",
-			result_fingerprint: fingerprintActivityOutput(output),
-		});
-
-		const tracer = new ToolCallTracer(db);
-		const id = tracer.start({
-			projectId: "proj-1",
-			source: "shell",
-			kind: "tool",
-			toolName: "slack.search_public_and_private",
-			metaTool: "call_tool",
-			args: { query: "hi" },
-		});
-
-		const finished = tracer.finish(id, {
-			status: "ok",
-			resultPreview: output,
-		});
-
-		expect(finished?.conversation_id).toBe("conv-chat");
-		expect(finished?.generation_id).toBe("gen-1");
-	});
-
 	it("links capa shell trace to provider hook by capa sh command when output differs", () => {
 		const started = Date.now();
 
@@ -714,7 +668,6 @@ describe("notifyToolCall SSE framing", () => {
 			generation_id: "gen-test",
 			model: null,
 			attributes_json: null,
-			result_fingerprint: null,
 			input_tokens: null,
 			output_tokens: null,
 			cache_read_tokens: null,
@@ -754,7 +707,6 @@ describe("notifyToolCall SSE framing", () => {
 			generation_id: null,
 			model: null,
 			attributes_json: null,
-			result_fingerprint: null,
 			input_tokens: null,
 			output_tokens: null,
 			cache_read_tokens: null,

@@ -1,6 +1,7 @@
 /**
- * Pair capa `capa sh` traces with provider afterShell hooks — primarily by
- * parsed command + time window; output fingerprint is a fallback.
+ * Pair capa `capa sh` traces with provider afterShell hooks by parsed command
+ * and time window. Unmatched capa shell traces stay uncorrelated and are hidden
+ * from the activity feed.
  */
 
 import {
@@ -11,11 +12,10 @@ import type { ToolCallRecord } from "../types/database";
 import {
 	ACTIVITY_TRACE_LINK_WINDOW_MS,
 	activityTraceLinkTimeBounds,
-	fingerprintActivityOutput,
 	isCapaShellActivitySource,
 	isProviderShellHookRow,
 	providerShellLooksLikeCapaSh,
-} from "./activity-output-fingerprint";
+} from "./activity-shell-classify";
 
 /** Capa MCP trace usually finishes shortly before the provider afterShell hook. */
 const CAPA_BEFORE_HOOK_SLACK_MS = 5_000;
@@ -24,19 +24,6 @@ const CAPA_BEFORE_HOOK_SLACK_MS = 5_000;
 const SAME_TOOL_AMBIGUITY_MS = 2_000;
 
 export type ActivityTraceCorrelateDb = {
-	findProviderShellHooksForFingerprint(input: {
-		projectId: string;
-		fingerprint: string;
-		since: number;
-		until: number;
-	}): ToolCallRecord[];
-	findCapaShellTracesForFingerprint(input: {
-		projectId: string;
-		fingerprint: string;
-		since: number;
-		until: number;
-		centerStartedAt: number;
-	}): ToolCallRecord[];
 	findUncorrelatedCapaShellTracesInWindow(input: {
 		projectId: string;
 		since: number;
@@ -171,51 +158,6 @@ function tryLinkByCapaShCommandFromProviderHook(
 	return patchFromHook(db, capa.id, hookRow);
 }
 
-function tryLinkByOutputFingerprintFromCapaTrace(
-	db: ActivityTraceCorrelateDb,
-	record: ToolCallRecord,
-	fingerprint: string | null,
-): ToolCallRecord | null {
-	if (!fingerprint) return null;
-
-	const { since, until } = activityTraceLinkTimeBounds(record.started_at);
-	const hooks = db
-		.findProviderShellHooksForFingerprint({
-			projectId: record.project_id,
-			fingerprint,
-			since,
-			until,
-		})
-		.filter((row) => row.id !== record.id);
-
-	const match = pickUniqueCapaShProviderShellMatch(hooks);
-	if (!match?.conversation_id?.trim()) return null;
-
-	return patchFromHook(db, record.id, match);
-}
-
-function tryLinkByOutputFingerprintFromProviderHook(
-	db: ActivityTraceCorrelateDb,
-	hookRow: ToolCallRecord,
-	resultPreview: unknown,
-): ToolCallRecord | null {
-	const fingerprint = fingerprintActivityOutput(resultPreview);
-	const { since, until } = activityTraceLinkTimeBounds(hookRow.started_at);
-	const capaRows = db
-		.findCapaShellTracesForFingerprint({
-			projectId: hookRow.project_id,
-			fingerprint,
-			since,
-			until,
-			centerStartedAt: hookRow.started_at,
-		})
-		.filter(capaTraceNeedsCorrelation);
-
-	if (capaRows.length !== 1) return null;
-
-	return patchFromHook(db, capaRows[0]!.id, hookRow);
-}
-
 /**
  * After a capa shell trace finishes, copy conversation/generation from a matching
  * provider afterShell hook when the pairing is unambiguous.
@@ -223,14 +165,9 @@ function tryLinkByOutputFingerprintFromProviderHook(
 export function tryLinkCapaShellTraceAfterFinish(
 	db: ActivityTraceCorrelateDb,
 	record: ToolCallRecord,
-	fingerprint: string | null,
 ): ToolCallRecord | null {
 	if (!capaTraceNeedsCorrelation(record)) return null;
-
-	return (
-		tryLinkByCapaShCommandFromCapaTrace(db, record) ??
-		tryLinkByOutputFingerprintFromCapaTrace(db, record, fingerprint)
-	);
+	return tryLinkByCapaShCommandFromCapaTrace(db, record);
 }
 
 /**
@@ -240,15 +177,10 @@ export function tryLinkCapaShellTraceAfterFinish(
 export function tryLinkCapaShellTraceFromProviderHook(
 	db: ActivityTraceCorrelateDb,
 	hookRow: ToolCallRecord,
-	resultPreview: unknown,
 ): ToolCallRecord | null {
 	if (!isProviderShellHookRow(hookRow)) return null;
 	if (!hookRow.conversation_id?.trim()) return null;
-
-	return (
-		tryLinkByCapaShCommandFromProviderHook(db, hookRow) ??
-		tryLinkByOutputFingerprintFromProviderHook(db, hookRow, resultPreview)
-	);
+	return tryLinkByCapaShCommandFromProviderHook(db, hookRow);
 }
 
-export { ACTIVITY_TRACE_LINK_WINDOW_MS, fingerprintActivityOutput };
+export { ACTIVITY_TRACE_LINK_WINDOW_MS };

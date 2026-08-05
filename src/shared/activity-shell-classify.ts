@@ -1,43 +1,10 @@
 /**
- * Stable fingerprints for matching capa shell/MCP tool output to provider
- * afterShell hook payloads (same bytes the agent saw).
+ * Classify activity rows used when pairing capa shell traces with provider
+ * afterShell hooks (command + time window matching).
  */
-
-import { createHash } from "node:crypto";
 
 /** Max |Δstarted_at| when pairing capa traces with provider shell hooks. */
 export const ACTIVITY_TRACE_LINK_WINDOW_MS = 5 * 60 * 1000;
-
-/** Must match {@link TOOL_CALL_PREVIEW_MAX_CHARS} in tool-call-tracer. */
-export const ACTIVITY_OUTPUT_FINGERPRINT_PREFIX_CHARS = 6_000;
-
-export function normalizeActivityOutputText(text: string): string {
-	return text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-}
-
-export function activityOutputToText(value: unknown): string {
-	if (value === undefined || value === null) return "";
-	if (typeof value === "string") return value;
-	try {
-		return JSON.stringify(value, null, 2);
-	} catch {
-		return String(value);
-	}
-}
-
-/**
- * SHA-256 hex of normalized tool/shell output for trace pairing.
- * Hashes only the first {@link ACTIVITY_OUTPUT_FINGERPRINT_PREFIX_CHARS} so capa
- * MCP traces match provider afterShell hooks when tails differ past the preview cap.
- */
-export function fingerprintActivityOutput(value: unknown): string {
-	const normalized = normalizeActivityOutputText(activityOutputToText(value));
-	const prefix =
-		normalized.length <= ACTIVITY_OUTPUT_FINGERPRINT_PREFIX_CHARS
-			? normalized
-			: normalized.slice(0, ACTIVITY_OUTPUT_FINGERPRINT_PREFIX_CHARS);
-	return createHash("sha256").update(prefix, "utf8").digest("hex");
-}
 
 const CAPA_SH_RE = /\bcapa\s+sh\b/i;
 

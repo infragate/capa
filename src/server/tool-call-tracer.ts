@@ -1,10 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { nanoid } from "nanoid";
 import type { CapaDatabase } from "../db/database";
-import { fingerprintActivityOutput } from "../shared/activity-output-fingerprint";
-import {
-	tryLinkCapaShellTraceAfterFinish,
-} from "../shared/activity-trace-correlate";
+import { tryLinkCapaShellTraceAfterFinish } from "../shared/activity-trace-correlate";
 import type {
 	ToolCallKind,
 	ToolCallRecord,
@@ -57,8 +54,7 @@ export interface ToolCallStartInput {
 	/**
 	 * When conversation/generation are missing, inherit the latest provider
 	 * correlation so capa MCP spans group with the agent turn.
-	 * Capa `capa sh` traces pair with provider afterShell hooks via command + time
-	 * (output fingerprint is fallback).
+	 * Capa `capa sh` traces pair with provider afterShell hooks via command + time.
 	 * Provider hook ingest must pass `false`.
 	 * Defaults to `true`.
 	 */
@@ -97,7 +93,7 @@ export class ToolCallTracer {
 
 		let conversationId = input.conversationId ?? null;
 		let generationId = input.generationId ?? null;
-		// Capa shell output is paired with provider afterShell hooks via fingerprint;
+		// Capa shell traces pair with provider afterShell hooks via command match;
 		// inheriting "latest" conversation here caused wrong grouping across chats.
 		const capaShell = input.source === "shell";
 		if (
@@ -152,10 +148,8 @@ export class ToolCallTracer {
 		let resultPreview = existing.result_preview;
 		let resultBytes = existing.result_bytes;
 		let resultTokens = existing.result_tokens;
-		let resultFingerprint: string | null = existing.result_fingerprint ?? null;
 
 		if (input.resultPreview !== undefined) {
-			resultFingerprint = fingerprintActivityOutput(input.resultPreview);
 			const sized = serializeResultWithSize(input.resultPreview, secrets);
 			resultPreview = sized.preview;
 			resultBytes = sized.bytes;
@@ -173,7 +167,6 @@ export class ToolCallTracer {
 			result_preview: resultPreview,
 			result_bytes: resultBytes,
 			result_tokens: resultTokens,
-			result_fingerprint: resultFingerprint,
 			input_tokens: input.inputTokens ?? null,
 			output_tokens: input.outputTokens ?? null,
 			cache_read_tokens: input.cacheReadTokens ?? null,
@@ -182,11 +175,7 @@ export class ToolCallTracer {
 		});
 		if (!record) return null;
 
-		const linked = tryLinkCapaShellTraceAfterFinish(
-			this.db,
-			record,
-			resultFingerprint,
-		);
+		const linked = tryLinkCapaShellTraceAfterFinish(this.db, record);
 		const finalRecord = linked ?? record;
 		this.notify?.(finalRecord.project_id, finalRecord);
 		return finalRecord;

@@ -147,11 +147,7 @@ export async function handlePostProjectActivityEvent(
 	});
 
 	if (finished && kind === "shell") {
-		const linkedCapa = tryLinkCapaShellTraceFromProviderHook(
-			deps.db,
-			finished,
-			body.resultPreview,
-		);
+		const linkedCapa = tryLinkCapaShellTraceFromProviderHook(deps.db, finished);
 		if (linkedCapa) deps.toolCallTracer.notifyRecord(linkedCapa);
 	}
 

@@ -419,25 +419,6 @@ export class CapaDatabase {
 		return this.toolCalls.patchCorrelation(id, correlation);
 	}
 
-	findProviderShellHooksForFingerprint(input: {
-		projectId: string;
-		fingerprint: string;
-		since: number;
-		until: number;
-	}): ToolCallRecord[] {
-		return this.toolCalls.findProviderShellHooksForFingerprint(input);
-	}
-
-	findCapaShellTracesForFingerprint(input: {
-		projectId: string;
-		fingerprint: string;
-		since: number;
-		until: number;
-		centerStartedAt: number;
-	}): ToolCallRecord[] {
-		return this.toolCalls.findCapaShellTracesForFingerprint(input);
-	}
-
 	findUncorrelatedCapaShellTracesInWindow(input: {
 		projectId: string;
 		since: number;

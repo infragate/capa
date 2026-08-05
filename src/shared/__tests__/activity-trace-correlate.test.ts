@@ -6,7 +6,6 @@ import {
 	tryLinkCapaShellTraceAfterFinish,
 	tryLinkCapaShellTraceFromProviderHook,
 } from "../activity-trace-correlate";
-import { fingerprintActivityOutput } from "../activity-output-fingerprint";
 
 function row(
 	partial: Partial<ToolCallRecord> & Pick<ToolCallRecord, "id" | "started_at">,
@@ -34,7 +33,6 @@ function row(
 		generation_id: "gen-1",
 		model: null,
 		attributes_json: null,
-		result_fingerprint: null,
 		...partial,
 	};
 }
@@ -45,8 +43,6 @@ function mockDb(
 	>,
 ) {
 	return {
-		findProviderShellHooksForFingerprint: () => [],
-		findCapaShellTracesForFingerprint: () => [],
 		findUncorrelatedCapaShellTracesInWindow: () => [],
 		findProviderCapaShHooksInWindow: () => [],
 		patchToolCallCorrelation: () => null,
@@ -96,11 +92,7 @@ describe("activity-trace-correlate", () => {
 			},
 		});
 
-		const linked = tryLinkCapaShellTraceAfterFinish(
-			db,
-			capa,
-			fingerprintActivityOutput(capa.result_preview),
-		);
+		const linked = tryLinkCapaShellTraceAfterFinish(db, capa);
 		expect(linked?.conversation_id).toBe("chat-a");
 		expect(linked?.generation_id).toBe("turn-1");
 		expect(patches).toHaveLength(1);
@@ -121,27 +113,14 @@ describe("activity-trace-correlate", () => {
 				generation_id: corr.generation_id,
 			}),
 		});
-		const fromHook = tryLinkCapaShellTraceFromProviderHook(
-			dbHookFirst,
-			hook,
-			hook.result_preview,
-		);
+		const fromHook = tryLinkCapaShellTraceFromProviderHook(dbHookFirst, hook);
 		expect(fromHook?.conversation_id).toBe("chat-a");
 	});
 
-	it("links capa shell trace when provider hook output matches (fingerprint fallback)", () => {
-		const output = "same stdout\n";
-		const fp = fingerprintActivityOutput(output);
-		const hook = row({
-			id: "hook",
-			started_at: 1000,
-			tool_name: "capa sh glean search --query x",
-			conversation_id: "chat-a",
-			generation_id: "turn-1",
-		});
+	it("leaves capa shell traces uncorrelated when no capa sh hook matches", () => {
 		const capa = row({
 			id: "capa",
-			started_at: 1005,
+			started_at: 1000,
 			source: "shell",
 			kind: "tool",
 			tool_name: "glean.search",
@@ -150,18 +129,10 @@ describe("activity-trace-correlate", () => {
 		});
 
 		const db = mockDb({
-			findProviderCapaShHooksInWindow: () => [hook],
-			findProviderShellHooksForFingerprint: () => [hook],
-			findCapaShellTracesForFingerprint: () => [capa],
-			patchToolCallCorrelation: (id, corr) => ({
-				...capa,
-				conversation_id: corr.conversation_id,
-				generation_id: corr.generation_id,
-			}),
+			findProviderCapaShHooksInWindow: () => [],
 		});
 
-		const linked = tryLinkCapaShellTraceAfterFinish(db, capa, fp);
-		expect(linked?.conversation_id).toBe("chat-a");
+		expect(tryLinkCapaShellTraceAfterFinish(db, capa)).toBeNull();
 	});
 
 	it("pickCapaTraceForProviderHook prefers latest capa trace before hook", () => {
