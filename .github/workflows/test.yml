@@ -32,7 +32,12 @@ jobs:
         run: bun run build:web
       
       - name: Run tests
+        run: bun test --timeout 20000
+        if: matrix.os == 'windows-latest'
+
+      - name: Run tests
         run: bun test
+        if: matrix.os != 'windows-latest'
       
       - name: Run tests with coverage
         if: matrix.os == 'ubuntu-latest'

@@ -234,6 +234,12 @@ export async function findWrapPidsForProject(realProjectPath: string): Promise<n
   const real = resolve(realProjectPath);
   const fromSessions = await pidsFromSessionFiles(real);
   const workspacePaths = await listWorkspacePathsForProject(real);
+  // No capa wrap workspace for this project — skip a full process-table scan
+  // (notably slow on Windows via PowerShell/CIM). Session files + workspace
+  // markers are the normal sources of truth once wrap has run.
+  if (fromSessions.length === 0 && workspacePaths.length === 0) {
+    return [];
+  }
   const procs = await listWrapProcesses();
   const fromArgv = procs
     .filter((p) => commandLineMatchesProject(p.commandLine, real, workspacePaths))

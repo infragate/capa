@@ -4,6 +4,26 @@ import { mkdtempSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
+/** Windows CI can briefly keep SQLite files open after close(). */
+function removeTempDirWithRetry(dir: string, attempts = 8): void {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+      return;
+    } catch (error: unknown) {
+      const code =
+        error && typeof error === 'object' && 'code' in error
+          ? String((error as { code: unknown }).code)
+          : '';
+      if (code !== 'EBUSY' && code !== 'EPERM' && code !== 'ENOTEMPTY') {
+        throw error;
+      }
+      if (i === attempts - 1) return;
+      Bun.sleepSync(50 * (i + 1));
+    }
+  }
+}
+
 describe('CapaDatabase', () => {
   let db: CapaDatabase;
   let tempDir: string;
@@ -17,11 +37,7 @@ describe('CapaDatabase', () => {
 
   afterEach(() => {
     db.close();
-    try {
-      rmSync(tempDir, { recursive: true, force: true });
-    } catch (error: any) {
-      if (error?.code !== 'EBUSY') throw error;
-    }
+    removeTempDirWithRetry(tempDir);
   });
 
   describe('Project operations', () => {
