@@ -36,4 +36,22 @@ describe("activity-capa-sh-command", () => {
 			capaShSegmentsMatchQualifiedTool(segments!, "atlassian.jira_get_ticket"),
 		).toBe(true);
 	});
+
+	it("stops before shell redirections like 2>/dev/null", () => {
+		expect(
+			parseCapaShSegmentsFromShellText(
+				"capa sh pagerduty list-incidents 2>/dev/null",
+			),
+		).toEqual(["pagerduty", "list-incidents"]);
+		expect(
+			parseCapaShSegmentsFromShellText("capa sh glean search >/tmp/out"),
+		).toEqual(["glean", "search"]);
+		expect(
+			parseCapaShSegmentsFromShellText("capa sh db query | jq ."),
+		).toEqual(["db", "query"]);
+		// Must not treat `2` from `2>/dev/null` as a tool segment.
+		expect(
+			parseCapaShSegmentsFromShellText("capa sh slack search 2>file"),
+		).toEqual(["slack", "search"]);
+	});
 });

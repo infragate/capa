@@ -40,7 +40,8 @@ export function parseCapaShSegmentsFromShellText(text: string): string[] | null 
 	while (rest.length > 0) {
 		rest = rest.trimStart();
 		if (!rest || rest.startsWith("--")) break;
-		if (/^2>$|^>&|^[|;&]/.test(rest)) break;
+		// Stop before shell redirections / operators (`2>/dev/null`, `>`, `|`, …).
+		if (/^(?:\d*>|&>|>&|>>|<|[|;&])/.test(rest)) break;
 
 		const token = /^([a-z0-9][\w-]*)/i.exec(rest);
 		if (!token) break;

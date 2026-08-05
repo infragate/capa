@@ -1,8 +1,8 @@
 import { cleanProject } from "../cli/commands/clean-project";
 import type { CapaDatabase } from "../db/database";
 import {
-	filterVisibleActivityFeed,
 	isVisibleInActivityFeed,
+	listVisibleActivityPage,
 } from "../shared/activity-feed-visible";
 import { isSystemActivityHookId } from "../shared/agent-activity";
 import { parseCapabilitiesFile } from "../shared/capabilities";
@@ -533,19 +533,17 @@ export function handleGetProjectActivity(
 	const parsedBefore = beforeParam ? Number.parseInt(beforeParam, 10) : NaN;
 	const beforeStartedAt = Number.isFinite(parsedBefore) ? parsedBefore : null;
 	const beforeId = beforeIdParam?.trim() ? beforeIdParam.trim() : null;
-	const page = deps.db.listToolCalls(projectId, {
-		limit,
-		beforeStartedAt,
-		beforeId,
-		before: beforeStartedAt,
-	});
-	return new Response(
-		JSON.stringify({
-			...page,
-			calls: filterVisibleActivityFeed(page.calls),
-		}),
-		{ headers: JSON_HEADERS },
+	const page = listVisibleActivityPage(
+		(opts) =>
+			deps.db.listToolCalls(projectId, {
+				limit: opts.limit,
+				beforeStartedAt: opts.beforeStartedAt,
+				beforeId: opts.beforeId,
+				before: opts.beforeStartedAt,
+			}),
+		{ limit, beforeStartedAt, beforeId },
 	);
+	return new Response(JSON.stringify(page), { headers: JSON_HEADERS });
 }
 
 export function handleGetProjectActivityStats(
