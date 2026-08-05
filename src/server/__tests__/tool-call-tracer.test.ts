@@ -16,6 +16,7 @@ import {
 	truncateText,
 } from "../tool-call-tracer";
 import { notifyToolCall } from "../project-routes";
+import { fingerprintActivityOutput } from "../../shared/activity-output-fingerprint";
 import type { ToolCallRecord } from "../../types/database";
 
 describe("tool-call-tracer helpers", () => {
@@ -402,7 +403,45 @@ describe("ToolCallTracer", () => {
 		expect(notified[1].record.status).toBe("ok");
 	});
 
-	it("inherits conversation/generation from latest provider activity", () => {
+	it("inherits conversation for capa MCP traces at start", () => {
+		db.insertToolCall({
+			id: "hook-1",
+			project_id: "proj-1",
+			session_id: null,
+			started_at: Date.now() - 1_000,
+			duration_ms: 10,
+			status: "ok",
+			source: "cursor",
+			kind: "tool",
+			tool_name: "Read",
+			meta_tool: null,
+			args_json: "{}",
+			result_preview: null,
+			result_bytes: null,
+			result_tokens: null,
+			error_message: null,
+			agent_id: null,
+			conversation_id: "conv-cursor",
+			generation_id: "gen-turn-2",
+		});
+
+		const tracer = new ToolCallTracer(db);
+		const id = tracer.start({
+			projectId: "proj-1",
+			sessionId: "mcp-sess",
+			source: "mcp",
+			kind: "tool",
+			toolName: "slack.search_public_and_private",
+			metaTool: "call_tool",
+			args: { query: "hi" },
+		});
+
+		const row = db.getToolCall(id);
+		expect(row?.conversation_id).toBe("conv-cursor");
+		expect(row?.generation_id).toBe("gen-turn-2");
+	});
+
+	it("does not inherit conversation for capa shell traces at start", () => {
 		db.insertToolCall({
 			id: "hook-1",
 			project_id: "proj-1",
@@ -436,8 +475,96 @@ describe("ToolCallTracer", () => {
 		});
 
 		const row = db.getToolCall(id);
-		expect(row?.conversation_id).toBe("conv-claude");
-		expect(row?.generation_id).toBe("gen-turn-1");
+		expect(row?.conversation_id).toBeNull();
+		expect(row?.generation_id).toBeNull();
+	});
+
+	it("links capa shell trace to provider shell hook by matching output fingerprint", () => {
+		const output = "search results line 1\n";
+		const started = Date.now();
+
+		db.insertToolCall({
+			id: "hook-shell",
+			project_id: "proj-1",
+			session_id: null,
+			started_at: started - 50,
+			duration_ms: 10,
+			status: "ok",
+			source: "cursor",
+			kind: "shell",
+			tool_name: "capa sh slack search-public-and-private --query hi",
+			meta_tool: null,
+			args_json: null,
+			result_preview: output,
+			result_bytes: null,
+			result_tokens: null,
+			error_message: null,
+			agent_id: null,
+			conversation_id: "conv-chat",
+			generation_id: "gen-1",
+			result_fingerprint: fingerprintActivityOutput(output),
+		});
+
+		const tracer = new ToolCallTracer(db);
+		const id = tracer.start({
+			projectId: "proj-1",
+			source: "shell",
+			kind: "tool",
+			toolName: "slack.search_public_and_private",
+			metaTool: "call_tool",
+			args: { query: "hi" },
+		});
+
+		const finished = tracer.finish(id, {
+			status: "ok",
+			resultPreview: output,
+		});
+
+		expect(finished?.conversation_id).toBe("conv-chat");
+		expect(finished?.generation_id).toBe("gen-1");
+	});
+
+	it("links capa shell trace to provider hook by capa sh command when output differs", () => {
+		const started = Date.now();
+
+		db.insertToolCall({
+			id: "hook-pd",
+			project_id: "proj-1",
+			session_id: null,
+			started_at: started + 900,
+			duration_ms: 10,
+			status: "ok",
+			source: "cursor",
+			kind: "shell",
+			tool_name: "capa sh pagerduty list-incidents --statuses triggered",
+			meta_tool: null,
+			args_json: null,
+			result_preview: "Traceback from shell wrapper",
+			result_bytes: null,
+			result_tokens: null,
+			error_message: null,
+			agent_id: null,
+			conversation_id: "conv-pager",
+			generation_id: "gen-pd",
+		});
+
+		const tracer = new ToolCallTracer(db);
+		const id = tracer.start({
+			projectId: "proj-1",
+			source: "shell",
+			kind: "tool",
+			toolName: "pagerduty.list_incidents",
+			metaTool: "call_tool",
+			args: { statuses: "triggered" },
+		});
+
+		const finished = tracer.finish(id, {
+			status: "error",
+			resultPreview: "Error executing tool list_incidents: validation failed",
+		});
+
+		expect(finished?.conversation_id).toBe("conv-pager");
+		expect(finished?.generation_id).toBe("gen-pd");
 	});
 
 	it("does not inherit correlation when inheritCorrelation is false", () => {
@@ -583,8 +710,8 @@ describe("notifyToolCall SSE framing", () => {
 			result_tokens: 1,
 			error_message: null,
 			agent_id: null,
-			conversation_id: null,
-			generation_id: null,
+			conversation_id: "conv-test",
+			generation_id: "gen-test",
 			model: null,
 			attributes_json: null,
 			input_tokens: null,
@@ -598,5 +725,39 @@ describe("notifyToolCall SSE framing", () => {
 		const text = new TextDecoder().decode(chunks[0]);
 		expect(text.startsWith("event: tool-call\n")).toBe(true);
 		expect(text).toContain('"tool_name":"echo"');
+	});
+
+	it("does not push uncorrelated capa shell traces", () => {
+		const chunks: Uint8Array[] = [];
+		const clients = new Map<string, Set<(chunk: Uint8Array) => void>>();
+		clients.set("proj-1", new Set([(chunk) => chunks.push(chunk)]));
+
+		notifyToolCall(clients, "proj-1", {
+			id: "abc",
+			project_id: "proj-1",
+			session_id: null,
+			started_at: 1,
+			duration_ms: 10,
+			status: "ok",
+			source: "shell",
+			kind: "tool",
+			tool_name: "echo",
+			meta_tool: null,
+			args_json: "{}",
+			result_preview: "hi",
+			result_bytes: 2,
+			result_tokens: 1,
+			error_message: null,
+			agent_id: null,
+			conversation_id: null,
+			generation_id: null,
+			model: null,
+			attributes_json: null,
+			input_tokens: null,
+			output_tokens: null,
+			cache_read_tokens: null,
+			cache_write_tokens: null,
+		});
+		expect(chunks).toHaveLength(0);
 	});
 });

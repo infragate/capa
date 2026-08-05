@@ -10,6 +10,7 @@ import type {
   Tool,
   ToolCallRecord,
 } from '../../types/api';
+import { isVisibleInActivityFeed } from '../../../../src/shared/activity-feed-visible';
 import { configuredToolReorderKey } from './components/tools/anchors';
 import { reorderByKey, serverReorderKey, skillReorderKey } from './lib/reorderKeys';
 
@@ -106,6 +107,13 @@ const ACTIVITY_RETENTION = 1000;
 const STATS_INVALIDATE_MS = 2_000;
 
 function mergeToolCall(prev: ToolCallRecord[], next: ToolCallRecord): ToolCallRecord[] {
+  if (!isVisibleInActivityFeed(next)) {
+    const idx = prev.findIndex((c) => c.id === next.id);
+    if (idx === -1) return prev;
+    const copy = prev.slice();
+    copy.splice(idx, 1);
+    return copy;
+  }
   const idx = prev.findIndex((c) => c.id === next.id);
   if (idx === -1) {
     return [next, ...prev].slice(0, ACTIVITY_RETENTION);

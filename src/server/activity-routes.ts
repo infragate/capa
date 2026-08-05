@@ -1,6 +1,7 @@
 import { serializeActivityAttributes } from "../shared/activity-attributes";
 import { isAgentActivityEnabled } from "../shared/agent-activity";
 import { syncSystemActivityHooks } from "../shared/agent-activity-sync";
+import { tryLinkCapaShellTraceFromProviderHook } from "../shared/activity-trace-correlate";
 import { parseCapabilitiesFile } from "../shared/capabilities";
 import { detectCapabilitiesFile } from "../shared/paths";
 import { resolveProvidersForClean } from "../shared/providers/resolve";
@@ -135,7 +136,7 @@ export async function handlePostProjectActivityEvent(
 	});
 
 	// Tracer finish already notifies SSE via ToolCallTracer constructor notify.
-	deps.toolCallTracer.finish(id, {
+	const finished = deps.toolCallTracer.finish(id, {
 		status: status === "running" ? "ok" : status,
 		resultPreview: body.resultPreview,
 		errorMessage: body.errorMessage ?? null,
@@ -144,6 +145,15 @@ export async function handlePostProjectActivityEvent(
 		cacheReadTokens: body.tokenUsage?.cache_read_tokens ?? null,
 		cacheWriteTokens: body.tokenUsage?.cache_write_tokens ?? null,
 	});
+
+	if (finished && kind === "shell") {
+		const linkedCapa = tryLinkCapaShellTraceFromProviderHook(
+			deps.db,
+			finished,
+			body.resultPreview,
+		);
+		if (linkedCapa) deps.toolCallTracer.notifyRecord(linkedCapa);
+	}
 
 	return new Response(JSON.stringify({ ok: true, id }), {
 		status: 201,

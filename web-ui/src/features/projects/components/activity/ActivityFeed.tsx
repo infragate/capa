@@ -11,6 +11,7 @@ import {
   formatRelative,
   groupActivityConversations,
   maxSpanDuration,
+  shortConversationLabel,
   sumRunTokenUsage,
 } from './groupActivityRuns';
 import { LatencyBar, sourceLabelText, TokenUsageLabel } from './ActivityShared';
@@ -89,6 +90,10 @@ function RunRow({
   );
 }
 
+/** Height of the sticky column header row (`RunRow` aligns below this). */
+const FEED_STICKY_COL_HEADER_CLASS = 'top-0';
+const FEED_STICKY_SECTION_HEADER_CLASS = 'top-7';
+
 function ConversationBlock({
   conversation,
   maxMs,
@@ -105,17 +110,28 @@ function ConversationBlock({
     ? t('activity.ungrouped', { defaultValue: 'Activity' })
     : t('activity.conversation', {
         defaultValue: 'Conversation {{id}}',
-        id: conversation.id,
+        id: shortConversationLabel(conversation.id),
       });
 
   return (
-    <div className="border-b border-border-secondary/90 last:border-b-0">
-      <div className="flex items-center gap-2 bg-bg-tertiary/40 px-3 py-1.5 text-[10px] font-medium uppercase tracking-[0.06em] text-text-tertiary">
-        <span className="min-w-0 flex-1 truncate" title={isOrphan ? undefined : conversation.id}>
+    <section>
+      <div
+        className={cn(
+          'sticky z-[2]',
+          FEED_STICKY_SECTION_HEADER_CLASS,
+          'flex items-center gap-2 border-b border-border-secondary/90',
+          'bg-bg-secondary/95 px-3 py-1.5 backdrop-blur-sm',
+          'text-[10px] font-medium uppercase tracking-[0.06em] text-text-tertiary',
+        )}
+      >
+        <span
+          className="min-w-0 flex-1 truncate"
+          title={isOrphan ? undefined : conversation.id}
+        >
           {title}
         </span>
         {conversation.source ? (
-          <span className="shrink-0 rounded bg-bg-secondary px-1.5 py-0.5 text-[10px] font-medium normal-case tracking-normal text-text-secondary">
+          <span className="shrink-0 rounded bg-bg-tertiary px-1.5 py-0.5 text-[10px] font-medium normal-case tracking-normal text-text-secondary">
             {sourceLabelText(conversation.source, t)}
           </span>
         ) : null}
@@ -135,7 +151,7 @@ function ConversationBlock({
           onOpen={() => onOpenRun(run.id)}
         />
       ))}
-    </div>
+    </section>
   );
 }
 
@@ -174,27 +190,35 @@ export function ActivityFeed({
 
   return (
     <>
-      <div className="max-h-[560px] overflow-y-auto">
-        <div className="sticky top-0 z-[1] flex items-center gap-2 border-b border-border-secondary bg-bg-secondary/95 px-3 py-1.5 text-[10px] font-medium uppercase tracking-[0.07em] text-text-tertiary backdrop-blur-sm">
-          <span className="w-4 shrink-0" />
-          <span className="min-w-0 flex-1">{t('activity.colName')}</span>
-          <span className="w-14 shrink-0 text-right">{t('activity.colSpans')}</span>
-          <span className="hidden md:inline w-14 shrink-0" />
-          <span className="w-12 shrink-0 text-right">{t('activity.colLatency')}</span>
-          <span className="hidden w-14 shrink-0 text-right sm:block">
-            {t('activity.colTime')}
-          </span>
+      <div className="flex max-h-[560px] flex-col overflow-hidden">
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain">
+          <div
+            className={cn(
+              'sticky z-[3]',
+              FEED_STICKY_COL_HEADER_CLASS,
+              'flex items-center gap-2 border-b border-border-secondary bg-bg-secondary/95 px-3 py-1.5 text-[10px] font-medium uppercase tracking-[0.07em] text-text-tertiary backdrop-blur-sm',
+            )}
+          >
+            <span className="w-4 shrink-0" />
+            <span className="min-w-0 flex-1">{t('activity.colName')}</span>
+            <span className="w-14 shrink-0 text-right">{t('activity.colSpans')}</span>
+            <span className="hidden md:inline w-14 shrink-0" />
+            <span className="w-12 shrink-0 text-right">{t('activity.colLatency')}</span>
+            <span className="hidden w-14 shrink-0 text-right sm:block">
+              {t('activity.colTime')}
+            </span>
+          </div>
+          {conversations.map((conversation) => (
+            <ConversationBlock
+              key={conversation.id}
+              conversation={conversation}
+              maxMs={maxMs}
+              onOpenRun={setSelectedId}
+            />
+          ))}
         </div>
-        {conversations.map((conversation) => (
-          <ConversationBlock
-            key={conversation.id}
-            conversation={conversation}
-            maxMs={maxMs}
-            onOpenRun={setSelectedId}
-          />
-        ))}
-        {hasMore && (
-          <div className="sticky bottom-0 border-t border-border-secondary bg-bg-secondary/95 px-3 py-2.5 text-center backdrop-blur-sm">
+        {hasMore ? (
+          <div className="shrink-0 border-t border-border-secondary bg-bg-secondary px-3 py-2.5 text-center">
             <button
               type="button"
               onClick={onLoadMore}
@@ -205,7 +229,7 @@ export function ActivityFeed({
               {t('activity.loadMore')}
             </button>
           </div>
-        )}
+        ) : null}
       </div>
 
       <ActivityRunDialog

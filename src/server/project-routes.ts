@@ -1,5 +1,9 @@
 import { cleanProject } from "../cli/commands/clean-project";
 import type { CapaDatabase } from "../db/database";
+import {
+	filterVisibleActivityFeed,
+	isVisibleInActivityFeed,
+} from "../shared/activity-feed-visible";
 import { isSystemActivityHookId } from "../shared/agent-activity";
 import { parseCapabilitiesFile } from "../shared/capabilities";
 import { detectCapabilitiesFile } from "../shared/paths";
@@ -494,6 +498,7 @@ export function notifyToolCall(
 	projectId: string,
 	record: ToolCallRecord,
 ): void {
+	if (!isVisibleInActivityFeed(record)) return;
 	const clients = projectEventClients.get(projectId);
 	if (!clients || clients.size === 0) return;
 	const encoder = new TextEncoder();
@@ -534,7 +539,13 @@ export function handleGetProjectActivity(
 		beforeId,
 		before: beforeStartedAt,
 	});
-	return new Response(JSON.stringify(page), { headers: JSON_HEADERS });
+	return new Response(
+		JSON.stringify({
+			...page,
+			calls: filterVisibleActivityFeed(page.calls),
+		}),
+		{ headers: JSON_HEADERS },
+	);
 }
 
 export function handleGetProjectActivityStats(

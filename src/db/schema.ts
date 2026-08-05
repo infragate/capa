@@ -216,6 +216,7 @@ export function initSchema(db: Database): void {
         generation_id TEXT,
         model TEXT,
         attributes_json TEXT,
+        result_fingerprint TEXT,
         FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
       )
     `);
@@ -230,6 +231,7 @@ export function initSchema(db: Database): void {
 	ensureColumn(db, "tool_calls", "generation_id", "TEXT");
 	ensureColumn(db, "tool_calls", "model", "TEXT");
 	ensureColumn(db, "tool_calls", "attributes_json", "TEXT");
+	ensureColumn(db, "tool_calls", "result_fingerprint", "TEXT");
 
 	db.run(`
       CREATE INDEX IF NOT EXISTS idx_tool_calls_project_started

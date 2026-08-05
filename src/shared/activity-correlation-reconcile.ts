@@ -100,7 +100,6 @@ export function reconcileCursorActivityConversationIds<
 	if (chatByAgentSession.size === 0) return reconciled;
 
 	return reconciled.map((call) => {
-		if (call.source !== "cursor") return call;
 		const sessionId = call.conversation_id?.trim();
 		if (!sessionId) return call;
 		const chatId = chatByAgentSession.get(sessionId);

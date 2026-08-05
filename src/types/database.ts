@@ -108,6 +108,8 @@ export interface ToolCallRecord {
   model: string | null;
   /** JSON object of provider envelope attributes (model_id, versions, …). */
   attributes_json: string | null;
+  /** SHA-256 of normalized tool/shell output (for hook ↔ capa trace pairing). */
+  result_fingerprint: string | null;
 }
 
 /** One-minute activity bucket for the last-hour chart. */

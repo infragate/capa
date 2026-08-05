@@ -1,4 +1,5 @@
 import type { ToolCallRecord } from '../../../../types/api';
+import { filterVisibleActivityFeed } from '../../../../../../src/shared/activity-feed-visible';
 import { reconcileCursorActivityConversationIds } from '../../../../../../src/shared/activity-correlation-reconcile';
 import {
   isActivityRunCloser,
@@ -50,7 +51,9 @@ export interface ActivityConversation {
 export function groupActivityConversations(
   calls: ToolCallRecord[],
 ): ActivityConversation[] {
-  const normalized = reconcileCursorActivityConversationIds(calls);
+  const normalized = reconcileCursorActivityConversationIds(
+    filterVisibleActivityFeed(calls),
+  );
   const correlated: ToolCallRecord[] = [];
   const uncorrelated: ToolCallRecord[] = [];
   for (const call of normalized) {
