@@ -119,4 +119,37 @@ describe("reconcileCursorActivityConversationIds", () => {
 			"sess-a",
 		);
 	});
+
+	it("rewrites capa shell traces linked to the agent session id", () => {
+		const chatId = "5838f384-e543-41e8-be49-57fb1de0d433";
+		const agentSessionId = "6b74a2c7-5d30-4160-8b01-e8106e144ff3";
+		const generationId = "e972af4d-ba8b-4d82-a839-b3b0a9b2aafd";
+
+		const rows = [
+			{
+				source: "cursor",
+				kind: "prompt",
+				conversation_id: chatId,
+				generation_id: generationId,
+				attributes_json: null,
+			},
+			{
+				source: "cursor",
+				kind: "shell",
+				conversation_id: agentSessionId,
+				generation_id: generationId,
+				attributes_json: null,
+			},
+			{
+				source: "shell",
+				kind: "tool",
+				conversation_id: agentSessionId,
+				generation_id: generationId,
+				attributes_json: null,
+			},
+		];
+
+		const out = reconcileCursorActivityConversationIds(rows);
+		expect(out[2]!.conversation_id).toBe(chatId);
+	});
 });

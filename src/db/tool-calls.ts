@@ -122,7 +122,8 @@ export class ToolCallsRepo {
 		this.db.run(
 			`UPDATE tool_calls
        SET status = ?, duration_ms = ?, result_preview = ?, result_bytes = ?,
-           result_tokens = ?, input_tokens = COALESCE(?, input_tokens),
+           result_tokens = ?,
+           input_tokens = COALESCE(?, input_tokens),
            output_tokens = COALESCE(?, output_tokens),
            cache_read_tokens = COALESCE(?, cache_read_tokens),
            cache_write_tokens = COALESCE(?, cache_write_tokens),
@@ -143,6 +144,69 @@ export class ToolCallsRepo {
 			],
 		);
 		return this.get(id);
+	}
+
+	patchCorrelation(
+		id: string,
+		correlation: {
+			conversation_id: string;
+			generation_id: string | null;
+		},
+	): ToolCallRecord | null {
+		this.db.run(
+			`UPDATE tool_calls
+       SET conversation_id = ?, generation_id = ?
+       WHERE id = ?`,
+			[correlation.conversation_id, correlation.generation_id, id],
+		);
+		return this.get(id);
+	}
+
+	findUncorrelatedCapaShellTracesInWindow(input: {
+		projectId: string;
+		since: number;
+		until: number;
+	}): ToolCallRecord[] {
+		return this.db
+			.query(
+				`SELECT * FROM tool_calls
+         WHERE project_id = ?
+           AND source = 'shell'
+           AND (conversation_id IS NULL OR TRIM(conversation_id) = '')
+           AND started_at >= ?
+           AND started_at <= ?
+         ORDER BY started_at DESC, id DESC`,
+			)
+			.all(
+				input.projectId,
+				input.since,
+				input.until,
+			) as ToolCallRecord[];
+	}
+
+	findProviderCapaShHooksInWindow(input: {
+		projectId: string;
+		since: number;
+		until: number;
+	}): ToolCallRecord[] {
+		return this.db
+			.query(
+				`SELECT * FROM tool_calls
+         WHERE project_id = ?
+           AND kind = 'shell'
+           AND source IS NOT NULL
+           AND source NOT IN ('shell', 'mcp')
+           AND conversation_id IS NOT NULL
+           AND TRIM(conversation_id) <> ''
+           AND started_at >= ?
+           AND started_at <= ?
+           AND (
+             INSTR(LOWER(tool_name), 'capa sh') > 0
+             OR INSTR(LOWER(COALESCE(args_json, '')), 'capa sh') > 0
+           )
+         ORDER BY started_at ASC, id ASC`,
+			)
+			.all(input.projectId, input.since, input.until) as ToolCallRecord[];
 	}
 
 	get(id: string): ToolCallRecord | null {

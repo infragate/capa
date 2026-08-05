@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { nanoid } from "nanoid";
 import type { CapaDatabase } from "../db/database";
+import { tryLinkCapaShellTraceAfterFinish } from "../shared/activity-trace-correlate";
 import type {
 	ToolCallKind,
 	ToolCallRecord,
@@ -52,9 +53,9 @@ export interface ToolCallStartInput {
 	args?: unknown;
 	/**
 	 * When conversation/generation are missing, inherit the latest provider
-	 * correlation so capa MCP / `capa sh` spans group with the agent turn.
-	 * Provider hook ingest must pass `false` — otherwise a failed stdin parse
-	 * (e.g. Windows UTF-8 BOM) attaches the previous provider's ids.
+	 * correlation so capa MCP spans group with the agent turn.
+	 * Capa `capa sh` traces pair with provider afterShell hooks via command + time.
+	 * Provider hook ingest must pass `false`.
 	 * Defaults to `true`.
 	 */
 	inheritCorrelation?: boolean;
@@ -81,16 +82,25 @@ export class ToolCallTracer {
 		private notify?: ToolCallNotify,
 	) {}
 
+	/** Broadcast a persisted activity row (e.g. after late correlation linking). */
+	notifyRecord(record: ToolCallRecord): void {
+		this.notify?.(record.project_id, record);
+	}
+
 	start(input: ToolCallStartInput): string {
 		const id = nanoid();
 		const secrets = this.secretValues(input.projectId);
 
 		let conversationId = input.conversationId ?? null;
 		let generationId = input.generationId ?? null;
-		// Capa MCP / shell traces do not see provider hook stdin. Inherit the
-		// active conversation/generation so they group with the agent turn.
-		// Provider hook ingest opts out — missing ids must stay null.
-		if (!conversationId && input.inheritCorrelation !== false) {
+		// Capa shell traces pair with provider afterShell hooks via command match;
+		// inheriting "latest" conversation here caused wrong grouping across chats.
+		const capaShell = input.source === "shell";
+		if (
+			!conversationId &&
+			!capaShell &&
+			input.inheritCorrelation !== false
+		) {
 			const inherited = this.db.findLatestActivityCorrelation(input.projectId);
 			if (inherited) {
 				conversationId = inherited.conversation_id;
@@ -163,8 +173,12 @@ export class ToolCallTracer {
 			cache_write_tokens: input.cacheWriteTokens ?? null,
 			error_message: errorMessage,
 		});
-		if (record) this.notify?.(record.project_id, record);
-		return record;
+		if (!record) return null;
+
+		const linked = tryLinkCapaShellTraceAfterFinish(this.db, record);
+		const finalRecord = linked ?? record;
+		this.notify?.(finalRecord.project_id, finalRecord);
+		return finalRecord;
 	}
 
 	private secretValues(projectId: string): string[] {
