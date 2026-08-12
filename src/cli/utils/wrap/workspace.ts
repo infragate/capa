@@ -21,7 +21,8 @@ import {
   collectWrapExclusionProviderIds,
   detectProviderIdsFromProjectTree,
 } from '../../../shared/providers';
-import { buildSymlinkWorkspace, syncTopLevelSymlinks } from './symlink-workspace';
+import { buildSymlinkWorkspace } from './symlink-workspace';
+import { validateAndRepairShadowWorkspace } from './validate-shadow-workspace';
 import { applyWrapShadowExtras } from './shadow-extras';
 import { installCommand } from '../../commands/install';
 import type { ProviderIntegration } from '../../../types/providers';
@@ -301,13 +302,30 @@ export async function prepareWorkspace(
   const workspaceReady = !!marker && existsSync(workspacePath);
   const projectKnown = await dbHasProject(real);
 
-  // Warm: same layout + same capabilities/lock pins → symlink sync only.
+  // Warm: same layout + same capabilities/lock pins → validate, sync, reuse.
   if (
     workspaceReady &&
     projectKnown &&
     marker!.capabilitiesFingerprint === fingerprint
   ) {
-    syncTopLevelSymlinks(real, workspacePath, exclusionProviderIds);
+    const repair = validateAndRepairShadowWorkspace(
+      real,
+      workspacePath,
+      exclusionProviderIds,
+    );
+    if (repair.needsReinstall) {
+      await runWrapInstall(workspacePath, real, provider.id, exclusionProviderIds);
+      await writeMarker(cachePath, real, provider.id, workName, fingerprint);
+      return {
+        cachePath,
+        workspacePath,
+        realProjectPath: real,
+        capabilitiesPath: caps.path,
+        exclusionProviderIds,
+        cold: false,
+        installed: true,
+      };
+    }
     applyWrapShadowExtras(workspacePath, real, provider.id, exclusionProviderIds);
     return {
       cachePath,
@@ -322,7 +340,7 @@ export async function prepareWorkspace(
 
   // Existing workspace, capabilities/lock changed → reinstall in place.
   if (workspaceReady) {
-    syncTopLevelSymlinks(real, workspacePath, exclusionProviderIds);
+    validateAndRepairShadowWorkspace(real, workspacePath, exclusionProviderIds);
     await runWrapInstall(workspacePath, real, provider.id, exclusionProviderIds);
     await writeMarker(cachePath, real, provider.id, workName, fingerprint);
     return {

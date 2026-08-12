@@ -7,6 +7,7 @@ import {
   renderSubAgentSkillsAndTools,
 } from '../../../shared/providers/handlers';
 import { assertSafeRepoPath } from '../../../shared/repo-file';
+import { assertCapaOwnedInstallPath } from '../../../shared/install-path-guard';
 import {
   describeUnsafeCapabilityId,
   isSafeCapabilityId,
@@ -86,6 +87,7 @@ function writeSubAgentFile(
 
   const { subagents: sa } = provider;
   const agentsDir = join(projectPath, sa.dir);
+  assertCapaOwnedInstallPath(projectPath, agentsDir);
   mkdirSync(agentsDir, { recursive: true });
 
   let filePath: string;

@@ -115,6 +115,10 @@ describe('prepareWorkspace', () => {
     expect(first.installed).toBe(true);
     expect(installMock).toHaveBeenCalledTimes(1);
 
+    // Simulate provider materialization from a real install run.
+    mkdirSync(join(first.workspacePath, '.claude'), { recursive: true });
+    writeFileSync(join(first.workspacePath, 'CLAUDE.md'), '# claude');
+
     installMock.mockClear();
     const second = await prepareWorkspace(realDir, provider);
     expect(second.cold).toBe(false);

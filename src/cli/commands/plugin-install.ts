@@ -20,6 +20,7 @@ import { getProjectPluginsDir } from '../../shared/plugin-paths';
 import { getProvider } from '../../shared/providers';
 import { getGitProvider } from '../../shared/git-providers/registry';
 import { assertSafeRepoPath } from '../../shared/repo-file';
+import { assertCapaOwnedInstallPath } from '../../shared/install-path-guard';
 import {
   describeUnsafeCapabilityId,
   isSafeCapabilityId,
@@ -220,6 +221,7 @@ export async function resolvePlugins(
         continue;
       }
       try {
+        assertCapaOwnedInstallPath(projectPath, destSkillDir);
         if (existsSync(destSkillDir)) {
           if (!trackManaged) {
             warnings.push(
