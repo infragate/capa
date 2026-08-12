@@ -101,6 +101,7 @@ function writeSubAgentFile(
   }
 
   const content = buildSubAgentFileContent(provider, subAgent, capabilities, skillDescriptions);
+  assertCapaOwnedInstallPath(projectPath, filePath);
   writeFileSync(filePath, content, 'utf8');
 
   taskLog(`  ✓ ${sa.dir}/${subAgent.id}${sa.extension} written`);
@@ -122,6 +123,7 @@ function removeSubAgentFile(projectPath: string, providerId: string, agentId: st
     return;
   }
   if (existsSync(filePath)) {
+    assertCapaOwnedInstallPath(projectPath, filePath);
     unlinkSync(filePath);
     taskLog(`  ✓ Removed ${sa.dir}/${agentId}${sa.extension}`);
   }

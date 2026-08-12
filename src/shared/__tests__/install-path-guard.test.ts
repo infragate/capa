@@ -7,10 +7,11 @@ import {
 	rmSync,
 	symlinkSync,
 } from "fs";
-import { join } from "path";
+import { join, win32 } from "path";
 import { tmpdir } from "os";
 import {
 	assertCapaOwnedInstallPath,
+	assertInsideProjectRoot,
 	validateProviderInstallRoots,
 } from "../install-path-guard";
 
@@ -69,5 +70,18 @@ describe("install-path-guard", () => {
 			),
 		).not.toThrow();
 		expect(existsSync(join(projectDir, ".cursor", "skills"))).toBe(false);
+	});
+
+	it("rejects cross-drive destinations on Windows paths", () => {
+		const ops = {
+			resolve: win32.resolve,
+			relative: win32.relative,
+			isAbsolute: win32.isAbsolute,
+			parse: win32.parse,
+			sep: win32.sep,
+		};
+		expect(() =>
+			assertInsideProjectRoot("C:\\capa\\project", "D:\\outside\\file.md", ops),
+		).toThrow(/outside the project root/i);
 	});
 });

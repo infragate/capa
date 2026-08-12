@@ -1,6 +1,62 @@
 import { existsSync, lstatSync, realpathSync } from "fs";
-import { dirname, join, relative, resolve, sep } from "path";
+import {
+	isAbsolute,
+	join,
+	parse,
+	relative,
+	resolve,
+	sep,
+	win32,
+} from "path";
 import { getProvider, resolveProviderId } from "./providers";
+
+type PathOps = {
+	resolve: (path: string) => string;
+	relative: (from: string, to: string) => string;
+	isAbsolute: (path: string) => boolean;
+	parse: (path: string) => { root: string };
+	sep: string;
+};
+
+function pathOps(): PathOps {
+	return process.platform === "win32"
+		? {
+				resolve: win32.resolve,
+				relative: win32.relative,
+				isAbsolute: win32.isAbsolute,
+				parse: win32.parse,
+				sep: win32.sep,
+			}
+		: { resolve, relative, isAbsolute, parse, sep };
+}
+
+/** @internal Exported for cross-platform containment regression tests. */
+export function assertInsideProjectRoot(
+	projectRoot: string,
+	destPath: string,
+	ops: PathOps = pathOps(),
+): string {
+	const root = ops.resolve(projectRoot);
+	const dest = ops.resolve(destPath);
+	const rootDrive = ops.parse(root).root;
+	const destDrive = ops.parse(dest).root;
+	if (
+		rootDrive &&
+		destDrive &&
+		rootDrive.toLowerCase() !== destDrive.toLowerCase()
+	) {
+		throw new Error(
+			`Refusing to install outside the project root: ${formatRel(root, dest, ops)}`,
+		);
+	}
+	const rel = ops.relative(root, dest);
+	if (ops.isAbsolute(rel) || rel.startsWith("..") || rel === "") {
+		throw new Error(
+			`Refusing to install outside the project root: ${formatRel(root, dest, ops)}`,
+		);
+	}
+	return rel.split(ops.sep).join("/");
+}
 
 /**
  * Relative project paths that `capa install` may write (skills, rules, MCP,
@@ -39,10 +95,14 @@ export function collectProviderInstallRelativePaths(
 	return [...paths];
 }
 
-function formatRel(projectRoot: string, absPath: string): string {
-	const root = resolve(projectRoot);
-	const rel = relative(root, absPath);
-	return rel.split(sep).join("/") || ".";
+function formatRel(
+	projectRoot: string,
+	absPath: string,
+	ops: PathOps = pathOps(),
+): string {
+	const root = ops.resolve(projectRoot);
+	const rel = ops.relative(root, ops.resolve(absPath));
+	return rel.split(ops.sep).join("/") || ".";
 }
 
 /** Relative path from the real project root — stable across /var vs /private/var. */
@@ -50,7 +110,7 @@ function relativeFromProjectReal(projectRoot: string, absPath: string): string {
 	const rootReal = realpathSync(resolve(projectRoot));
 	const pathReal = realpathSync(absPath);
 	const rel = relative(rootReal, pathReal);
-	if (rel.startsWith("..") || rel === "") {
+	if (isAbsolute(rel) || rel.startsWith("..") || rel === "") {
 		throw new Error(
 			`Refusing to install outside the project root: ${formatRel(projectRoot, absPath)}`,
 		);
@@ -69,14 +129,9 @@ export function assertCapaOwnedInstallPath(
 ): void {
 	const root = resolve(projectRoot);
 	const dest = resolve(destPath);
-	const rel = relative(root, dest);
-	if (rel.startsWith("..") || rel === "") {
-		throw new Error(
-			`Refusing to install outside the project root: ${formatRel(root, dest)}`,
-		);
-	}
+	const rel = assertInsideProjectRoot(root, dest);
 
-	const parts = rel.split(/[/\\]/).filter(Boolean);
+	const parts = rel.split("/").filter(Boolean);
 	let current = root;
 	for (const part of parts) {
 		current = join(current, part);
