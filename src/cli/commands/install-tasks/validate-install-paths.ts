@@ -4,9 +4,8 @@ import type { InstallCtx } from './context';
 
 export function validateInstallPathsTask(): Task<InstallCtx> {
   return {
-    id: 'validate-install-paths',
-    title: 'Validate install paths',
-    run: async (ctx) => {
+    title: 'Validating install paths',
+    task: async (ctx) => {
       validateProviderInstallRoots(ctx.projectPath, ctx.resolvedProviders);
     },
   };
