@@ -1,6 +1,8 @@
 import type { Task } from '../../ui';
+import { isInteractive } from '../../ui';
 import type { InstallCtx } from './context';
-import { openBrowser } from './helpers/browser';
+import { openBrowser } from '../../utils/browser';
+import { browserLaunchBlockedReason } from '../../utils/environment';
 
 export function openCredentialSetupTask(opts?: { skipOpen?: boolean }): Task<InstallCtx> {
   return {
@@ -28,9 +30,23 @@ export function openCredentialSetupTask(opts?: { skipOpen?: boolean }): Task<Ins
         );
       }
 
+      // Explicit caller opt-out (e.g. wrap live re-apply).
       if (opts?.skipOpen) {
+        ctx.warnings.push(`Credentials needed — open: ${result.credentialsUrl}`);
+        task.output = 'skipped browser open';
+        return;
+      }
+
+      // CAPA was built for a local desktop. In CI / cloud agent sandboxes (or
+      // any headless, non-interactive shell) there is no user at a browser, so
+      // launching one is pointless and - because the opener can stay attached
+      // to the browser it spawns - risks blocking the whole install. Surface
+      // the URL for the user to open elsewhere instead of attempting a launch.
+      const blockedReason = browserLaunchBlockedReason();
+      if (!isInteractive() || blockedReason) {
+        const reason = blockedReason ?? 'the shell is non-interactive';
         ctx.warnings.push(
-          `Credentials needed — open: ${result.credentialsUrl}`,
+          `Skipping browser launch (${reason}). Complete credential setup at: ${result.credentialsUrl}`,
         );
         task.output = 'skipped browser open';
         return;
