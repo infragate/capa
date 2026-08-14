@@ -8,9 +8,7 @@ import {
   getGitProviderByHost,
 } from '../../shared/git-providers/registry';
 import { GitIntegrationManager } from '../../server/git-integration-manager';
-import { header, footer, success, info, warn, error, runTasks, isInteractive } from '../ui';
-import { openBrowser } from '../utils/browser';
-import { browserLaunchBlockedReason } from '../utils/environment';
+import { header, footer, success, info, warn, error, runTasks, isHeadless } from '../ui';
 import type { GitPlatform } from '../../types/git-integration';
 import type { GitIntegration } from '../../types/database';
 
@@ -182,12 +180,10 @@ export async function authCommand(
             throw new Error('Missing authorization URL');
           }
 
-          // In a headless CI / cloud agent sandbox there is no user at a
-          // browser, and the opener can block the process, so print the URL
-          // instead of attempting a launch. The polling step below still lets
-          // the user complete authentication from another machine.
-          const blockedReason = browserLaunchBlockedReason();
-          if (!isInteractive() || blockedReason) {
+          // In --headless mode (CI / cloud agent sandbox) there is no browser
+          // to open; print the URL so the user can authenticate elsewhere.
+          // The polling step below still waits for that to complete.
+          if (isHeadless()) {
             warn('Please open this URL in your browser to authenticate:');
             info(`   ${authorizationUrl}`);
             return;
@@ -492,4 +488,30 @@ async function pollForCompletion(
   }
 
   return false;
+}
+
+async function openBrowser(url: string): Promise<boolean> {
+  try {
+    const platform = process.platform;
+    let command: string;
+
+    if (platform === 'darwin') {
+      command = `open "${url}"`;
+    } else if (platform === 'win32') {
+      command = `start "" "${url}"`;
+    } else {
+      command = `xdg-open "${url}"`;
+    }
+
+    const proc = Bun.spawn(command.split(' '), {
+      stdout: 'ignore',
+      stderr: 'ignore',
+      stdin: 'ignore',
+    });
+
+    await proc.exited;
+    return proc.exitCode === 0;
+  } catch {
+    return false;
+  }
 }

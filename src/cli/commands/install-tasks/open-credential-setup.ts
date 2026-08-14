@@ -1,8 +1,7 @@
 import type { Task } from '../../ui';
-import { isInteractive } from '../../ui';
+import { isHeadless } from '../../ui';
 import type { InstallCtx } from './context';
-import { openBrowser } from '../../utils/browser';
-import { browserLaunchBlockedReason } from '../../utils/environment';
+import { openBrowser } from './helpers/browser';
 
 export function openCredentialSetupTask(opts?: { skipOpen?: boolean }): Task<InstallCtx> {
   return {
@@ -30,23 +29,13 @@ export function openCredentialSetupTask(opts?: { skipOpen?: boolean }): Task<Ins
         );
       }
 
-      // Explicit caller opt-out (e.g. wrap live re-apply).
-      if (opts?.skipOpen) {
-        ctx.warnings.push(`Credentials needed — open: ${result.credentialsUrl}`);
-        task.output = 'skipped browser open';
-        return;
-      }
-
-      // CAPA was built for a local desktop. In CI / cloud agent sandboxes (or
-      // any headless, non-interactive shell) there is no user at a browser, so
-      // launching one is pointless and - because the opener can stay attached
-      // to the browser it spawns - risks blocking the whole install. Surface
-      // the URL for the user to open elsewhere instead of attempting a launch.
-      const blockedReason = browserLaunchBlockedReason();
-      if (!isInteractive() || blockedReason) {
-        const reason = blockedReason ?? 'the shell is non-interactive';
+      // Skip the browser when the caller opted out (e.g. wrap re-apply) or the
+      // user passed --headless (CI / cloud agent sandbox with no browser).
+      // Awaiting an OS opener that stays attached to the browser would
+      // otherwise hang the whole install, so surface the URL instead.
+      if (opts?.skipOpen || isHeadless()) {
         ctx.warnings.push(
-          `Skipping browser launch (${reason}). Complete credential setup at: ${result.credentialsUrl}`,
+          `Credentials needed — open: ${result.credentialsUrl}`,
         );
         task.output = 'skipped browser open';
         return;

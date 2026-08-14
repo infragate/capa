@@ -9,6 +9,7 @@ export interface CliFlags {
   verbose: boolean
   noColor: boolean
   yes: boolean
+  headless: boolean
 }
 
 let currentFlags: CliFlags = {
@@ -17,6 +18,7 @@ let currentFlags: CliFlags = {
   verbose: false,
   noColor: false,
   yes: false,
+  headless: false,
 }
 
 export function setFlags(flags: Partial<CliFlags>): void {
@@ -54,4 +56,15 @@ export function isVerbose(): boolean {
 
 export function isYes(): boolean {
   return currentFlags.yes
+}
+
+/**
+ * True when the user asked CAPA to treat this as a headless environment via
+ * `--headless`. In headless mode, steps that would launch a desktop browser
+ * (OAuth / credential setup) print the URL instead, so CAPA never blocks
+ * waiting on a browser that no one can see — e.g. in CI or a cloud agent
+ * sandbox.
+ */
+export function isHeadless(): boolean {
+  return currentFlags.headless
 }

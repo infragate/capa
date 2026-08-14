@@ -1,15 +1,15 @@
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, it, expect, afterEach } from 'bun:test';
+import { setFlags } from '../../../ui';
 import { openCredentialSetupTask } from '../open-credential-setup';
 import type { InstallCtx } from '../context';
 
-// Env vars that influence browser-launch gating (see cli/utils/environment).
-const MANAGED_ENV = ['CI', 'CURSOR_AGENT', 'NO_BROWSER', 'BROWSER', 'DISPLAY', 'WAYLAND_DISPLAY'] as const;
+const CREDENTIALS_URL = 'http://127.0.0.1:5912/ui/project?id=demo';
 
 function makeCtx(): InstallCtx {
   return {
     configureResult: {
       needsCredentials: true,
-      credentialsUrl: 'http://127.0.0.1:5912/ui/project?id=demo',
+      credentialsUrl: CREDENTIALS_URL,
       oauth2Servers: [{ serverId: 'atlassian', isConnected: false }],
       missingVariables: [],
     },
@@ -26,47 +26,31 @@ async function runTask(ctx: InstallCtx): Promise<{ output?: string }> {
   return taskHandle;
 }
 
-describe('openCredentialSetupTask (browser gating)', () => {
-  const saved: Record<string, string | undefined> = {};
-  let savedPlatform: NodeJS.Platform;
-
-  beforeEach(() => {
-    savedPlatform = process.platform;
-    for (const name of MANAGED_ENV) {
-      saved[name] = process.env[name];
-      delete process.env[name];
-    }
-    // Pretend we are on a graphical desktop so the only gating factor is the
-    // sandbox/env signal each test sets explicitly.
-    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
-  });
-
+describe('openCredentialSetupTask (--headless gating)', () => {
   afterEach(() => {
-    Object.defineProperty(process, 'platform', { value: savedPlatform, configurable: true });
-    for (const name of MANAGED_ENV) {
-      if (saved[name] === undefined) delete process.env[name];
-      else process.env[name] = saved[name];
-    }
+    setFlags({ headless: false });
   });
 
-  it('does not launch a browser in a cloud agent sandbox and surfaces the URL', async () => {
-    process.env.CURSOR_AGENT = '1';
+  it('skips the browser and surfaces the URL when --headless is set', async () => {
+    setFlags({ headless: true });
     const ctx = makeCtx();
     const handle = await runTask(ctx);
 
     expect(handle.output).toBe('skipped browser open');
-    expect(ctx.warnings.some((w) => w.includes('Skipping browser launch'))).toBe(true);
-    expect(ctx.warnings.some((w) => w.includes('http://127.0.0.1:5912/ui/project?id=demo'))).toBe(true);
+    expect(ctx.warnings.some((w) => w.includes('Credentials needed — open'))).toBe(true);
+    expect(ctx.warnings.some((w) => w.includes(CREDENTIALS_URL))).toBe(true);
     // OAuth2 guidance is still recorded.
     expect(ctx.warnings.some((w) => w.includes('OAuth2 servers need connection: atlassian'))).toBe(true);
   });
 
-  it('does not launch a browser when explicitly disabled via NO_BROWSER', async () => {
-    process.env.NO_BROWSER = '1';
+  it('respects the explicit skipOpen option regardless of --headless', async () => {
+    setFlags({ headless: false });
+    const def = openCredentialSetupTask({ skipOpen: true });
     const ctx = makeCtx();
-    const handle = await runTask(ctx);
+    const handle: { output?: string } = {};
+    await def.task(ctx, handle as never);
 
     expect(handle.output).toBe('skipped browser open');
-    expect(ctx.warnings.some((w) => w.includes('Skipping browser launch'))).toBe(true);
+    expect(ctx.warnings.some((w) => w.includes('Credentials needed — open'))).toBe(true);
   });
 });

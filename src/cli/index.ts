@@ -74,7 +74,8 @@ if (process.argv[2] === '__server__') {
       .option('-q, --quiet', 'Suppress non-essential output')
       .option('-v, --verbose', 'Verbose output')
       .option('--no-color', 'Disable colored output')
-      .option('-y, --yes', 'Auto-accept all confirms');
+      .option('-y, --yes', 'Auto-accept all confirms')
+      .option('--headless', 'Headless environment: never launch a browser; print URLs to open manually');
 
     program.hook('preAction', () => {
       const opts = program.opts();
@@ -84,6 +85,7 @@ if (process.argv[2] === '__server__') {
         verbose: Boolean(opts.verbose),
         noColor: !opts.color,
         yes: Boolean(opts.yes),
+        headless: Boolean(opts.headless),
       });
     });
 
