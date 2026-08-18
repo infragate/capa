@@ -2,14 +2,12 @@
 // Handles OAuth2 flows via cloud endpoint and Personal Access Token storage
 
 import type { CapaDatabase } from "../db/database";
-import {
-	getAllGitProviders,
-	getGitProvider,
-} from "../shared/git-providers/registry";
+import { getGitProvider } from "../shared/git-providers/registry";
 import { logger } from "../shared/logger";
 import { isPermanentRefreshFailure } from "../shared/oauth-refresh";
 import { CAPA_CLOUD_OAUTH_URL } from "../shared/ui-urls";
 import type { GitPATConfig, GitPlatform } from "../types/git-integration";
+import { generateState } from "../utils/pkce";
 
 export class GitIntegrationManager {
 	private db: CapaDatabase;
@@ -57,17 +55,12 @@ export class GitIntegrationManager {
 	async generateAuthorizationUrl(
 		platform: "github" | "gitlab",
 		localRedirectUri: string,
-	): Promise<{ url: string; flowId: string }> {
-		// Generate a unique flow ID to track this OAuth attempt
-		const flowId = this.generateFlowId();
-
-		// Store flow metadata
-		this.pendingFlows.set(flowId, {
+	): Promise<{ url: string; flowId: string; state: string }> {
+		const state = generateState();
+		this.pendingFlows.set(state, {
 			platform,
 			timestamp: Date.now(),
 		});
-
-		// Clean up old flows (older than 15 minutes)
 		this.cleanupExpiredFlows();
 
 		const gp = getGitProvider(platform);
@@ -75,16 +68,19 @@ export class GitIntegrationManager {
 			throw new Error(`Unknown git platform: ${platform}`);
 		}
 
-		// Build cloud OAuth URL
-		// The cloud will handle the OAuth flow and redirect back to our local server with the token
+		const callback = new URL(localRedirectUri);
+		callback.searchParams.set("state", state);
+		callback.searchParams.set("flowId", state);
+
 		const cloudUrl = new URL(CAPA_CLOUD_OAUTH_URL);
 		cloudUrl.searchParams.set("provider", gp.cloudOAuthProviderParam);
-		cloudUrl.searchParams.set("redirect", localRedirectUri);
+		cloudUrl.searchParams.set("redirect", callback.toString());
+		cloudUrl.searchParams.set("state", state);
 
 		const finalUrl = cloudUrl.toString();
 		this.logger.info(`Generated cloud OAuth URL for ${platform}: ${finalUrl}`);
-		this.logger.debug(`Flow ID: ${flowId}, Redirect URI: ${localRedirectUri}`);
-		return { url: finalUrl, flowId };
+		this.logger.debug(`OAuth state: ${state}, Redirect URI: ${callback}`);
+		return { url: finalUrl, flowId: state, state };
 	}
 
 	/**
@@ -93,60 +89,26 @@ export class GitIntegrationManager {
 	 */
 	async handleCallback(
 		accessToken: string,
-		platformOrFlowId: "github" | "gitlab" | string | undefined,
+		state: string | undefined,
 		refreshToken?: string,
 		expiresIn?: number,
 	): Promise<{ success: boolean; platform?: GitPlatform; error?: string }> {
 		try {
 			this.logger.info(
-				`OAuth callback received. Platform/FlowId: ${platformOrFlowId || "none"}, Token length: ${accessToken.length}`,
+				`OAuth callback received. State present: ${Boolean(state)}, Token length: ${accessToken.length}`,
 			);
 
-			let platform: GitPlatform | undefined;
-
-			// Check if it's a direct platform identifier
-			if (platformOrFlowId === "github" || platformOrFlowId === "gitlab") {
-				platform = platformOrFlowId;
-				this.logger.debug(`Platform directly specified: ${platform}`);
-			}
-			// Otherwise treat it as a flow ID
-			else if (platformOrFlowId) {
-				const flowData = this.pendingFlows.get(platformOrFlowId);
-				if (flowData) {
-					platform = flowData.platform;
-					this.pendingFlows.delete(platformOrFlowId);
-					this.logger.debug(`Found flow data for platform: ${platform}`);
-				} else {
-					this.logger.warn(
-						`No flow data found for flow ID: ${platformOrFlowId}`,
-					);
-				}
+			if (!state) {
+				return { success: false, error: "Missing OAuth state" };
 			}
 
-			// If we still don't have a platform, try to determine it from the token
-			if (!platform) {
-				this.logger.info(
-					"Attempting to determine platform by testing token...",
-				);
-				for (const gp of getAllGitProviders()) {
-					const valid = await this.testToken(
-						gp.id as "github" | "gitlab",
-						accessToken,
-					);
-					if (valid) {
-						platform = gp.id as GitPlatform;
-						this.logger.success(`Token identified as ${gp.displayName}`);
-						break;
-					}
-				}
+			const flowData = this.pendingFlows.get(state);
+			if (!flowData) {
+				this.logger.warn("OAuth callback rejected: unknown or reused state");
+				return { success: false, error: "Invalid or expired OAuth state" };
 			}
-
-			if (!platform) {
-				return {
-					success: false,
-					error: "Unable to determine platform for access token",
-				};
-			}
+			this.pendingFlows.delete(state);
+			const platform = flowData.platform;
 
 			// Calculate expiration timestamp
 			const expiresAt = expiresIn ? Date.now() + expiresIn * 1000 : null;
@@ -480,13 +442,6 @@ export class GitIntegrationManager {
 			default:
 				return getGitProvider(platform)?.displayName ?? platform;
 		}
-	}
-
-	/**
-	 * Generate a unique flow ID
-	 */
-	private generateFlowId(): string {
-		return `${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
 	}
 
 	/**

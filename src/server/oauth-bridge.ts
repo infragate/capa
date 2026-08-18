@@ -56,6 +56,8 @@ export function buildOAuthBridgeHtml(platform: GitOAuthPlatform): string {
   var refreshToken = params.get('refresh_token');
   var expiresInRaw = params.get('expires_in');
   var oauthError = params.get('error');
+  var state = params.get('state');
+  var flowId = params.get('flowId');
   try {
     history.replaceState(null, '', window.location.pathname);
   } catch (_) {}
@@ -66,6 +68,8 @@ export function buildOAuthBridgeHtml(platform: GitOAuthPlatform): string {
     var body = { access_token: accessToken };
     if (refreshToken) body.refresh_token = refreshToken;
     if (expiresInRaw) body.expires_in = parseInt(expiresInRaw, 10);
+    if (state) body.state = state;
+    if (flowId) body.flowId = flowId;
     var headers = { 'Content-Type': 'application/json' };
     if (window.__CAPA_AUTH_TOKEN__) headers['Authorization'] = 'Bearer ' + window.__CAPA_AUTH_TOKEN__;
     var resp = await fetch(${JSON.stringify(callbackPath)}, {
