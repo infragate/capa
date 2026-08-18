@@ -1,4 +1,5 @@
 import type { Task } from '../../ui';
+import { isHeadless } from '../../ui';
 import type { InstallCtx } from './context';
 import { openBrowser } from './helpers/browser';
 
@@ -28,7 +29,11 @@ export function openCredentialSetupTask(opts?: { skipOpen?: boolean }): Task<Ins
         );
       }
 
-      if (opts?.skipOpen) {
+      // Skip the browser when the caller opted out (e.g. wrap re-apply) or the
+      // user passed --headless (CI / cloud agent sandbox with no browser).
+      // Awaiting an OS opener that stays attached to the browser would
+      // otherwise hang the whole install, so surface the URL instead.
+      if (opts?.skipOpen || isHeadless()) {
         ctx.warnings.push(
           `Credentials needed — open: ${result.credentialsUrl}`,
         );

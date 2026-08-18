@@ -1,5 +1,5 @@
 export { c, icon } from './colors'
-export { setFlags, getFlags, isColorEnabled, isInteractive, isJson, isQuiet, isVerbose, isYes } from './flags'
+export { setFlags, getFlags, isColorEnabled, isInteractive, isJson, isQuiet, isVerbose, isYes, isHeadless } from './flags'
 export type { CliFlags } from './flags'
 export { prompt } from './prompts'
 export type { SelectOption } from './prompts'
