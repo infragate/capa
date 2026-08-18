@@ -91,6 +91,11 @@ export interface InstallOptions {
    * Default true.
    */
   persistProviders?: boolean;
+  /**
+   * Print the executable surface (stdio MCP, hooks, formatters, plugins)
+   * and exit without starting the server, writing hooks, or mutating the lock.
+   */
+  dryRun?: boolean;
 }
 
 export type GetRepoSnapshotFn = (

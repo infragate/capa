@@ -1,15 +1,11 @@
-import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import * as install from '../install';
+import { addCommand } from '../add';
 
 const installMock = mock(async () => {});
-
-mock.module('../install', () => ({
-  installCommand: installMock,
-}));
-
-const { addCommand } = await import('../add');
 
 function isolateHome(): { restore: () => void } {
   const home = mkdtempSync(join(tmpdir(), 'capa-add-home-'));
@@ -32,6 +28,7 @@ describe('addCommand install flag (github skill)', () => {
   let projectDir: string;
   let homeCtx: { restore: () => void };
   let originalCwd: string;
+  let installSpy: ReturnType<typeof spyOn>;
 
   beforeEach(() => {
     projectDir = mkdtempSync(join(tmpdir(), 'capa-add-proj-'));
@@ -43,9 +40,11 @@ describe('addCommand install flag (github skill)', () => {
       'skills: []\nplugins: []\nservers: []\ntools: []\n',
     );
     installMock.mockClear();
+    installSpy = spyOn(install, 'installCommand').mockImplementation(installMock);
   });
 
   afterEach(() => {
+    installSpy.mockRestore();
     process.chdir(originalCwd);
     homeCtx.restore();
     rmSync(projectDir, { recursive: true, force: true });

@@ -21,6 +21,7 @@ export async function passthroughInstall(opts: {
   noCache?: boolean;
   projectPath?: string;
   exitProcess?: boolean;
+  dryRun?: boolean;
 }): Promise<void> {
   const exitProcess = opts.exitProcess !== false;
   const projectPath = opts.projectPath ? resolve(opts.projectPath) : process.cwd();
@@ -39,6 +40,21 @@ export async function passthroughInstall(opts: {
 
   await loadEnvFileOptional(opts.envFile);
   let capabilities = await parseCapabilitiesFile(capabilitiesFile.path, capabilitiesFile.format);
+
+  try {
+    const { confirmInstallExecution } = await import('../../commands/install-confirm');
+    const decision = await confirmInstallExecution({
+      projectId,
+      capabilities,
+      dryRun: !!opts.dryRun,
+    });
+    if (decision === 'dry-run') return;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`✗ ${msg}`);
+    if (exitProcess) process.exit(1);
+    throw err;
+  }
 
   let providers: string[];
   try {

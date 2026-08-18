@@ -188,14 +188,18 @@ if (process.argv[2] === '__server__') {
       .option('-p, --provider <id>', 'Install for a single provider (e.g. "cursor", "claude-code")')
       .option('--no-cache', 'Bypass the on-disk cache and lockfile; re-resolve every remote source')
       .option('--passthrough', 'Write provider-native files from the capabilities file (no capa server/proxy)')
+      .option('--dry-run', 'Print the executable surface and exit without installing')
+      .option('-y, --yes', 'Skip confirmation (required in non-interactive / CI)')
       .action(async (options) => {
         // Commander inverts --no-* flags: `options.cache` is true by default and
         // false when --no-cache is passed. Convert to the explicit noCache flag.
+        if (options.yes) setFlags({ yes: true });
         await installCommand({
           envFile: options.env,
           provider: options.provider,
           noCache: options.cache === false,
           passthrough: options.passthrough === true,
+          dryRun: options.dryRun === true,
         });
       });
 
