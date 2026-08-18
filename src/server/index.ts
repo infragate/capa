@@ -19,6 +19,7 @@ import type { OAuth2Config } from "../types/oauth";
 import type { RegistryCapability } from "../types/registry";
 import { VERSION } from "../version";
 import { authorizeApiRequest, injectHtmlAuthToken } from "./api-guards";
+import { withAllowedHost } from "./host-allowlist";
 import {
 	getAuthToken,
 	initAuth,
@@ -401,6 +402,18 @@ class CapaServer {
 	}
 
 	private async _handleRequest(
+		request: Request,
+		server: any,
+	): Promise<Response> {
+		return withAllowedHost(
+			request,
+			this.settings.server.host,
+			this.settings.server.port,
+			() => this._dispatchRequest(request, server),
+		);
+	}
+
+	private async _dispatchRequest(
 		request: Request,
 		server: any,
 	): Promise<Response> {
