@@ -31,7 +31,7 @@ function resolveToken(): string | null {
 		if (err?.code !== "ENOENT") throw err;
 	}
 
-	if (bindHost && !isLoopbackHost(bindHost)) {
+	if (bindHost) {
 		const token = randomBytes(32).toString("hex");
 		const capaDir = getCapaDir();
 		mkdirSync(capaDir, { recursive: true });
@@ -95,14 +95,20 @@ function extractProvidedToken(req: Request): string | null {
 	return null;
 }
 
-export function requireAuth(
+export function requireMcpAuth(
 	req: Request,
 	host: string,
 ): { ok: true } | { ok: false; reason: string; status: number } {
 	if (isLoopbackHost(host)) {
 		return { ok: true };
 	}
+	return requireAuth(req, host);
+}
 
+export function requireAuth(
+	req: Request,
+	_host?: string,
+): { ok: true } | { ok: false; reason: string; status: number } {
 	if (req.method === "OPTIONS") {
 		return { ok: true };
 	}

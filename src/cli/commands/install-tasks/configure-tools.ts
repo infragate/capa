@@ -1,4 +1,5 @@
 import type { Task, TaskWrapper } from '../../ui';
+import { localApiHeaders } from '../../utils/local-api';
 import type { InstallCtx } from './context';
 import { getUnexposedToolIds } from './helpers/tool-warnings';
 
@@ -37,14 +38,14 @@ export function configureToolsTask(): Task<InstallCtx> {
         `${ctx.serverStatus.url}/api/projects/${ctx.projectId}/configure`,
         {
           method: 'POST',
-          headers: {
+          headers: localApiHeaders({
             'Content-Type': 'application/json',
             // Ask the server to stream NDJSON progress so we can render a
             // live "X of Y validated · last-server done" counter instead of
             // a static spinner. The server falls back to a single JSON
             // body if it doesn't support streaming.
             Accept: 'application/x-ndjson, application/json',
-          },
+          }),
           body: JSON.stringify({
             ...ctx.capabilitiesToUse,
             // Wrap installs write Claude/etc. only into the shadow workspace;

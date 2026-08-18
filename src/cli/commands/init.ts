@@ -16,6 +16,7 @@ import { ensureCapaDir, loadSettings, getDatabasePath } from '../../shared/confi
 import { CapaDatabase } from '../../db/database';
 import { isUnderWrapWorkspacesDir } from '../../shared/workspaces/paths';
 import { ensureServer } from '../utils/server-manager';
+import { localApiHeaders } from '../utils/local-api';
 import { refuseIfWrapWorkspace } from '../utils/wrap/marker';
 import { VERSION } from '../../version';
 
@@ -62,10 +63,10 @@ async function registerProject(
         `${serverUrl}/api/projects/${encodeURIComponent(projectId)}/configure`,
         {
           method: 'POST',
-          headers: {
+          headers: localApiHeaders({
             'Content-Type': 'application/json',
             Accept: 'application/json',
-          },
+          }),
           body: JSON.stringify(capabilities),
           signal: AbortSignal.timeout(120000),
         },

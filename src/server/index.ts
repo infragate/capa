@@ -18,7 +18,13 @@ import type { Capabilities, MCPServer } from "../types/capabilities";
 import type { OAuth2Config } from "../types/oauth";
 import type { RegistryCapability } from "../types/registry";
 import { VERSION } from "../version";
-import { initAuth, isLoopbackHost, requireAuth } from "./auth-middleware";
+import { authorizeApiRequest, injectHtmlAuthToken } from "./api-guards";
+import {
+	getAuthToken,
+	initAuth,
+	isLoopbackHost,
+	requireMcpAuth,
+} from "./auth-middleware";
 import { handleCapabilitiesMutation } from "./capabilities-routes";
 import { CapabilitiesFileWatcher } from "./capabilities-watcher";
 import {
@@ -426,9 +432,15 @@ class CapaServer {
 		// API endpoints
 		if (path.startsWith("/api/")) {
 			this.logger.debug("API endpoint");
-			const auth = requireAuth(request, this.settings.server.host);
-			if (!auth.ok) {
-				return this.authFailureResponse(request, auth.reason, auth.status);
+			if (request.method === "OPTIONS") {
+				return new Response(null, { status: 204 });
+			}
+			const gate = authorizeApiRequest(request, {
+				host: this.settings.server.host,
+				port: this.settings.server.port,
+			});
+			if (!gate.ok) {
+				return this.authFailureResponse(request, gate.reason, gate.status);
 			}
 			return this.handleAPI(request, server);
 		}
@@ -441,7 +453,7 @@ class CapaServer {
 			this.logger.debug(
 				`MCP endpoint for project: ${projectId}, sub-agent: ${agentId}`,
 			);
-			const auth = requireAuth(request, this.settings.server.host);
+			const auth = requireMcpAuth(request, this.settings.server.host);
 			if (!auth.ok) {
 				return this.authFailureResponse(request, auth.reason, auth.status);
 			}
@@ -453,7 +465,7 @@ class CapaServer {
 		if (mcpMatch) {
 			const projectId = mcpMatch[1];
 			this.logger.debug(`MCP endpoint for project: ${projectId}`);
-			const auth = requireAuth(request, this.settings.server.host);
+			const auth = requireMcpAuth(request, this.settings.server.host);
 			if (!auth.ok) {
 				return this.authFailureResponse(request, auth.reason, auth.status);
 			}
@@ -465,7 +477,11 @@ class CapaServer {
 	}
 
 	private async handleSpa(): Promise<Response> {
-		return new Response(spaHtml as unknown as string, {
+		const html = injectHtmlAuthToken(
+			spaHtml as unknown as string,
+			getAuthToken(),
+		);
+		return new Response(html, {
 			headers: { "Content-Type": "text/html" },
 		});
 	}

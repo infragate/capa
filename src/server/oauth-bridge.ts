@@ -18,6 +18,9 @@
  * Module-level pure function so it's trivially unit-testable and doesn't pull
  * `CapaServer` into the test graph.
  */
+import { injectHtmlAuthToken } from "./api-guards";
+import { getAuthToken } from "./auth-middleware";
+
 export type GitOAuthPlatform = "github" | "gitlab";
 
 export function buildOAuthBridgeHtml(platform: GitOAuthPlatform): string {
@@ -62,9 +65,11 @@ export function buildOAuthBridgeHtml(platform: GitOAuthPlatform): string {
     var body = { access_token: accessToken };
     if (refreshToken) body.refresh_token = refreshToken;
     if (expiresInRaw) body.expires_in = parseInt(expiresInRaw, 10);
+    var headers = { 'Content-Type': 'application/json' };
+    if (window.__CAPA_AUTH_TOKEN__) headers['Authorization'] = 'Bearer ' + window.__CAPA_AUTH_TOKEN__;
     var resp = await fetch(${JSON.stringify(callbackPath)}, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: headers,
       body: JSON.stringify(body),
       credentials: 'same-origin',
       redirect: 'manual',
@@ -89,7 +94,8 @@ export function buildOAuthBridgeHtml(platform: GitOAuthPlatform): string {
 }
 
 export function oauthBridgeResponse(platform: GitOAuthPlatform): Response {
-	return new Response(buildOAuthBridgeHtml(platform), {
+	const html = injectHtmlAuthToken(buildOAuthBridgeHtml(platform), getAuthToken());
+	return new Response(html, {
 		status: 200,
 		headers: {
 			"Content-Type": "text/html; charset=utf-8",

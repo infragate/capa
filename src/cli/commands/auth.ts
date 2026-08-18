@@ -2,6 +2,7 @@ import { isIP } from 'net';
 import { loadSettings, getDatabasePath } from '../../shared/config';
 import { CapaDatabase } from '../../db/database';
 import { ensureServer } from '../utils/server-manager';
+import { localApiHeaders } from '../utils/local-api';
 import { VERSION } from '../../version';
 import {
   getGitProvider,
@@ -158,7 +159,7 @@ export async function authCommand(
             `${serverUrl}/api/integrations/${platform}/oauth/start`,
             {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: localApiHeaders({ 'Content-Type': 'application/json' }),
               body: JSON.stringify({}),
             },
           );
