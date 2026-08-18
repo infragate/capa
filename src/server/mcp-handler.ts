@@ -858,7 +858,7 @@ export class CapaMCPServer {
 	async listServerTools(
 		serverId: string,
 		capabilities: Capabilities,
-		options: { throwOnError?: boolean } = {},
+		options: { throwOnError?: boolean; connect?: boolean } = {},
 	): Promise<any[]> {
 		const serverDef = capabilities.servers.find((s) => s.id === serverId);
 		if (!serverDef) return [];

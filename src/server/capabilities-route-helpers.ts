@@ -105,7 +105,8 @@ export async function afterWrite(
 ): Promise<Response> {
 	deps.markSelfWrite?.(projectId);
 	const caps = await parseCapabilitiesFile(path, format);
-	const configureResult = await deps.configure(projectId, caps);
+	const apply = deps.refreshCapabilities ?? deps.configure;
+	const configureResult = await apply(projectId, caps);
 	deps.notifyChanged?.(projectId);
 	return jsonOk({
 		success: true,

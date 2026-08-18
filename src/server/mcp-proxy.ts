@@ -2,6 +2,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { CapaDatabase } from "../db/database";
 import { logger } from "../shared/logger";
+import { isStdioTrusted } from "../shared/stdio-allowlist";
 import {
 	hasUnresolvedVariables,
 	resolveVariablesInObject,
@@ -199,9 +200,17 @@ export class MCPProxy {
 	async listTools(
 		serverId: string,
 		serverDefinition: MCPServerDefinition,
-		options: { throwOnError?: boolean; timeoutMs?: number } = {},
+		options: {
+			throwOnError?: boolean;
+			timeoutMs?: number;
+			connect?: boolean;
+		} = {},
 	): Promise<any[]> {
-		const { throwOnError = false, timeoutMs = 15000 } = options;
+		const {
+			throwOnError = false,
+			timeoutMs = 15000,
+			connect = true,
+		} = options;
 		// Strip @ prefix from server ID if present
 		const cleanServerId = serverId.replace("@", "");
 
@@ -213,7 +222,22 @@ export class MCPProxy {
 
 		let client: Client | null;
 		try {
-			client = await this.getOrCreateClient(cleanServerId, resolvedServerDef);
+			if (!connect) {
+				client = this.clients.get(cleanServerId) ?? null;
+				if (!client) {
+					if (throwOnError) {
+						throw new Error(
+							`MCP server "${cleanServerId}" is not connected`,
+						);
+					}
+					return [];
+				}
+			} else {
+				client = await this.getOrCreateClient(
+					cleanServerId,
+					resolvedServerDef,
+				);
+			}
 		} catch (error) {
 			if (error instanceof MCPOAuthDisconnectedError) {
 				if (throwOnError) throw error;
@@ -233,6 +257,10 @@ export class MCPProxy {
 			return result.tools;
 		} catch (error) {
 			if (error instanceof MCPSessionExpiredError) {
+				if (!connect) {
+					if (throwOnError) throw error;
+					return [];
+				}
 				this.logger.warn(
 					`Session expired for ${cleanServerId}, reconnecting...`,
 				);
@@ -392,6 +420,12 @@ export class MCPProxy {
 		fingerprint: string,
 	): Promise<Client | null> {
 		try {
+			if (!isStdioTrusted(this.projectId, serverDefinition)) {
+				this.logger.warn(
+					`Refusing to spawn untrusted stdio MCP server ${serverId}`,
+				);
+				return null;
+			}
 			this.logger.info(`Creating stdio client for: ${serverId}`);
 			this.logger.debug(
 				`Command: ${serverDefinition.cmd}, Args: ${JSON.stringify(serverDefinition.args || [])}`,

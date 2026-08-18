@@ -1,3 +1,4 @@
+import { trustStdioServers } from '../../../shared/stdio-allowlist';
 import type { Task, TaskWrapper } from '../../ui';
 import { localApiHeaders } from '../../utils/local-api';
 import type { InstallCtx } from './context';
@@ -33,6 +34,8 @@ export function configureToolsTask(): Task<InstallCtx> {
         }
         task.output = `validating ${parts.join(' + ')}…`;
       }
+
+      trustStdioServers(ctx.projectId, ctx.capabilitiesToUse.servers ?? []);
 
       const response = await fetch(
         `${ctx.serverStatus.url}/api/projects/${ctx.projectId}/configure`,

@@ -13,6 +13,7 @@ import {
 } from '../../shared/capabilities';
 import type { Capabilities, CapabilitiesFormat } from '../../types/capabilities';
 import { ensureCapaDir, loadSettings, getDatabasePath } from '../../shared/config';
+import { trustStdioServers } from '../../shared/stdio-allowlist';
 import { CapaDatabase } from '../../db/database';
 import { isUnderWrapWorkspacesDir } from '../../shared/workspaces/paths';
 import { ensureServer } from '../utils/server-manager';
@@ -59,6 +60,7 @@ async function registerProject(
     }
 
     try {
+      trustStdioServers(projectId, capabilities.servers ?? []);
       const response = await fetch(
         `${serverUrl}/api/projects/${encodeURIComponent(projectId)}/configure`,
         {

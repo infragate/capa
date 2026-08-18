@@ -1,4 +1,8 @@
 import type { CapaDatabase } from "../db/database";
+import {
+	normalizeCapabilities,
+	parseCapabilitiesFile,
+} from "../shared/capabilities";
 import { logger } from "../shared/logger";
 import { detectCapabilitiesFile } from "../shared/paths";
 import { projectUiUrl } from "../shared/ui-urls";
@@ -355,6 +359,28 @@ export async function runProjectConfigure(
 	};
 }
 
+async function capabilitiesForConfigure(
+	deps: ConfigureRouteDeps,
+	projectId: string,
+	requested: Capabilities,
+): Promise<Capabilities> {
+	const project = deps.db.getProject(projectId);
+	if (!project) {
+		throw new Error("Project not found");
+	}
+	const file = await detectCapabilitiesFile(project.path);
+	if (!file) {
+		throw new Error("No capabilities file on disk for this project");
+	}
+	const onDisk = await parseCapabilitiesFile(file.path, file.format);
+	// Wrap-install compatibility: overlay providers only. Stdio spawn config
+	// (cmd/args/cwd/env) always comes from the on-disk document.
+	if (requested.providers) {
+		onDisk.providers = requested.providers;
+	}
+	return onDisk;
+}
+
 export async function handleProjectConfigure(
 	deps: ConfigureRouteDeps,
 	projectId: string,
@@ -365,11 +391,23 @@ export async function handleProjectConfigure(
 		.toLowerCase()
 		.includes("application/x-ndjson");
 
-	let capabilities: Capabilities;
+	let requested: unknown;
 	try {
-		capabilities = await request.json();
+		requested = await request.json();
 	} catch (error: any) {
 		apiLogger.failure(`Error parsing capabilities: ${error.message}`);
+		return new Response(JSON.stringify({ error: error.message }), {
+			status: 400,
+			headers: JSON_HEADERS,
+		});
+	}
+
+	let capabilities: Capabilities;
+	try {
+		const parsed = normalizeCapabilities(requested);
+		capabilities = await capabilitiesForConfigure(deps, projectId, parsed);
+	} catch (error: any) {
+		apiLogger.failure(`Error: ${error.message}`);
 		return new Response(JSON.stringify({ error: error.message }), {
 			status: 400,
 			headers: JSON_HEADERS,

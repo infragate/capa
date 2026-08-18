@@ -1,5 +1,6 @@
 import { resolve } from 'path';
 import { getDatabasePath, loadSettings } from '../../../shared/config';
+import { trustStdioServers } from '../../../shared/stdio-allowlist';
 import { CapaDatabase } from '../../../db/database';
 import type { Capabilities } from '../../../types/capabilities';
 import { isUnderWrapWorkspacesDir } from '../../../shared/workspaces/paths';
@@ -71,6 +72,8 @@ async function ensureProjectConfigured(
   } finally {
     db.close();
   }
+
+  trustStdioServers(projectId, capabilities.servers ?? []);
 
   const response = await fetch(`${serverUrl}/api/projects/${encodeURIComponent(projectId)}/configure`, {
     method: 'POST',

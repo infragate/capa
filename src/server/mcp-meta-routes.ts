@@ -46,6 +46,7 @@ export async function handleGetServerTools(
 
 		const tools = await mcpServer.listServerTools(serverId, capabilities, {
 			throwOnError: true,
+			connect: false,
 		});
 		return new Response(JSON.stringify({ tools }), {
 			headers: JSON_HEADERS,
