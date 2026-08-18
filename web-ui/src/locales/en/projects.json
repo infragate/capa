@@ -59,7 +59,10 @@
     "delete": "Delete variable",
     "confirmDelete": "Remove variable {{name}} from the catalog?",
     "referenced": "referenced",
-    "unused": "unused"
+    "unused": "unused",
+    "set": "set",
+    "replacePlaceholder": "Stored — enter a new value to replace",
+    "endsWith": "ends with {{hint}}"
   },
   "oauth": {
     "title": "OAuth 2.0 Connections",
@@ -186,6 +189,7 @@
     "serverOauth": "OAuth2 (optional)",
     "serverOauthClientId": "Client ID",
     "serverOauthClientSecret": "Client secret",
+    "serverOauthClientSecretPlaceholder": "Leave blank to keep the stored secret",
     "serverOauthAuthUrl": "Authorization URL",
     "serverOauthTokenUrl": "Token URL",
     "serverOauthScopes": "Scopes",

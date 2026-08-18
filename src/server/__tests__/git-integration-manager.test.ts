@@ -3,21 +3,34 @@ import { mkdtempSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { CapaDatabase } from '../../db/database';
+import { resetSecretCryptoForTests } from '../../shared/secret-crypto';
 import { GitIntegrationManager } from '../git-integration-manager';
 
 describe('GitIntegrationManager', () => {
   let db: CapaDatabase;
   let tempDir: string;
   let manager: GitIntegrationManager;
+  let prevHome: string | undefined;
+  let prevProfile: string | undefined;
 
   beforeEach(() => {
     tempDir = mkdtempSync(join(tmpdir(), 'capa-git-int-test-'));
+    prevHome = process.env.HOME;
+    prevProfile = process.env.USERPROFILE;
+    process.env.HOME = tempDir;
+    process.env.USERPROFILE = tempDir;
+    resetSecretCryptoForTests();
     db = new CapaDatabase(join(tempDir, 'test.db'));
     manager = new GitIntegrationManager(db);
   });
 
   afterEach(() => {
     db.close();
+    resetSecretCryptoForTests();
+    if (prevHome === undefined) delete process.env.HOME;
+    else process.env.HOME = prevHome;
+    if (prevProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = prevProfile;
     try {
       rmSync(tempDir, { recursive: true, force: true });
     } catch (error: any) {

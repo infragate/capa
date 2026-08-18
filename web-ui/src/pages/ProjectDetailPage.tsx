@@ -56,7 +56,9 @@ export function ProjectDetailPage() {
   const showNoConfig = !isLoading && !caps && !error;
 
   const missingVarCount = variables?.required
-    ? variables.required.filter((v) => !variables.values?.[v]).length
+    ? variables.required.filter(
+        (v) => !variables.secrets?.find((s) => s.name === v)?.isSet,
+      ).length
     : 0;
   const pendingOAuthCount = oauth2Servers
     ? oauth2Servers.filter((s) => !s.isConnected).length

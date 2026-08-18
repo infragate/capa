@@ -364,6 +364,11 @@ export function ServerDialog({
                                 type="password"
                                 value={oauthClientSecret}
                                 onChange={(e) => setOauthClientSecret(e.target.value)}
+                                placeholder={
+                                  isEdit
+                                    ? t('actions.serverOauthClientSecretPlaceholder')
+                                    : undefined
+                                }
                                 className="mt-1 w-full rounded-sm border border-border-tertiary bg-bg-tertiary px-2 py-1.5 font-mono text-xs text-text-primary"
                               />
                             </label>

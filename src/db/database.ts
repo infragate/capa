@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "fs";
 import { dirname } from "path";
+import { restrictDatabaseFileMode } from "../shared/config";
 import type {
 	GitIntegration,
 	MCPSubprocess,
@@ -58,6 +59,7 @@ export class CapaDatabase {
 		mkdirSync(dbDir, { recursive: true });
 
 		this.db = new Database(dbPath, { create: true });
+		restrictDatabaseFileMode(dbPath);
 		initSchema(this.db);
 
 		this.projects = new ProjectsRepo(this.db);

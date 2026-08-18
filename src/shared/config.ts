@@ -1,4 +1,4 @@
-import { existsSync } from "fs";
+import * as fs from "fs";
 import { mkdir } from "fs/promises";
 import { homedir } from "os";
 import { join } from "path";
@@ -59,25 +59,53 @@ export function getHookScriptDir(projectId: string): string {
 	return join(getCapaDir(), "hooks", projectId);
 }
 
+export function chmodBestEffort(path: string, mode: number): void {
+	try {
+		fs.chmodSync(path, mode);
+	} catch {
+		// best-effort on platforms that ignore chmod
+	}
+}
+
+export function restrictDatabaseFileMode(dbPath: string): void {
+	for (const candidate of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
+		if (fs.existsSync(candidate)) chmodBestEffort(candidate, 0o600);
+	}
+}
+
+export function restrictCapaHomeModes(): void {
+	const capaDir = getCapaDir();
+	if (fs.existsSync(capaDir)) chmodBestEffort(capaDir, 0o700);
+
+	const settingsPath = getSettingsPath();
+	if (fs.existsSync(settingsPath)) chmodBestEffort(settingsPath, 0o600);
+
+	restrictDatabaseFileMode(getDatabasePath());
+	restrictDatabaseFileMode(join(capaDir, "capa.db"));
+}
+
 export async function ensureCapaDir(): Promise<void> {
 	const capaDir = getCapaDir();
-	if (!existsSync(capaDir)) {
-		await mkdir(capaDir, { recursive: true });
+	if (!fs.existsSync(capaDir)) {
+		await mkdir(capaDir, { recursive: true, mode: 0o700 });
 	}
+	restrictCapaHomeModes();
 }
 
 export async function loadSettings(): Promise<ServerSettings> {
 	const settingsPath = getSettingsPath();
 
-	if (!existsSync(settingsPath)) {
+	if (!fs.existsSync(settingsPath)) {
 		await ensureCapaDir();
 		await Bun.write(settingsPath, JSON.stringify(DEFAULT_SETTINGS, null, 2));
+		chmodBestEffort(settingsPath, 0o600);
 		return DEFAULT_SETTINGS;
 	}
 
 	try {
 		const file = Bun.file(settingsPath);
 		const settings = await file.json();
+		chmodBestEffort(settingsPath, 0o600);
 		return { ...DEFAULT_SETTINGS, ...settings };
 	} catch (error) {
 		logger.error("Failed to load settings, using defaults:", error);
@@ -89,4 +117,5 @@ export async function saveSettings(settings: ServerSettings): Promise<void> {
 	await ensureCapaDir();
 	const settingsPath = getSettingsPath();
 	await Bun.write(settingsPath, JSON.stringify(settings, null, 2));
+	chmodBestEffort(settingsPath, 0o600);
 }

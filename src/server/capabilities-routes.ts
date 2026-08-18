@@ -1,4 +1,5 @@
 import type { ArrayCapabilitySection } from "../shared/capabilities";
+import { secretHint } from "../shared/secret-crypto";
 import { extractAllVariables } from "../shared/variable-resolver";
 import type { Capabilities } from "../types/capabilities";
 import {
@@ -107,16 +108,23 @@ const INTERNAL_OAUTH_VAR = /^oauth2_client_(id|secret)_/;
 export function buildVariablesResponse(
 	capabilities: Capabilities | null,
 	values: Record<string, string>,
-): { required: string[]; catalog: string[]; values: Record<string, string> } {
+): {
+	required: string[];
+	catalog: string[];
+	secrets: Array<{ name: string; isSet: boolean; hint: string }>;
+} {
 	const required = (
 		capabilities ? extractAllVariables(capabilities) : []
 	).filter((name) => !INTERNAL_OAUTH_VAR.test(name));
 	const catalog = Object.keys(values)
 		.filter((name) => !INTERNAL_OAUTH_VAR.test(name))
 		.sort();
-	const publicValues: Record<string, string> = {};
-	for (const [key, value] of Object.entries(values)) {
-		if (!INTERNAL_OAUTH_VAR.test(key)) publicValues[key] = value;
-	}
-	return { required, catalog, values: publicValues };
+	const names = new Set([...required, ...catalog]);
+	const secrets = [...names].sort().map((name) => {
+		const value = values[name];
+		const isSet = typeof value === "string" && value.length > 0;
+		const hint = isSet ? secretHint(value) : "";
+		return { name, isSet, hint };
+	});
+	return { required, catalog, secrets };
 }

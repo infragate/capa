@@ -74,7 +74,7 @@ export interface EnrichedTool extends Tool {
 
 export interface ServerOAuth2Config {
   clientId: string | null;
-  clientSecret: string | null;
+  clientSecret?: string | null;
   authorizationUrl: string | null;
   tokenUrl: string | null;
   scopes: string[] | null;
@@ -255,10 +255,17 @@ export interface ProjectDetail {
   capabilities: ProjectCapabilities | null;
 }
 
+export interface VariableSecret {
+  name: string;
+  isSet: boolean;
+  hint: string;
+}
+
 export interface VariablesResponse {
   required: string[];
   catalog: string[];
-  values: Record<string, string>;
+  secrets: VariableSecret[];
+  values?: Record<string, string>;
 }
 
 export interface CapabilitiesMutationResponse {

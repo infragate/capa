@@ -36,7 +36,9 @@ export function VariablesForm({ projectId, returnUrl }: VariablesFormProps) {
       const variables: Record<string, string> = {};
       for (const [key, value] of formData.entries()) {
         if (key.startsWith('__')) continue;
-        variables[key] = value as string;
+        const text = String(value);
+        if (text.length === 0) continue;
+        variables[key] = text;
       }
 
       try {
@@ -90,11 +92,14 @@ export function VariablesForm({ projectId, returnUrl }: VariablesFormProps) {
           {names.length === 0 ? (
             <p className="text-xs text-text-tertiary">{t('projects:variables.empty')}</p>
           ) : (
-            names.map((varName) => (
+            names.map((varName) => {
+              const secret = data?.secrets?.find((s) => s.name === varName);
+              return (
               <VariableField
                 key={varName}
                 name={varName}
-                defaultValue={data?.values?.[varName] || ''}
+                isSet={!!secret?.isSet}
+                hint={secret?.hint || ''}
                 referenced={requiredSet.has(varName)}
                 onDelete={() => {
                   if (confirm(t('projects:variables.confirmDelete', { name: varName }))) {
@@ -103,7 +108,8 @@ export function VariablesForm({ projectId, returnUrl }: VariablesFormProps) {
                 }}
                 deleting={deleteMutation.isPending}
               />
-            ))
+            );
+            })
           )}
         </div>
 
@@ -150,13 +156,15 @@ export function VariablesForm({ projectId, returnUrl }: VariablesFormProps) {
 
 function VariableField({
   name,
-  defaultValue,
+  isSet,
+  hint,
   referenced,
   onDelete,
   deleting,
 }: {
   name: string;
-  defaultValue: string;
+  isSet: boolean;
+  hint: string;
   referenced: boolean;
   onDelete: () => void;
   deleting: boolean;
@@ -179,6 +187,11 @@ function VariableField({
         >
           {referenced ? t('variables.referenced') : t('variables.unused')}
         </span>
+        {isSet && (
+          <span className="rounded-sm bg-bg-tertiary px-1.5 py-0.5 text-[10px] text-text-tertiary">
+            {hint ? t('variables.endsWith', { hint }) : t('variables.set')}
+          </span>
+        )}
         <button
           type="button"
           onClick={onDelete}
@@ -194,7 +207,8 @@ function VariableField({
           id={`var-${name}`}
           name={name}
           type={show ? 'text' : 'password'}
-          defaultValue={defaultValue}
+          defaultValue=""
+          placeholder={isSet ? t('variables.replacePlaceholder') : ''}
           autoComplete="off"
           className="w-full rounded-sm border border-border-tertiary bg-bg-tertiary px-3 py-2 pr-10 font-mono text-sm text-text-primary"
         />
