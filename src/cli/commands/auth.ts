@@ -9,6 +9,7 @@ import {
   getGitProviderByHost,
 } from '../../shared/git-providers/registry';
 import { GitIntegrationManager } from '../../server/git-integration-manager';
+import { cloudOAuthDisclosure } from '../../shared/ui-urls';
 import { header, footer, success, info, warn, error, runTasks, isHeadless } from '../ui';
 import type { GitPlatform } from '../../types/git-integration';
 import type { GitIntegration } from '../../types/database';
@@ -64,8 +65,9 @@ export async function authCommand(
   if (!provider) {
     listConnectedProviders(db);
     info('Usage:');
+    info('  capa auth <provider> --access-token <token>  - PAT (recommended)');
     info('  capa auth <provider>                         - OAuth (browser)');
-    info('  capa auth <provider> --access-token <token>  - PAT / access token');
+    info(cloudOAuthDisclosure());
     info('Examples:');
     info('  capa auth github.com');
     info('  capa auth github.com --access-token <token>');
@@ -184,6 +186,7 @@ export async function authCommand(
           // In --headless mode (CI / cloud agent sandbox) there is no browser
           // to open; print the URL so the user can authenticate elsewhere.
           // The polling step below still waits for that to complete.
+          warn(cloudOAuthDisclosure());
           if (isHeadless()) {
             warn('Please open this URL in your browser to authenticate:');
             info(`   ${authorizationUrl}`);

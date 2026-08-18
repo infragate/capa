@@ -99,6 +99,8 @@ describe('authCommand', () => {
   it('lists connected providers when called without a provider arg', async () => {
     const { stdout } = await captureOutput(() => authCommand());
     expect(stdout).toContain('Connected Git Providers');
+    expect(stdout).toContain('capa.infragate.ai');
+    expect(stdout).toContain('--access-token');
     expect(ensureServerMock).toHaveBeenCalled();
   });
 
