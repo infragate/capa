@@ -20,6 +20,14 @@ import { assertSafeRepoPath } from "../repo-file";
 import { parseRepoString } from "../repo-string";
 import { assertPublicHttpsUrl } from "../safe-remote-url";
 import {
+	assertBundledAdapterPin,
+	bundledAdapterPin,
+	bundledSlugFromSource,
+	isBundledRegistryInstall,
+	readBundledAdapterSource,
+	type BundledAdapterSlug,
+} from "./bundled";
+import {
 	fetchClaudeMarketplace,
 	getInstalledMarketplacePath,
 	loadClaudeMarketplaceAdapter,
@@ -143,6 +151,10 @@ export async function stageRegistry(
 		}
 		mkdirSync(targetDir, { recursive: true });
 
+		if (isBundledRegistryInstall(input)) {
+			return stageBundledAdapter(input.slug, targetDir);
+		}
+
 		if (input.type === "claude-marketplace") {
 			return await stageClaudeMarketplace(input, authFetch, targetDir, opts);
 		}
@@ -251,6 +263,23 @@ export async function installRegistry(
 	};
 }
 
+function stageBundledAdapter(
+	slug: BundledAdapterSlug,
+	targetDir: string,
+): RegistryStageResult {
+	const content = readBundledAdapterSource(slug);
+	assertBundledAdapterPin(slug, content);
+	const pin = bundledAdapterPin(slug);
+	const adapterPath = join(targetDir, "adapter.ts");
+	writeFileSync(adapterPath, content, "utf-8");
+	return {
+		resolvedRef: `bundled:${pin.slice(0, 16)}`,
+		adapterPath,
+		contentSha256: pin,
+		content,
+	};
+}
+
 async function stageClaudeMarketplace(
 	input: RegistryInstallInput,
 	authFetch: AuthenticatedFetch,
@@ -286,6 +315,15 @@ export async function fetchAdapterSource(
 	preferredSlug?: string;
 	pluginCount?: number;
 }> {
+	const bundledSlug = bundledSlugFromSource(input.source);
+	if (bundledSlug) {
+		const content = readBundledAdapterSource(bundledSlug);
+		assertBundledAdapterPin(bundledSlug, content);
+		return {
+			content,
+			resolvedRef: `bundled:${bundledAdapterPin(bundledSlug).slice(0, 16)}`,
+		};
+	}
 	if (input.type === "claude-marketplace") {
 		const result = await fetchClaudeMarketplace(input.source, authFetch, opts);
 		return {

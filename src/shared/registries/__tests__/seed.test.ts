@@ -1,11 +1,17 @@
 import { describe, it, expect, beforeEach, afterEach, spyOn } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'fs';
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import * as config from '../../config';
+import * as cache from '../../cache';
 import * as safeRemoteUrl from '../../safe-remote-url';
 import { CapaDatabase } from '../../../db/database';
 import { RegistryManager } from '../manager';
+import {
+  executeStagedRegistry,
+  hashAdapterContent,
+  writeStagedAdapter,
+} from '../installer';
 import { seedDefaultRegistries, DEFAULT_REGISTRIES } from '../seed';
 
 const VALID_ADAPTER = `export default {
@@ -121,16 +127,53 @@ describe('seedDefaultRegistries', () => {
     expect(db.getMeta('registries_seeded_v1')).toBe('1');
   });
 
-  it('exposes the bundled default registries pointing at infragate/capa', () => {
-    // Sanity: the shipped list should reference the example folders so users
-    // get a one-click experience on first boot.
+  it('default registry sources are pinned bundled adapters, not floating GitHub refs', () => {
+    const floatingGithub = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+@[A-Za-z0-9_.-]+$/;
     const slugs = DEFAULT_REGISTRIES.map((r) => r.slug);
-    expect(slugs).toContain('skills-sh');
-    expect(slugs).toContain('claude-plugins');
-    expect(slugs).toContain('cursor-marketplace');
+    expect(slugs).toEqual(['skills-sh', 'claude-plugins', 'cursor-marketplace']);
     for (const r of DEFAULT_REGISTRIES) {
-      expect(r.type).toBe('github');
-      expect(r.source.startsWith('infragate/capa@')).toBe(true);
+      expect(r.source).not.toMatch(floatingGithub);
+      expect(r.source.startsWith('infragate/capa@')).toBe(false);
+      const pin = (r as { contentSha256?: string }).contentSha256;
+      expect(pin).toMatch(/^[a-f0-9]{64}$/);
+      const adapterFile = join(import.meta.dir, '../../../../registries', r.slug, 'adapter.ts');
+      if (existsSync(adapterFile)) {
+        expect(hashAdapterContent(readFileSync(adapterFile, 'utf8'))).toBe(pin);
+      }
     }
+  });
+
+  it('seeds bundled defaults from local adapter bytes without cloning GitHub', async () => {
+    const snapshotSpy = spyOn(cache, 'getOrCreateSnapshot').mockRejectedValue(
+      new Error('git clone must not run during default seed'),
+    );
+    try {
+      const result = await seedDefaultRegistries(db, manager);
+      expect(snapshotSpy).not.toHaveBeenCalled();
+      expect(result.skipped).toBe(false);
+      expect(result.failed).toEqual([]);
+      expect([...result.installed].sort()).toEqual(
+        ['claude-plugins', 'cursor-marketplace', 'skills-sh'].sort(),
+      );
+      for (const r of DEFAULT_REGISTRIES) {
+        const row = db.getRegistry(r.slug)!;
+        expect(row.status).toBe('installed');
+        expect(row.contentSha256).toMatch(/^[a-f0-9]{64}$/);
+        expect(row.contentSha256).toBe((r as { contentSha256?: string }).contentSha256);
+        const copied = join(tempDir, 'managed', r.slug, 'adapter.ts');
+        expect(existsSync(copied)).toBe(true);
+        expect(hashAdapterContent(readFileSync(copied, 'utf8'))).toBe(row.contentSha256);
+      }
+    } finally {
+      snapshotSpy.mockRestore();
+    }
+  });
+
+  it('refuses to execute a seeded adapter when bytes do not match the compiled pin', async () => {
+    const seed = DEFAULT_REGISTRIES.find((r) => r.slug === 'claude-plugins')!;
+    const pin = (seed as { contentSha256?: string }).contentSha256;
+    expect(pin).toMatch(/^[a-f0-9]{64}$/);
+    writeStagedAdapter('claude-plugins', 'export default { not_an_adapter: true };', '.ts');
+    await expect(executeStagedRegistry('claude-plugins', pin)).rejects.toThrow(/hash mismatch/i);
   });
 });
