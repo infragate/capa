@@ -91,6 +91,36 @@ export function tokenizeCommandTemplate(input: string): string[] {
 	return tokens;
 }
 
+const SHELL_ARGV0 = new Set([
+	"sh",
+	"bash",
+	"zsh",
+	"dash",
+	"fish",
+	"cmd",
+	"cmd.exe",
+	"powershell",
+	"powershell.exe",
+	"pwsh",
+	"pwsh.exe",
+]);
+
+function argv0Basename(program: string): string {
+	const normalized = program.replace(/\\/g, "/");
+	const base = normalized.slice(normalized.lastIndexOf("/") + 1);
+	return base.toLowerCase();
+}
+
+export function shellPlaceholderTemplateError(tokens: string[]): string | null {
+	if (tokens.length === 0) return null;
+	if (!SHELL_ARGV0.has(argv0Basename(tokens[0]))) return null;
+	const hasPlaceholder = tokens.some((t) =>
+		/\{[a-zA-Z_][a-zA-Z0-9_]*\}/.test(t),
+	);
+	if (!hasPlaceholder) return null;
+	return `Command template uses a shell (${tokens[0]}) with {placeholders}; caller values would be re-parsed by the shell. Use a non-shell argv0, or set allowShellPlaceholders: true if this is intentional.`;
+}
+
 function substitutePlaceholders(
 	token: string,
 	values: Record<string, string>,
@@ -189,6 +219,16 @@ export class CommandToolExecutor {
 		}
 		if (templateTokens.length === 0) {
 			return { success: false, error: "Command template is empty" };
+		}
+		if (!spec.allowShellPlaceholders) {
+			const shellError = shellPlaceholderTemplateError(templateTokens);
+			if (shellError) {
+				return { success: false, error: shellError };
+			}
+		} else if (shellPlaceholderTemplateError(templateTokens)) {
+			this.logger.warn(
+				`allowShellPlaceholders is set; caller values will be interpolated into a shell command: ${resolvedSpec.cmd}`,
+			);
 		}
 
 		// Collect substitution values: caller-supplied first, falling back to

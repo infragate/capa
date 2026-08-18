@@ -382,6 +382,12 @@ export interface CommandSpec {
   args?: ArgumentDefinition[];
   dir?: string;
   env?: Record<string, string>;
+  /**
+   * Allow `{placeholders}` inside a template whose argv0 is a shell
+   * (`sh`, `bash`, `cmd.exe`, …). Off by default because caller values
+   * would then be re-parsed by that shell.
+   */
+  allowShellPlaceholders?: boolean;
 }
 
 export interface ArgumentDefinition {
