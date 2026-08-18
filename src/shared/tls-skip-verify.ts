@@ -15,6 +15,12 @@ export function shouldSkipTlsVerify(
 		return false;
 	}
 
+	// Managed-workstation policy: images can set this to refuse skip even when
+	// CAPA_ALLOW_TLS_SKIP_VERIFY=1 is present in the process environment.
+	if (process.env.CAPA_DISALLOW_TLS_SKIP_VERIFY === "1") {
+		return false;
+	}
+
 	const allowed = process.env.CAPA_ALLOW_TLS_SKIP_VERIFY === "1";
 
 	if (!allowed) {

@@ -6,7 +6,9 @@ describe('shouldSkipTlsVerify', () => {
 
   beforeEach(() => {
     savedEnv.CAPA_ALLOW_TLS_SKIP_VERIFY = process.env.CAPA_ALLOW_TLS_SKIP_VERIFY;
+    savedEnv.CAPA_DISALLOW_TLS_SKIP_VERIFY = process.env.CAPA_DISALLOW_TLS_SKIP_VERIFY;
     delete process.env.CAPA_ALLOW_TLS_SKIP_VERIFY;
+    delete process.env.CAPA_DISALLOW_TLS_SKIP_VERIFY;
   });
 
   afterEach(() => {
@@ -14,6 +16,11 @@ describe('shouldSkipTlsVerify', () => {
       delete process.env.CAPA_ALLOW_TLS_SKIP_VERIFY;
     } else {
       process.env.CAPA_ALLOW_TLS_SKIP_VERIFY = savedEnv.CAPA_ALLOW_TLS_SKIP_VERIFY;
+    }
+    if (savedEnv.CAPA_DISALLOW_TLS_SKIP_VERIFY === undefined) {
+      delete process.env.CAPA_DISALLOW_TLS_SKIP_VERIFY;
+    } else {
+      process.env.CAPA_DISALLOW_TLS_SKIP_VERIFY = savedEnv.CAPA_DISALLOW_TLS_SKIP_VERIFY;
     }
   });
 
@@ -29,5 +36,11 @@ describe('shouldSkipTlsVerify', () => {
   it('returns false when env is 1 but requested is false', () => {
     process.env.CAPA_ALLOW_TLS_SKIP_VERIFY = '1';
     expect(shouldSkipTlsVerify(false, 'tls-smoke-not-requested')).toBe(false);
+  });
+
+  it('fails closed when CAPA_DISALLOW_TLS_SKIP_VERIFY=1 even if skip is requested and allowed', () => {
+    process.env.CAPA_ALLOW_TLS_SKIP_VERIFY = '1';
+    process.env.CAPA_DISALLOW_TLS_SKIP_VERIFY = '1';
+    expect(shouldSkipTlsVerify(true, 'tls-smoke-disallow')).toBe(false);
   });
 });
