@@ -353,7 +353,11 @@ class CapaServer {
 		status: number,
 	): Response {
 		const requestOrigin = request.headers.get("Origin");
-		const originCheck = isAllowedOrigin(requestOrigin);
+		const originCheck = isAllowedOrigin(
+			requestOrigin,
+			this.settings.server.host,
+			this.settings.server.port,
+		);
 		const headers: Record<string, string> = {};
 		if (originCheck.origin) {
 			headers["Access-Control-Allow-Origin"] = originCheck.origin;
@@ -1692,7 +1696,11 @@ class CapaServer {
 		}
 
 		const requestOrigin = request.headers.get("Origin");
-		const originCheck = isAllowedOrigin(requestOrigin);
+		const originCheck = isAllowedOrigin(
+			requestOrigin,
+			this.settings.server.host,
+			this.settings.server.port,
+		);
 		const corsHeaders: Record<string, string> = {
 			"Access-Control-Allow-Methods": "POST, GET, OPTIONS",
 			"Access-Control-Allow-Headers": `Content-Type, ${CAPA_CLIENT_HEADER}`,
