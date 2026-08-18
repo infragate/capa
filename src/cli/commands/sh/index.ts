@@ -3,29 +3,26 @@ import { parseCapabilitiesFile } from '../../../shared/capabilities';
 import { getServerStatus } from '../../utils/server-manager';
 import { resolveProjectIdentityPath } from '../../utils/wrap/marker';
 import { slugify } from '../../../shared/slug';
-import { parseShellGlobalFlags, parseInlineArgs, resolveArgs } from './args';
+import { parseShellGlobalFlags, parseInlineArgs, resolveArgs, classifyUnknownCommand } from './args';
 import { ShellRegistry, applyLocalMetadata } from './registry';
 import type { ShellCommand } from './registry';
 import { fetchShellToolsWithConfigure, ensureSchema, executeToolViaMCP } from './fetch';
 import { printAvailableCommands, printGroupHelp, printCommandHelp, buildArgList } from './help';
 
-async function runPassthrough(tokens: string[]): Promise<void> {
-  if (process.env.CAPA_NO_SHELL_WARN !== '1') {
-    console.warn('capa: running OS shell passthrough. Set CAPA_NO_SHELL_WARN=1 to suppress.');
-  }
-  const command = tokens.join(' ');
-  const isWindows = process.platform === 'win32';
-  const shell = isWindows ? 'cmd.exe' : '/bin/sh';
-  const shellFlag = isWindows ? '/C' : '-c';
-
-  const proc = Bun.spawn([shell, shellFlag, command], {
+/**
+ * Explicit unrestricted spawn. Sub-agent tool filtering is a token-budget /
+ * UX feature, not a security boundary — `--exec` is trivially deniable in
+ * agent allow-lists.
+ */
+async function runExec(argv: string[]): Promise<void> {
+  const proc = Bun.spawn(argv, {
     cwd: process.cwd(),
     stdout: 'inherit',
     stderr: 'inherit',
     stdin: 'inherit',
   });
-
-  await proc.exited;
+  const code = await proc.exited;
+  if (code !== 0) process.exit(code ?? 1);
 }
 
 async function execCommand(
@@ -104,7 +101,8 @@ async function dispatch(
   registry: ShellRegistry,
   serverUrl: string,
   projectId: string,
-  rawMode = false
+  rawMode = false,
+  execMode = false,
 ): Promise<void> {
   if (tokens.length === 0) {
     printAvailableCommands(registry);
@@ -164,8 +162,15 @@ async function dispatch(
     return;
   }
 
-  // Unknown — pass through to OS shell (including any --help flags)
-  await runPassthrough(tokens);
+  // Unknown first token: never fall through to an OS shell.
+  const unknown = classifyUnknownCommand(tokens, execMode);
+  if (unknown.kind === 'exec') {
+    await runExec(unknown.argv);
+    return;
+  }
+  console.error(`No such tool: "${first}"`);
+  console.error('Use `capa sh --help` to list tools, or `capa sh --exec -- <cmd>` for an unrestricted spawn.');
+  process.exit(1);
 }
 
 export async function shellCommand(args: string[]): Promise<void> {
@@ -213,7 +218,7 @@ export async function shellCommand(args: string[]): Promise<void> {
   const registry = new ShellRegistry();
   registry.build(tools);
 
-  const { rawMode, tokens } = parseShellGlobalFlags(args);
+  const { rawMode, execMode, tokens } = parseShellGlobalFlags(args);
 
-  await dispatch(tokens, registry, serverUrl, projectId, rawMode);
+  await dispatch(tokens, registry, serverUrl, projectId, rawMode, execMode);
 }

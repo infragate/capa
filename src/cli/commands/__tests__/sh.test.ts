@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test';
-import { parseInlineArgs, resolveArgs, coerceValue, parseShellGlobalFlags } from '../sh';
+import { parseInlineArgs, resolveArgs, coerceValue, parseShellGlobalFlags, classifyUnknownCommand } from '../sh';
 import type { ShellCommand } from '../sh';
 import { slugify } from '../../../shared/slug';
 
@@ -24,6 +24,7 @@ describe('parseShellGlobalFlags', () => {
   it('detects and removes a leading --raw', () => {
     expect(parseShellGlobalFlags(['--raw', 'my-tool', '--x', '1'])).toEqual({
       rawMode: true,
+      execMode: false,
       tokens: ['my-tool', '--x', '1'],
     });
   });
@@ -31,6 +32,7 @@ describe('parseShellGlobalFlags', () => {
   it('detects and removes a trailing --raw', () => {
     expect(parseShellGlobalFlags(['group', 'my-tool', '--x', '1', '--raw'])).toEqual({
       rawMode: true,
+      execMode: false,
       tokens: ['group', 'my-tool', '--x', '1'],
     });
   });
@@ -38,6 +40,7 @@ describe('parseShellGlobalFlags', () => {
   it('detects --raw anywhere in the middle', () => {
     expect(parseShellGlobalFlags(['group', '--raw', 'my-tool'])).toEqual({
       rawMode: true,
+      execMode: false,
       tokens: ['group', 'my-tool'],
     });
   });
@@ -45,8 +48,38 @@ describe('parseShellGlobalFlags', () => {
   it('defaults rawMode to false', () => {
     expect(parseShellGlobalFlags(['my-tool'])).toEqual({
       rawMode: false,
+      execMode: false,
       tokens: ['my-tool'],
     });
+  });
+
+  it('treats --exec as a distinct unrestricted subcommand, not a joined shell string', () => {
+    expect(parseShellGlobalFlags(['--exec', '--', 'ls', '-la'])).toEqual({
+      rawMode: false,
+      execMode: true,
+      tokens: ['ls', '-la'],
+    });
+    expect(parseShellGlobalFlags(['--exec', 'rm', '-rf', '/tmp/x'])).toEqual({
+      rawMode: false,
+      execMode: true,
+      tokens: ['rm', '-rf', '/tmp/x'],
+    });
+  });
+});
+
+describe('classifyUnknownCommand', () => {
+  it('rejects an unknown first token so capa sh does not spawn a shell', () => {
+    expect(classifyUnknownCommand(['ls', '-la'], false)).toEqual({ kind: 'reject' });
+    expect(classifyUnknownCommand(['echo', 'hi'], false)).toEqual({ kind: 'reject' });
+  });
+
+  it('keeps --exec argv intact (no sh -c join)', () => {
+    expect(classifyUnknownCommand(['ls', '-la'], true)).toEqual({
+      kind: 'exec',
+      argv: ['ls', '-la'],
+    });
+    const joined = classifyUnknownCommand(['ls', '-la'], true);
+    expect(joined.kind === 'exec' ? joined.argv.join(' ') : '').not.toBe(joined.kind === 'exec' ? joined.argv[0] : '');
   });
 });
 
