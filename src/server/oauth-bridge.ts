@@ -20,6 +20,7 @@
  */
 import { injectHtmlAuthToken } from "./api-guards";
 import { getAuthToken } from "./auth-middleware";
+import { htmlSecurityHeaders } from "./html-security-headers";
 
 export type GitOAuthPlatform = "github" | "gitlab";
 
@@ -97,10 +98,10 @@ export function oauthBridgeResponse(platform: GitOAuthPlatform): Response {
 	const html = injectHtmlAuthToken(buildOAuthBridgeHtml(platform), getAuthToken());
 	return new Response(html, {
 		status: 200,
-		headers: {
+		headers: htmlSecurityHeaders({
 			"Content-Type": "text/html; charset=utf-8",
 			"Cache-Control": "no-store",
 			"Referrer-Policy": "no-referrer",
-		},
+		}),
 	});
 }

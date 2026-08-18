@@ -19,6 +19,7 @@ import type { OAuth2Config } from "../types/oauth";
 import type { RegistryCapability } from "../types/registry";
 import { VERSION } from "../version";
 import { authorizeApiRequest, injectHtmlAuthToken } from "./api-guards";
+import { htmlSecurityHeaders } from "./html-security-headers";
 import { withAllowedHost } from "./host-allowlist";
 import {
 	getAuthToken,
@@ -499,7 +500,7 @@ class CapaServer {
 			getAuthToken(),
 		);
 		return new Response(html, {
-			headers: { "Content-Type": "text/html" },
+			headers: htmlSecurityHeaders({ "Content-Type": "text/html" }),
 		});
 	}
 
