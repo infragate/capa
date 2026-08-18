@@ -8,6 +8,7 @@ import { getProvider, getAllProviders } from '../../../../shared/providers';
 import { getGitProvider } from '../../../../shared/git-providers/registry';
 import { LockfileBuilder } from '../../../../shared/lockfile';
 import { assertSafeRepoPath } from '../../../../shared/repo-file';
+import { assertCapaOwnedInstallPath } from '../../../../shared/install-path-guard';
 import {
   describeUnsafeCapabilityId,
   isSafeCapabilityId,
@@ -312,6 +313,7 @@ export async function installOneSkill(
     const skillsBaseDir = join(projectPath, providerEntry.skillsDir);
     const skillDir = assertSafeRepoPath(skillsBaseDir, skill.id);
     const skillMdPath = join(skillDir, 'SKILL.md');
+    assertCapaOwnedInstallPath(projectPath, skillDir);
 
     if (existsSync(skillDir)) {
       if (trackManaged) {

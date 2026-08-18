@@ -3,6 +3,7 @@ import type { RequiredCommand } from '../../../types/capabilities';
 import type { InstallCtx } from './context';
 
 import { verifyPrerequisitesTask } from './verify-prerequisites';
+import { validateInstallPathsTask } from './validate-install-paths';
 import { resolvePluginsTask } from './resolve-plugins';
 import { validatePluginConfigTask } from './validate-plugin-config';
 import { loadEnvTask } from './load-env';
@@ -36,6 +37,7 @@ export function buildInstallTasks(
   tasks.push(
     resolvePluginsTask(),
     validatePluginConfigTask(),
+    validateInstallPathsTask(),
     loadEnvTask(),
     checkRemovedSkillsTask(),
     installSkillsTask(),
