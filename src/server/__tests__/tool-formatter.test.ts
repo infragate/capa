@@ -1,4 +1,5 @@
-import { describe, it, expect } from 'bun:test';
+import { describe, it, expect, spyOn } from 'bun:test';
+import * as childProcess from 'child_process';
 import {
   applyToolFormatter,
   buildToolCallText,
@@ -120,5 +121,33 @@ describe('applyToolFormatter', () => {
       timeout: 50,
     });
     expect(out).toBe(input);
+  });
+
+  it('spawns a tokenized argv with shell disabled', async () => {
+    const spawnSpy = spyOn(childProcess, 'spawn');
+    try {
+      await applyToolFormatter('x', { cmd: PASSTHROUGH });
+      expect(spawnSpy.mock.calls.length).toBeGreaterThan(0);
+      const [program, argv, opts] = spawnSpy.mock.calls[0] as [
+        string,
+        string[],
+        { shell?: boolean },
+      ];
+      expect(opts?.shell).toBe(false);
+      expect(String(program)).not.toMatch(/(?:^|[/\\])(sh|cmd\.exe)$/i);
+      expect(Array.isArray(argv)).toBe(true);
+      expect(argv[0]).not.toBe('-c');
+      expect(argv[0]).not.toBe('/C');
+    } finally {
+      spawnSpy.mockRestore();
+    }
+  });
+
+  it('does not run a formatter string as a shell script', async () => {
+    const out = await applyToolFormatter('original', {
+      cmd: 'false; echo pwned',
+    });
+    expect(out).toBe('original');
+    expect(out).not.toContain('pwned');
   });
 });
