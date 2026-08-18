@@ -18,6 +18,7 @@ import {
   registryListCommand,
   registryPathCommand,
   registryAddCommand,
+  registryApproveCommand,
   registryRemoveCommand,
   registryRefreshCommand,
   registrySetEnabledCommand,
@@ -351,7 +352,8 @@ if (process.argv[2] === '__server__') {
         'Source type: github, gitlab, url, or claude-marketplace (auto-detected from source by default)',
       )
       .option('--no-cache', 'Bypass the on-disk repo cache when fetching')
-      .action(async (source: string, slug: string | undefined, opts: { type?: string; cache?: boolean }) => {
+      .option('-y, --yes', 'Skip confirmation (required in non-interactive / CI)')
+      .action(async (source: string, slug: string | undefined, opts: { type?: string; cache?: boolean; yes?: boolean }) => {
         let type: RegistrySourceType | undefined;
         if (opts.type) {
           if (
@@ -367,7 +369,15 @@ if (process.argv[2] === '__server__') {
           }
           type = opts.type;
         }
-        await registryAddCommand(source, slug, { type, noCache: opts.cache === false });
+        await registryAddCommand(source, slug, { type, noCache: opts.cache === false, yes: !!opts.yes });
+      });
+
+    registryCmd
+      .command('approve <slug>')
+      .description('Execute a pending staged registry adapter after reviewing it')
+      .option('-y, --yes', 'Skip confirmation (required in non-interactive / CI)')
+      .action(async (slug: string, opts: { yes?: boolean }) => {
+        await registryApproveCommand(slug, { yes: !!opts.yes });
       });
 
     registryCmd

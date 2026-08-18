@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import * as config from '../../config';
+import * as safeRemoteUrl from '../../safe-remote-url';
 import { CapaDatabase } from '../../../db/database';
 import { RegistryManager } from '../manager';
 import { seedDefaultRegistries, DEFAULT_REGISTRIES } from '../seed';
@@ -21,6 +22,7 @@ describe('seedDefaultRegistries', () => {
   let db: CapaDatabase;
   let manager: RegistryManager;
   let managedDirSpy: ReturnType<typeof spyOn>;
+  let urlPolicySpy: ReturnType<typeof spyOn>;
   let server: ReturnType<typeof Bun.serve>;
   let goodUrl: string;
 
@@ -28,6 +30,9 @@ describe('seedDefaultRegistries', () => {
     tempDir = mkdtempSync(join(tmpdir(), 'capa-seed-test-'));
     managedDirSpy = spyOn(config, 'getManagedRegistriesDir').mockReturnValue(
       join(tempDir, 'managed'),
+    );
+    urlPolicySpy = spyOn(safeRemoteUrl, 'assertPublicHttpsUrl').mockImplementation(
+      async (urlString: string) => new URL(urlString),
     );
     db = new CapaDatabase(join(tempDir, 'test.db'));
     manager = new RegistryManager(db);
@@ -52,6 +57,7 @@ describe('seedDefaultRegistries', () => {
 
   afterEach(() => {
     server.stop();
+    urlPolicySpy.mockRestore();
     managedDirSpy.mockRestore();
     db.close();
     rmSync(tempDir, { recursive: true, force: true });

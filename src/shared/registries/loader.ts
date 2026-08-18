@@ -7,7 +7,7 @@ import {
 	getInstalledMarketplacePath,
 	loadClaudeMarketplaceAdapter,
 } from "./claude-marketplace";
-import { getInstalledAdapterPath } from "./installer";
+import { assertAdapterHash, getInstalledAdapterPath } from "./installer";
 
 interface LoadedRegistry {
 	adapter: RegistryAdapter;
@@ -120,6 +120,9 @@ export class RegistryLoader {
 			}
 
 			try {
+				if (record.contentSha256) {
+					assertAdapterHash(adapterPath, record.contentSha256);
+				}
 				const moduleUrl = `file://${adapterPath.replace(/\\/g, "/")}?t=${mtime}`;
 				const module = await import(moduleUrl);
 				const adapter: unknown = module.default ?? module;
@@ -174,6 +177,7 @@ export class RegistryLoader {
 		record: {
 			slug: string;
 			updatedAt: number;
+			contentSha256?: string | null;
 		},
 		adapters: Map<string, RegistryAdapter>,
 		failures: RegistryLoadFailure[],
@@ -230,6 +234,9 @@ export class RegistryLoader {
 		}
 
 		try {
+			if (record.contentSha256) {
+				assertAdapterHash(jsonPath, record.contentSha256);
+			}
 			const adapter = loadClaudeMarketplaceAdapter(record.slug, {
 				db: this.db,
 			});

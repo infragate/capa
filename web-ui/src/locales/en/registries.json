@@ -73,6 +73,7 @@
     },
     "feedback": {
       "added": "Registry \"{{slug}}\" added.",
+      "pending": "Registry \"{{slug}}\" is staged as pending. Approve it with: capa registry approve {{slug}}",
       "removed": "Registry \"{{slug}}\" removed.",
       "refreshed": "Registry \"{{slug}}\" refreshed.",
       "edited": "Registry \"{{slug}}\" updated.",
@@ -82,7 +83,7 @@
   },
   "editDialog": {
     "title": "Edit registry \"{{slug}}\"",
-    "description": "Repoint this slug at a different source. The new adapter is downloaded and validated before it replaces the existing one.",
+    "description": "Repoint this slug at a different source. HTTP re-stages the adapter as pending; run `capa registry approve <slug>` to execute it.",
     "descriptionMarketplace": "Repoint this slug at a different Claude marketplace. The marketplace.json catalog is re-fetched before it replaces the existing one.",
     "slugImmutable": "The slug is the registry's identity and cannot be renamed. Remove and re-add to change it.",
     "noChanges": "No changes — Save closes the dialog.",
@@ -90,7 +91,7 @@
   },
   "addDialog": {
     "title": "Add registry",
-    "description": "Fetch an adapter from a Git repository or HTTPS URL. The file is downloaded and validated before it is enabled.",
+    "description": "Fetch an adapter from a Git repository or HTTPS URL. HTTP only stages the file; run `capa registry approve <slug>` to execute it.",
     "descriptionMarketplace": "Add a Claude Code marketplace by owner/repo. Capa fetches .claude-plugin/marketplace.json and lists its plugins.",
     "marketplaceHint": "Claude marketplaces are JSON catalogs — no executable adapter code.",
     "fields": {

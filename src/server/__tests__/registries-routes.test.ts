@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, readFileSync
 import { join } from 'path';
 import { tmpdir } from 'os';
 import * as config from '../../shared/config';
+import * as safeRemoteUrl from '../../shared/safe-remote-url';
 import { CapaDatabase } from '../../db/database';
 import { RegistryManager } from '../../shared/registries/manager';
 import {
@@ -38,6 +39,9 @@ describe('registries-routes', () => {
   let server: ReturnType<typeof Bun.serve>;
   let goodUrl: string;
   let badUrl: string;
+  let evilUrl: string;
+  let markerPath: string;
+  let urlPolicySpy: ReturnType<typeof spyOn> | undefined;
 
   beforeEach(() => {
     tempDir = mkdtempSync(join(tmpdir(), 'capa-registry-routes-test-'));
@@ -48,8 +52,14 @@ describe('registries-routes', () => {
 
     const goodAdapterFile = join(tempDir, 'good.ts');
     const badAdapterFile = join(tempDir, 'bad.ts');
+    markerPath = join(tempDir, 'pwned.txt');
+    const evilAdapterFile = join(tempDir, 'evil.ts');
     writeFileSync(goodAdapterFile, VALID_ADAPTER);
     writeFileSync(badAdapterFile, BAD_ADAPTER);
+    writeFileSync(
+      evilAdapterFile,
+      `import { writeFileSync } from 'fs';\nwriteFileSync(${JSON.stringify(markerPath)}, 'pwned');\n${VALID_ADAPTER}`,
+    );
 
     server = Bun.serve({
       port: 0,
@@ -65,14 +75,28 @@ describe('registries-routes', () => {
             headers: { 'content-type': 'application/typescript' },
           });
         }
+        if (path.endsWith('/evil.ts')) {
+          return new Response(readFileSync(evilAdapterFile, 'utf-8'), {
+            headers: { 'content-type': 'application/typescript' },
+          });
+        }
         return new Response('not found', { status: 404 });
       },
     });
     goodUrl = `http://localhost:${server.port}/good.ts`;
     badUrl = `http://localhost:${server.port}/bad.ts`;
+    evilUrl = `http://localhost:${server.port}/evil.ts`;
   });
 
+  function allowLocalUrlPolicy(): void {
+    urlPolicySpy = spyOn(safeRemoteUrl, 'assertPublicHttpsUrl').mockImplementation(
+      async (urlString: string) => new URL(urlString),
+    );
+  }
+
   afterEach(() => {
+    urlPolicySpy?.mockRestore();
+    urlPolicySpy = undefined;
     server.stop();
     managedDirSpy.mockRestore();
     db.close();
@@ -118,29 +142,45 @@ describe('registries-routes', () => {
   });
 
   describe('POST /api/registries', () => {
-    it('installs from a URL and returns 201 with the new record', async () => {
+    it('rejects localhost URLs without executing adapter code', async () => {
       const req = new Request('http://localhost/api/registries', {
         method: 'POST',
-        body: JSON.stringify({ type: 'url', source: goodUrl, slug: 'unit' }),
+        body: JSON.stringify({ type: 'url', source: evilUrl, slug: 'evil' }),
       });
       const res = await createRegistryHandler(db, manager, req);
-      expect(res.status).toBe(201);
+      expect(res.status).toBe(400);
+      expect(existsSync(markerPath)).toBe(false);
+      expect(db.getRegistry('evil')).toBeNull();
+    });
+
+    it('stages from a URL and returns 202 pending without importing', async () => {
+      allowLocalUrlPolicy();
+      const req = new Request('http://localhost/api/registries', {
+        method: 'POST',
+        body: JSON.stringify({ type: 'url', source: evilUrl, slug: 'evil' }),
+      });
+      const res = await createRegistryHandler(db, manager, req);
+      expect(res.status).toBe(202);
       const body = await jsonOf(res);
-      expect(body.registry.slug).toBe('unit');
-      expect(body.registry.status).toBe('installed');
-      expect(body.manifest.id).toBe('demo-registry');
-      expect(existsSync(join(managedDir, 'unit', 'adapter.ts'))).toBe(true);
+      expect(body.registry.slug).toBe('evil');
+      expect(body.registry.status).toBe('pending');
+      expect(body.registry.contentSha256).toMatch(/^[a-f0-9]{64}$/);
+      expect(body.manifest).toBeUndefined();
+      expect(existsSync(join(managedDir, 'evil', 'adapter.ts'))).toBe(true);
+      expect(existsSync(markerPath)).toBe(false);
     });
 
     it('derives the slug when not provided', async () => {
+      allowLocalUrlPolicy();
       const req = new Request('http://localhost/api/registries', {
         method: 'POST',
         body: JSON.stringify({ type: 'url', source: goodUrl }),
       });
       const res = await createRegistryHandler(db, manager, req);
-      expect(res.status).toBe(201);
+      expect(res.status).toBe(202);
       const body = await jsonOf(res);
       expect(body.registry.slug).toBe('good');
+      expect(body.registry.status).toBe('pending');
     });
 
     it('rejects bodies missing type or source', async () => {
@@ -194,15 +234,16 @@ describe('registries-routes', () => {
       expect(res.status).toBe(409);
     });
 
-    it('returns 400 when the fetched adapter is malformed', async () => {
+    it('stages a malformed adapter as pending without importing it', async () => {
+      allowLocalUrlPolicy();
       const req = new Request('http://localhost/api/registries', {
         method: 'POST',
         body: JSON.stringify({ type: 'url', source: badUrl, slug: 'bad' }),
       });
       const res = await createRegistryHandler(db, manager, req);
-      expect(res.status).toBe(400);
-      expect((await jsonOf(res)).error).toMatch(/does not export a valid RegistryAdapter/);
-      expect(db.getRegistry('bad')).toBeNull();
+      expect(res.status).toBe(202);
+      expect(db.getRegistry('bad')?.status).toBe('pending');
+      expect(existsSync(join(managedDir, 'bad', 'adapter.ts'))).toBe(true);
     });
   });
 
@@ -213,6 +254,7 @@ describe('registries-routes', () => {
     });
 
     it('removes the row and the materialized files', async () => {
+      allowLocalUrlPolicy();
       const create = new Request('http://localhost/api/registries', {
         method: 'POST',
         body: JSON.stringify({ type: 'url', source: goodUrl, slug: 'gone' }),
@@ -259,25 +301,25 @@ describe('registries-routes', () => {
       expect(res.status).toBe(404);
     });
 
-    it('re-runs the installer when source changes and persists the new pointer', async () => {
+    it('re-stages when source changes without importing and returns 202 pending', async () => {
+      allowLocalUrlPolicy();
       const create = new Request('http://localhost/api/registries', {
         method: 'POST',
         body: JSON.stringify({ type: 'url', source: goodUrl, slug: 'r' }),
       });
       await createRegistryHandler(db, manager, create);
 
-      // Same upstream content but a different URL — re-install pipeline runs.
       const newGoodUrl = `http://localhost:${server.port}/good.ts?v=2`;
       const req = new Request('http://localhost/api/registries/r', {
         method: 'PATCH',
         body: JSON.stringify({ source: newGoodUrl }),
       });
       const res = await patchRegistryHandler(db, manager, 'r', req);
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(202);
 
       const after = db.getRegistry('r')!;
       expect(after.source).toBe(newGoodUrl);
-      expect(after.status).toBe('installed');
+      expect(after.status).toBe('pending');
     });
 
     it('marks failed and keeps the new pointer when the new source is broken', async () => {
@@ -303,7 +345,8 @@ describe('registries-routes', () => {
       expect(after.lastError).toBeTruthy();
     });
 
-    it('is a no-op when the same source is sent (no re-install, status preserved)', async () => {
+    it('is a no-op when the same source is sent (no re-stage, status preserved)', async () => {
+      allowLocalUrlPolicy();
       const create = new Request('http://localhost/api/registries', {
         method: 'POST',
         body: JSON.stringify({ type: 'url', source: goodUrl, slug: 'same' }),
@@ -320,22 +363,22 @@ describe('registries-routes', () => {
 
       const after = db.getRegistry('same')!;
       expect(after.installedAt).toBe(before.installedAt);
-      expect(after.status).toBe('installed');
+      expect(after.status).toBe('pending');
     });
   });
 
   describe('POST /api/registries/:slug/refresh', () => {
-    it('re-installs and updates installed_at', async () => {
+    it('re-stages without importing and returns 202 pending', async () => {
+      allowLocalUrlPolicy();
       const create = new Request('http://localhost/api/registries', {
         method: 'POST',
         body: JSON.stringify({ type: 'url', source: goodUrl, slug: 'r' }),
       });
       await createRegistryHandler(db, manager, create);
-      const firstInstalledAt = db.getRegistry('r')!.installedAt!;
-      await Bun.sleep(5);
       const res = await refreshRegistryHandler(db, manager, 'r');
-      expect(res.status).toBe(200);
-      expect(db.getRegistry('r')!.installedAt!).toBeGreaterThan(firstInstalledAt);
+      expect(res.status).toBe(202);
+      expect(db.getRegistry('r')!.status).toBe('pending');
+      expect(existsSync(join(managedDir, 'r', 'adapter.ts'))).toBe(true);
     });
 
     it('marks the row as failed when the source is unreachable', async () => {
@@ -360,6 +403,7 @@ describe('registries-routes', () => {
 
   describe('GET /api/registries/preview', () => {
     it('returns the raw adapter source without persisting', async () => {
+      allowLocalUrlPolicy();
       const url = new URL(`http://localhost/api/registries/preview?type=url&source=${encodeURIComponent(goodUrl)}`);
       const res = await previewRegistryHandler(db, url);
       expect(res.status).toBe(200);
@@ -461,26 +505,14 @@ describe('registries-routes', () => {
           }),
         });
         const res = await createRegistryHandler(db, manager, req);
-        expect(res.status).toBe(201);
+        expect(res.status).toBe(202);
         const body = await jsonOf(res);
         expect(body.registry.slug).toBe('developer-kit');
         expect(body.registry.type).toBe('claude-marketplace');
-        expect(body.manifest.id).toBe('developer-kit');
+        expect(body.registry.status).toBe('pending');
+        expect(body.manifest).toBeUndefined();
         expect(existsSync(join(managedDir, 'developer-kit', 'marketplace.json'))).toBe(true);
         expect(existsSync(join(managedDir, 'developer-kit', 'marketplace.meta.json'))).toBe(true);
-
-        // Bare JSON URL marketplaces have no ownerRepo — relative sources
-        // are listed but not installable. Search still works.
-        await manager.reload();
-        const search = await manager.search('developer-kit', {
-          capability: 'plugins',
-          query: '',
-        });
-        expect(search.total).toBe(2);
-        expect(search.items.map((i) => i.id).sort()).toEqual([
-          'developer-kit',
-          'developer-kit-typescript',
-        ]);
       } finally {
         mpServer.stop();
       }

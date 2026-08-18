@@ -122,7 +122,6 @@ export function AddRegistryDialog({ open, onOpenChange, onAdded }: AddRegistryDi
         slug: slug.trim() || undefined,
       });
       onAdded(res.registry.slug);
-      onOpenChange(false);
     } catch (err) {
       const message =
         err instanceof ApiError

@@ -3,6 +3,8 @@ import { loadSettings, getDatabasePath, getManagedRegistriesDir } from '../../sh
 import { RegistryManager } from '../../shared/registries/manager';
 import {
   installRegistry,
+  stageRegistry,
+  executeStagedRegistry,
   removeInstalledAdapter,
   deriveSlug,
   isValidSlug,
@@ -10,11 +12,12 @@ import {
 import { createAuthenticatedFetch } from '../../shared/authenticated-fetch';
 import type { RegistrySourceType } from '../../types/database';
 import type { RegistryCapability, RegistryItemSummary } from '../../types/registry';
-import { runTasks, header, footer, success, info, warn, error, isJson, isVerbose, c, type Task } from '../ui';
+import { runTasks, header, footer, success, info, warn, error, isJson, isVerbose, c, prompt, setFlags, type Task } from '../ui';
 
 interface RegistryAddOptions {
   type?: RegistrySourceType;
   noCache?: boolean;
+  yes?: boolean;
 }
 
 function detectType(source: string, explicit?: RegistrySourceType): RegistrySourceType {
@@ -88,6 +91,19 @@ interface AddCtx {
   db: CapaDatabase;
   resolvedRef: string | null;
   manifestName: string;
+  contentSha256: string;
+  preview: string;
+}
+
+async function confirmAdapterExecution(source: string, contentSha256: string, preview: string): Promise<boolean> {
+  info(`Source: ${source}`);
+  info(`SHA-256: ${contentSha256}`);
+  const lines = preview.split('\n').slice(0, 20).join('\n');
+  info(`Preview:\n${lines}`);
+  return prompt.confirm(
+    'Execute this adapter in-process? This runs third-party TypeScript with your privileges.',
+    false,
+  );
 }
 
 export async function registryAddCommand(
@@ -95,6 +111,7 @@ export async function registryAddCommand(
   slugArg: string | undefined,
   options: RegistryAddOptions = {},
 ): Promise<void> {
+  if (options.yes) setFlags({ yes: true });
   const settings = await loadSettings();
   const db = new CapaDatabase(getDatabasePath(settings));
 
@@ -142,30 +159,15 @@ export async function registryAddCommand(
                 ? `fetching marketplace ${ctx.source}`
                 : `cloning ${ctx.source} from ${ctx.type}`;
           const authFetch = createAuthenticatedFetch(ctx.db);
-          const result = await installRegistry(
+          const staged = await stageRegistry(
             { slug: ctx.slug, type: ctx.type, source: ctx.source },
             authFetch,
             { noCache: ctx.noCache },
           );
-          ctx.resolvedRef = result.resolvedRef;
-          ctx.manifestName = result.manifest.name;
-          task.title = `Fetched "${result.manifest.name}"`;
-        },
-      },
-      {
-        title: 'Saving registry',
-        task: async (ctx, task) => {
-          ctx.db.upsertRegistry({
-            slug: ctx.slug,
-            type: ctx.type,
-            source: ctx.source,
-            status: 'installed',
-            enabled: true,
-            lastError: null,
-            resolvedRef: ctx.resolvedRef,
-            installedAt: Date.now(),
-          });
-          task.title = `Saved "${ctx.slug}"`;
+          ctx.resolvedRef = staged.resolvedRef;
+          ctx.contentSha256 = staged.contentSha256;
+          ctx.preview = staged.content;
+          task.title = `Staged ${ctx.slug} (${staged.contentSha256.slice(0, 12)}…)`;
         },
       },
     ];
@@ -178,13 +180,116 @@ export async function registryAddCommand(
       db,
       resolvedRef: null,
       manifestName: '',
+      contentSha256: '',
+      preview: '',
     };
 
     await runTasks(tasks, { exitOnError: true }, ctx);
 
+    let confirmed: boolean;
+    try {
+      confirmed = await confirmAdapterExecution(ctx.source, ctx.contentSha256, ctx.preview);
+    } catch (err: unknown) {
+      removeInstalledAdapter(ctx.slug);
+      throw err;
+    }
+    if (!confirmed) {
+      removeInstalledAdapter(ctx.slug);
+      throw new Error('Registry add cancelled.');
+    }
+
+    await runTasks(
+      [
+        {
+          title: 'Executing adapter',
+          task: async (c, task) => {
+            const executed = await executeStagedRegistry(c.slug, c.contentSha256);
+            c.manifestName = executed.manifest.name;
+            task.title = `Executed "${executed.manifest.name}"`;
+          },
+        },
+        {
+          title: 'Saving registry',
+          task: async (c, task) => {
+            c.db.upsertRegistry({
+              slug: c.slug,
+              type: c.type,
+              source: c.source,
+              status: 'installed',
+              enabled: true,
+              lastError: null,
+              resolvedRef: c.resolvedRef,
+              installedAt: Date.now(),
+              contentSha256: c.contentSha256,
+            });
+            task.title = `Saved "${c.slug}"`;
+          },
+        },
+      ],
+      { exitOnError: true },
+      ctx,
+    );
+
     success(`Registry "${ctx.slug}" added.`);
     info(`Use it with: capa add ${ctx.slug}:<item-id>`);
     footer(`Done in ${((Date.now() - startedAt) / 1000).toFixed(1)}s`);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    error(message);
+    process.exit(1);
+  } finally {
+    try { db.close(); } catch {}
+  }
+}
+
+export async function registryApproveCommand(slug: string, options: { yes?: boolean } = {}): Promise<void> {
+  if (options.yes) setFlags({ yes: true });
+  const settings = await loadSettings();
+  const db = new CapaDatabase(getDatabasePath(settings));
+  try {
+    const existing = db.getRegistry(slug);
+    if (!existing) {
+      error(`Registry "${slug}" not found.`);
+      process.exit(1);
+    }
+    header(`Approve registry "${slug}"`);
+    const { readFileSync } = await import('fs');
+    const { getInstalledAdapterPath, getInstalledMarketplacePath } = await import('../../shared/registries/installer');
+    const adapterPath = getInstalledAdapterPath(slug);
+    const marketplacePath = getInstalledMarketplacePath(slug);
+    const filePath = adapterPath ?? marketplacePath;
+    if (!filePath) {
+      error(`No staged adapter for "${slug}". Re-add it with capa registry add.`);
+      process.exit(1);
+    }
+    const preview = readFileSync(filePath, 'utf-8');
+    const contentSha256 = existing.contentSha256;
+    if (!contentSha256) {
+      error(`Registry "${slug}" has no pinned content hash. Re-add it with capa registry add.`);
+      process.exit(1);
+    }
+    let confirmed: boolean;
+    try {
+      confirmed = await confirmAdapterExecution(existing.source, contentSha256, preview);
+    } catch (err: unknown) {
+      throw err;
+    }
+    if (!confirmed) {
+      throw new Error('Registry approve cancelled.');
+    }
+    const executed = await executeStagedRegistry(slug, contentSha256);
+    db.upsertRegistry({
+      slug: existing.slug,
+      type: existing.type,
+      source: existing.source,
+      status: 'installed',
+      enabled: true,
+      lastError: null,
+      resolvedRef: existing.resolvedRef,
+      installedAt: Date.now(),
+      contentSha256,
+    });
+    success(`Registry "${slug}" approved (${executed.manifest.name}).`);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     error(message);
@@ -242,6 +347,7 @@ interface RefreshCtx {
   db: CapaDatabase;
   resolvedRef: string | null;
   manifestName: string;
+  contentSha256: string;
 }
 
 export async function registryRefreshCommand(
@@ -276,6 +382,7 @@ export async function registryRefreshCommand(
             );
             ctx.resolvedRef = result.resolvedRef;
             ctx.manifestName = result.manifest.name;
+            ctx.contentSha256 = result.contentSha256;
             task.title = `Fetched "${result.manifest.name}"`;
           } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
@@ -296,6 +403,7 @@ export async function registryRefreshCommand(
             lastError: null,
             resolvedRef: ctx.resolvedRef,
             installedAt: Date.now(),
+            contentSha256: ctx.contentSha256,
           });
           task.title = `Updated record for "${ctx.slug}"`;
         },
@@ -308,6 +416,7 @@ export async function registryRefreshCommand(
       db,
       resolvedRef: null,
       manifestName: '',
+      contentSha256: '',
     });
 
     success(`Registry "${slug}" refreshed.`);

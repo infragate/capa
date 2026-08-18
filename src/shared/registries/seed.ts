@@ -105,6 +105,7 @@ export async function seedDefaultRegistries(
 				lastError: null,
 				resolvedRef: result.resolvedRef,
 				installedAt: Date.now(),
+				contentSha256: result.contentSha256,
 			});
 			installed.push(seed.slug);
 			log.success?.(`Seeded default registry "${seed.slug}"`);

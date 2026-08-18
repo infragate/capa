@@ -3,9 +3,9 @@ import { createAuthenticatedFetch } from "../shared/authenticated-fetch";
 import {
 	deriveSlug,
 	fetchAdapterSource,
-	installRegistry,
 	isValidSlug,
 	removeInstalledAdapter,
+	stageRegistry,
 } from "../shared/registries/installer";
 import type { RegistryManager } from "../shared/registries/manager";
 import type { RegistrySourceType } from "../types/database";
@@ -113,7 +113,7 @@ export async function createRegistryHandler(
 			return jsonError(`Registry "${installSlug}" already exists.`, 409);
 		}
 
-		const result = await installRegistry(
+		const result = await stageRegistry(
 			{ slug: installSlug, type, source },
 			authFetch,
 		);
@@ -121,14 +121,14 @@ export async function createRegistryHandler(
 			slug: installSlug,
 			type,
 			source,
-			status: "installed",
+			status: "pending",
 			enabled: true,
 			lastError: null,
 			resolvedRef: result.resolvedRef,
-			installedAt: Date.now(),
+			installedAt: null,
+			contentSha256: result.contentSha256,
 		});
-		await manager.reload().catch(() => {});
-		return jsonOk({ registry: record, manifest: result.manifest }, 201);
+		return jsonOk({ registry: record }, 202);
 	} catch (err: any) {
 		return jsonError(clientErrorMessage(err), 400);
 	}
@@ -198,7 +198,7 @@ export async function patchRegistryHandler(
 	if (needsReinstall) {
 		try {
 			const authFetch = createAuthenticatedFetch(db);
-			const result = await installRegistry(
+			const result = await stageRegistry(
 				{ slug, type: newType!, source: newSource },
 				authFetch,
 			);
@@ -206,14 +206,15 @@ export async function patchRegistryHandler(
 				slug,
 				type: newType!,
 				source: newSource,
-				status: "installed",
+				status: "pending",
 				enabled: hasEnabled ? body.enabled! : existing.enabled,
 				lastError: null,
 				resolvedRef: result.resolvedRef,
-				installedAt: Date.now(),
+				installedAt: null,
+				contentSha256: result.contentSha256,
 			});
 			await manager.reload().catch(() => {});
-			return jsonOk({ registry: record, manifest: result.manifest });
+			return jsonOk({ registry: record }, 202);
 		} catch (err: any) {
 			const message = clientErrorMessage(err);
 			// Persist the new pointer so the user can fix and retry, but mark
@@ -251,7 +252,7 @@ export async function refreshRegistryHandler(
 	}
 	try {
 		const authFetch = createAuthenticatedFetch(db);
-		const result = await installRegistry(
+		const result = await stageRegistry(
 			{ slug: existing.slug, type: existing.type, source: existing.source },
 			authFetch,
 		);
@@ -259,14 +260,15 @@ export async function refreshRegistryHandler(
 			slug: existing.slug,
 			type: existing.type,
 			source: existing.source,
-			status: "installed",
+			status: "pending",
 			enabled: true,
 			lastError: null,
 			resolvedRef: result.resolvedRef,
-			installedAt: Date.now(),
+			installedAt: null,
+			contentSha256: result.contentSha256,
 		});
 		await manager.reload().catch(() => {});
-		return jsonOk({ registry: record, manifest: result.manifest });
+		return jsonOk({ registry: record }, 202);
 	} catch (err: any) {
 		const message = clientErrorMessage(err);
 		db.setRegistryStatus(slug, "failed", message);

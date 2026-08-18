@@ -4,8 +4,10 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import * as config from '../../../shared/config';
 import { CapaDatabase } from '../../../db/database';
+import * as safeRemoteUrl from '../../../shared/safe-remote-url';
 import {
   registryAddCommand,
+  registryApproveCommand,
   registryListCommand,
   registryRefreshCommand,
   registryRemoveCommand,
@@ -35,6 +37,7 @@ describe('registry CLI commands', () => {
   let server: ReturnType<typeof Bun.serve>;
   let url: string;
   let originalProcessExit: typeof process.exit;
+  let urlPolicySpy: ReturnType<typeof spyOn>;
 
   beforeEach(() => {
     tempDir = mkdtempSync(join(tmpdir(), 'capa-registry-cli-test-'));
@@ -42,6 +45,10 @@ describe('registry CLI commands', () => {
     dbPath = join(tempDir, 'test.db');
     getDbPathSpy = spyOn(config, 'getDatabasePath').mockReturnValue(dbPath);
     getManagedDirSpy = spyOn(config, 'getManagedRegistriesDir').mockReturnValue(managedDir);
+    urlPolicySpy = spyOn(safeRemoteUrl, 'assertPublicHttpsUrl').mockImplementation(
+      async (urlString: string) => new URL(urlString),
+    );
+    setFlags({ yes: true, json: false, quiet: false, verbose: false });
 
     // Convert process.exit calls into thrown errors so tests don't bail.
     originalProcessExit = process.exit;
@@ -75,6 +82,8 @@ describe('registry CLI commands', () => {
   });
 
   afterEach(() => {
+    setFlags({ yes: false, json: false, quiet: false, verbose: false });
+    urlPolicySpy.mockRestore();
     server.stop();
     exitSpy.mockRestore();
     process.exit = originalProcessExit;
@@ -105,6 +114,46 @@ describe('registry CLI commands', () => {
     expect(existsSync(join(managedDir, 'demo', 'adapter.ts'))).toBe(true);
 
     await registryListCommand();
+  });
+
+  it('add without --yes fails closed in non-interactive mode', async () => {
+    setFlags({ yes: false });
+    await expect(registryAddCommand(url, 'demo', { type: 'url' })).rejects.toThrow(
+      /process\.exit\(1\)/,
+    );
+    const db = new CapaDatabase(dbPath);
+    try {
+      expect(db.listRegistries()).toHaveLength(0);
+    } finally {
+      db.close();
+    }
+  });
+
+  it('approve executes a pending staged registry with --yes', async () => {
+    setFlags({ yes: false });
+    const { writeStagedAdapter } = await import('../../../shared/registries/installer');
+    const staged = writeStagedAdapter('pending-one', VALID_ADAPTER, '.ts');
+    const dbSetup = new CapaDatabase(dbPath);
+    dbSetup.upsertRegistry({
+      slug: 'pending-one',
+      type: 'url',
+      source: url,
+      status: 'pending',
+      contentSha256: staged.contentSha256,
+    });
+    dbSetup.close();
+
+    setFlags({ yes: true });
+    await registryApproveCommand('pending-one');
+
+    const db = new CapaDatabase(dbPath);
+    try {
+      const row = db.getRegistry('pending-one')!;
+      expect(row.status).toBe('installed');
+      expect(row.contentSha256).toBe(staged.contentSha256);
+    } finally {
+      db.close();
+    }
   });
 
   it('add derives slug from URL when none is provided', async () => {
@@ -265,6 +314,7 @@ describe('registry search CLI command', () => {
   let stdoutSpy: ReturnType<typeof spyOn>;
   let logs: string[];
   let stdoutChunks: string[];
+  let urlPolicySpy: ReturnType<typeof spyOn>;
 
   beforeEach(() => {
     tempDir = mkdtempSync(join(tmpdir(), 'capa-registry-search-test-'));
@@ -272,6 +322,10 @@ describe('registry search CLI command', () => {
     dbPath = join(tempDir, 'test.db');
     getDbPathSpy = spyOn(config, 'getDatabasePath').mockReturnValue(dbPath);
     getManagedDirSpy = spyOn(config, 'getManagedRegistriesDir').mockReturnValue(managedDir);
+    urlPolicySpy = spyOn(safeRemoteUrl, 'assertPublicHttpsUrl').mockImplementation(
+      async (urlString: string) => new URL(urlString),
+    );
+    setFlags({ yes: true, json: false, quiet: false, verbose: false });
 
     originalProcessExit = process.exit;
     exitSpy = spyOn(process, 'exit').mockImplementation((code?: any) => {
@@ -320,7 +374,8 @@ describe('registry search CLI command', () => {
   });
 
   afterEach(() => {
-    setFlags({ json: false, quiet: false, verbose: false });
+    setFlags({ yes: false, json: false, quiet: false, verbose: false });
+    urlPolicySpy.mockRestore();
     server.stop();
     consoleLogSpy.mockRestore();
     stdoutSpy.mockRestore();
