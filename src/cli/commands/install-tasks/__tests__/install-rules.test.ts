@@ -97,3 +97,37 @@ describe('resolveRuleBody', () => {
     );
   });
 });
+
+describe('resolveRuleBody remote URL policy', () => {
+  function remoteDeps(): ResolveRuleBodyDeps {
+    return {
+      capabilitiesFilePath: '/tmp/capa.yaml',
+      authFetch: {
+        fetch: async () =>
+          new Response('# rule\n', { status: 200, headers: { 'Content-Type': 'text/plain' } }),
+        hasAuth: () => false,
+      } as unknown as ResolveRuleBodyDeps['authFetch'],
+      getRepoSnapshot: async () => {
+        throw new Error('repo snapshot should not be used for remote URL rules');
+      },
+    };
+  }
+
+  it('rejects HTTP rule URLs', async () => {
+    const rule: Rule = { id: 'style', type: 'remote', url: 'http://example.com/rule.md' };
+    await expect(resolveRuleBody(rule, remoteDeps())).rejects.toThrow(/https/i);
+  });
+
+  it('rejects private and metadata HTTPS rule URLs', async () => {
+    const deps = remoteDeps();
+    await expect(
+      resolveRuleBody({ id: 'style', type: 'remote', url: 'https://10.0.0.8/rule.md' }, deps),
+    ).rejects.toThrow(/not allowed/i);
+    await expect(
+      resolveRuleBody(
+        { id: 'style', type: 'remote', url: 'https://169.254.169.254/latest/meta-data/' },
+        deps,
+      ),
+    ).rejects.toThrow(/not allowed/i);
+  });
+});

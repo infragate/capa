@@ -110,7 +110,7 @@ describe('fetchTextFile', () => {
         headers: { 'content-type': 'text/markdown' },
       })) as any;
 
-    const body = await fetchTextFile('https://example.com/foo.md');
+    const body = await fetchTextFile('https://8.8.8.8/foo.md');
     expect(body).toBe('# Hello\n');
   });
 
@@ -122,7 +122,7 @@ describe('fetchTextFile', () => {
       })) as any;
 
     await expect(
-      fetchTextFile('https://gitlab.com/private/repo/-/raw/main/AGENTS.md', {
+      fetchTextFile('https://8.8.8.8/private/repo/-/raw/main/AGENTS.md', {
         sourceLabel: 'agents.base',
       })
     ).rejects.toThrow(/HTML/);
@@ -137,7 +137,7 @@ describe('fetchTextFile', () => {
 
     let caught: Error | null = null;
     try {
-      await fetchTextFile('https://gitlab.com/x/y/-/raw/main/foo.md');
+      await fetchTextFile('https://8.8.8.8/x/y/-/raw/main/foo.md');
     } catch (err: any) {
       caught = err;
     }
@@ -150,7 +150,7 @@ describe('fetchTextFile', () => {
     globalThis.fetch = (async () =>
       new Response('not found', { status: 404, statusText: 'Not Found' })) as any;
 
-    await expect(fetchTextFile('https://example.com/missing.md')).rejects.toThrow(/404/);
+    await expect(fetchTextFile('https://8.8.8.8/missing.md')).rejects.toThrow(/404/);
   });
 
   it('uses authFetch.fetch when an auth helper is supplied', async () => {
@@ -165,9 +165,42 @@ describe('fetchTextFile', () => {
       },
     } as any;
 
-    const body = await fetchTextFile('https://example.com/private.md', { authFetch: auth });
+    const body = await fetchTextFile('https://8.8.8.8/private.md', { authFetch: auth });
     expect(calledThroughAuth).toBe(true);
     expect(body).toBe('# private\n');
+  });
+
+  it('rejects HTTP URLs without fetching', async () => {
+    let fetched = false;
+    const authFetch = {
+      fetch: async () => {
+        fetched = true;
+        return new Response('pwned', { status: 200 });
+      },
+      hasAuth: () => false,
+    } as any;
+
+    await expect(fetchTextFile('http://example.com/x', { authFetch })).rejects.toThrow(
+      /https/i,
+    );
+    expect(fetched).toBe(false);
+  });
+
+  it('rejects private, link-local, and loopback HTTPS IPs', async () => {
+    const authFetch = {
+      fetch: async () => new Response('pwned', { status: 200 }),
+      hasAuth: () => false,
+    } as any;
+
+    await expect(fetchTextFile('https://10.1.2.3/hook.sh', { authFetch })).rejects.toThrow(
+      /not allowed/i,
+    );
+    await expect(
+      fetchTextFile('https://169.254.169.254/latest/meta-data/', { authFetch }),
+    ).rejects.toThrow(/not allowed/i);
+    await expect(fetchTextFile('https://127.0.0.1/hook.sh', { authFetch })).rejects.toThrow(
+      /not allowed/i,
+    );
   });
 });
 

@@ -100,4 +100,44 @@ describe('validateHooks', () => {
     expect(valid).toHaveLength(0);
     expect(issues[0].message).toContain('def.repo');
   });
+
+  it('rejects HTTP remote hook URLs', () => {
+    const { valid, issues } = validateHooks([
+      {
+        id: 'remote-hook',
+        on: 'beforeShell',
+        source: { type: 'remote', url: 'http://example.com/hook.sh' },
+      },
+    ]);
+    expect(valid).toHaveLength(0);
+    expect(issues.some((i) => /https/i.test(i.message))).toBe(true);
+  });
+
+  it('rejects private, link-local, and metadata HTTPS remote hosts', () => {
+    const urls = [
+      'https://10.0.0.5/hook.sh',
+      'https://127.0.0.1/hook.sh',
+      'https://169.254.169.254/latest/meta-data/',
+      'https://metadata.google.internal/computeMetadata/v1/',
+    ];
+    for (const url of urls) {
+      const { valid, issues } = validateHooks([
+        { id: 'remote-hook', on: 'beforeShell', source: { type: 'remote', url } },
+      ]);
+      expect(valid).toHaveLength(0);
+      expect(issues.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('accepts a public https remote URL', () => {
+    const { valid, issues } = validateHooks([
+      {
+        id: 'remote-hook',
+        on: 'beforeShell',
+        source: { type: 'remote', url: 'https://example.com/hook.sh' },
+      },
+    ]);
+    expect(issues).toEqual([]);
+    expect(valid).toHaveLength(1);
+  });
 });
