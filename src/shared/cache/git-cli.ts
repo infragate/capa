@@ -1,6 +1,5 @@
 import type { ExecFileOptions } from "child_process";
 import * as childProcess from "child_process";
-import { promisify } from "util";
 
 /** Git -c flags that disable LFS smudge/clean so clones work without git-lfs or LFS API access. */
 export const LFS_SKIP_ARGS = [
@@ -40,20 +39,50 @@ const NON_INTERACTIVE_GIT_ENV: Record<string, string> = {
 		process.env.GIT_SSH_COMMAND ?? "ssh -o BatchMode=yes -o ConnectTimeout=10",
 };
 
+/**
+ * Pass an HTTP credential to git without putting it in argv or the remote URL.
+ * Uses GIT_CONFIG_* env indirection so `http.extraHeader` is not visible in `ps`.
+ */
+export function gitHttpCredentialEnv(token: string): Record<string, string> {
+	const parsed = Number.parseInt(process.env.GIT_CONFIG_COUNT ?? "0", 10);
+	const n = Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+	const basic = Buffer.from(`oauth2:${token}`, "utf8").toString("base64");
+	return {
+		GIT_TERMINAL_PROMPT: "0",
+		GIT_CONFIG_COUNT: String(n + 1),
+		[`GIT_CONFIG_KEY_${n}`]: "http.extraHeader",
+		[`GIT_CONFIG_VALUE_${n}`]: `Authorization: Basic ${basic}`,
+	};
+}
+
 export async function git(
 	args: string[],
 	opts: ExecFileOptions = {},
 ): Promise<{ stdout: string; stderr: string }> {
-	const execFileAsync = promisify(childProcess.execFile);
-	const { stdout, stderr } = await execFileAsync("git", gitCommandArgs(args), {
-		...opts,
-		windowsHide: true,
-		env: {
-			...process.env,
-			GIT_LFS_SKIP_SMUDGE: "1",
-			...NON_INTERACTIVE_GIT_ENV,
-			...(opts.env ?? {}),
-		},
+	return new Promise((resolve, reject) => {
+		childProcess.execFile(
+			"git",
+			gitCommandArgs(args),
+			{
+				...opts,
+				windowsHide: true,
+				env: {
+					...process.env,
+					GIT_LFS_SKIP_SMUDGE: "1",
+					...NON_INTERACTIVE_GIT_ENV,
+					...(opts.env ?? {}),
+				},
+			},
+			(err, stdout, stderr) => {
+				if (err) {
+					reject(err);
+					return;
+				}
+				resolve({
+					stdout: String(stdout ?? ""),
+					stderr: String(stderr ?? ""),
+				});
+			},
+		);
 	});
-	return { stdout: String(stdout), stderr: String(stderr) };
 }
