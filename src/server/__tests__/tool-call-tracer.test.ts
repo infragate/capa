@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { CapaDatabase } from "../../db/database";
+import { resetSecretCryptoForTests } from "../../shared/secret-crypto";
 import { ToolCallsRepo } from "../../db/tool-calls";
 import { initSchema } from "../../db/schema";
 import {
@@ -356,10 +357,17 @@ describe("ToolCallTracer", () => {
 	let dir: string;
 	let db: CapaDatabase;
 	const notified: Array<{ projectId: string; record: ToolCallRecord }> = [];
+	let prevHome: string | undefined;
+	let prevProfile: string | undefined;
 
 	beforeEach(() => {
 		notified.length = 0;
 		dir = mkdtempSync(join(tmpdir(), "capa-tracer-"));
+		prevHome = process.env.HOME;
+		prevProfile = process.env.USERPROFILE;
+		process.env.HOME = dir;
+		process.env.USERPROFILE = dir;
+		resetSecretCryptoForTests();
 		db = new CapaDatabase(join(dir, "test.db"));
 		db.upsertProject({ id: "proj-1", path: "/tmp/proj-1" });
 		db.setVariable("proj-1", "SECRET_TOKEN", "my-secret-token-value");
@@ -367,6 +375,11 @@ describe("ToolCallTracer", () => {
 
 	afterEach(() => {
 		db.close();
+		resetSecretCryptoForTests();
+		if (prevHome === undefined) delete process.env.HOME;
+		else process.env.HOME = prevHome;
+		if (prevProfile === undefined) delete process.env.USERPROFILE;
+		else process.env.USERPROFILE = prevProfile;
 		rmSync(dir, { recursive: true, force: true });
 	});
 

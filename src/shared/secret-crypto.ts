@@ -63,20 +63,8 @@ export function decryptSecret(value: string): string {
 }
 
 export const decryptSecretString = decryptSecret;
+
 export function secretHint(value: string | undefined): string {
-	if (!value) return "";
-	return value.length > 4 ? value.slice(-4) : "";
-}
-
-export function secretHint(value: string): string {
-	if (value.length <= 4) return "";
+	if (!value || value.length <= 4) return "";
 	return value.slice(-4);
-}
-
-export function encryptSecretIfNeeded(
-	value: string | null | undefined,
-): string | null {
-	if (value == null) return null;
-	if (value.startsWith(PREFIX)) return value;
-	return encryptSecret(value);
 }
