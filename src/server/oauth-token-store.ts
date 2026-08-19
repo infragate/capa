@@ -31,10 +31,19 @@ export async function refreshAccessToken(
 
 		const clientId =
 			db.getVariable(projectId, `oauth2_client_id_${serverId}`) || "capa";
-		const clientSecret = db.getVariable(
-			projectId,
-			`oauth2_client_secret_${serverId}`,
-		);
+		let clientSecret: string | null = null;
+		try {
+			clientSecret = db.getVariable(
+				projectId,
+				`oauth2_client_secret_${serverId}`,
+			);
+		} catch (err: unknown) {
+			const message = err instanceof Error ? err.message : String(err);
+			log.failure(`Failed to read OAuth client secret for ${serverId}: ${message}`);
+			db.deleteOAuthToken(projectId, serverId);
+			log.info(`Deleted invalid token for ${serverId}`);
+			return false;
+		}
 
 		const tokenParams: Record<string, string> = {
 			grant_type: "refresh_token",
@@ -74,7 +83,20 @@ export async function refreshAccessToken(
 			return false;
 		}
 
-		const newTokenData = await response.json();
+		const newTokenData = (await response.json()) as {
+			access_token?: string;
+			refresh_token?: string;
+			token_type?: string;
+			expires_in?: number;
+			scope?: string;
+		};
+
+		if (typeof newTokenData.access_token !== "string" || !newTokenData.access_token) {
+			log.failure(`Token refresh response missing access_token for ${serverId}`);
+			db.deleteOAuthToken(projectId, serverId);
+			log.info(`Deleted invalid token for ${serverId}`);
+			return false;
+		}
 
 		const expiresAt = newTokenData.expires_in
 			? Date.now() + newTokenData.expires_in * 1000
@@ -85,7 +107,7 @@ export async function refreshAccessToken(
 			refresh_token: newTokenData.refresh_token || tokenData.refresh_token,
 			token_type: newTokenData.token_type || "Bearer",
 			expires_at: expiresAt,
-			scope: newTokenData.scope || tokenData.scope,
+			scope: newTokenData.scope || tokenData.scope || undefined,
 		});
 
 		log.success(`Access token refreshed for ${serverId}`);

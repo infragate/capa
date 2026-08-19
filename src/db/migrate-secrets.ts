@@ -13,12 +13,16 @@ import {
 function nextSecret(
 	value: string | null,
 	binding: Parameters<typeof canonicalizeStoredSecret>[1],
-): { value: string | null; changed: boolean } {
+): { value: string | null; changed: boolean; corrupt?: boolean } {
 	if (typeof value !== "string" || value.length === 0) {
 		return { value, changed: false };
 	}
-	const next = canonicalizeStoredSecret(value, binding);
-	return { value: next, changed: next !== value };
+	try {
+		const next = canonicalizeStoredSecret(value, binding);
+		return { value: next, changed: next !== value };
+	} catch {
+		return { value, changed: false, corrupt: true };
+	}
 }
 
 /**
@@ -60,6 +64,10 @@ export function migrateSecretsAtRest(db: Database): void {
 				row.refresh_token,
 				oauthSecretBinding(row.project_id, row.server_id, "refresh_token"),
 			);
+			if (access.corrupt || refresh.corrupt) {
+				db.run("DELETE FROM oauth_tokens WHERE id = ?", [row.id]);
+				continue;
+			}
 			if (!access.changed && !refresh.changed) continue;
 			db.run(
 				"UPDATE oauth_tokens SET access_token = ?, refresh_token = ? WHERE id = ?",

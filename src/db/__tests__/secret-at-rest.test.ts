@@ -113,6 +113,30 @@ describe("credential at-rest encryption", () => {
 		db = new CapaDatabase(dbPath);
 	});
 
+	it("drops undecryptable oauth rows instead of looping refresh", () => {
+		db.setOAuthToken("p1", "bad", {
+			access_token: SECRET,
+			refresh_token: `${SECRET}-refresh`,
+		});
+		db.close();
+
+		const raw = new Database(dbPath);
+		raw.run(
+			"UPDATE oauth_tokens SET access_token = ? WHERE project_id = ? AND server_id = ?",
+			["enc:v2:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "p1", "bad"],
+		);
+		raw.close();
+
+		db = new CapaDatabase(dbPath);
+		expect(db.getOAuthToken("p1", "bad")).toBeNull();
+		const verify = new Database(dbPath, { readonly: true });
+		const row = verify
+			.query("SELECT 1 FROM oauth_tokens WHERE project_id = ? AND server_id = ?")
+			.get("p1", "bad");
+		verify.close();
+		expect(row).toBeNull();
+	});
+
 	it("does not persist git integration tokens in sqlite", () => {
 		db.setGitIntegration("github", {
 			access_token: SECRET,

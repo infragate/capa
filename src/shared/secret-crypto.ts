@@ -40,6 +40,9 @@ function parsePayload(value: string, prefix: string): Buffer {
  * into a row someone can read back.
  */
 export function encryptSecret(plain: string, binding: SecretBinding): string {
+	if (typeof plain !== "string" || plain.length === 0) {
+		throw new Error("encryptSecret requires a non-empty string");
+	}
 	const key = loadMasterKey();
 	const iv = randomBytes(12);
 	if (iv.length !== 12) {
