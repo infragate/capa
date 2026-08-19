@@ -3,6 +3,7 @@ import { createHash } from 'crypto';
 import {
   assertSha256Match,
   formatUpgradePreview,
+  githubFetchHeaders,
   githubReleaseAssetUrl,
   parseSha256Sums,
   planUpgrade,
@@ -17,6 +18,20 @@ function sha256Hex(data: string | Uint8Array): string {
 }
 
 describe('capa upgrade planning', () => {
+  it('sets GitHub API accept headers from the URL hostname, not a substring', () => {
+    const api = githubFetchHeaders(
+      'https://api.github.com/repos/infragate/capa/releases/latest',
+    );
+    expect(api.Accept).toBe('application/vnd.github+json');
+    const asset = githubFetchHeaders(
+      'https://github.com/infragate/capa/releases/download/v1.0.0/SHA256SUMS.txt',
+    );
+    expect(asset.Accept).not.toBe('application/vnd.github+json');
+    expect(() =>
+      githubFetchHeaders('https://evil.example/api.github.com/latest'),
+    ).toThrow(/host/i);
+  });
+
   it('builds a GitHub release asset URL for a pinned version, not the mutable vendor installer URL', () => {
     const url = githubReleaseAssetUrl('v1.2.3', 'install.sh');
     expect(url).toBe(

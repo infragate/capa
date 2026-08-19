@@ -9,6 +9,7 @@ import {
   requireMcpAuth,
   initAuth,
   getAuthToken,
+  getSpaAuthToken,
   _resetAuthStateForTests,
 } from '../auth-middleware';
 
@@ -173,9 +174,17 @@ describe('auth-middleware', () => {
       const token = initAuth('127.0.0.1');
       expect(token).toMatch(/^[0-9a-f]{64}$/);
       expect(getAuthToken()).toBe(token);
+      expect(getSpaAuthToken()).toBe(token);
       expect(readFileSync(join(dir, 'auth.token'), 'utf8').trim()).toBe(
         token ?? '',
       );
+    });
+
+    it('does not expose the SPA bootstrap token when bound off-loopback', () => {
+      const token = initAuth('0.0.0.0');
+      expect(token).toMatch(/^[0-9a-f]{64}$/);
+      expect(getAuthToken()).toBe(token);
+      expect(getSpaAuthToken()).toBeNull();
     });
   });
 });

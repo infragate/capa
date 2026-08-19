@@ -30,12 +30,20 @@ export function _resetProjectEventsForTests(): void {
 }
 
 function capaAuthToken(): string | undefined {
-  return typeof window !== 'undefined' ? window.__CAPA_AUTH_TOKEN__ : undefined;
+  const g = globalThis as typeof globalThis & {
+    window?: { __CAPA_AUTH_TOKEN__?: string };
+    __CAPA_AUTH_TOKEN__?: string;
+  };
+  return g.window?.__CAPA_AUTH_TOKEN__ ?? g.__CAPA_AUTH_TOKEN__;
 }
 
 function ensureSource(projectId: string): EventSource {
   const existing = sources.get(projectId);
-  if (existing) return existing;
+  if (existing && existing.readyState !== 2) return existing;
+  if (existing) {
+    existing.close();
+    sources.delete(projectId);
+  }
 
   const url = `/api/projects/${encodeURIComponent(projectId)}/events`;
   const token = capaAuthToken();
@@ -98,10 +106,10 @@ export function subscribeProjectEvents(
   // EventSource.onopen only fires on CONNECTING → OPEN. A late subscriber
   // (activity after capabilities sync) joining an already-open shared socket
   // would otherwise stay on "reconnecting…" forever.
-  if (es.readyState === EventSource.OPEN) {
+  if (es.readyState === 1) {
     queueMicrotask(() => {
       if (!subscriptions.get(projectId)?.has(sub)) return;
-      if (sources.get(projectId)?.readyState !== EventSource.OPEN) return;
+      if (sources.get(projectId)?.readyState !== 1) return;
       sub.handlers.onOpen?.();
     });
   }
@@ -112,10 +120,33 @@ export function subscribeProjectEvents(
   };
 }
 
+/** Overridable so tests can reconnect without wall-clock delays. */
+export let sseReconnectDelaysMs = [250, 1000, 3000, 5000];
+
+export function _setSseReconnectDelaysForTests(ms: number[]): void {
+  sseReconnectDelaysMs = ms;
+}
+
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new DOMException('Aborted', 'AbortError'));
+    };
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
 /** EventSource cannot set Authorization; same-origin fetch can. */
 function createAuthedEventSource(url: string, token: string): EventSource {
-  const abort = new AbortController();
   const listeners = new Map<string, Set<(ev: MessageEvent) => void>>();
+  let userClosed = false;
+  let attemptAbort = new AbortController();
   const es = {
     CONNECTING: 0,
     OPEN: 1,
@@ -143,56 +174,68 @@ function createAuthedEventSource(url: string, token: string): EventSource {
       return false;
     },
     close() {
+      userClosed = true;
       es.readyState = 2;
-      abort.abort();
+      attemptAbort.abort();
     },
   };
 
+  const dispatchBlock = (block: string) => {
+    let eventName = 'message';
+    const data: string[] = [];
+    for (const line of block.split('\n')) {
+      if (line.startsWith('event:')) eventName = line.slice(6).trim();
+      else if (line.startsWith('data:')) data.push(line.slice(5).trimStart());
+    }
+    const ev = new MessageEvent(eventName, { data: data.join('\n') });
+    if (eventName === 'message') es.onmessage?.(ev);
+    for (const fn of listeners.get(eventName) ?? []) fn(ev);
+  };
+
   void (async () => {
-    try {
-      const res = await fetch(url, {
-        headers: {
-          Accept: 'text/event-stream',
-          Authorization: `Bearer ${token}`,
-        },
-        signal: abort.signal,
-      });
-      if (!res.ok || !res.body) {
-        es.readyState = 2;
-        es.onerror?.(new Event('error'));
-        return;
-      }
-      es.readyState = 1;
-      es.onopen?.(new Event('open'));
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = '';
-      while (es.readyState === 1) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const blocks = buf.split('\n\n');
-        buf = blocks.pop() ?? '';
-        for (const block of blocks) {
-          let eventName = 'message';
-          const data: string[] = [];
-          for (const line of block.split('\n')) {
-            if (line.startsWith('event:')) eventName = line.slice(6).trim();
-            else if (line.startsWith('data:')) data.push(line.slice(5).trimStart());
-          }
-          const ev = new MessageEvent(eventName, { data: data.join('\n') });
-          if (eventName === 'message') es.onmessage?.(ev);
-          for (const fn of listeners.get(eventName) ?? []) fn(ev);
+    let attempt = 0;
+    while (!userClosed) {
+      attemptAbort = new AbortController();
+      es.readyState = 0;
+      try {
+        const res = await fetch(url, {
+          headers: {
+            Accept: 'text/event-stream',
+            Authorization: `Bearer ${token}`,
+          },
+          signal: attemptAbort.signal,
+        });
+        if (!res.ok || !res.body) {
+          throw new Error(`sse ${res.status}`);
         }
+        es.readyState = 1;
+        es.onopen?.(new Event('open'));
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
+        while (!userClosed && es.readyState === 1) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          const blocks = buf.split('\n\n');
+          buf = blocks.pop() ?? '';
+          for (const block of blocks) dispatchBlock(block);
+        }
+      } catch {
+        // fetch abort / network / non-OK
       }
-      if (es.readyState === 1) {
-        es.readyState = 2;
-        es.onerror?.(new Event('error'));
-      }
-    } catch {
-      if (es.readyState !== 2) {
-        es.readyState = 2;
-        es.onerror?.(new Event('error'));
+      if (userClosed) return;
+      es.readyState = 0;
+      es.onerror?.(new Event('error'));
+      const delay =
+        sseReconnectDelaysMs[
+          Math.min(attempt, sseReconnectDelaysMs.length - 1)
+        ] ?? 5000;
+      attempt += 1;
+      try {
+        await sleep(delay, attemptAbort.signal);
+      } catch {
+        return;
       }
     }
   })();

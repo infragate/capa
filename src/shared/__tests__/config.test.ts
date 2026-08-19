@@ -46,6 +46,16 @@ describe('config', () => {
       expect(capaDir).toBe(join(homedir(), '.capa'));
     });
 
+    it('follows process.env.HOME / USERPROFILE so tests do not touch the real ~/.capa', () => {
+      const { home, restore } = isolateHome();
+      try {
+        expect(getCapaDir()).toBe(join(home, '.capa'));
+        expect(getSettingsPath()).toBe(join(home, '.capa', 'settings.json'));
+      } finally {
+        restore();
+      }
+    });
+
     it('should get settings path', () => {
       const settingsPath = getSettingsPath();
       expect(settingsPath).toBe(join(homedir(), '.capa', 'settings.json'));

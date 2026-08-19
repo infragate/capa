@@ -35,7 +35,11 @@ describe("credential at-rest encryption", () => {
 		else process.env.HOME = prevHome;
 		if (prevProfile === undefined) delete process.env.USERPROFILE;
 		else process.env.USERPROFILE = prevProfile;
-		rmSync(home, { recursive: true, force: true });
+		try {
+			rmSync(home, { recursive: true, force: true });
+		} catch {
+			// Windows can keep capa.db locked briefly after close
+		}
 	});
 
 	it("chmods the sqlite file to 0600", () => {
@@ -71,6 +75,27 @@ describe("credential at-rest encryption", () => {
 		);
 		raw.close();
 		expect(db.getVariable("p1", "LEGACY")).toBe("plain-legacy-token");
+	});
+
+	it("rewrites legacy plaintext rows to ciphertext on the next open", () => {
+		db.close();
+		const raw = new Database(dbPath);
+		raw.run(
+			"INSERT INTO variables (project_id, key, value, created_at) VALUES (?, ?, ?, ?)",
+			["p1", "MIGRATE_ME", "plain-to-migrate", Date.now()],
+		);
+		raw.close();
+
+		db = new CapaDatabase(dbPath);
+		expect(db.getVariable("p1", "MIGRATE_ME")).toBe("plain-to-migrate");
+
+		const verify = new Database(dbPath, { readonly: true });
+		const row = verify
+			.query("SELECT value FROM variables WHERE project_id = ? AND key = ?")
+			.get("p1", "MIGRATE_ME") as { value: string };
+		verify.close();
+		expect(row.value.startsWith("enc:v1:")).toBe(true);
+		expect(row.value).not.toContain("plain-to-migrate");
 	});
 
 	it("encrypts oauth access and refresh tokens at rest", () => {

@@ -23,6 +23,7 @@ import { OAuthFlowStateRepo } from "./oauth-flow-state";
 import { OAuthTokensRepo } from "./oauth-tokens";
 import { ProjectsRepo } from "./projects";
 import { RegistriesRepo, type RegistryUpsertInput } from "./registries";
+import { migrateSecretsAtRest } from "./migrate-secrets";
 import { initSchema } from "./schema";
 import { SessionsRepo } from "./sessions";
 import { SubAgentsRepo } from "./sub-agents";
@@ -61,6 +62,7 @@ export class CapaDatabase {
 		this.db = new Database(dbPath, { create: true });
 		restrictDatabaseFileMode(dbPath);
 		initSchema(this.db);
+		migrateSecretsAtRest(this.db);
 
 		this.projects = new ProjectsRepo(this.db);
 		this.sessions = new SessionsRepo(this.db);

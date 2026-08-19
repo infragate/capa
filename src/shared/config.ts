@@ -24,8 +24,12 @@ const DEFAULT_SETTINGS: ServerSettings = {
 	},
 };
 
+function resolveHomeDir(): string {
+	return process.env.HOME || process.env.USERPROFILE || homedir();
+}
+
 export function getCapaDir(): string {
-	return join(homedir(), ".capa");
+	return join(resolveHomeDir(), ".capa");
 }
 
 export function getSettingsPath(): string {
@@ -34,7 +38,7 @@ export function getSettingsPath(): string {
 
 export function getDatabasePath(settings?: ServerSettings): string {
 	const path = settings?.database.path ?? DEFAULT_SETTINGS.database.path;
-	return path.replace("~", homedir());
+	return path.replace("~", resolveHomeDir());
 }
 
 export function getPidFilePath(): string {

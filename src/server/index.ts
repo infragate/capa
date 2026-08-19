@@ -22,7 +22,7 @@ import { authorizeApiRequest, injectHtmlAuthToken } from "./api-guards";
 import { htmlSecurityHeaders } from "./html-security-headers";
 import { withAllowedHost } from "./host-allowlist";
 import {
-	getAuthToken,
+	getSpaAuthToken,
 	initAuth,
 	isLoopbackHost,
 	requireMcpAuth,
@@ -497,7 +497,7 @@ class CapaServer {
 	private async handleSpa(): Promise<Response> {
 		const html = injectHtmlAuthToken(
 			spaHtml as unknown as string,
-			getAuthToken(),
+			getSpaAuthToken(),
 		);
 		return new Response(html, {
 			headers: htmlSecurityHeaders({ "Content-Type": "text/html" }),

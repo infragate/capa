@@ -79,7 +79,7 @@ export async function upgradeCommand(): Promise<void> {
 
   const dir = mkdtempSync(join(tmpdir(), 'capa-upgrade-'));
   const installerPath = join(dir, plan.installerAsset);
-  writeFileSync(installerPath, installerBytes);
+  writeFileSync(installerPath, Buffer.from(installerBytes));
   if (process.platform !== 'win32') {
     chmodSync(installerPath, 0o755);
   }

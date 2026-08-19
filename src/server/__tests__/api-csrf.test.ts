@@ -235,4 +235,9 @@ describe('injectHtmlAuthToken', () => {
     expect(out).toContain('window.__CAPA_AUTH_TOKEN__="abc123"');
     expect(out.indexOf('__CAPA_AUTH_TOKEN__')).toBeLessThan(out.indexOf('</head>'));
   });
+
+  it('leaves HTML unchanged when no token is provided', () => {
+    const html = '<html><head></head><body></body></html>';
+    expect(injectHtmlAuthToken(html, null)).toBe(html);
+  });
 });

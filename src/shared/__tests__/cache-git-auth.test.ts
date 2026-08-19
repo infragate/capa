@@ -19,9 +19,18 @@ const noAuthFetch = {
   getTokenForUrl: () => null,
 } as any;
 
+function isGithubHost(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return host === 'github.com' || host.endsWith('.github.com');
+  } catch {
+    return false;
+  }
+}
+
 const authFetch = {
-  hasAuth: (url: string) => /github\.com/i.test(url),
-  getTokenForUrl: (url: string) => (/github\.com/i.test(url) ? SECRET : null),
+  hasAuth: (url: string) => isGithubHost(url),
+  getTokenForUrl: (url: string) => (isGithubHost(url) ? SECRET : null),
 } as any;
 
 function argvContainsSecret(args: string[]): boolean {

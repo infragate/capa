@@ -44,6 +44,12 @@ describe("secret-crypto", () => {
 		expect(decryptSecret("legacy-plain-token")).toBe("legacy-plain-token");
 	});
 
+	it("treats a legacy plaintext value that starts with enc:v1: as plaintext", () => {
+		expect(decryptSecret("enc:v1:this-is-not-ciphertext")).toBe(
+			"enc:v1:this-is-not-ciphertext",
+		);
+	});
+
 	it("creates ~/.capa/master.key with mode 0600", () => {
 		encryptSecret("x");
 		const keyPath = join(home, ".capa", "master.key");

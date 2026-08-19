@@ -19,7 +19,7 @@
  * `CapaServer` into the test graph.
  */
 import { injectHtmlAuthToken } from "./api-guards";
-import { getAuthToken } from "./auth-middleware";
+import { getSpaAuthToken } from "./auth-middleware";
 import { htmlSecurityHeaders } from "./html-security-headers";
 
 export type GitOAuthPlatform = "github" | "gitlab";
@@ -99,7 +99,7 @@ export function buildOAuthBridgeHtml(platform: GitOAuthPlatform): string {
 }
 
 export function oauthBridgeResponse(platform: GitOAuthPlatform): Response {
-	const html = injectHtmlAuthToken(buildOAuthBridgeHtml(platform), getAuthToken());
+	const html = injectHtmlAuthToken(buildOAuthBridgeHtml(platform), getSpaAuthToken());
 	return new Response(html, {
 		status: 200,
 		headers: htmlSecurityHeaders({

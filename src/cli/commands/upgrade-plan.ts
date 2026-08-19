@@ -158,14 +158,34 @@ export async function planUpgrade(
   };
 }
 
+const GITHUB_FETCH_HOSTS = new Set(["api.github.com", "github.com"]);
+
+export function githubFetchHeaders(url: string): Record<string, string> {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error(`invalid upgrade URL: ${url}`);
+  }
+  if (parsed.protocol !== "https:") {
+    throw new Error(`refusing non-https upgrade URL: ${url}`);
+  }
+  const host = parsed.hostname.toLowerCase();
+  if (!GITHUB_FETCH_HOSTS.has(host)) {
+    throw new Error(`refusing unexpected upgrade host: ${host}`);
+  }
+  return {
+    Accept:
+      host === "api.github.com"
+        ? "application/vnd.github+json"
+        : "application/octet-stream",
+    "User-Agent": "capa-upgrade",
+  };
+}
+
 export async function githubFetchText(url: string): Promise<string> {
   const res = await fetch(url, {
-    headers: {
-      Accept: url.includes('api.github.com')
-        ? 'application/vnd.github+json'
-        : 'text/plain',
-      'User-Agent': 'capa-upgrade',
-    },
+    headers: githubFetchHeaders(url),
   });
   if (!res.ok) {
     throw new Error(`Failed to fetch ${url}: HTTP ${res.status}`);
@@ -175,10 +195,7 @@ export async function githubFetchText(url: string): Promise<string> {
 
 export async function githubFetchBytes(url: string): Promise<Uint8Array> {
   const res = await fetch(url, {
-    headers: {
-      Accept: 'application/octet-stream',
-      'User-Agent': 'capa-upgrade',
-    },
+    headers: githubFetchHeaders(url),
   });
   if (!res.ok) {
     throw new Error(`Failed to fetch ${url}: HTTP ${res.status}`);

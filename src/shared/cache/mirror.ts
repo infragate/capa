@@ -70,7 +70,6 @@ function scrubGitConfigText(text: string): string {
 
 function scrubMirrorConfigFile(mirrorDir: string): void {
 	const configPath = join(mirrorDir, "config");
-	if (!existsSync(configPath)) return;
 	try {
 		const original = readFileSync(configPath, "utf8");
 		const next = scrubGitConfigText(original);
@@ -78,7 +77,7 @@ function scrubMirrorConfigFile(mirrorDir: string): void {
 			writeFileSync(configPath, next);
 		}
 	} catch {
-		// Unreadable or unwritable configs are left as-is.
+		// Missing, unreadable, or unwritable configs are left as-is.
 	}
 }
 

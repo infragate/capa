@@ -68,6 +68,12 @@ export function getAuthToken(): string | null {
 	return resolveToken();
 }
 
+/** SPA/HTML bootstrap token. Omitted when bound off-loopback so GET / cannot leak it. */
+export function getSpaAuthToken(): string | null {
+	if (!bindHost || !isLoopbackHost(bindHost)) return null;
+	return resolveToken();
+}
+
 function tokensMatch(provided: string, expected: string): boolean {
 	const providedBuf = Buffer.from(provided);
 	const expectedBuf = Buffer.from(expected);
