@@ -41,7 +41,7 @@ describe('Git OAuth callback state binding', () => {
       new Response(JSON.stringify({ login: 'tester' }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
-      })) as typeof fetch;
+      })) as unknown as typeof fetch;
   });
 
   afterEach(() => {

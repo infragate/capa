@@ -134,7 +134,7 @@ describe('seedDefaultRegistries', () => {
     for (const r of DEFAULT_REGISTRIES) {
       expect(r.source).not.toMatch(floatingGithub);
       expect(r.source.startsWith('infragate/capa@')).toBe(false);
-      const pin = (r as { contentSha256?: string }).contentSha256;
+      const pin = r.contentSha256 ?? '';
       expect(pin).toMatch(/^[a-f0-9]{64}$/);
       const adapterFile = join(import.meta.dir, '../../../../registries', r.slug, 'adapter.ts');
       if (existsSync(adapterFile)) {
@@ -159,10 +159,12 @@ describe('seedDefaultRegistries', () => {
         const row = db.getRegistry(r.slug)!;
         expect(row.status).toBe('installed');
         expect(row.contentSha256).toMatch(/^[a-f0-9]{64}$/);
-        expect(row.contentSha256).toBe((r as { contentSha256?: string }).contentSha256);
+        expect(row.contentSha256).toBe(r.contentSha256 ?? null);
         const copied = join(tempDir, 'managed', r.slug, 'adapter.ts');
         expect(existsSync(copied)).toBe(true);
-        expect(hashAdapterContent(readFileSync(copied, 'utf8'))).toBe(row.contentSha256);
+        expect(hashAdapterContent(readFileSync(copied, 'utf8'))).toBe(
+          row.contentSha256 ?? '',
+        );
       }
     } finally {
       snapshotSpy.mockRestore();

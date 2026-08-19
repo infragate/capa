@@ -173,7 +173,9 @@ describe('auth-middleware', () => {
       const token = initAuth('127.0.0.1');
       expect(token).toMatch(/^[0-9a-f]{64}$/);
       expect(getAuthToken()).toBe(token);
-      expect(readFileSync(join(dir, 'auth.token'), 'utf8').trim()).toBe(token);
+      expect(readFileSync(join(dir, 'auth.token'), 'utf8').trim()).toBe(
+        token ?? '',
+      );
     });
   });
 });

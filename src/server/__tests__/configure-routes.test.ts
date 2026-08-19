@@ -172,7 +172,7 @@ describe("handleGetServerTools", () => {
 		const res = await handleGetServerTools(
 			{
 				db: {} as CapaDatabase,
-				sessionManager: sessionManager as SessionManager,
+				sessionManager: sessionManager as unknown as SessionManager,
 				getOrCreateMCPServer: () => mcp,
 			},
 			"proj-1",
