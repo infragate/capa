@@ -5,7 +5,10 @@ import type { Rule } from '../../types/rules';
 import { getAllProviders, getProvider } from '../../shared/providers';
 import { buildRuleFrontmatter } from '../../shared/providers/handlers';
 import { assertSafeRepoPath } from '../../shared/repo-file';
-import { assertCapaOwnedInstallPath } from '../../shared/install-path-guard';
+import {
+  assertCapaOwnedInstallPath,
+  isCapaOwnedInstallPath,
+} from '../../shared/install-path-guard';
 import {
   describeUnsafeCapabilityId,
   isSafeCapabilityId,
@@ -433,6 +436,7 @@ export function cleanRules(projectPath: string, providers: string[], ruleIds?: s
     if (provider.rules) {
       const rulesDir = join(projectPath, provider.rules.dir);
       if (!existsSync(rulesDir)) continue;
+      if (!isCapaOwnedInstallPath(projectPath, rulesDir)) continue;
 
       const managedNames = new Set(
         (ruleIds ?? [])
