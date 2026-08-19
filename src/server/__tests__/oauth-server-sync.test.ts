@@ -8,6 +8,12 @@ import {
 } from "../oauth-server-sync";
 import { preserveDiscoveredOAuth2 } from "../resolve-effective-capabilities";
 
+const DETECTED_OAUTH: OAuth2Config = {
+	authorizationEndpoint: "https://auth.example/authorize",
+	tokenEndpoint: "https://auth.example/token",
+	resourceServer: "https://mcp.example/mcp",
+};
+
 function mcpServer(
 	id: string,
 	url: string,
@@ -27,10 +33,7 @@ describe("preserveDiscoveredOAuth2", () => {
 			skills: [],
 			tools: [],
 			servers: [
-				mcpServer("server-a", "https://old.example/mcp", {
-					authorizationEndpoint: "https://auth.example/authorize",
-					tokenEndpoint: "https://auth.example/token",
-				}),
+				mcpServer("server-a", "https://old.example/mcp", DETECTED_OAUTH),
 			],
 		};
 		const fresh: Capabilities = {
@@ -50,10 +53,7 @@ describe("preserveDiscoveredOAuth2", () => {
 			skills: [],
 			tools: [],
 			servers: [
-				mcpServer("server-b", "https://mcp.example/mcp", {
-					authorizationEndpoint: "https://auth.example/authorize",
-					tokenEndpoint: "https://auth.example/token",
-				}),
+				mcpServer("server-b", "https://mcp.example/mcp", DETECTED_OAUTH),
 			],
 		};
 		const fresh: Capabilities = {
@@ -74,10 +74,7 @@ describe("mergeDetectedOAuth2", () => {
 	it("keeps plugin-embedded client_id and callback_port", () => {
 		const merged = mergeDetectedOAuth2(
 			{ client_id: "embedded-app", callback_port: 3111 },
-			{
-				authorizationEndpoint: "https://auth.example/authorize",
-				tokenEndpoint: "https://auth.example/token",
-			},
+			DETECTED_OAUTH,
 		);
 		expect(merged.client_id).toBe("embedded-app");
 		expect(merged.callback_port).toBe(3111);
@@ -87,10 +84,11 @@ describe("mergeDetectedOAuth2", () => {
 
 describe("syncServerOAuth2Requirement", () => {
 	it("clears stale OAuth config when the live URL no longer requires auth", async () => {
-		const server = mcpServer("server-a", "https://new.example/mcp", {
-			authorizationEndpoint: "https://auth.example/authorize",
-			tokenEndpoint: "https://auth.example/token",
-		});
+		const server = mcpServer(
+			"server-a",
+			"https://new.example/mcp",
+			DETECTED_OAUTH,
+		);
 		const disconnects: string[] = [];
 		const oauth2Manager = {
 			detectOAuth2Requirement: async () => null,

@@ -1,4 +1,7 @@
-import type { MCPServer } from "../types/capabilities";
+import type {
+	MCPServer,
+	OAuth2Config as CapabilitiesOAuth2Config,
+} from "../types/capabilities";
 import type { OAuth2Config } from "../types/oauth";
 import type { OAuth2Manager } from "./oauth-manager";
 
@@ -13,7 +16,7 @@ export function serverHasExplicitAuthHeader(server: MCPServer): boolean {
 
 /** Merge auto-detected OAuth endpoints with plugin-embedded client_id / callback_port. */
 export function mergeDetectedOAuth2(
-	existingOAuth: OAuth2Config | undefined,
+	existingOAuth: CapabilitiesOAuth2Config | undefined,
 	oauth2Config: OAuth2Config,
 ): OAuth2Config {
 	const merged: OAuth2Config = { ...(existingOAuth ?? {}), ...oauth2Config };

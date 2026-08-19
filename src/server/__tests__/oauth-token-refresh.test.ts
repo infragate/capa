@@ -72,10 +72,12 @@ describe("refreshAccessToken", () => {
 			new Response(JSON.stringify({ ok: false, error: "invalid_refresh_token" }), {
 				status: 200,
 				headers: { "Content-Type": "application/json" },
-			})) as typeof fetch;
+			})) as unknown as typeof fetch;
 
 		const ok = await refreshAccessToken(db, "p1", "mcp-server", {
+			authorizationEndpoint: "https://example.com/authorize",
 			tokenEndpoint: "https://example.com/token",
+			resourceServer: "https://example.com",
 			client_id: "test-app-id",
 		});
 
@@ -85,7 +87,7 @@ describe("refreshAccessToken", () => {
 
 	it("uses embedded client_id from oauth2 config when no stored variable exists", async () => {
 		let body = "";
-		globalThis.fetch = (async (_input, init) => {
+		globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
 			body = String(init?.body ?? "");
 			return new Response(
 				JSON.stringify({
@@ -95,10 +97,12 @@ describe("refreshAccessToken", () => {
 				}),
 				{ status: 200, headers: { "Content-Type": "application/json" } },
 			);
-		}) as typeof fetch;
+		}) as unknown as typeof fetch;
 
 		const ok = await refreshAccessToken(db, "p1", "mcp-server", {
+			authorizationEndpoint: "https://example.com/authorize",
 			tokenEndpoint: "https://example.com/token",
+			resourceServer: "https://example.com",
 			client_id: "test-app-id",
 		});
 

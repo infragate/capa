@@ -166,10 +166,10 @@ export async function refreshAccessToken(
 
 		db.setOAuthToken(projectId, serverId, {
 			access_token: parsed.accessToken,
-			refresh_token: parsed.refreshToken || tokenData.refresh_token,
+			refresh_token: parsed.refreshToken || tokenData.refresh_token || undefined,
 			token_type: parsed.tokenType || "Bearer",
 			expires_at: expiresAt,
-			scope: parsed.scope || tokenData.scope,
+			scope: parsed.scope || tokenData.scope || undefined,
 		});
 
 		log.success(`Access token refreshed for ${serverId}`);
