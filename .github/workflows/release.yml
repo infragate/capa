@@ -129,6 +129,10 @@ jobs:
     name: Create Release
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -144,7 +148,17 @@ jobs:
       - name: Generate SHA256SUMS.txt
         run: |
           find artifacts -name '*.sha256' -type f -exec cat {} \; | LC_ALL=C sort -k2 > SHA256SUMS.txt
+          sha256sum install.sh install.ps1 >> SHA256SUMS.txt
+          LC_ALL=C sort -k2 -o SHA256SUMS.txt SHA256SUMS.txt
           cat SHA256SUMS.txt
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: |
+            SHA256SUMS.txt
+            install.sh
+            install.ps1
 
       - name: Create Release
         uses: softprops/action-gh-release@v3
@@ -152,17 +166,10 @@ jobs:
           files: |
             artifacts/**/*
             SHA256SUMS.txt
+            install.sh
+            install.ps1
           draft: false
           prerelease: false
           generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload install scripts
-        uses: softprops/action-gh-release@v3
-        with:
-          files: |
-            install.sh
-            install.ps1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

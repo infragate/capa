@@ -279,7 +279,9 @@ if (process.argv[2] === '__server__') {
     program
       .command('upgrade')
       .description('Upgrade capa to the latest version')
-      .action(async () => {
+      .option('-y, --yes', 'Skip confirmation (required in non-interactive / CI)')
+      .action(async (options: { yes?: boolean }) => {
+        if (options.yes) setFlags({ yes: true });
         await upgradeCommand();
       });
 
