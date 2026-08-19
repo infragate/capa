@@ -4,17 +4,24 @@ import {
 	decryptSecretString,
 	encryptSecret,
 } from "../shared/secret-crypto";
+import { oauthSecretBinding } from "../shared/secret-binding";
 import type { OAuthTokenRow } from "../types/database";
 
 function decryptTokenRow(row: OAuthTokenRow | null): OAuthTokenRow | null {
 	if (!row) return null;
 	return {
 		...row,
-		access_token: decryptSecretString(row.access_token),
+		access_token: decryptSecretString(
+			row.access_token,
+			oauthSecretBinding(row.project_id, row.server_id, "access_token"),
+		),
 		refresh_token:
 			row.refresh_token == null
 				? row.refresh_token
-				: decryptSecret(row.refresh_token),
+				: decryptSecret(
+						row.refresh_token,
+						oauthSecretBinding(row.project_id, row.server_id, "refresh_token"),
+					),
 	};
 }
 
@@ -43,9 +50,15 @@ export class OAuthTokensRepo {
 		},
 	): void {
 		const now = Date.now();
-		const access = encryptSecret(tokenData.access_token);
+		const access = encryptSecret(
+			tokenData.access_token,
+			oauthSecretBinding(projectId, serverId, "access_token"),
+		);
 		const refresh = tokenData.refresh_token
-			? encryptSecret(tokenData.refresh_token)
+			? encryptSecret(
+					tokenData.refresh_token,
+					oauthSecretBinding(projectId, serverId, "refresh_token"),
+				)
 			: null;
 		this.db.run(
 			`INSERT INTO oauth_tokens (project_id, server_id, access_token, refresh_token, token_type, expires_at, scope, created_at, updated_at)

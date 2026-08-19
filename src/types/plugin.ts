@@ -1,5 +1,7 @@
 // Plugin types: capabilities reference, unified manifest, source attribution
 
+import type { SecretValue } from '../shared/secret-ref';
+
 /**
  * @see ProviderIntegration.pluginProviderId — registry id may differ from this manifest id
  * (e.g. registry id `claude-code` maps to manifest id `claude`).
@@ -183,10 +185,10 @@ export interface NormalizedPluginMCPServerDef {
   /** Subprocess: command to run */
   cmd?: string;
   args?: string[];
-  env?: Record<string, string>;
+  env?: Record<string, SecretValue>;
   /** Remote: HTTP MCP server URL */
   url?: string;
-  headers?: Record<string, string>;
+  headers?: Record<string, SecretValue>;
   /** OAuth config (Claude uses "oauth", capa uses oauth2) */
   oauth2?: unknown;
 }

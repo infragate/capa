@@ -65,8 +65,9 @@ export async function authCommand(
   if (!provider) {
     listConnectedProviders(db);
     info('Usage:');
-    info('  capa auth <provider> --access-token <token>  - PAT (recommended)');
-    info('  capa auth <provider>                         - OAuth (browser)');
+    info('  capa auth <provider> --access-token <token>  - PAT (git credential helper)');
+    info('  capa auth <provider>                         - OAuth (browser; last resort)');
+    info('Prefer gh auth login / Git Credential Manager — CAPA does not store git tokens.');
     info(cloudOAuthDisclosure());
     info('Examples:');
     info('  capa auth github.com');
@@ -284,7 +285,7 @@ async function authenticateWithAccessToken(
   try {
     await runTasks([
       {
-        title: 'Validate and store access token',
+        title: 'Validate token and hand it to git credential helper',
         task: async () => {
           const manager = new GitIntegrationManager(db);
           await manager.storePAT({

@@ -2,6 +2,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { CapaDatabase } from "../db/database";
 import { logger } from "../shared/logger";
+import { resolveSecretRecord } from "../shared/secret-ref";
 import { isStdioTrusted } from "../shared/stdio-allowlist";
 import {
 	hasUnresolvedVariables,
@@ -327,20 +328,26 @@ export class MCPProxy {
 
 		this.logger.info(`Creating new MCP client for server: ${serverId}`);
 
+		const launchDef: MCPServerDefinition = {
+			...serverDefinition,
+			env: resolveSecretRecord(serverDefinition.env),
+			headers: resolveSecretRecord(serverDefinition.headers),
+		};
+
 		// For local subprocess-based servers
-		if (serverDefinition.cmd) {
+		if (launchDef.cmd) {
 			return await this.createStdioClient(
 				serverId,
-				serverDefinition,
+				launchDef,
 				fingerprint,
 			);
 		}
 
 		// For remote HTTP-based servers
-		if (serverDefinition.url) {
+		if (launchDef.url) {
 			return await this.createHttpClient(
 				serverId,
-				serverDefinition,
+				launchDef,
 				fingerprint,
 			);
 		}
@@ -434,7 +441,7 @@ export class MCPProxy {
 			const transport = new StdioClientTransport({
 				command: serverDefinition.cmd!,
 				args: serverDefinition.args || [],
-				env: { ...process.env, ...serverDefinition.env } as Record<
+				env: { ...process.env, ...(resolveSecretRecord(serverDefinition.env) ?? {}) } as Record<
 					string,
 					string
 				>,
@@ -650,7 +657,7 @@ export class MCPProxy {
 
 /** Stable fingerprint of the launch config used to connect an MCP server. */
 export function mcpServerLaunchFingerprint(def: MCPServerDefinition): string {
-	const sorted = (obj: Record<string, string> | undefined) =>
+	const sorted = (obj: Record<string, unknown> | undefined) =>
 		obj
 			? Object.fromEntries(
 					Object.entries(obj).sort(([a], [b]) => a.localeCompare(b)),

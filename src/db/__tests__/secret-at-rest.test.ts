@@ -60,7 +60,7 @@ describe("credential at-rest encryption", () => {
 			.query("SELECT value FROM variables WHERE project_id = ? AND key = ?")
 			.get("p1", "API_KEY") as { value: string };
 		raw.close();
-		expect(row.value.startsWith("enc:v1:")).toBe(true);
+		expect(row.value.startsWith("enc:v2:")).toBe(true);
 		expect(row.value).not.toContain(SECRET);
 
 		db = new CapaDatabase(dbPath);
@@ -94,7 +94,7 @@ describe("credential at-rest encryption", () => {
 			.query("SELECT value FROM variables WHERE project_id = ? AND key = ?")
 			.get("p1", "MIGRATE_ME") as { value: string };
 		verify.close();
-		expect(row.value.startsWith("enc:v1:")).toBe(true);
+		expect(row.value.startsWith("enc:v2:")).toBe(true);
 		expect(row.value).not.toContain("plain-to-migrate");
 	});
 
@@ -113,7 +113,7 @@ describe("credential at-rest encryption", () => {
 		db = new CapaDatabase(dbPath);
 	});
 
-	it("encrypts git integration tokens at rest", () => {
+	it("does not persist git integration tokens in sqlite", () => {
 		db.setGitIntegration("github", {
 			access_token: SECRET,
 			refresh_token: `${SECRET}-refresh`,
@@ -121,10 +121,18 @@ describe("credential at-rest encryption", () => {
 		});
 		const row = db.getGitIntegration("github");
 		expect(row?.access_token).toBe(SECRET);
-		expect(row?.refresh_token).toBe(`${SECRET}-refresh`);
+		expect(row?.refresh_token).toBeNull();
 
 		db.close();
 		expect(readFileSync(dbPath).includes(Buffer.from(SECRET))).toBe(false);
+		const raw = new Database(dbPath, { readonly: true });
+		const stored = raw
+			.query("SELECT access_token, refresh_token FROM git_integrations WHERE platform = ?")
+			.get("github") as { access_token: string; refresh_token: string | null };
+		raw.close();
+		expect(stored.access_token).toBe("");
+		expect(stored.refresh_token).toBeNull();
 		db = new CapaDatabase(dbPath);
+		expect(db.getGitIntegration("github")?.access_token).toBe(SECRET);
 	});
 });

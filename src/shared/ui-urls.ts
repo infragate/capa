@@ -8,9 +8,10 @@ export const CAPA_CLOUD_OAUTH_URL = "https://capa.infragate.ai/auth";
 /** Shown before browser OAuth. Cloud host is pinned; not request-controlled. */
 export function cloudOAuthDisclosure(): string {
 	return (
-		"Browser OAuth sends GitHub/GitLab access and refresh tokens through " +
-		`${CAPA_CLOUD_OAUTH_URL}. Prefer a short-lived PAT via ` +
-		"`capa auth <provider> --access-token` so tokens stay on this machine."
+		"Prefer `gh auth login` or Git Credential Manager so CAPA never stores a git token. " +
+		"Browser OAuth still sends GitHub/GitLab tokens through " +
+		`${CAPA_CLOUD_OAUTH_URL}. A PAT via \`capa auth <provider> --access-token\` ` +
+		"is handed to your git credential helper, not capa.db."
 	);
 }
 

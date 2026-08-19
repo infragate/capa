@@ -8,7 +8,7 @@ import {
 } from "fs";
 import { join } from "path";
 import type { AuthenticatedFetch } from "../authenticated-fetch";
-import { git, gitHttpCredentialEnv } from "./git-cli";
+import { git } from "./git-cli";
 import {
 	type CachePlatform,
 	getCacheDir,
@@ -48,15 +48,6 @@ function stripHttpUrlUserinfo(url: string): string {
 	return stripUserinfoFromHttpUrl(url) ?? url;
 }
 
-function credentialEnvFor(
-	url: string,
-	authFetch: AuthenticatedFetch,
-): Record<string, string> | undefined {
-	if (!authFetch.hasAuth(url)) return undefined;
-	const token = authFetch.getTokenForUrl(url);
-	if (!token) return undefined;
-	return gitHttpCredentialEnv(token);
-}
 
 function scrubGitConfigText(text: string): string {
 	return text.replace(
@@ -135,7 +126,7 @@ export function scrubCachedMirrorAuthUrls(): void {
 export async function ensureMirrorClone(
 	platform: CachePlatform,
 	repoPath: string,
-	authFetch: AuthenticatedFetch,
+	_authFetch: AuthenticatedFetch,
 	repoUrl?: string,
 ): Promise<string> {
 	validateRepoPath(repoPath);
@@ -149,7 +140,6 @@ export async function ensureMirrorClone(
 	const url = stripHttpUrlUserinfo(
 		repoUrl ?? publicHttpsRepoUrl(platform, repoPath),
 	);
-	const env = credentialEnvFor(url, authFetch);
 	// Blobless partial clone: fetch the full commit/tree graph (so any SHA, tag,
 	// or branch still resolves offline via resolveRef) but skip all historical
 	// file contents. On a big repo (e.g. remotion) this avoids downloading every
@@ -165,9 +155,7 @@ export async function ensureMirrorClone(
 	//
 	// Requires git >= 2.19. Servers without partial-clone support degrade
 	// gracefully to a full clone (git warns and ignores the filter).
-	await git(["clone", "--mirror", "--filter=blob:none", url, mirrorDir], {
-		env,
-	});
+	await git(["clone", "--mirror", "--filter=blob:none", url, mirrorDir]);
 	await git(["-C", mirrorDir, "remote", "set-url", "origin", url]);
 	return mirrorDir;
 }
@@ -176,30 +164,16 @@ export async function ensureMirrorClone(
  * Update an existing mirror clone (`git remote update`). Used when a requested
  * version/ref isn't yet present in the mirror.
  *
- * Credentials are injected per-call via env (never stored in the remote URL).
+ * Git uses the developer's credential helper (GCM / `gh auth` / osxkeychain).
+ * CAPA does not inject or persist git tokens.
  */
 export async function fetchMirror(
 	mirrorDir: string,
-	authFetch?: AuthenticatedFetch,
+	_authFetch?: AuthenticatedFetch,
 ): Promise<void> {
 	scrubCachedMirrorAuthUrls();
 	scrubMirrorConfigFile(mirrorDir);
-	let env: Record<string, string> | undefined;
-	if (authFetch) {
-		try {
-			const { stdout } = await git([
-				"-C",
-				mirrorDir,
-				"remote",
-				"get-url",
-				"origin",
-			]);
-			env = credentialEnvFor(stdout.trim(), authFetch);
-		} catch {
-			// No origin remote — update may still succeed for other remotes.
-		}
-	}
-	await git(["-C", mirrorDir, "remote", "update", "--prune"], { env });
+	await git(["-C", mirrorDir, "remote", "update", "--prune"]);
 }
 
 /**

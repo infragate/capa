@@ -1,32 +1,20 @@
 /**
  * Authenticated Fetch Helper for Private Repositories
  *
- * Provides fetch helpers that automatically add authentication headers
- * for GitHub and GitLab based on stored credentials.
+ * Adds GitHub/GitLab auth headers using the developer's existing git
+ * credential helper / `gh auth token`. CAPA does not store git tokens.
  */
 
 import type { CapaDatabase } from "../db/database";
-import type { GitIntegration } from "../types/database";
 import type { GitPlatform } from "../types/git-integration";
+import {
+	fillGitHttpCredential,
+	gitHostFromUrl,
+} from "./git-credentials";
 import { getGitProvider, getGitProviderByHost } from "./git-providers/registry";
-import { isPermanentRefreshFailure } from "./oauth-refresh";
 
-const CLOUD_OAUTH_ENDPOINT = "https://capa.infragate.ai/auth";
-
-// Kept for reference in tests; no longer thrown by ensureFreshIntegration so that
-// public URLs on known git hosts still work when the stored token is expired.
 export const TOKEN_EXPIRED_MESSAGE =
 	"Git integration token has expired. Run `capa auth` again to re-authenticate.";
-
-function getExpiresAt(integration: GitIntegration): number | null {
-	const row = integration as GitIntegration & { expiresAt?: number | null };
-	return integration.expires_at ?? row.expiresAt ?? null;
-}
-
-function isTokenExpired(integration: GitIntegration): boolean {
-	const expiresAt = getExpiresAt(integration);
-	return expiresAt !== null && expiresAt < Date.now();
-}
 
 export class AuthenticatedFetch {
 	private db: CapaDatabase;
@@ -35,139 +23,24 @@ export class AuthenticatedFetch {
 		this.db = db;
 	}
 
-	/**
-	 * Detect the platform from a URL
-	 */
-	private detectPlatform(
-		url: string,
-	): { platform: GitPlatform; host?: string } | null {
-		try {
-			const urlObj = new URL(url);
-			const host = urlObj.hostname;
+	private authorizationHeader(host: string, token: string): string {
+		const provider = getGitProviderByHost(host);
+		if (provider) return provider.authHeader(token);
 
-			const provider = getGitProviderByHost(host);
-			if (provider) {
-				return { platform: provider.id as GitPlatform };
-			}
-
-			// Check for self-managed instances
-			const integrations = this.db.getAllGitIntegrations();
-
-			for (const integration of integrations) {
-				if (integration.host && host === integration.host) {
-					return {
-						platform: integration.platform as GitPlatform,
-						host: integration.host,
-					};
-				}
-			}
-
-			return null;
-		} catch (error) {
-			return null;
-		}
-	}
-
-	private canRefresh(platform: GitPlatform): boolean {
-		return !!getGitProvider(platform);
-	}
-
-	/**
-	 * Refresh an expired OAuth token via the cloud endpoint and persist to the DB.
-	 */
-	private async refreshAccessToken(
-		platform: GitPlatform,
-		host: string | undefined,
-		integration: GitIntegration,
-	): Promise<boolean> {
-		if (!integration.refresh_token || !this.canRefresh(platform)) {
-			return false;
-		}
-
-		try {
-			const gp = getGitProvider(platform);
-			if (!gp) return false;
-
-			const response = await fetch(`${CLOUD_OAUTH_ENDPOINT}/refresh`, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					provider: gp.cloudOAuthProviderParam,
-					refresh_token: integration.refresh_token,
-				}),
-			});
-			if (!response.ok) {
-				// Only drop the stored token when the refresh_token is provably bad. Transient
-				// 5xx / rate-limit / network failures leave the token in place so the next
-				// request (or the scheduler) can retry.
-				const body = await response.text().catch(() => "");
-				if (isPermanentRefreshFailure(undefined, response, body)) {
-					this.db.deleteGitIntegration(platform, host ?? null);
-				}
-				return false;
-			}
-
-			const tokenData = (await response.json()) as {
-				access_token?: string;
-				refresh_token?: string;
-				token_type?: string;
-				expires_in?: number;
-			};
-
-			if (!tokenData.access_token) {
-				return false;
-			}
-
-			const expiresAt = tokenData.expires_in
-				? Date.now() + tokenData.expires_in * 1000
-				: null;
-
-			this.db.setGitIntegration(platform, {
-				host: host ?? null,
-				access_token: tokenData.access_token,
-				refresh_token: tokenData.refresh_token || integration.refresh_token,
-				token_type: tokenData.token_type || "Bearer",
-				expires_at: expiresAt,
-			});
-
-			return true;
-		} catch {
-			return false;
-		}
-	}
-
-	/**
-	 * Ensure the integration has a non-expired token, refreshing when possible.
-	 * Returns null when the token is expired and cannot be refreshed — callers
-	 * should fall back to an unauthenticated request rather than aborting, so
-	 * that public URLs on known git hosts (e.g. raw.githubusercontent.com) still
-	 * work even when the user's stored token has expired.
-	 */
-	private async ensureFreshIntegration(
-		platform: GitPlatform,
-		host: string | undefined,
-		integration: GitIntegration,
-	): Promise<GitIntegration | null> {
-		if (!isTokenExpired(integration)) {
-			return integration;
-		}
-
-		const refreshed = await this.refreshAccessToken(
-			platform,
-			host,
-			integration,
+		const integrations = this.db.getAllGitIntegrations();
+		const match = integrations.find(
+			(row) => row.host && row.host.toLowerCase() === host.toLowerCase(),
 		);
-		if (refreshed) {
-			const updated = this.db.getGitIntegration(platform, host ?? null);
-			if (updated && !isTokenExpired(updated)) {
-				return updated;
-			}
+		if (match?.platform === "github-enterprise") {
+			return `token ${token}`;
 		}
+		return `Bearer ${token}`;
+	}
 
-		// Token is expired and refresh failed. Return null so the caller can fall
-		// back to an unauthenticated request. Private repos will still get a 401/403
-		// which the install flow already converts into a friendly re-auth prompt.
-		return null;
+	private tokenForUrl(url: string): string | null {
+		const host = gitHostFromUrl(url);
+		if (!host) return null;
+		return fillGitHttpCredential(host);
 	}
 
 	/**
@@ -176,119 +49,43 @@ export class AuthenticatedFetch {
 	private async getAuthHeaders(
 		url: string,
 	): Promise<Record<string, string> | null> {
-		const detected = this.detectPlatform(url);
-		if (!detected) {
-			return null;
-		}
-
-		const { platform, host } = detected;
-		const integration = this.db.getGitIntegration(platform, host || null);
-
-		if (!integration) {
-			return null;
-		}
-
-		const fresh = await this.ensureFreshIntegration(
-			platform,
-			host,
-			integration,
-		);
-		if (!fresh) {
-			// Token expired and could not be refreshed; proceed without auth headers.
-			return null;
-		}
-
-		const gp = getGitProvider(platform);
-		if (gp) {
-			return {
-				Authorization: gp.authHeader(fresh.access_token),
-			};
-		}
-
-		// Self-managed instances
-		if (platform === "github-enterprise") {
-			return {
-				Authorization: `token ${fresh.access_token}`,
-			};
-		}
-
-		return {
-			Authorization: `Bearer ${fresh.access_token}`,
-		};
+		const host = gitHostFromUrl(url);
+		if (!host) return null;
+		const token = fillGitHttpCredential(host);
+		if (!token) return null;
+		return { Authorization: this.authorizationHeader(host, token) };
 	}
 
-	/**
-	 * Perform an authenticated fetch request
-	 * @param url The URL to fetch
-	 * @param options Standard fetch options
-	 * @returns Response object
-	 */
 	async fetch(url: string, options: RequestInit = {}): Promise<Response> {
 		const authHeaders = await this.getAuthHeaders(url);
-
 		const headers = new Headers(options.headers || {});
-
 		if (authHeaders) {
 			for (const [key, value] of Object.entries(authHeaders)) {
 				headers.set(key, value);
 			}
 		}
-
 		return fetch(url, {
 			...options,
 			headers,
 		});
 	}
 
-	/**
-	 * Check if authentication is available for a URL
-	 */
 	hasAuth(url: string): boolean {
-		const detected = this.detectPlatform(url);
-		if (!detected) {
-			return false;
-		}
-
-		const { platform, host } = detected;
-		const integration = this.db.getGitIntegration(platform, host || null);
-
-		return !!integration && !isTokenExpired(integration);
+		return this.tokenForUrl(url) != null;
 	}
 
-	/**
-	 * Get the access token for a URL (for use in git clone)
-	 * @param url The URL to get the token for
-	 * @returns The access token or null if not available
-	 */
 	getTokenForUrl(url: string): string | null {
-		const detected = this.detectPlatform(url);
-		if (!detected) {
-			return null;
-		}
-
-		const { platform, host } = detected;
-		const integration = this.db.getGitIntegration(platform, host || null);
-
-		if (!integration || isTokenExpired(integration)) {
-			return null;
-		}
-
-		return integration.access_token;
+		return this.tokenForUrl(url);
 	}
 
-	/**
-	 * Check if a URL is for a private repository based on response
-	 * This should be called after a failed fetch attempt
-	 */
 	static isPrivateRepoError(response: Response): boolean {
 		return response.status === 401 || response.status === 403;
 	}
 }
 
-/**
- * Create an authenticated fetch helper
- * This is a convenience function for creating an AuthenticatedFetch instance
- */
 export function createAuthenticatedFetch(db: CapaDatabase): AuthenticatedFetch {
 	return new AuthenticatedFetch(db);
 }
+
+/** @deprecated Detected platform is no longer required for clone auth. */
+export type { GitPlatform };

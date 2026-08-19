@@ -3,6 +3,9 @@
 import type { Plugin, SourcePlugin, ResolvedPluginInfo } from './plugin';
 import type { Rule } from './rules';
 import type { Hook } from './hooks';
+import type { SecretValue } from '../shared/secret-ref';
+
+export type { SecretRef, SecretValue } from '../shared/secret-ref';
 
 /** OAuth2 settings on MCP server definitions (plugin manifest or auto-detected). */
 export interface OAuth2Config {
@@ -335,13 +338,13 @@ export interface MCPServer {
 export interface MCPServerDefinition {
   // For remote MCP servers
   url?: string;
-  headers?: Record<string, string>;
+  headers?: Record<string, SecretValue>;
   /** Skip TLS certificate verification (e.g. for self-signed certs on internal servers) */
   tlsSkipVerify?: boolean;
   // For local MCP servers (subprocess)
   cmd?: string;
   args?: string[];
-  env?: Record<string, string>;
+  env?: Record<string, SecretValue>;
   /** Working directory for subprocess (e.g. plugin root) */
   cwd?: string;
   // OAuth2 config (auto-detected, not user-specified)

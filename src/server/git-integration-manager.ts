@@ -2,9 +2,13 @@
 // Handles OAuth2 flows via cloud endpoint and Personal Access Token storage
 
 import type { CapaDatabase } from "../db/database";
+import {
+	fillGitHttpCredential,
+	gitHostForPlatform,
+	hasGitHttpCredential,
+} from "../shared/git-credentials";
 import { getGitProvider } from "../shared/git-providers/registry";
 import { logger } from "../shared/logger";
-import { isPermanentRefreshFailure } from "../shared/oauth-refresh";
 import { CAPA_CLOUD_OAUTH_URL } from "../shared/ui-urls";
 import type { GitPATConfig, GitPlatform } from "../types/git-integration";
 import { generateState } from "../utils/pkce";
@@ -23,11 +27,14 @@ export class GitIntegrationManager {
 
 	/**
 	 * Check if a specific platform integration is configured and usable.
-	 * Sync check only — verifies a non-empty stored token exists.
+	 * Tokens live in the developer's git credential helper / `gh auth`, not capa.db.
 	 */
 	isConnected(platform: GitPlatform, host?: string): boolean {
-		const integration = this.db.getGitIntegration(platform, host || null);
-		return this.hasUsableStoredToken(integration);
+		const helperHost = gitHostForPlatform(platform, host);
+		if (helperHost && hasGitHttpCredential(helperHost)) return true;
+		return this.hasUsableStoredToken(
+			this.db.getGitIntegration(platform, host || null),
+		);
 	}
 
 	private hasUsableStoredToken(
@@ -179,7 +186,7 @@ export class GitIntegrationManager {
 			});
 
 			this.logger.success(
-				`Token stored for ${platform}${refreshToken ? " (with refresh token)" : ""}`,
+				`Token handed to git credential helper for ${platform}`,
 			);
 			return { success: true, platform };
 		} catch (error: any) {
@@ -251,7 +258,9 @@ export class GitIntegrationManager {
 			expires_at: null,
 		});
 
-		this.logger.success(`PAT stored for ${config.platform} at ${hostLabel}`);
+		this.logger.success(
+			`PAT handed to git credential helper for ${config.platform} at ${hostLabel}`,
+		);
 	}
 
 	/**
@@ -294,144 +303,38 @@ export class GitIntegrationManager {
 	}
 
 	/**
-	 * Get access token for a platform
-	 * Automatically refreshes expired tokens if refresh token is available
+	 * Get access token for a platform from the git credential helper.
+	 * CAPA does not persist git tokens, so there is nothing to refresh via
+	 * capa.infragate.ai.
 	 */
 	async getAccessToken(
 		platform: GitPlatform,
 		host?: string,
 	): Promise<string | null> {
+		const helperHost = gitHostForPlatform(platform, host);
+		if (helperHost) {
+			const token = fillGitHttpCredential(helperHost);
+			if (token) return token;
+		}
 		const integration = this.db.getGitIntegration(platform, host || null);
-		if (!integration) {
-			return null;
-		}
-
-		// Check if token is expired or expiring soon (within 5 minutes)
-		if (integration.expires_at) {
-			const expiresIn = integration.expires_at - Date.now();
-			const fiveMinutes = 5 * 60 * 1000;
-
-			if (expiresIn < fiveMinutes) {
-				this.logger.info(
-					`Token for ${platform} expired or expiring soon, attempting refresh...`,
-				);
-
-				// Try to refresh if we have a refresh token
-				if (integration.refresh_token) {
-					const refreshed = await this.refreshAccessToken(platform, host);
-					if (refreshed) {
-						// Get the refreshed token
-						const updatedIntegration = this.db.getGitIntegration(
-							platform,
-							host || null,
-						);
-						return updatedIntegration?.access_token || null;
-					} else {
-						this.logger.warn(`Failed to refresh token for ${platform}`);
-						// Return expired token and let the caller handle 401
-						return integration.access_token;
-					}
-				} else {
-					this.logger.warn(`No refresh token available for ${platform}`);
-					// Return expired token and let the caller handle 401
-					return integration.access_token;
-				}
-			}
-		}
-
-		return integration.access_token;
+		return integration?.access_token?.trim() || null;
 	}
 
 	/**
-	 * Refresh access token using refresh token via cloud OAuth proxy (POST + JSON body).
-	 *
-	 * POST https://capa.infragate.ai/auth/refresh
-	 * Body: { "provider": "github.com", "refresh_token": "..." }
+	 * Git tokens are not stored in CAPA, so cloud refresh is a no-op.
 	 */
 	async refreshAccessToken(
 		platform: GitPlatform,
-		host?: string,
+		_host?: string,
 	): Promise<boolean> {
-		try {
-			const integration = this.db.getGitIntegration(platform, host || null);
-
-			if (!integration || !integration.refresh_token) {
-				this.logger.failure(`No refresh token available for ${platform}`);
-				return false;
-			}
-
-			// Only registered cloud OAuth providers support refresh
-			const gp = getGitProvider(platform);
-			if (!gp) {
-				this.logger.warn(`Refresh not supported for ${platform}`);
-				return false;
-			}
-
-			this.logger.debug(
-				`Refreshing token via: ${CAPA_CLOUD_OAUTH_URL}/refresh`,
-			);
-
-			const response = await fetch(`${CAPA_CLOUD_OAUTH_URL}/refresh`, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					provider: gp.cloudOAuthProviderParam,
-					refresh_token: integration.refresh_token,
-				}),
-			});
-
-			if (!response.ok) {
-				const errorText = await response.text();
-				this.logger.failure(
-					`Token refresh failed: ${response.status} ${errorText}`,
-				);
-
-				// Only delete the stored token when the refresh_token itself is known to be
-				// unusable (invalid_grant / invalid_token / expired). Transient failures like
-				// proxy 5xx, rate limits, or network blips keep the token so the next
-				// scheduler tick (or user retry) can succeed.
-				if (isPermanentRefreshFailure(undefined, response, errorText)) {
-					this.db.deleteGitIntegration(platform, host || null);
-					this.logger.info(`Deleted invalid token for ${platform}`);
-				} else {
-					this.logger.warn(
-						`Transient refresh failure for ${platform}, keeping token`,
-					);
-				}
-				return false;
-			}
-
-			const tokenData = await response.json();
-
-			if (!tokenData.access_token) {
-				this.logger.failure("No access token in refresh response");
-				return false;
-			}
-
-			// Calculate expiration
-			const expiresAt = tokenData.expires_in
-				? Date.now() + tokenData.expires_in * 1000
-				: null;
-
-			// Update token in database
-			this.db.setGitIntegration(platform, {
-				host: host || null,
-				access_token: tokenData.access_token,
-				refresh_token: tokenData.refresh_token || integration.refresh_token, // Use new or keep old
-				token_type: tokenData.token_type || "Bearer",
-				expires_at: expiresAt,
-			});
-
-			this.logger.success(`Token refreshed successfully for ${platform}`);
-			return true;
-		} catch (error: any) {
-			this.logger.failure(`Token refresh error: ${error.message}`);
-			return false;
-		}
+		this.logger.info(
+			`Skipping cloud git token refresh for ${platform}; credentials come from git/gh`,
+		);
+		return false;
 	}
 
 	/**
-	 * Alias for `getAccessToken` (automatically refreshes when needed).
+	 * Alias for `getAccessToken`.
 	 */
 	async getAccessTokenLegacy(
 		platform: GitPlatform,

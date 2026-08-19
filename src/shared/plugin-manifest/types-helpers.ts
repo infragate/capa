@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from "fs";
 import { join } from "path";
 import type { UnifiedSkillEntry } from "../../types/plugin";
+import type { SecretValue } from "../../types/capabilities";
 import { asOptionalString, splitMarkdownFrontmatter } from "./frontmatter";
 
 export interface ParsedMcpServerEntry {
@@ -8,9 +9,9 @@ export interface ParsedMcpServerEntry {
 	command?: string;
 	cmd?: string;
 	args?: string[];
-	env?: Record<string, string>;
+	env?: Record<string, SecretValue>;
 	type?: string;
-	headers?: Record<string, string>;
+	headers?: Record<string, SecretValue>;
 	oauth2?: unknown;
 	oauth?: unknown;
 	auth?: unknown;

@@ -4,16 +4,21 @@ import { resolveProviders } from '../../../shared/providers/resolve';
 import { loadSettings, getDatabasePath } from '../../../shared/config';
 import { CapaDatabase } from '../../../db/database';
 import type { Capabilities } from '../../../types/capabilities';
+import { isSecretRef, resolveSecretValue, type SecretValue } from '../../../shared/secret-ref';
 
 export function expandEnvInRecord(
-  record: Record<string, string> | undefined,
+  record: Record<string, SecretValue> | undefined,
 ): Record<string, string> | undefined {
   if (!record) return undefined;
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(record)) {
-    out[k] = v.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_, name: string) => {
-      return process.env[name] ?? '';
-    });
+    if (typeof v === 'string') {
+      out[k] = v.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_, name: string) => {
+        return process.env[name] ?? '';
+      });
+    } else if (isSecretRef(v)) {
+      out[k] = resolveSecretValue(v);
+    }
   }
   return out;
 }

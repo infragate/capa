@@ -2,6 +2,7 @@ import { ChildProcess, spawn } from "child_process";
 import { createHash } from "crypto";
 import type { CapaDatabase } from "../db/database";
 import { logger } from "../shared/logger";
+import { resolveSecretRecord } from "../shared/secret-ref";
 import type { MCPServerDefinition } from "../types/capabilities";
 
 export interface MCPSubprocessInfo {
@@ -127,7 +128,10 @@ export class SubprocessManager {
 
 		// Parse command
 		const args = definition.args || [];
-		const env = { ...process.env, ...definition.env };
+		const env = {
+			...process.env,
+			...(resolveSecretRecord(definition.env) ?? {}),
+		};
 		const cwd = definition.cwd ?? projectPath;
 
 		this.logger.debug(`Working directory: ${cwd}`);

@@ -29,6 +29,17 @@ describe("redactServerForApi", () => {
 		expect(redacted.oauth2?.clientSecret).toBeUndefined();
 		expect(redacted.oauth2?.clientId).toBe("public-client");
 	});
+
+	it("keeps fromEnv/fromCommand/fromFile refs visible (they are not secrets)", () => {
+		const redacted = redactServerForApi({
+			env: { TOKEN: { fromEnv: "OP_TOKEN" } },
+			headers: { Authorization: { fromCommand: "op read op://x" } },
+		});
+		expect(redacted.env?.TOKEN).toEqual({ fromEnv: "OP_TOKEN" });
+		expect(redacted.headers?.Authorization).toEqual({
+			fromCommand: "op read op://x",
+		});
+	});
 });
 
 describe("mergeServerDef", () => {

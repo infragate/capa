@@ -1,5 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+import { mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { AuthenticatedFetch } from '../authenticated-fetch';
+import {
+  approveGitHttpCredential,
+  resetGitCredentialsForTests,
+} from '../git-credentials';
+import { resetSecretCryptoForTests } from '../secret-crypto';
 import type { CapaDatabase } from '../../db/database';
 import type { GitIntegration } from '../../types/database';
 
@@ -11,10 +19,10 @@ function makeIntegration(overrides: Partial<GitIntegration> = {}): GitIntegratio
     id: 1,
     platform: 'github',
     host: null,
-    access_token: 'gho_test_token',
+    access_token: '',
     refresh_token: null,
     token_type: 'Bearer',
-    expires_at: Date.now() + 60 * 60 * 1000,
+    expires_at: null,
     created_at: Date.now(),
     updated_at: Date.now(),
     ...overrides,
@@ -30,37 +38,21 @@ function makeDb(integration: GitIntegration | null): CapaDatabase {
   } as unknown as CapaDatabase;
 }
 
-function makeDbWithSpies(integration: GitIntegration | null) {
-  const deletes: Array<{ platform: string; host: string | null }> = [];
-  const sets: Array<{ platform: string; tokenData: Record<string, unknown> }> = [];
-  let current: GitIntegration | null = integration;
-  const db = {
-    getGitIntegration: () => current,
-    getAllGitIntegrations: () => (current ? [current] : []),
-    setGitIntegration: (platform: string, tokenData: Record<string, unknown>) => {
-      sets.push({ platform, tokenData });
-      if (current) {
-        current = {
-          ...current,
-          access_token: String(tokenData.access_token ?? current.access_token),
-          refresh_token: (tokenData.refresh_token as string | null | undefined) ?? current.refresh_token,
-          expires_at: (tokenData.expires_at as number | null | undefined) ?? current.expires_at,
-        };
-      }
-    },
-    deleteGitIntegration: (platform: string, host: string | null) => {
-      deletes.push({ platform, host });
-      current = null;
-    },
-  } as unknown as CapaDatabase;
-  return { db, deletes, sets, get current() { return current; } };
-}
-
 describe('AuthenticatedFetch', () => {
   const originalFetch = globalThis.fetch;
   let fetchCalls: Array<{ url: string; init?: RequestInit }>;
+  let home: string;
+  let prevHome: string | undefined;
+  let prevProfile: string | undefined;
 
   beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'capa-authfetch-'));
+    prevHome = process.env.HOME;
+    prevProfile = process.env.USERPROFILE;
+    process.env.HOME = home;
+    process.env.USERPROFILE = home;
+    resetSecretCryptoForTests();
+    resetGitCredentialsForTests();
     fetchCalls = [];
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input.toString();
@@ -71,30 +63,28 @@ describe('AuthenticatedFetch', () => {
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
+    resetSecretCryptoForTests();
+    if (prevHome === undefined) delete process.env.HOME;
+    else process.env.HOME = prevHome;
+    if (prevProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = prevProfile;
+    rmSync(home, { recursive: true, force: true });
   });
 
-  it('falls back to unauthenticated fetch when the token is expired and refresh is unavailable', async () => {
-    const db = makeDb(
-      makeIntegration({
-        expires_at: Date.now() - 60_000,
-        refresh_token: null,
-      })
-    );
-    const authFetch = new AuthenticatedFetch(db);
+  it('falls back to unauthenticated fetch when the git helper has no token', async () => {
+    const authFetch = new AuthenticatedFetch(makeDb(null));
 
-    // Should not throw — the request proceeds without auth so public URLs still work.
     const response = await authFetch.fetch(GITHUB_RAW_URL);
     expect(response.status).toBe(200);
 
-    // Fetch must have been called once (unauthenticated — no Authorization header).
     expect(fetchCalls).toHaveLength(1);
     const headers = fetchCalls[0]!.init?.headers as Headers | undefined;
     expect(headers?.get?.('Authorization') ?? null).toBeNull();
   });
 
-  it('includes the auth header when the token is valid and not expired', async () => {
-    const db = makeDb(makeIntegration());
-    const authFetch = new AuthenticatedFetch(db);
+  it('includes the auth header from the git credential helper, not sqlite', async () => {
+    approveGitHttpCredential('github.com', 'gho_test_token');
+    const authFetch = new AuthenticatedFetch(makeDb(makeIntegration()));
 
     await authFetch.fetch(GITHUB_RAW_URL);
 
@@ -104,8 +94,8 @@ describe('AuthenticatedFetch', () => {
   });
 
   it('returns a 200 response unchanged', async () => {
-    const db = makeDb(makeIntegration());
-    const authFetch = new AuthenticatedFetch(db);
+    approveGitHttpCredential('github.com', 'gho_test_token');
+    const authFetch = new AuthenticatedFetch(makeDb(makeIntegration()));
 
     const response = await authFetch.fetch(GITHUB_RAW_URL);
 
@@ -120,8 +110,8 @@ describe('AuthenticatedFetch', () => {
       return new Response('Unauthorized', { status: 401 });
     }) as typeof fetch;
 
-    const db = makeDb(makeIntegration());
-    const authFetch = new AuthenticatedFetch(db);
+    approveGitHttpCredential('github.com', 'gho_test_token');
+    const authFetch = new AuthenticatedFetch(makeDb(makeIntegration()));
 
     const response = await authFetch.fetch(GITHUB_RAW_URL);
 
@@ -137,8 +127,8 @@ describe('AuthenticatedFetch', () => {
       return new Response('Not Found', { status: 404 });
     }) as typeof fetch;
 
-    const db = makeDb(makeIntegration());
-    const authFetch = new AuthenticatedFetch(db);
+    approveGitHttpCredential('github.com', 'gho_test_token');
+    const authFetch = new AuthenticatedFetch(makeDb(makeIntegration()));
 
     const response = await authFetch.fetch(GITHUB_RAW_URL);
 
@@ -147,94 +137,16 @@ describe('AuthenticatedFetch', () => {
     expect(AuthenticatedFetch.isPrivateRepoError(response)).toBe(false);
   });
 
-  describe('refresh failure classification', () => {
-    it('keeps the stored token and falls back to unauthenticated fetch when the cloud refresh endpoint returns a transient 5xx', async () => {
-      let targetFetchCalled = false;
-      globalThis.fetch = (async (input: RequestInfo | URL) => {
-        const url = typeof input === 'string' ? input : input.toString();
-        if (url.includes('/auth/refresh')) {
-          return new Response('bad gateway', { status: 502 });
-        }
-        targetFetchCalled = true;
-        return new Response('ok', { status: 200 });
-      }) as typeof fetch;
+  it('does not call capa.infragate.ai to refresh git tokens', async () => {
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      fetchCalls.push({ url, init });
+      return new Response('ok', { status: 200 });
+    }) as typeof fetch;
 
-      const harness = makeDbWithSpies(
-        makeIntegration({
-          expires_at: Date.now() - 60_000,
-          refresh_token: 'still-valid-refresh',
-        })
-      );
-      const authFetch = new AuthenticatedFetch(harness.db);
+    const authFetch = new AuthenticatedFetch(makeDb(makeIntegration()));
+    await authFetch.fetch(GITHUB_RAW_URL);
 
-      // Falls back to unauthenticated — does not throw.
-      const response = await authFetch.fetch(GITHUB_RAW_URL);
-      expect(response.status).toBe(200);
-      expect(targetFetchCalled).toBe(true);
-
-      // Stored token must NOT be deleted on a transient failure.
-      expect(harness.deletes).toHaveLength(0);
-      expect(harness.current).not.toBeNull();
-      expect(harness.current?.refresh_token).toBe('still-valid-refresh');
-    });
-
-    it('keeps the stored token and falls back to unauthenticated fetch when the refresh request throws a network error', async () => {
-      let targetFetchCalled = false;
-      globalThis.fetch = (async (input: RequestInfo | URL) => {
-        const url = typeof input === 'string' ? input : input.toString();
-        if (url.includes('/auth/refresh')) {
-          throw new Error('ENOTFOUND capa.infragate.ai');
-        }
-        targetFetchCalled = true;
-        return new Response('ok', { status: 200 });
-      }) as typeof fetch;
-
-      const harness = makeDbWithSpies(
-        makeIntegration({
-          expires_at: Date.now() - 60_000,
-          refresh_token: 'still-valid-refresh',
-        })
-      );
-      const authFetch = new AuthenticatedFetch(harness.db);
-
-      const response = await authFetch.fetch(GITHUB_RAW_URL);
-      expect(response.status).toBe(200);
-      expect(targetFetchCalled).toBe(true);
-
-      expect(harness.deletes).toHaveLength(0);
-      expect(harness.current).not.toBeNull();
-    });
-
-    it('deletes the stored token and falls back to unauthenticated fetch when the refresh_token is rejected as invalid_grant', async () => {
-      let targetFetchCalled = false;
-      globalThis.fetch = (async (input: RequestInfo | URL) => {
-        const url = typeof input === 'string' ? input : input.toString();
-        if (url.includes('/auth/refresh')) {
-          return new Response(JSON.stringify({ error: 'invalid_grant' }), {
-            status: 400,
-            headers: { 'Content-Type': 'application/json' },
-          });
-        }
-        targetFetchCalled = true;
-        return new Response('ok', { status: 200 });
-      }) as typeof fetch;
-
-      const harness = makeDbWithSpies(
-        makeIntegration({
-          expires_at: Date.now() - 60_000,
-          refresh_token: 'truly-revoked',
-        })
-      );
-      const authFetch = new AuthenticatedFetch(harness.db);
-
-      // Falls back to unauthenticated after clearing the bad token.
-      const response = await authFetch.fetch(GITHUB_RAW_URL);
-      expect(response.status).toBe(200);
-      expect(targetFetchCalled).toBe(true);
-
-      expect(harness.deletes).toHaveLength(1);
-      expect(harness.deletes[0]).toEqual({ platform: 'github', host: null });
-      expect(harness.current).toBeNull();
-    });
+    expect(fetchCalls.every((c) => !c.url.includes('capa.infragate.ai'))).toBe(true);
   });
 });

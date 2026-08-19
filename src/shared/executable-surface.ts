@@ -2,6 +2,7 @@ import { createHash } from 'crypto';
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import type { Capabilities } from '../types/capabilities';
+import type { SecretValue } from './secret-ref';
 import type { Hook } from '../types/hooks';
 import type { Plugin } from '../types/plugin';
 import { getCapaDir } from './config';
@@ -11,7 +12,7 @@ export interface SurfaceServer {
   cmd: string;
   args: string[];
   cwd?: string;
-  env?: Record<string, string>;
+  env?: Record<string, SecretValue>;
 }
 
 export interface SurfaceHook {
@@ -50,8 +51,8 @@ export interface ExecutableSurface {
 }
 
 function sortedRecord(
-  env: Record<string, string> | undefined,
-): Record<string, string> | undefined {
+  env: Record<string, SecretValue> | undefined,
+): Record<string, SecretValue> | undefined {
   if (!env) return undefined;
   return Object.fromEntries(Object.entries(env).sort(([a], [b]) => a.localeCompare(b)));
 }

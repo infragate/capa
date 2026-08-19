@@ -1,11 +1,12 @@
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import type { MCPServer, MCPServerDefinition } from "../types/capabilities";
+import type { SecretValue } from "./secret-ref";
 import { getCapaDir } from "./config";
 
 function sortedEnv(
-	env: Record<string, string> | undefined,
-): Record<string, string> | null {
+	env: Record<string, SecretValue> | undefined,
+): Record<string, SecretValue> | null {
 	if (!env) return null;
 	return Object.fromEntries(
 		Object.entries(env).sort(([a], [b]) => a.localeCompare(b)),

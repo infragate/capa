@@ -2,6 +2,7 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
 import type { CapaDatabase } from "../db/database";
 import { logger } from "../shared/logger";
+import { resolveSecretRecord } from "../shared/secret-ref";
 import { shouldSkipTlsVerify } from "../shared/tls-skip-verify";
 import type { MCPServerDefinition } from "../types/capabilities";
 import type { OAuth2Config } from "../types/oauth";
@@ -83,7 +84,7 @@ export class HttpMCPTransport implements Transport {
 			}
 
 			if (this.serverDefinition.headers) {
-				Object.assign(headers, this.serverDefinition.headers);
+				Object.assign(headers, resolveSecretRecord(this.serverDefinition.headers));
 			}
 
 			if (this.serverDefinition.oauth2) {

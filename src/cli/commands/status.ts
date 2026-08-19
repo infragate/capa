@@ -1,7 +1,13 @@
 import { getServerStatus } from '../utils/server-manager';
+import {
+  activeSecretStoreTier,
+  describeSecretStoreTier,
+} from '../../shared/secret-store';
 
 export async function statusCommand(): Promise<void> {
   console.log('Checking capa server status...\n');
+  console.log(`Secret store: ${describeSecretStoreTier(activeSecretStoreTier())}`);
+
   
   const status = await getServerStatus();
   

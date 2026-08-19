@@ -95,7 +95,7 @@ describe('cache git auth (F10)', () => {
       }
     });
 
-    it('injects private-clone credentials out of band via GIT_ASKPASS or GIT_CONFIG env', async () => {
+    it('does not inject CAPA-held credentials into git clone env', async () => {
       const calls: { args: string[]; env?: NodeJS.ProcessEnv }[] = [];
       const execFileSpy = spyOn(childProcess, 'execFile').mockImplementation(
         ((_cmd: string, args: string[], opts: object, cb: (err: null, stdout: string, stderr: string) => void) => {
@@ -109,7 +109,7 @@ describe('cache git auth (F10)', () => {
         const cloneCall = calls.find((c) => c.args.includes('clone'));
         expect(cloneCall).toBeDefined();
         expect(argvContainsSecret(cloneCall!.args)).toBe(false);
-        expect(envCarriesOutOfBandAuth(cloneCall!.env)).toBe(true);
+        expect(envCarriesOutOfBandAuth(cloneCall!.env)).toBe(false);
       } finally {
         execFileSpy.mockRestore();
       }
@@ -185,7 +185,7 @@ describe('cache git auth (F10)', () => {
   });
 
   describe('fetchMirror', () => {
-    it('injects credentials per call without putting the token in argv', async () => {
+    it('does not inject credentials on fetch; git uses the developer helper', async () => {
       const calls: { args: string[]; env?: NodeJS.ProcessEnv }[] = [];
       const execFileSpy = spyOn(childProcess, 'execFile').mockImplementation(
         ((_cmd: string, args: string[], opts: object, cb: (err: null, stdout: string, stderr: string) => void) => {
@@ -204,7 +204,7 @@ describe('cache git auth (F10)', () => {
         expect(updateCall).toBeDefined();
         expect(argvContainsSecret(updateCall!.args)).toBe(false);
         expect(updateCall!.args.some((a) => /oauth2:/i.test(a))).toBe(false);
-        expect(envCarriesOutOfBandAuth(updateCall!.env)).toBe(true);
+        expect(envCarriesOutOfBandAuth(updateCall!.env)).toBe(false);
       } finally {
         execFileSpy.mockRestore();
       }

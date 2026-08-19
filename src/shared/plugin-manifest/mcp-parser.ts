@@ -6,6 +6,8 @@ import {
 } from "path/win32";
 import { resolve as posixResolve } from "path/posix";
 import type { NormalizedPluginMCPServerDef } from "../../types/plugin";
+import type { SecretValue } from "../secret-ref";
+import { isSecretRef } from "../secret-ref";
 import { asParsedMcpServerEntry, isPlainObject } from "./types-helpers";
 
 /**
@@ -89,7 +91,7 @@ export function normalizeMcpServerEntry(
 		return {
 			url,
 			headers: isPlainObject(parsed.headers)
-				? (parsed.headers as Record<string, string>)
+				? (parsed.headers as Record<string, SecretValue>)
 				: undefined,
 			oauth2: normalizeOAuth2Block(rawOauth),
 		};
@@ -101,7 +103,7 @@ export function normalizeMcpServerEntry(
 		cmd: command,
 		args: Array.isArray(parsed.args) ? parsed.args : undefined,
 		env: isPlainObject(parsed.env)
-			? (parsed.env as Record<string, string>)
+			? (parsed.env as Record<string, SecretValue>)
 			: undefined,
 	};
 }
@@ -311,9 +313,9 @@ export function resolvePluginServerDef(
 ): {
 	cmd?: string;
 	args?: string[];
-	env?: Record<string, string>;
+	env?: Record<string, SecretValue>;
 	url?: string;
-	headers?: Record<string, string>;
+	headers?: Record<string, SecretValue>;
 	oauth2?: unknown;
 } {
 	if (def.url) {
@@ -328,14 +330,15 @@ export function resolvePluginServerDef(
 	const args = def.args?.map((a) =>
 		typeof a === "string" ? resolvePluginRootInString(a, pluginRoot) : a,
 	);
-	let env: Record<string, string> | undefined;
+	let env: Record<string, SecretValue> | undefined;
 	if (def.env && typeof def.env === "object") {
 		env = {};
 		for (const [k, v] of Object.entries(def.env)) {
-			env[k] =
-				typeof v === "string"
-					? resolvePluginRootInString(v, pluginRoot)
-					: String(v);
+			if (typeof v === "string") {
+				env[k] = resolvePluginRootInString(v, pluginRoot);
+			} else if (isSecretRef(v)) {
+				env[k] = v;
+			}
 		}
 	}
 	return { cmd, args, env };

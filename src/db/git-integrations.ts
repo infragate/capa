@@ -1,24 +1,23 @@
 import type { Database } from "bun:sqlite";
 import {
+	approveGitHttpCredential,
+	fillGitHttpCredential,
+	gitHostForPlatform,
+	rejectGitHttpCredential,
+} from "../shared/git-credentials";
+import {
 	getGitProvider,
 	getGitProviderByHost,
 } from "../shared/git-providers/registry";
-import {
-	decryptSecret,
-	decryptSecretString,
-	encryptSecret,
-} from "../shared/secret-crypto";
 import type { GitIntegration } from "../types/database";
 
-function decryptGitRow(row: GitIntegration | null): GitIntegration | null {
-	if (!row) return null;
+function overlayHelperToken(row: GitIntegration): GitIntegration {
+	const host = gitHostForPlatform(row.platform, row.host);
+	const token = host ? fillGitHttpCredential(host) : null;
 	return {
 		...row,
-		access_token: decryptSecretString(row.access_token),
-		refresh_token:
-			row.refresh_token == null
-				? row.refresh_token
-				: decryptSecret(row.refresh_token),
+		access_token: token ?? "",
+		refresh_token: null,
 	};
 }
 
@@ -26,13 +25,12 @@ export class GitIntegrationsRepo {
 	constructor(private db: Database) {}
 
 	get(platform: string, host: string | null = null): GitIntegration | null {
-		return decryptGitRow(
-			this.db
-				.query(
-					"SELECT * FROM git_integrations WHERE platform = ? AND (host = ? OR (host IS NULL AND ? IS NULL))",
-				)
-				.get(platform, host, host) as GitIntegration | null,
-		);
+		const row = this.db
+			.query(
+				"SELECT * FROM git_integrations WHERE platform = ? AND (host = ? OR (host IS NULL AND ? IS NULL))",
+			)
+			.get(platform, host, host) as GitIntegration | null;
+		return row ? overlayHelperToken(row) : null;
 	}
 
 	set(
@@ -47,55 +45,40 @@ export class GitIntegrationsRepo {
 	): void {
 		const now = Date.now();
 		const host = tokenData.host || null;
-		const access = encryptSecret(tokenData.access_token);
-		const refresh = tokenData.refresh_token
-			? encryptSecret(tokenData.refresh_token)
-			: null;
+		const helperHost = gitHostForPlatform(platform, host);
+		if (helperHost && tokenData.access_token.trim()) {
+			approveGitHttpCredential(helperHost, tokenData.access_token);
+		}
 
-		// Check if an entry already exists
-		const existing = this.get(platform, host);
+		const existing = this.db
+			.query(
+				"SELECT id FROM git_integrations WHERE platform = ? AND (host = ? OR (host IS NULL AND ? IS NULL))",
+			)
+			.get(platform, host, host) as { id: number } | null;
 
 		if (existing) {
-			// Update existing entry
 			this.db.run(
 				`UPDATE git_integrations SET
-          access_token = ?,
-          refresh_token = ?,
+          access_token = '',
+          refresh_token = NULL,
           token_type = ?,
-          expires_at = ?,
+          expires_at = NULL,
           updated_at = ?
          WHERE platform = ? AND (host = ? OR (host IS NULL AND ? IS NULL))`,
-				[
-					access,
-					refresh,
-					tokenData.token_type || "Bearer",
-					tokenData.expires_at || null,
-					now,
-					platform,
-					host,
-					host,
-				],
+				[tokenData.token_type || "Bearer", now, platform, host, host],
 			);
 		} else {
-			// Insert new entry
 			this.db.run(
 				`INSERT INTO git_integrations (platform, host, access_token, refresh_token, token_type, expires_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-				[
-					platform,
-					host,
-					access,
-					refresh,
-					tokenData.token_type || "Bearer",
-					tokenData.expires_at || null,
-					now,
-					now,
-				],
+         VALUES (?, ?, '', NULL, ?, NULL, ?, ?)`,
+				[platform, host, tokenData.token_type || "Bearer", now, now],
 			);
 		}
 	}
 
 	delete(platform: string, host: string | null = null): void {
+		const helperHost = gitHostForPlatform(platform, host);
+		if (helperHost) rejectGitHttpCredential(helperHost);
 		this.db.run(
 			"DELETE FROM git_integrations WHERE platform = ? AND (host = ? OR (host IS NULL AND ? IS NULL))",
 			[platform, host, host],
@@ -107,7 +90,7 @@ export class GitIntegrationsRepo {
 			this.db
 				.query("SELECT * FROM git_integrations ORDER BY created_at DESC")
 				.all() as GitIntegration[]
-		).map((row) => decryptGitRow(row)!);
+		).map(overlayHelperToken);
 	}
 
 	getOAuthToken(provider: string): GitIntegration | null {
