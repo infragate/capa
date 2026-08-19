@@ -4,6 +4,7 @@ import type { Task } from '../../ui';
 import { parseEnvFile } from '../../../shared/env-parser';
 import { extractAllVariables } from '../../../shared/variable-resolver';
 import type { InstallCtx } from './context';
+import { raiseInstallError } from './install-error-policy';
 
 export function loadEnvTask(): Task<InstallCtx> {
   return {
@@ -20,18 +21,21 @@ export function loadEnvTask(): Task<InstallCtx> {
       }
 
       if (!existsSync(envFilePath)) {
-        throw new Error(
+        raiseInstallError(
+          ctx,
           `Environment file not found: ${envFilePath}\n\n` +
             '  When using -e or --env flag, the specified .env file must exist.\n' +
             '  Please create the file or run without the flag to use the web UI.\n',
         );
+        return;
       }
 
       let envVariables: Record<string, string>;
       try {
         envVariables = parseEnvFile(envFilePath);
       } catch (error: any) {
-        throw new Error(`Failed to parse env file: ${error.message}`);
+        raiseInstallError(ctx, `Failed to parse env file: ${error.message}`);
+        return;
       }
 
       // Authored file only — plugin-merged content must not invent credentials.
@@ -53,7 +57,8 @@ export function loadEnvTask(): Task<InstallCtx> {
       }
 
       if (missingVars.length > 0) {
-        throw new Error(
+        raiseInstallError(
+          ctx,
           `Missing required variables: ${missingVars.join(', ')}\n` +
             '  These variables are required but were not found in the env file.\n' +
             '  Please add them to your env file and try again.\n',

@@ -98,9 +98,16 @@ export interface CapabilitiesOptions {
   security?: SecurityOptions;
   /**
    * CLI commands that must be available before `capa install` proceeds.
-   * Installation stops immediately if any command is missing.
+   * Missing commands warn by default; use `onInstallError: stop` to abort.
    */
   requiresCommands?: RequiredCommand[];
+  /**
+   * How install handles operational errors (missing CLI, skill/rule fetch
+   * failures, plugin resolution, tool validation, etc.).
+   * - `warn` (default): log warnings, install everything that succeeds
+   * - `stop`: abort the install run (legacy behavior)
+   */
+  onInstallError?: 'warn' | 'stop';
 }
 
 /**

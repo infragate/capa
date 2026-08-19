@@ -445,7 +445,7 @@ function assertPermutation(
 export type OptionsPatch = Partial<
 	Pick<
 		CapabilitiesOptions,
-		"toolExposure" | "requiresCommands" | "security" | "agentActivity"
+		"toolExposure" | "requiresCommands" | "security" | "agentActivity" | "onInstallError"
 	>
 >;
 

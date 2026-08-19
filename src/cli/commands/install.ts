@@ -16,6 +16,7 @@ import type { InstallCtx, InstallOptions } from './install-tasks';
 import { refuseIfWrapWorkspace } from '../utils/wrap/marker';
 import { isUnderWrapWorkspacesDir } from '../../shared/workspaces/paths';
 import { confirmInstallExecution } from './install-confirm';
+import { getInstallErrorMode } from './install-tasks/install-error-policy';
 
 export type { InstallOptions, GetRepoSnapshotFn } from './install-tasks';
 
@@ -230,6 +231,8 @@ async function installCommandBody(opts: {
     failExit(message, exitProcess);
   }
 
+  const installErrorMode = getInstallErrorMode(capabilities);
+
   // Hoisted so the catch block can surface ctx.errors accumulated before the throw.
   const initialCtx: InstallCtx = {
     projectPath,
@@ -254,12 +257,13 @@ async function installCommandBody(opts: {
     skipped: 0,
     warnings: [],
     errors: [],
+    installErrorMode,
   };
 
   try {
     const ctx = await runTasks(
       buildInstallTasks(reqCmds, { skipPrerequisites, skipCredentialOpen }),
-      { exitOnError: true },
+      { exitOnError: installErrorMode === 'stop' },
       initialCtx,
     );
 
@@ -280,9 +284,9 @@ async function installCommandBody(opts: {
       skipped: ctx.skipped,
       elapsedMs: Date.now() - startedAt,
     });
-    // Exit non-zero on accumulated per-task failures (continue-on-error mode).
-    if (initialCtx.failed > 0) {
-      failExit(`Install completed with ${initialCtx.failed} failure(s).`, exitProcess);
+    // Exit non-zero on accumulated failures only when configured to stop.
+    if (installErrorMode === 'stop' && ctx.failed > 0) {
+      failExit(`Install completed with ${ctx.failed} failure(s).`, exitProcess);
     }
   } catch (err: unknown) {
     for (const e of initialCtx.errors) error(e);
@@ -294,13 +298,19 @@ async function installCommandBody(opts: {
       elapsedMs: Date.now() - startedAt,
     });
     if (err instanceof Error) {
+      if (installErrorMode === 'warn') {
+        warn(err.message);
+        return;
+      }
       if (exitProcess) {
         console.error(`✗ ${err.message}`);
         process.exit(1);
       }
       throw err;
     }
-    throw err;
+    if (installErrorMode === 'stop') {
+      throw err;
+    }
   } finally {
     try {
       db.close();

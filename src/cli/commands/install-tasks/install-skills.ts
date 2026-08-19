@@ -3,6 +3,7 @@ import type { InstallCtx } from './context';
 import { checkGitInstalled, gitOAuthHelpText } from './helpers/git';
 import { installOneSkill } from './helpers/install-one-skill';
 import { indentLines } from './helpers/text';
+import { finishInstallBatch, raiseInstallError, recordInstallFailure } from './install-error-policy';
 
 export function installSkillsTask(): Task<InstallCtx> {
   return {
@@ -16,10 +17,12 @@ export function installSkillsTask(): Task<InstallCtx> {
         const gitInstalled = await checkGitInstalled();
         if (!gitInstalled) {
           const lines = gitOAuthHelpText().split('\n');
-          throw new Error(
+          raiseInstallError(
+            ctx,
             'Git is not installed on your system.\n\n' +
               lines.map((line) => (line ? `  ${line}` : '')).join('\n'),
           );
+          return;
         }
       }
       const totalSkills = ctx.capabilities.skills.length;
@@ -45,27 +48,31 @@ export function installSkillsTask(): Task<InstallCtx> {
             ctx.resolvedRepos,
           );
         } catch (err: unknown) {
-          ctx.failed++;
           const message = err instanceof Error ? err.message : String(err);
-          ctx.errors.push(`Skill "${skill.id}" failed:\n${indentLines(message, '    ')}`);
+          recordInstallFailure(
+            ctx,
+            `Skill "${skill.id}" failed:\n${indentLines(message, '    ')}`,
+          );
           continue;
         }
 
         if (outcome === 'installed') ctx.added++;
         else if (outcome === 'skipped') ctx.skipped++;
         else {
-          ctx.failed++;
-          ctx.errors.push(`Skill "${skill.id}" failed (see logs above)`);
+          recordInstallFailure(ctx, `Skill "${skill.id}" failed (see logs above)`);
         }
       }
 
       const failedInTask = ctx.failed - failedBefore;
+      finishInstallBatch(
+        ctx,
+        failedInTask,
+        `${failedInTask} of ${totalSkills} skill(s) failed to install. ` +
+          `See the errors above for details.`,
+      );
       if (failedInTask > 0) {
         task.title = `Installing skills — ${failedInTask} of ${totalSkills} failed`;
-        throw new Error(
-          `${failedInTask} of ${totalSkills} skill(s) failed to install. ` +
-            `See the errors above for details.`,
-        );
+        return;
       }
       task.title = `Installed ${totalSkills} skill${totalSkills === 1 ? '' : 's'}`;
     },

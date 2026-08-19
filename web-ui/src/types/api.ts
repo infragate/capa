@@ -191,6 +191,8 @@ export interface CapabilitiesOptions {
   agentActivity: boolean;
   security: SecurityOptions | null;
   requiresCommands: RequiredCommand[];
+  /** Default warn when omitted. */
+  onInstallError: 'warn' | 'stop' | null;
 }
 
 export interface AgentSnippetDef {

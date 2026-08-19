@@ -14,6 +14,7 @@ import { upsertNativeMcpServer } from './native-mcp';
 import { expandEnvInRecord, loadEnvFileOptional, openAuthDb } from './env';
 import type { MCPServer } from '../../../types/capabilities';
 import type { GetSnapshotResult } from '../../../shared/cache';
+import { getInstallErrorMode } from '../../commands/install-tasks/install-error-policy';
 
 export async function passthroughInstall(opts: {
   envFile?: string | boolean;
@@ -72,6 +73,8 @@ export async function passthroughInstall(opts: {
     throw err;
   }
   capabilities.providers = providers;
+  const installErrorMode = getInstallErrorMode(capabilities);
+  const stopOnError = installErrorMode === 'stop';
 
   const { db, settings } = await openAuthDb();
   const authFetch = createAuthenticatedFetch(db);
@@ -96,6 +99,22 @@ export async function passthroughInstall(opts: {
     warnings.push(...pluginResult.warnings);
     capabilities = pluginResult.mergedCapabilities;
     capabilities.providers = providers;
+
+    const declaredPlugins = capabilities.plugins?.length ?? 0;
+    const resolvedPlugins = capabilities.resolvedPlugins?.length ?? 0;
+    const pluginFailures = pluginResult.warnings.filter((w) =>
+      w.includes('failed to resolve and was skipped'),
+    );
+    if (declaredPlugins > 0 && resolvedPlugins === 0 && pluginFailures.length > 0) {
+      failed++;
+      const message = pluginFailures.join('\n');
+      if (stopOnError) {
+        console.error(`✗ ${message}`);
+        if (exitProcess) process.exit(1);
+        throw new Error(message);
+      }
+      warnings.push(message);
+    }
 
     const resolvedRepos = new Map<string, GetSnapshotResult>();
 
@@ -144,32 +163,42 @@ export async function passthroughInstall(opts: {
             }),
           );
         } catch (err) {
+          failed++;
           warnings.push(
             `Rule "${rule.id}": ${err instanceof Error ? err.message : String(err)}`,
           );
         }
       }
-      installRules(projectPath, rules, providers, bodies);
-      added += bodies.size;
+      if (bodies.size > 0) {
+        installRules(projectPath, rules.filter((r) => bodies.has(r.id)), providers, bodies);
+        added += bodies.size;
+      }
     }
 
     const hooks = capabilities.hooks ?? [];
     if (hooks.length > 0) {
-      const hookResult = await installHooks({
-        projectPath,
-        projectId,
-        capabilitiesFilePath: capabilitiesFile.path,
-        hooks,
-        providers,
-        db,
-        authFetch,
-        getRepoSnapshot,
-        noCache: !!opts.noCache,
-        trackManaged: false,
-        nameTagPrefix: '',
-      });
-      warnings.push(...hookResult.warnings);
-      added += hookResult.installed;
+      try {
+        const hookResult = await installHooks({
+          projectPath,
+          projectId,
+          capabilitiesFilePath: capabilitiesFile.path,
+          hooks,
+          providers,
+          db,
+          authFetch,
+          getRepoSnapshot,
+          noCache: !!opts.noCache,
+          trackManaged: false,
+          nameTagPrefix: '',
+        });
+        warnings.push(...hookResult.warnings);
+        added += hookResult.installed;
+      } catch (err) {
+        failed++;
+        warnings.push(
+          `Failed to install hooks: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
     }
 
     const subagents = capabilities.subagents ?? [];
@@ -223,7 +252,7 @@ export async function passthroughInstall(opts: {
       `\n✓ Passthrough install complete (added=${added}, skipped=${skipped}, failed=${failed}).`,
     );
     console.log('  No capa server was started. capa clean will not reverse these writes.\n');
-    if (failed > 0 && exitProcess) process.exit(1);
+    if (failed > 0 && stopOnError && exitProcess) process.exit(1);
   } finally {
     try {
       db.close();
