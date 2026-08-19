@@ -3,7 +3,7 @@ import type { Task, TaskWrapper } from '../../ui';
 import { localApiHeaders } from '../../utils/local-api';
 import type { InstallCtx } from './context';
 import { getUnexposedToolIds } from './helpers/tool-warnings';
-import { finishInstallBatch, raiseInstallError, shouldStopOnInstallError } from './install-error-policy';
+import { raiseInstallError, shouldStopOnInstallError } from './install-error-policy';
 
 export function configureToolsTask(): Task<InstallCtx> {
   return {

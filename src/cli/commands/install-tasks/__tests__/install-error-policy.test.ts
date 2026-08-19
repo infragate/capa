@@ -13,7 +13,7 @@ function ctx(mode: 'warn' | 'stop'): InstallCtx {
     failed: 0,
     warnings: [],
     errors: [],
-  } as InstallCtx;
+  } as unknown as InstallCtx;
 }
 
 describe('getInstallErrorMode', () => {
