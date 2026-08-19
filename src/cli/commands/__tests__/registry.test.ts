@@ -97,7 +97,7 @@ describe('registry CLI commands', () => {
   });
 
   it('add → list reflects an installed registry', async () => {
-    await registryAddCommand(url, 'demo', { type: 'url' });
+    await registryAddCommand(url, 'demo', { type: 'url', yes: true });
 
     const db = new CapaDatabase(dbPath);
     try {
@@ -157,7 +157,7 @@ describe('registry CLI commands', () => {
   });
 
   it('add derives slug from URL when none is provided', async () => {
-    await registryAddCommand(url, undefined, { type: 'url' });
+    await registryAddCommand(url, undefined, { type: 'url', yes: true });
     const db = new CapaDatabase(dbPath);
     try {
       const records = db.listRegistries();
@@ -169,18 +169,18 @@ describe('registry CLI commands', () => {
   });
 
   it('rejects duplicate slugs', async () => {
-    await registryAddCommand(url, 'demo', { type: 'url' });
-    await expect(registryAddCommand(url, 'demo', { type: 'url' })).rejects.toThrow(/process\.exit\(1\)/);
+    await registryAddCommand(url, 'demo', { type: 'url', yes: true });
+    await expect(registryAddCommand(url, 'demo', { type: 'url', yes: true })).rejects.toThrow(/process\.exit\(1\)/);
   });
 
   it('rejects invalid slugs', async () => {
     await expect(
-      registryAddCommand(url, 'has space', { type: 'url' }),
+      registryAddCommand(url, 'has space', { type: 'url', yes: true }),
     ).rejects.toThrow(/process\.exit\(1\)/);
   });
 
   it('add → remove leaves no record or files behind', async () => {
-    await registryAddCommand(url, 'demo', { type: 'url' });
+    await registryAddCommand(url, 'demo', { type: 'url', yes: true });
     expect(existsSync(join(managedDir, 'demo'))).toBe(true);
 
     await registryRemoveCommand('demo');
@@ -195,7 +195,7 @@ describe('registry CLI commands', () => {
   });
 
   it('refresh updates installedAt and resolved status', async () => {
-    await registryAddCommand(url, 'demo', { type: 'url' });
+    await registryAddCommand(url, 'demo', { type: 'url', yes: true });
 
     const db1 = new CapaDatabase(dbPath);
     const firstInstalledAt = db1.getRegistry('demo')!.installedAt!;
@@ -215,7 +215,7 @@ describe('registry CLI commands', () => {
   });
 
   it('refresh marks the record as failed when the source becomes unreachable', async () => {
-    await registryAddCommand(url, 'gone', { type: 'url' });
+    await registryAddCommand(url, 'gone', { type: 'url', yes: true });
 
     // Repoint the stored source at a URL whose server no longer exists so
     // refresh fails at the fetch step (cleanly avoids module-import caching
@@ -238,7 +238,7 @@ describe('registry CLI commands', () => {
   });
 
   it('enable / disable toggles the enabled flag', async () => {
-    await registryAddCommand(url, 'demo', { type: 'url' });
+    await registryAddCommand(url, 'demo', { type: 'url', yes: true });
     await registrySetEnabledCommand('demo', false);
 
     const db = new CapaDatabase(dbPath);
@@ -394,9 +394,9 @@ describe('registry search CLI command', () => {
     const skillsUrl = `http://localhost:${server.port}/skills-adapter.ts`;
     const pluginsUrl = `http://localhost:${server.port}/plugins-adapter.ts`;
     const brokenUrl = `http://localhost:${server.port}/broken-adapter.ts`;
-    await registryAddCommand(skillsUrl, 'search-one', { type: 'url' });
-    await registryAddCommand(pluginsUrl, 'search-two', { type: 'url' });
-    await registryAddCommand(brokenUrl, 'search-broken', { type: 'url' });
+    await registryAddCommand(skillsUrl, 'search-one', { type: 'url', yes: true });
+    await registryAddCommand(pluginsUrl, 'search-two', { type: 'url', yes: true });
+    await registryAddCommand(brokenUrl, 'search-broken', { type: 'url', yes: true });
     return { skills: skillsUrl, plugins: pluginsUrl, broken: brokenUrl };
   }
 

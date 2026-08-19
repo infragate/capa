@@ -101,7 +101,7 @@ describe('subscribeProjectEvents', () => {
         status: 200,
         headers: { 'Content-Type': 'text/event-stream' },
       });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const unsub = subscribeProjectEvents('proj-auth', {});
     await Bun.sleep(30);
