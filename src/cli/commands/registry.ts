@@ -102,7 +102,7 @@ async function confirmAdapterExecution(source: string, contentSha256: string, pr
   info(`Preview:\n${lines}`);
   return prompt.confirm(
     'Execute this adapter in-process? This runs third-party TypeScript with your privileges.',
-    false,
+    true,
   );
 }
 

@@ -36,6 +36,22 @@ export async function fetchProtectedResourceMetadata(
 }
 
 /**
+ * Build the RFC 8414 authorization-server metadata URL for an issuer.
+ * Path-based issuers (e.g. Keycloak `/realms/{realm}`) must insert
+ * `/.well-known/oauth-authorization-server` between host and path — not at origin root.
+ */
+export function buildOAuthAuthorizationServerMetadataUrl(
+	authServerUrl: string,
+): string {
+	const issuer = new URL(authServerUrl);
+	const path = issuer.pathname.replace(/\/$/, "");
+	if (!path || path === "/") {
+		return `${issuer.origin}/.well-known/oauth-authorization-server`;
+	}
+	return `${issuer.origin}/.well-known/oauth-authorization-server${path}`;
+}
+
+/**
  * Fetch authorization server metadata (RFC 8414)
  * Path: /.well-known/oauth-authorization-server
  */
@@ -45,10 +61,7 @@ export async function fetchAuthServerMetadata(
 	log = logger.child("OAuth2Discovery"),
 ): Promise<OAuth2Metadata | null> {
 	try {
-		const wellKnownUrl = new URL(
-			"/.well-known/oauth-authorization-server",
-			authServerUrl,
-		).toString();
+		const wellKnownUrl = buildOAuthAuthorizationServerMetadataUrl(authServerUrl);
 
 		log.debug(`Fetching OAuth metadata from: ${wellKnownUrl}`);
 		const response = await fetch(wellKnownUrl, {
@@ -68,6 +81,44 @@ export async function fetchAuthServerMetadata(
 		log.debug(`OAuth metadata fetch error: ${error.message}`);
 		return null;
 	}
+}
+
+/** Scopes commonly listed by Keycloak but not valid for user-facing authorization_code + DCR clients. */
+export const BLOCKED_OAUTH_SCOPES = new Set([
+	"service_account",
+	"roles",
+	"web-origins",
+]);
+
+/** Remove invalid scopes from a persisted or user-supplied scope string. */
+export function sanitizeOAuthScope(scope: string): string {
+	return scope
+		.split(/\s+/)
+		.filter((part) => part.length > 0 && !BLOCKED_OAUTH_SCOPES.has(part))
+		.join(" ");
+}
+
+/** Prefer resource-advertised scopes; auth-server catalogs often list realm-wide scopes DCR clients cannot request. */
+export function resolveOAuthScope(options: {
+	resourceMetadata?: ProtectedResourceMetadata | null;
+	wwwAuthenticateScope?: string | null;
+	authServerScopes?: string[] | null;
+}): string | undefined {
+	if (options.resourceMetadata?.scopes_supported?.length) {
+		return options.resourceMetadata.scopes_supported.join(" ");
+	}
+	if (options.wwwAuthenticateScope?.trim()) {
+		return options.wwwAuthenticateScope.trim();
+	}
+	if (options.authServerScopes?.length) {
+		const filtered = options.authServerScopes.filter(
+			(s) => !BLOCKED_OAUTH_SCOPES.has(s),
+		);
+		if (filtered.length > 0) {
+			return filtered.join(" ");
+		}
+	}
+	return undefined;
 }
 
 /**
@@ -115,9 +166,17 @@ export async function detectOAuth2Requirement(
 
 		const wwwAuthenticate = response.headers.get("WWW-Authenticate");
 		let authMetadata: OAuth2Metadata | null = null;
+		let resourceMetadata: ProtectedResourceMetadata | null = null;
+		let wwwAuthenticateScope: string | undefined;
 
 		if (wwwAuthenticate) {
 			log.debug(`WWW-Authenticate: ${wwwAuthenticate}`);
+
+			const scopeMatch = wwwAuthenticate.match(/\bscope="([^"]+)"/);
+			if (scopeMatch) {
+				wwwAuthenticateScope = scopeMatch[1];
+				log.debug(`Resource scope hint: ${wwwAuthenticateScope}`);
+			}
 
 			let resourceMetadataUrl: string | null = null;
 			const resourceMetadataMatch = wwwAuthenticate.match(
@@ -135,16 +194,16 @@ export async function detectOAuth2Requirement(
 				log.debug(`Trying: ${resourceMetadataUrl}`);
 			}
 
+			resourceMetadata = await fetchProtectedResourceMetadata(
+				resourceMetadataUrl,
+				tlsSkipVerify,
+			);
+
 			log.debug(`Trying direct OAuth discovery at: ${baseUrl}`);
 			authMetadata = await fetchAuthServerMetadata(baseUrl, tlsSkipVerify, log);
 
 			if (!authMetadata) {
 				log.debug("Direct discovery failed, trying RFC 9728...");
-				const resourceMetadata = await fetchProtectedResourceMetadata(
-					resourceMetadataUrl,
-					tlsSkipVerify,
-				);
-
 				if (
 					resourceMetadata &&
 					resourceMetadata.authorization_servers &&
@@ -185,12 +244,18 @@ export async function detectOAuth2Requirement(
 			return null;
 		}
 
+		const scope = resolveOAuthScope({
+			resourceMetadata,
+			wwwAuthenticateScope,
+			authServerScopes: authMetadata.scopes_supported,
+		});
+
 		const config: OAuth2Config = {
 			authorizationEndpoint: authMetadata.authorization_endpoint,
 			tokenEndpoint: authMetadata.token_endpoint,
 			resourceServer: serverUrl,
 			registrationEndpoint: authMetadata.registration_endpoint,
-			scope: authMetadata.scopes_supported?.join(" "),
+			...(scope ? { scope } : {}),
 		};
 
 		log.success("OAuth2 detected");

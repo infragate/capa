@@ -92,10 +92,15 @@ capa registry search skills-sh "research"
 ### 3. Install
 
 ```bash
-capa install
+capa install              # interactive: confirms executable surface, then installs
+capa install --yes        # CI / scripts: skip confirmation
+capa install --dry-run    # preview MCP servers, hooks, and commands without changes
 ```
 
 Resolves SHAs, fills the cache, writes per-provider files, and registers one MCP endpoint with each configured agent. Resolved SHAs land in `capabilities.lock`.
+
+> [!NOTE]
+> Non-interactive shells (CI, scripts) must pass `--yes`. The first install prints the executable surface (MCP stdio servers, hooks, command tools, plugins) and asks for confirmation; unchanged surfaces skip the prompt on re-run.
 
 > [!TIP]
 > Already have skills, MCP configs, and rules in the repo? After `capa init`, use the bundled `/bootstrap` skill — the agent scans the project and drafts the CAPA config for you.
@@ -206,7 +211,7 @@ Agent ──MCP──► capa gateway (:5912) ──proxy──► upstream MCP 
 capa init                              # create capabilities.yaml + register project
 capa add <source> [--plugin] [--install]
 capa add --server|--tool|--rule|--hook …
-capa install [-p <provider>] [-e .env] [--no-cache]
+capa install [-p <provider>] [-e .env] [--no-cache] [--yes] [--dry-run]
 capa wrap <provider> [--project <path>]
 capa sh [tool] [args…] [--raw]
 capa registry search|add|list|refresh|remove …
@@ -214,7 +219,7 @@ capa start|stop|restart|status
 capa clean                             # remove managed artifacts
 capa auth github|gitlab
 capa cache | capa cache clean
-capa upgrade
+capa upgrade [--yes]                   # pin GitHub release + verify installer checksum
 ```
 
 ## Documentation

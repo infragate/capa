@@ -1354,16 +1354,8 @@ class CapaServer {
 				...(server.def.oauth2 as OAuth2Config),
 				...(effectiveClientId ? { client_id: effectiveClientId } : {}),
 			};
-			const hasAuthEndpoint = !!(
-				configForFlow.authorizationEndpoint ||
-				(configForFlow as { authorizationUrl?: string }).authorizationUrl
-			);
-			const hasTokenEndpoint = !!(
-				configForFlow.tokenEndpoint ||
-				(configForFlow as { tokenUrl?: string }).tokenUrl
-			);
-			if ((!hasAuthEndpoint || !hasTokenEndpoint) && server.def.url) {
-				apiLogger.info(`Discovering OAuth endpoints for ${serverId}…`);
+			if (server.def.url) {
+				apiLogger.info(`Refreshing OAuth metadata for ${serverId}…`);
 				const detected = await this.oauth2Manager.detectOAuth2Requirement(
 					server.def.url,
 					{
@@ -1380,8 +1372,8 @@ class CapaServer {
 					);
 				}
 				configForFlow = {
-					...detected,
 					...configForFlow,
+					...detected,
 					authorizationEndpoint:
 						configForFlow.authorizationEndpoint ||
 						(configForFlow as { authorizationUrl?: string }).authorizationUrl ||
@@ -1394,6 +1386,7 @@ class CapaServer {
 						configForFlow.resourceServer ||
 						detected.resourceServer ||
 						server.def.url,
+					scope: detected.scope ?? configForFlow.scope,
 					...(effectiveClientId ? { client_id: effectiveClientId } : {}),
 				};
 				server.def.oauth2 = configForFlow;

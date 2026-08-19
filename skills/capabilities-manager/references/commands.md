@@ -29,6 +29,8 @@ capa install -e .prod.env   # Load variables from custom env file
 capa install -p cursor      # Install for a single provider
 capa install --no-cache     # Bypass on-disk cache; re-resolve all remote sources
 capa install --passthrough  # Write provider-native files only (no capa server/proxy)
+capa install --dry-run      # Print executable surface (MCP, hooks, commands) and exit
+capa install --yes          # Skip confirmation (required in CI / non-interactive shells)
 ```
 
 Reads the capabilities file and:
@@ -44,6 +46,10 @@ Reads the capabilities file and:
 
 **Security**: If `options.security` is configured with `blockedPhrases` or `allowedCharacters`, the corresponding checks run during installation. Omit or comment out each property to disable it. If a blocked phrase is found, installation stops immediately and reports which skill and phrase caused the block. When `allowedCharacters` is present, character sanitization runs: the baseline (printable ASCII + standard whitespace) is always preserved, and the value specifies extra Unicode ranges to keep on top of that.
 
+Before any changes run, capa prints the **executable surface** (MCP stdio servers, hooks, command tools, plugins) and asks for confirmation. Re-running install with an unchanged surface skips the prompt. In CI or other non-interactive environments, pass `--yes`. Use `--dry-run` to preview the surface without installing.
+
+Project secrets (`${VarName}`) are encrypted at rest in `~/.capa/capa.db`. The Web UI and HTTP API return `{ isSet, hint }` metadata only — never raw values.
+
 **Flags**:
 - `-e, --env [file]`: Load variables from a `.env` file instead of using the web UI
   - Without filename: Uses `.env` in the project directory
@@ -53,6 +59,8 @@ Reads the capabilities file and:
 - `-p, --provider <id>`: Install for a single provider (e.g. `cursor`, `claude-code`). Overrides the `providers` field in the capabilities file.
 - `--no-cache`: Bypass the on-disk cache and lockfile; re-resolve every remote source (skills, agents, rules, plugins) from scratch.
 - `--passthrough`: Write provider-native files from the capabilities file **without** registering the project with the capa server / MCP proxy. No lockfile pinning for managed mode, no tool aliases/defaults/formatters via the proxy. Prefer managed install unless the user explicitly wants unmanaged native files.
+- `--dry-run`: Print the executable surface and exit without installing.
+- `-y, --yes`: Accept the executable-surface confirmation without prompting (required in non-interactive / CI environments).
 
 **Provider resolution** (when `providers` is omitted from the capabilities file):
 1. `--provider` flag (highest priority)
@@ -267,9 +275,10 @@ Authenticates with Git providers for accessing private repositories (skills, plu
 
 ```bash
 capa upgrade
+capa upgrade --yes    # Skip confirmation (required in non-interactive / CI)
 ```
 
-Upgrades capa to the latest published version.
+Upgrades capa to the latest published version. Prints the pinned release, installer URL, and SHA-256 checksum before downloading. Non-interactive environments must pass `--yes`.
 
 **When to use**: When a new version of capa is available (capa will notify you after commands when an update is available).
 
@@ -297,6 +306,7 @@ capa registry path                                         # Print the managed r
 capa registry search [slug] "query" [--capability skills|plugins] [--limit 20]
 
 capa registry add <source> [slug]                          # Fetch + install a registry
+capa registry add <source> [slug] --yes                  # Skip execute-adapter confirmation (CI)
 capa registry add infragate/capa@skills-sh                 # GitHub source, search-form (auto type=github)
 capa registry add gitlab/group/proj::registries/internal --type=gitlab
 capa registry add https://example.com/adapter.ts          # HTTPS URL source (type auto-detected from scheme)

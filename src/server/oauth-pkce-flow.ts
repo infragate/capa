@@ -10,8 +10,16 @@ import {
 	resolveAuthorizationEndpoint,
 	resolveTokenEndpoint,
 } from "./oauth-endpoint-resolve";
+import { sanitizeOAuthScope } from "./oauth-discovery";
 
 const pkceLogger = logger.child("OAuth2PKCE");
+
+/** Optional DCR metadata; localhost matches typical Keycloak trustedHosts policies. */
+export function clientUriForRegistration(redirectUri: string): string {
+	const redirect = new URL(redirectUri);
+	const port = redirect.port ? `:${redirect.port}` : "";
+	return `http://localhost${port}`;
+}
 
 /**
  * Register a dynamic OAuth client (RFC 7591)
@@ -27,7 +35,7 @@ export async function registerClient(
 		},
 		body: JSON.stringify({
 			client_name: "CAPA - Capabilities Package Manager",
-			client_uri: "https://github.com/infragate/capa",
+			client_uri: clientUriForRegistration(redirectUri),
 			redirect_uris: [redirectUri],
 			grant_types: ["authorization_code", "refresh_token"],
 			response_types: ["code"],
@@ -113,7 +121,10 @@ export async function generateAuthorizationUrl(
 	authUrl.searchParams.set("code_challenge_method", "S256");
 
 	if (oauth2Config.scope) {
-		authUrl.searchParams.set("scope", oauth2Config.scope);
+		const scope = sanitizeOAuthScope(oauth2Config.scope);
+		if (scope) {
+			authUrl.searchParams.set("scope", scope);
+		}
 	}
 
 	log.info(`Generated authorization URL for ${serverId}`);

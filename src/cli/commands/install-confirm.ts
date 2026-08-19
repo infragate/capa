@@ -46,7 +46,7 @@ export async function confirmInstallExecution(opts: {
   try {
     ok = await prompt.confirm(
       'Proceed with capa install? This will execute the commands above.',
-      false,
+      true,
     );
   } catch {
     throw new Error(
