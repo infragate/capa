@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach, spyOn } from 'bun:test';
 import { mkdtempSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -52,17 +52,43 @@ describe('GitIntegrationManager', () => {
 
     expect(manager.isConnected('github')).toBe(true);
     expect(manager.isConnected('gitlab')).toBe(false);
+
+    db.setGitIntegration('github-enterprise', {
+      host: 'git.example.com',
+      access_token: '   ',
+      token_type: 'token',
+    });
+    expect(manager.isConnected('github-enterprise', 'git.example.com')).toBe(false);
   });
 
-  it('maps platforms to display names in getAllIntegrations', () => {
+  it('maps platforms to display names in getAllIntegrations', async () => {
     db.setGitIntegration('github', { access_token: 'gh', token_type: 'Bearer' });
     db.setGitIntegration('gitlab', { access_token: 'gl', token_type: 'Bearer' });
 
-    const integrations = manager.getAllIntegrations();
+    const integrations = await manager.getAllIntegrations();
     const byPlatform = Object.fromEntries(integrations.map((i) => [i.platform, i.displayName]));
 
     expect(byPlatform.github).toBe('GitHub');
     expect(byPlatform.gitlab).toBe('GitLab');
+  });
+
+  it('marks self-hosted PAT integrations disconnected when validation fails', async () => {
+    const fetchSpy = spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('Unauthorized', { status: 401 }),
+    );
+
+    db.setGitIntegration('github-enterprise', {
+      host: 'git.example.com',
+      access_token: 'bad-pat',
+      token_type: 'token',
+    });
+
+    const integrations = await manager.getAllIntegrations();
+    const ghe = integrations.find((i) => i.platform === 'github-enterprise');
+    expect(ghe?.host).toBe('git.example.com');
+    expect(ghe?.isConnected).toBe(false);
+
+    fetchSpy.mockRestore();
   });
 
   it('returns null token and false refresh for unsupported platform', async () => {

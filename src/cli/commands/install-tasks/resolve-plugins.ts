@@ -31,6 +31,16 @@ export function resolvePluginsTask(): Task<InstallCtx> {
           );
         ctx.capabilitiesToUse = mergedCapabilities;
         ctx.warnings.push(...pluginWarnings);
+        const declaredPlugins = ctx.capabilities.plugins?.length ?? 0;
+        const resolvedPlugins = ctx.capabilitiesToUse.resolvedPlugins?.length ?? 0;
+        const pluginFailures = pluginWarnings.filter((w) =>
+          w.includes('failed to resolve and was skipped'),
+        );
+        // When every declared plugin fails, treat install as failed — but keep
+        // partial success when at least one plugin resolved (isolation).
+        if (declaredPlugins > 0 && resolvedPlugins === 0 && pluginFailures.length > 0) {
+          throw new Error(pluginFailures.join('\n'));
+        }
         for (const dir of tempDirsToCleanup) {
           try {
             rmSync(dir, { recursive: true, force: true });

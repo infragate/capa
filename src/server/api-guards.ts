@@ -1,4 +1,4 @@
-import { requireAuth } from "./auth-middleware";
+import { requireAuth, isLoopbackHost } from "./auth-middleware";
 
 export type GuardResult =
 	| { ok: true }
@@ -21,7 +21,7 @@ export function isPublicApiRoute(method: string, pathname: string): boolean {
 	if (verb === "OPTIONS") {
 		return true;
 	}
-	if (verb !== "GET" && verb !== "HEAD") {
+	if (verb !== "GET" && verb !== "HEAD" && verb !== "POST") {
 		return false;
 	}
 	if (/^\/api\/integrations\/(github|gitlab)\/oauth\/callback$/.test(pathname)) {
@@ -31,6 +31,34 @@ export function isPublicApiRoute(method: string, pathname: string): boolean {
 		return true;
 	}
 	return false;
+}
+
+function defaultPort(protocol: string, explicit: string): string {
+	if (explicit) return explicit;
+	return protocol === "https:" ? "443" : "80";
+}
+
+/** Browsers treat localhost and 127.0.0.1 as different Origins; both are loopback. */
+export function isEquivalentApiOrigin(
+	origin: string,
+	serverOrigin: string,
+): boolean {
+	if (origin === serverOrigin) return true;
+	try {
+		const a = new URL(origin);
+		const b = new URL(serverOrigin);
+		if (a.protocol !== b.protocol) return false;
+		if (
+			defaultPort(a.protocol, a.port) !== defaultPort(b.protocol, b.port)
+		) {
+			return false;
+		}
+		const aHost = a.hostname.replace(/^\[|\]$/g, "");
+		const bHost = b.hostname.replace(/^\[|\]$/g, "");
+		return isLoopbackHost(aHost) && isLoopbackHost(bHost);
+	} catch {
+		return false;
+	}
 }
 
 export function requireApiCsrf(
@@ -44,7 +72,7 @@ export function requireApiCsrf(
 		return { ok: false, reason: "Forbidden", status: 403 };
 	}
 	const origin = req.headers.get("Origin");
-	if (origin && origin !== serverOrigin) {
+	if (origin && !isEquivalentApiOrigin(origin, serverOrigin)) {
 		return { ok: false, reason: "Forbidden", status: 403 };
 	}
 	return { ok: true };

@@ -2,6 +2,7 @@ import { describe, it, expect, mock, beforeEach, afterEach, afterAll, spyOn } fr
 import { mkdtempSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { setFlags } from '../../ui';
 
 const ensureServerMock = mock(async () => ({
   running: true,
@@ -90,6 +91,7 @@ describe('authCommand', () => {
 
   afterEach(() => {
     homeCtx.restore();
+    setFlags({ headless: false });
   });
 
   it('module loads and exports a callable authCommand', () => {
@@ -278,6 +280,58 @@ describe('authCommand', () => {
       expect(stdout).toContain('Invalid Personal Access Token');
       expect(exitSpy).toHaveBeenCalledWith(1);
       exitSpy.mockRestore();
+    });
+  });
+
+  describe('OAuth (--headless)', () => {
+    const originalFetch = globalThis.fetch;
+    const AUTH_URL = 'https://github.com/login/oauth/authorize?client_id=headless-test';
+
+    afterEach(() => {
+      globalThis.fetch = originalFetch;
+    });
+
+    it('prints the authorization URL and does not spawn a browser opener', async () => {
+      setFlags({ headless: true });
+
+      const { loadSettings, getDatabasePath } = await import('../../../shared/config');
+      const { CapaDatabase } = await import('../../../db/database');
+      const settings = await loadSettings();
+      const db = new CapaDatabase(getDatabasePath(settings));
+
+      globalThis.fetch = (async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes('/api/integrations/github/oauth/start')) {
+          db.setGitOAuthToken('github.com', {
+            access_token: 'gho_headless_test',
+            token_type: 'Bearer',
+          });
+          return new Response(JSON.stringify({ authorizationUrl: AUTH_URL }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return new Response('not found', { status: 404 });
+      }) as typeof fetch;
+
+      const spawnSpy = spyOn(Bun, 'spawn').mockImplementation(
+        () =>
+          ({
+            exited: Promise.resolve(0),
+            exitCode: 0,
+          }) as never,
+      );
+
+      try {
+        const { stdout } = await captureOutput(() => authCommand('github.com'));
+        expect(stdout).toContain(AUTH_URL);
+        expect(stdout).toContain('Please open this URL in your browser to authenticate');
+        expect(stdout).toContain('Authentication successful');
+        expect(spawnSpy).not.toHaveBeenCalled();
+      } finally {
+        db.close();
+        spawnSpy.mockRestore();
+      }
     });
   });
 

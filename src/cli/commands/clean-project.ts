@@ -1,11 +1,11 @@
 import { existsSync } from 'fs';
 import { rm } from 'fs/promises';
-import { resolve } from 'path';
+import { join, resolve } from 'path';
 import { detectCapabilitiesFile } from '../../shared/paths';
 import { parseCapabilitiesFile } from '../../shared/capabilities';
 import { getLockfilePath } from '../../shared/lockfile';
 import { resolveProvidersForClean } from '../../shared/providers/resolve';
-import { getAllProviders } from '../../shared/providers';
+import { getAllProviders, getProvider } from '../../shared/providers';
 import type { CapaDatabase } from '../../db/database';
 import type { Capabilities } from '../../types/capabilities';
 import { unregisterMCPServer, unregisterSubAgentMCPServer } from '../utils/mcp-client-manager';
@@ -28,6 +28,7 @@ export interface CleanProjectResult {
   wrapSessionsStopped: number;
   workspacesPruned: number;
   managedFilesRemoved: number;
+  skillDirsRemoved: number;
 }
 
 /**
@@ -38,8 +39,45 @@ export interface CleanProjectResult {
 function providersForOnDiskCleanup(resolved: string[]): string[] {
   if (resolved.length > 0) return resolved;
   return getAllProviders()
-    .filter((p) => p.subagents || p.rules || p.instructions || p.mcp)
+    .filter((p) => p.subagents || p.rules || p.instructions || p.mcp || p.skillsDir)
     .map((p) => p.id);
+}
+
+/**
+ * Remove skill install directories declared in capabilities for each active
+ * provider (e.g. `.cursor/skills/<id>`). Mirrors sub-agent cleanup: covers
+ * orphaned dirs when install wrote files but never recorded managed_files.
+ */
+async function cleanSkillInstallDirs(
+  projectPath: string,
+  providers: string[],
+  skillIds: string[],
+  warnings: string[],
+): Promise<number> {
+  let removed = 0;
+  if (skillIds.length === 0 || providers.length === 0) return removed;
+
+  for (const providerId of providers) {
+    const provider = getProvider(providerId);
+    if (!provider?.skillsDir) continue;
+
+    for (const skillId of skillIds) {
+      const skillDir = join(projectPath, provider.skillsDir, skillId);
+      if (!existsSync(skillDir)) continue;
+      try {
+        await rm(skillDir, { recursive: true, force: true });
+        removed++;
+      } catch (err) {
+        warnings.push(
+          `Failed to remove skill directory ${skillDir}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+  }
+
+  return removed;
 }
 
 /**
@@ -77,6 +115,14 @@ export async function cleanProject(opts: CleanProjectOptions): Promise<CleanProj
     projectId,
   });
   const providers = providersForOnDiskCleanup(resolvedProviders);
+
+  const skillIds = (capabilities?.skills ?? []).map((s) => s.id);
+  const skillDirsRemoved = await cleanSkillInstallDirs(
+    projectPath,
+    providers,
+    skillIds,
+    warnings,
+  );
 
   const managedFiles = db.getManagedFiles(projectId);
   let managedFilesRemoved = 0;
@@ -169,5 +215,6 @@ export async function cleanProject(opts: CleanProjectOptions): Promise<CleanProj
     wrapSessionsStopped,
     workspacesPruned,
     managedFilesRemoved,
+    skillDirsRemoved,
   };
 }

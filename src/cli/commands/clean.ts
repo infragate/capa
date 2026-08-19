@@ -55,6 +55,13 @@ export async function cleanCommand(): Promise<void> {
         }`,
       );
     }
+    if (result.skillDirsRemoved > 0) {
+      info(
+        `Removed ${result.skillDirsRemoved} skill director${
+          result.skillDirsRemoved === 1 ? 'y' : 'ies'
+        }`,
+      );
+    }
     if (result.workspacesPruned > 0) {
       info(
         `Pruned ${result.workspacesPruned} wrap workspace${

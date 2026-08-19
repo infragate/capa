@@ -29,4 +29,12 @@ describe('isUnderWrapWorkspacesDir', () => {
     );
     expect(isUnderWrapWorkspacesDir(join(flipped, 'shadow', 'proj'))).toBe(true);
   });
+
+  it('treats macOS /tmp and /private/tmp as the same location', () => {
+    if (process.platform !== 'darwin') return;
+    const root = getWorkspacesDir();
+    if (!root.startsWith('/tmp/')) return;
+    const privateRoot = root.replace(/^\/tmp\//, '/private/tmp/');
+    expect(isUnderWrapWorkspacesDir(join(privateRoot, 'shadow', 'proj'))).toBe(true);
+  });
 });

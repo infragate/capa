@@ -22,30 +22,87 @@ export class GitIntegrationManager {
 	}
 
 	/**
-	 * Check if a specific platform integration is configured
+	 * Check if a specific platform integration is configured and usable.
+	 * Sync check only — verifies a non-empty stored token exists.
 	 */
 	isConnected(platform: GitPlatform, host?: string): boolean {
 		const integration = this.db.getGitIntegration(platform, host || null);
-		return !!integration;
+		return this.hasUsableStoredToken(integration);
+	}
+
+	private hasUsableStoredToken(
+		integration: ReturnType<CapaDatabase["getGitIntegration"]>,
+	): boolean {
+		return !!integration?.access_token?.trim();
+	}
+
+	private isOAuthIntegration(platform: GitPlatform): boolean {
+		return !!getGitProvider(platform);
+	}
+
+	private async integrationIsLive(
+		integration: NonNullable<ReturnType<CapaDatabase["getGitIntegration"]>>,
+	): Promise<boolean> {
+		if (!this.hasUsableStoredToken(integration)) {
+			return false;
+		}
+
+		const host = integration.host ?? undefined;
+
+		// Self-hosted PATs must still authenticate against the host API.
+		if (
+			integration.platform === "github-enterprise" ||
+			integration.platform === "gitlab-self-managed"
+		) {
+			return this.validatePAT(
+				integration.platform,
+				host,
+				integration.access_token,
+			);
+		}
+
+		// Cloud OAuth: expired without refresh is not "connected" for the UI.
+		if (integration.expires_at && integration.expires_at < Date.now()) {
+			if (integration.refresh_token && this.isOAuthIntegration(integration.platform)) {
+				const refreshed = await this.refreshAccessToken(
+					integration.platform,
+					host,
+				);
+				if (refreshed) {
+					const updated = this.db.getGitIntegration(
+						integration.platform,
+						integration.host,
+					);
+					return this.hasUsableStoredToken(updated);
+				}
+			}
+			return false;
+		}
+
+		return true;
 	}
 
 	/**
-	 * Get all configured integrations
+	 * Get all configured integrations with live connection status.
 	 */
-	getAllIntegrations() {
+	async getAllIntegrations() {
 		const integrations = this.db.getAllGitIntegrations();
 
-		return integrations.map((integration) => ({
-			platform: integration.platform,
-			host: integration.host || undefined,
-			displayName: this.getPlatformDisplayName(
-				integration.platform,
-				integration.host,
-			),
-			isConnected: true,
-			expiresAt: integration.expires_at || undefined,
-			usesOAuth: !!getGitProvider(integration.platform),
-		}));
+		const results = await Promise.all(
+			integrations.map(async (integration) => ({
+				platform: integration.platform,
+				host: integration.host || undefined,
+				displayName: this.getPlatformDisplayName(
+					integration.platform,
+					integration.host,
+				),
+				isConnected: await this.integrationIsLive(integration),
+				expiresAt: integration.expires_at || undefined,
+				usesOAuth: this.isOAuthIntegration(integration.platform),
+			})),
+		);
+
+		return results;
 	}
 
 	/**

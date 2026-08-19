@@ -1,5 +1,5 @@
 import type { GitIntegrationManager } from "./git-integration-manager";
-import { oauthBridgeResponse } from "./oauth-bridge";
+import { gitOAuthCallbackNeedsBridge, oauthBridgeResponse } from "./oauth-bridge";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
@@ -14,7 +14,7 @@ export async function handleGetIntegrations(
 	deps: GitIntegrationsRouteDeps,
 ): Promise<Response> {
 	try {
-		const integrations = deps.gitIntegrationManager.getAllIntegrations();
+		const integrations = await deps.gitIntegrationManager.getAllIntegrations();
 		return new Response(JSON.stringify({ integrations }), {
 			headers: JSON_HEADERS,
 		});
@@ -122,11 +122,7 @@ export async function handleGitHubOAuthCallback(
 			state = readOAuthNonce(body);
 		} else {
 			const url = new URL(request.url);
-			if (
-				url.searchParams.has("access_token") ||
-				url.searchParams.has("refresh_token") ||
-				url.searchParams.has("token")
-			) {
+			if (gitOAuthCallbackNeedsBridge(url)) {
 				return oauthBridgeResponse("github");
 			}
 			error = url.searchParams.get("error");
@@ -217,11 +213,7 @@ export async function handleGitLabOAuthCallback(
 			state = readOAuthNonce(body);
 		} else {
 			const url = new URL(request.url);
-			if (
-				url.searchParams.has("access_token") ||
-				url.searchParams.has("refresh_token") ||
-				url.searchParams.has("token")
-			) {
+			if (gitOAuthCallbackNeedsBridge(url)) {
 				return oauthBridgeResponse("gitlab");
 			}
 			error = url.searchParams.get("error");

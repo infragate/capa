@@ -59,10 +59,7 @@
     "delete": "Delete variable",
     "confirmDelete": "Remove variable {{name}} from the catalog?",
     "referenced": "referenced",
-    "unused": "unused",
-    "set": "set",
-    "replacePlaceholder": "Stored — enter a new value to replace",
-    "endsWith": "ends with {{hint}}"
+    "unused": "unused"
   },
   "oauth": {
     "title": "OAuth 2.0 Connections",

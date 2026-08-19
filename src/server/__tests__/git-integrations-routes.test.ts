@@ -11,7 +11,7 @@ import {
   handleGitHubOAuthStart,
   handleGitLabOAuthCallback,
 } from '../git-integrations-routes';
-import { buildOAuthBridgeHtml } from '../oauth-bridge';
+import { buildOAuthBridgeHtml, gitOAuthCallbackNeedsBridge } from '../oauth-bridge';
 
 describe('Git OAuth callback state binding', () => {
   let db: CapaDatabase;
@@ -148,8 +148,41 @@ describe('Git OAuth callback state binding', () => {
 
   it('forwards state and flowId from the cloud GET query into the HTML bridge POST body', () => {
     const html = buildOAuthBridgeHtml('github');
-    expect(html).toMatch(/params\.get\(['"]state['"]\)/);
+    expect(html).toMatch(/params\.get\(['"]state['"]\)|pick\(['"]state['"]\)/);
     expect(html).toMatch(/body\.state/);
-    expect(html).toMatch(/params\.get\(['"]flowId['"]\)|params\.get\(['"]flow_id['"]\)/);
+    expect(html).toMatch(/flowId|flow_id/);
+  });
+
+  it('serves the HTML bridge on GET when only state/flowId are present (tokens in hash)', async () => {
+    const res = await handleGitHubOAuthCallback(
+      deps,
+      new Request(
+        'http://127.0.0.1:5912/api/integrations/github/oauth/callback?state=abc&flowId=abc',
+        { method: 'GET' },
+      ),
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('text/html');
+    const html = await res.text();
+    expect(html).toContain('Finishing GitHub sign-in');
+    expect(html).toContain('location.hash');
+  });
+
+  it('gitOAuthCallbackNeedsBridge accepts state-only and token query params', () => {
+    expect(
+      gitOAuthCallbackNeedsBridge(
+        new URL('http://127.0.0.1:5912/api/integrations/github/oauth/callback?state=x'),
+      ),
+    ).toBe(true);
+    expect(
+      gitOAuthCallbackNeedsBridge(
+        new URL('http://127.0.0.1:5912/api/integrations/github/oauth/callback?token=t'),
+      ),
+    ).toBe(true);
+    expect(
+      gitOAuthCallbackNeedsBridge(
+        new URL('http://127.0.0.1:5912/api/integrations/github/oauth/callback?error=denied'),
+      ),
+    ).toBe(false);
   });
 });

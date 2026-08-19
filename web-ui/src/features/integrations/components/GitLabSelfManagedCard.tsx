@@ -16,6 +16,7 @@ interface GitLabSelfManagedCardProps {
 export function GitLabSelfManagedCard({ integration, onMessage, onDisconnect, onRefresh }: GitLabSelfManagedCardProps) {
   const { t } = useTranslation('integrations');
   const connected = integration?.isConnected ?? false;
+  const staleHost = !connected && integration?.host ? integration.host : '';
   const [host, setHost] = useState('');
   const [token, setToken] = useState('');
   const [showToken, setShowToken] = useState(false);
@@ -65,6 +66,22 @@ export function GitLabSelfManagedCard({ integration, onMessage, onDisconnect, on
         </button>
       ) : (
         <div className="space-y-4 border-t border-border-tertiary pt-4">
+          {staleHost && (
+            <div className="flex items-center justify-between gap-2 rounded-sm border border-border-tertiary bg-bg-secondary px-3 py-2 text-xs text-text-secondary">
+              <span>Saved credentials for {staleHost} are no longer valid.</span>
+              <button
+                type="button"
+                onClick={() => {
+                  if (confirm(t('gitlabSelfManaged.confirmDisconnect'))) {
+                    onDisconnect('gitlab-self-managed', staleHost);
+                  }
+                }}
+                className="shrink-0 text-error-text hover:underline cursor-pointer"
+              >
+                Remove
+              </button>
+            </div>
+          )}
           <div>
             <label className="mb-2 block text-[13px] font-medium text-text-primary">
               {t('gitlabSelfManaged.hostLabel')}

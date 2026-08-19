@@ -1,5 +1,6 @@
-import { isAbsolute, join, relative, resolve } from "path";
+import { isAbsolute, join, relative } from "path";
 import { getCapaDir } from "../config";
+import { canonicalizePath } from "../paths";
 
 /** Marker filename written into every wrap shadow workspace. */
 export const WORKSPACE_MARKER = ".capa-workspace.json";
@@ -16,8 +17,8 @@ export function getWorkspacesDir(): string {
  * `startsWith`, so `C:\...` vs `c:\...` cannot bypass the guard.
  */
 export function isUnderWrapWorkspacesDir(dir: string): boolean {
-	const workspaces = resolve(getWorkspacesDir());
-	const abs = resolve(dir);
+	const workspaces = canonicalizePath(getWorkspacesDir());
+	const abs = canonicalizePath(dir);
 	const rel = relative(workspaces, abs);
 	return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }

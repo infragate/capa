@@ -71,6 +71,15 @@ describe('requireApiCsrf', () => {
     expect(requireApiCsrf(req, SERVER_ORIGIN)).toEqual({ ok: true });
   });
 
+  it('accepts localhost Origin when the server binds 127.0.0.1', () => {
+    const req = apiRequest('/api/integrations/gitlab', {
+      method: 'DELETE',
+      origin: 'http://localhost:5912',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    expect(requireApiCsrf(req, SERVER_ORIGIN)).toEqual({ ok: true });
+  });
+
   it('accepts CLI mutating requests that omit Origin', () => {
     const req = apiRequest('/api/registries', {
       method: 'POST',
@@ -223,6 +232,15 @@ describe('authorizeApiRequest', () => {
   it('allows unauthenticated GET oauth callback HTML', () => {
     const req = apiRequest('/api/integrations/github/oauth/callback', {
       method: 'GET',
+    });
+    expect(authorizeApiRequest(req, bind)).toEqual({ ok: true });
+  });
+
+  it('allows unauthenticated POST oauth callback (bridge token submission)', () => {
+    const req = apiRequest('/api/integrations/github/oauth/callback', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ access_token: 'x', state: 'y' }),
     });
     expect(authorizeApiRequest(req, bind)).toEqual({ ok: true });
   });
