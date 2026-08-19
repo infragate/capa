@@ -283,21 +283,13 @@ describe('installer — pending vs execute', () => {
 
   it('cleans up the managed dir when fetch fails after URL policy', async () => {
     allowLocalUrlPolicy();
-    const server = Bun.serve({
-      port: 0,
-      fetch() {
-        return new Response('unavailable', { status: 503 });
-      },
-    });
-    try {
-      const url = `http://127.0.0.1:${server.port}/adapter.ts`;
-      await expect(
-        stageRegistry({ slug: 'unit', type: 'url', source: url }, authFetch),
-      ).rejects.toThrow(/Failed to fetch/);
-      expect(existsSync(join(managedDir, 'unit'))).toBe(false);
-    } finally {
-      server.stop();
-    }
+    await expect(
+      stageRegistry(
+        { slug: 'gone', type: 'url', source: 'http://127.0.0.1:1/adapter.ts' },
+        authFetch,
+      ),
+    ).rejects.toThrow(/Failed to fetch/);
+    expect(existsSync(join(managedDir, 'gone'))).toBe(false);
   });
 
   it('rejects an adapter whose default export has the wrong shape on execute', async () => {

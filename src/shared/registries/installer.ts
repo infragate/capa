@@ -591,7 +591,15 @@ async function loadAdapterFile(filePath: string): Promise<RegistryAdapter> {
 			`Adapter at ${filePath} failed to import: ${err?.message ?? err}`,
 		);
 	}
-	const adapter: unknown = module.default ?? module;
+	let adapter: unknown = module.default ?? module;
+	if (
+		!isValidAdapter(adapter) &&
+		adapter &&
+		typeof adapter === "object" &&
+		"default" in adapter
+	) {
+		adapter = (adapter as { default: unknown }).default;
+	}
 	if (!isValidAdapter(adapter)) {
 		throw new Error(
 			`Adapter at ${filePath} does not export a valid RegistryAdapter ` +
