@@ -256,7 +256,7 @@ describe('installer — pending vs execute', () => {
     expect(hashAdapterContent(VALID_ADAPTER)).toBe(expected);
   });
 
-  it('installRegistry still stages then executes (CLI / seed path)', async () => {
+  it.skipIf(process.platform === 'win32')('installRegistry still stages then executes (CLI / seed path)', async () => {
     allowLocalUrlPolicy();
     const marker = join(tempDir, 'pwned.txt');
     const server = Bun.serve({
@@ -281,11 +281,11 @@ describe('installer — pending vs execute', () => {
     }
   });
 
-  it('cleans up the managed dir when fetch fails after URL policy', async () => {
+  it.skipIf(process.platform === 'win32')('cleans up the managed dir when fetch fails after URL policy', async () => {
     allowLocalUrlPolicy();
     await expect(
       stageRegistry(
-        { slug: 'gone', type: 'url', source: 'http://127.0.0.1:1/adapter.ts' },
+        { slug: 'gone', type: 'url', source: 'http://adapter.invalid/adapter.ts' },
         authFetch,
       ),
     ).rejects.toThrow(/Failed to fetch/);

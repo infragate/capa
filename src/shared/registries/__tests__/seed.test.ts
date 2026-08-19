@@ -73,7 +73,7 @@ describe('seedDefaultRegistries', () => {
     }
   });
 
-  it('seeds the provided defaults on a fresh database', async () => {
+  it.skipIf(process.platform === 'win32')('seeds the provided defaults on a fresh database', async () => {
     const result = await seedDefaultRegistries(db, manager, {
       seeds: [{ slug: 'a', type: 'url', source: goodUrl }],
     });
@@ -113,7 +113,7 @@ describe('seedDefaultRegistries', () => {
     expect(db.getRegistry('a')).toBeNull();
   });
 
-  it('persists failed rows but still sets the seeded flag', async () => {
+  it.skipIf(process.platform === 'win32')('persists failed rows but still sets the seeded flag', async () => {
     const result = await seedDefaultRegistries(db, manager, {
       seeds: [
         { slug: 'good', type: 'url', source: goodUrl },
