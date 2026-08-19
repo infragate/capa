@@ -20,9 +20,27 @@ interface RegistryAddOptions {
   yes?: boolean;
 }
 
-function detectType(source: string, explicit?: RegistrySourceType): RegistrySourceType {
+/** Infer registry source type when `--type` is omitted. */
+export function detectRegistrySourceType(
+  source: string,
+  explicit?: RegistrySourceType,
+): RegistrySourceType {
   if (explicit) return explicit;
-  if (/^https?:\/\//i.test(source)) return 'url';
+  const trimmed = source.trim();
+  if (/^https?:\/\//i.test(trimmed)) {
+    try {
+      if (/marketplace\.json$/i.test(new URL(trimmed).pathname)) {
+        return 'claude-marketplace';
+      }
+    } catch {
+      /* fall through to url */
+    }
+    return 'url';
+  }
+  // Bare owner/repo (no @adapter or ::path) is a Claude marketplace locator.
+  if (/^[^/\s@:]+\/[^/\s@:]+$/i.test(trimmed)) {
+    return 'claude-marketplace';
+  }
   return 'github';
 }
 
@@ -73,7 +91,9 @@ export async function registryListCommand(): Promise<void> {
       console.log();
     }
 
-    console.log('Note: Registry adapters are executable TypeScript — only add sources you trust.');
+    console.log(
+      'Note: Registry adapters run executable TypeScript; Claude marketplaces are JSON catalogs only.',
+    );
   } finally {
     db.close();
   }
@@ -95,11 +115,22 @@ interface AddCtx {
   preview: string;
 }
 
-async function confirmAdapterExecution(source: string, contentSha256: string, preview: string): Promise<boolean> {
+async function confirmRegistryInstall(
+  type: RegistrySourceType,
+  source: string,
+  contentSha256: string,
+  preview: string,
+): Promise<boolean> {
   info(`Source: ${source}`);
   info(`SHA-256: ${contentSha256}`);
   const lines = preview.split('\n').slice(0, 20).join('\n');
   info(`Preview:\n${lines}`);
+  if (type === 'claude-marketplace') {
+    return prompt.confirm(
+      'Install this Claude marketplace catalog? This only stores JSON plugin metadata — no executable adapter code runs.',
+      true,
+    );
+  }
   return prompt.confirm(
     'Execute this adapter in-process? This runs third-party TypeScript with your privileges.',
     true,
@@ -117,7 +148,7 @@ export async function registryAddCommand(
 
   header('Add registry');
   const startedAt = Date.now();
-  const type = detectType(source, options.type);
+  const type = detectRegistrySourceType(source, options.type);
   let slug = slugArg;
 
   try {
@@ -188,7 +219,12 @@ export async function registryAddCommand(
 
     let confirmed: boolean;
     try {
-      confirmed = await confirmAdapterExecution(ctx.source, ctx.contentSha256, ctx.preview);
+      confirmed = await confirmRegistryInstall(
+        ctx.type,
+        ctx.source,
+        ctx.contentSha256,
+        ctx.preview,
+      );
     } catch (err: unknown) {
       removeInstalledAdapter(ctx.slug);
       throw err;
@@ -270,7 +306,12 @@ export async function registryApproveCommand(slug: string, options: { yes?: bool
     }
     let confirmed: boolean;
     try {
-      confirmed = await confirmAdapterExecution(existing.source, contentSha256, preview);
+      confirmed = await confirmRegistryInstall(
+        existing.type,
+        existing.source,
+        contentSha256,
+        preview,
+      );
     } catch (err: unknown) {
       throw err;
     }

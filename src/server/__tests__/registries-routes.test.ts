@@ -153,21 +153,37 @@ describe('registries-routes', () => {
       expect(db.getRegistry('evil')).toBeNull();
     });
 
-    it('stages from a URL and returns 202 pending without importing', async () => {
+    it('installs from a URL and executes the adapter', async () => {
       allowLocalUrlPolicy();
       const req = new Request('http://localhost/api/registries', {
         method: 'POST',
         body: JSON.stringify({ type: 'url', source: evilUrl, slug: 'evil' }),
       });
       const res = await createRegistryHandler(db, manager, req);
-      expect(res.status).toBe(202);
+      expect(res.status).toBe(200);
       const body = await jsonOf(res);
       expect(body.registry.slug).toBe('evil');
-      expect(body.registry.status).toBe('pending');
+      expect(body.registry.status).toBe('installed');
       expect(body.registry.contentSha256).toMatch(/^[a-f0-9]{64}$/);
-      expect(body.manifest).toBeUndefined();
+      expect(body.registry.installedAt).toBeTruthy();
       expect(existsSync(join(managedDir, 'evil', 'adapter.ts'))).toBe(true);
-      expect(existsSync(markerPath)).toBe(false);
+      expect(existsSync(markerPath)).toBe(true);
+    });
+
+    it('installs from a URL and returns installed status', async () => {
+      allowLocalUrlPolicy();
+      const req = new Request('http://localhost/api/registries', {
+        method: 'POST',
+        body: JSON.stringify({ type: 'url', source: goodUrl, slug: 'good-reg' }),
+      });
+      const res = await createRegistryHandler(db, manager, req);
+      expect(res.status).toBe(200);
+      const body = await jsonOf(res);
+      expect(body.registry.slug).toBe('good-reg');
+      expect(body.registry.status).toBe('installed');
+      await manager.reload();
+      const listed = await manager.list();
+      expect(listed.some((m) => m.id === 'demo-registry')).toBe(true);
     });
 
     it('derives the slug when not provided', async () => {
@@ -177,10 +193,10 @@ describe('registries-routes', () => {
         body: JSON.stringify({ type: 'url', source: goodUrl }),
       });
       const res = await createRegistryHandler(db, manager, req);
-      expect(res.status).toBe(202);
+      expect(res.status).toBe(200);
       const body = await jsonOf(res);
       expect(body.registry.slug).toBe('good');
-      expect(body.registry.status).toBe('pending');
+      expect(body.registry.status).toBe('installed');
     });
 
     it('rejects bodies missing type or source', async () => {
@@ -234,15 +250,16 @@ describe('registries-routes', () => {
       expect(res.status).toBe(409);
     });
 
-    it('stages a malformed adapter as pending without importing it', async () => {
+    it('marks a malformed adapter as failed when execution fails', async () => {
       allowLocalUrlPolicy();
       const req = new Request('http://localhost/api/registries', {
         method: 'POST',
         body: JSON.stringify({ type: 'url', source: badUrl, slug: 'bad' }),
       });
       const res = await createRegistryHandler(db, manager, req);
-      expect(res.status).toBe(202);
-      expect(db.getRegistry('bad')?.status).toBe('pending');
+      expect(res.status).toBe(400);
+      expect(db.getRegistry('bad')?.status).toBe('failed');
+      expect(db.getRegistry('bad')?.lastError).toBeTruthy();
       expect(existsSync(join(managedDir, 'bad', 'adapter.ts'))).toBe(true);
     });
   });
@@ -301,7 +318,7 @@ describe('registries-routes', () => {
       expect(res.status).toBe(404);
     });
 
-    it('re-stages when source changes without importing and returns 202 pending', async () => {
+    it('re-installs when source changes and returns installed', async () => {
       allowLocalUrlPolicy();
       const create = new Request('http://localhost/api/registries', {
         method: 'POST',
@@ -315,11 +332,11 @@ describe('registries-routes', () => {
         body: JSON.stringify({ source: newGoodUrl }),
       });
       const res = await patchRegistryHandler(db, manager, 'r', req);
-      expect(res.status).toBe(202);
+      expect(res.status).toBe(200);
 
       const after = db.getRegistry('r')!;
       expect(after.source).toBe(newGoodUrl);
-      expect(after.status).toBe('pending');
+      expect(after.status).toBe('installed');
     });
 
     it('marks failed and keeps the new pointer when the new source is broken', async () => {
@@ -363,12 +380,12 @@ describe('registries-routes', () => {
 
       const after = db.getRegistry('same')!;
       expect(after.installedAt).toBe(before.installedAt);
-      expect(after.status).toBe('pending');
+      expect(after.status).toBe('installed');
     });
   });
 
   describe('POST /api/registries/:slug/refresh', () => {
-    it('re-stages without importing and returns 202 pending', async () => {
+    it('re-fetches and re-installs, returning installed', async () => {
       allowLocalUrlPolicy();
       const create = new Request('http://localhost/api/registries', {
         method: 'POST',
@@ -376,8 +393,8 @@ describe('registries-routes', () => {
       });
       await createRegistryHandler(db, manager, create);
       const res = await refreshRegistryHandler(db, manager, 'r');
-      expect(res.status).toBe(202);
-      expect(db.getRegistry('r')!.status).toBe('pending');
+      expect(res.status).toBe(200);
+      expect(db.getRegistry('r')!.status).toBe('installed');
       expect(existsSync(join(managedDir, 'r', 'adapter.ts'))).toBe(true);
     });
 
@@ -505,14 +522,16 @@ describe('registries-routes', () => {
           }),
         });
         const res = await createRegistryHandler(db, manager, req);
-        expect(res.status).toBe(202);
+        expect(res.status).toBe(200);
         const body = await jsonOf(res);
         expect(body.registry.slug).toBe('developer-kit');
         expect(body.registry.type).toBe('claude-marketplace');
-        expect(body.registry.status).toBe('pending');
-        expect(body.manifest).toBeUndefined();
+        expect(body.registry.status).toBe('installed');
         expect(existsSync(join(managedDir, 'developer-kit', 'marketplace.json'))).toBe(true);
         expect(existsSync(join(managedDir, 'developer-kit', 'marketplace.meta.json'))).toBe(true);
+        await manager.reload();
+        const listed = await manager.list();
+        expect(listed.some((m) => m.id === 'developer-kit')).toBe(true);
       } finally {
         mpServer.stop();
       }

@@ -6,6 +6,7 @@ import * as config from '../../../shared/config';
 import { CapaDatabase } from '../../../db/database';
 import * as safeRemoteUrl from '../../../shared/safe-remote-url';
 import {
+  detectRegistrySourceType,
   registryAddCommand,
   registryApproveCommand,
   registryListCommand,
@@ -26,6 +27,30 @@ const VALID_ADAPTER = `export default {
 };`;
 
 const BAD_ADAPTER = `export default { not_an_adapter: true };`;
+
+describe('detectRegistrySourceType', () => {
+  it('treats bare owner/repo as claude-marketplace', () => {
+    expect(detectRegistrySourceType('owner/repo')).toBe('claude-marketplace');
+  });
+
+  it('treats marketplace.json URLs as claude-marketplace', () => {
+    expect(
+      detectRegistrySourceType('https://example.com/.claude-plugin/marketplace.json'),
+    ).toBe('claude-marketplace');
+  });
+
+  it('treats adapter URLs as url', () => {
+    expect(detectRegistrySourceType('https://example.com/adapter.ts')).toBe('url');
+  });
+
+  it('treats owner/repo@adapter as github', () => {
+    expect(detectRegistrySourceType('owner/repo@my-adapter')).toBe('github');
+  });
+
+  it('respects explicit type override', () => {
+    expect(detectRegistrySourceType('owner/repo', 'github')).toBe('github');
+  });
+});
 
 describe('registry CLI commands', () => {
   let tempDir: string;

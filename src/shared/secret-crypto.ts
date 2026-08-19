@@ -90,8 +90,8 @@ export function canonicalizeStoredSecret(value: string): string {
 	}
 }
 
-export function decryptSecret(value: string | null): string | null {
-	if (value === null) return null;
+export function decryptSecret(value: string | null | undefined): string | null {
+	if (value == null) return null;
 	if (!value.startsWith(SECRET_CIPHER_PREFIX)) return value;
 	try {
 		return decryptCiphertext(value);
@@ -100,8 +100,9 @@ export function decryptSecret(value: string | null): string | null {
 	}
 }
 
-export function decryptSecretString(value: string): string {
-	return decryptSecret(value) as string;
+export function decryptSecretString(value: string | null | undefined): string {
+	const decrypted = decryptSecret(value);
+	return decrypted ?? "";
 }
 
 export function secretHint(value: string | undefined): string {

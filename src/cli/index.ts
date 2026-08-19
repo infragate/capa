@@ -352,7 +352,9 @@ if (process.argv[2] === '__server__') {
 
     registryCmd
       .command('add <source> [slug]')
-      .description('Fetch a registry adapter from a git repo or HTTPS URL and install it')
+      .description(
+        'Add a registry adapter (git/HTTPS) or Claude marketplace (owner/repo) and install it',
+      )
       .option(
         '--type <type>',
         'Source type: github, gitlab, url, or claude-marketplace (auto-detected from source by default)',

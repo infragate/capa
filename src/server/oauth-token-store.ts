@@ -6,6 +6,71 @@ import { resolveTokenEndpoint } from "./oauth-endpoint-resolve";
 
 const tokenLogger = logger.child("OAuth2TokenStore");
 
+function resolveStoredClientId(
+	projectId: string,
+	serverId: string,
+	oauth2Config: OAuth2Config,
+	db: CapaDatabase,
+): string {
+	return (
+		db.getVariable(projectId, `oauth2_client_id_${serverId}`) ||
+		oauth2Config.client_id ||
+		oauth2Config.clientId ||
+		oauth2Config.oauth?.clientId ||
+		"capa"
+	);
+}
+
+function parseRefreshTokenResponse(raw: unknown): {
+	accessToken?: string;
+	refreshToken?: string;
+	tokenType?: string;
+	expiresIn?: number;
+	scope?: string;
+	error?: string;
+} {
+	return parseOAuthTokenExchangeResponse(raw);
+}
+
+/** Shared parser for OAuth token endpoint JSON (exchange + refresh). */
+export function parseOAuthTokenExchangeResponse(raw: unknown): {
+	accessToken?: string;
+	refreshToken?: string;
+	tokenType?: string;
+	expiresIn?: number;
+	scope?: string;
+	error?: string;
+} {
+	if (!raw || typeof raw !== "object") {
+		return { error: "Token response was not a JSON object" };
+	}
+	const body = raw as Record<string, unknown>;
+	if (body.ok === false && typeof body.error === "string") {
+		return { error: body.error };
+	}
+	if (typeof body.error === "string") {
+		return { error: body.error };
+	}
+	const accessToken =
+		typeof body.access_token === "string" ? body.access_token : undefined;
+	const refreshToken =
+		typeof body.refresh_token === "string" ? body.refresh_token : undefined;
+	const tokenType =
+		typeof body.token_type === "string" ? body.token_type : undefined;
+	const scope = typeof body.scope === "string" ? body.scope : undefined;
+	const expiresInRaw = body.expires_in;
+	const expiresIn =
+		typeof expiresInRaw === "number"
+			? expiresInRaw
+			: typeof expiresInRaw === "string"
+				? Number(expiresInRaw)
+				: undefined;
+	if (!accessToken) {
+		return { error: "Token response did not include access_token" };
+	}
+	return { accessToken, refreshToken, tokenType, scope, expiresIn };
+}
+
 /**
  * Refresh access token using refresh token
  */
@@ -29,8 +94,12 @@ export async function refreshAccessToken(
 
 		log.info(`Refreshing access token for ${serverId}`);
 
-		const clientId =
-			db.getVariable(projectId, `oauth2_client_id_${serverId}`) || "capa";
+		const clientId = resolveStoredClientId(
+			projectId,
+			serverId,
+			oauth2Config,
+			db,
+		);
 		const clientSecret = db.getVariable(
 			projectId,
 			`oauth2_client_secret_${serverId}`,
@@ -74,18 +143,33 @@ export async function refreshAccessToken(
 			return false;
 		}
 
-		const newTokenData = await response.json();
+		const parsed = parseRefreshTokenResponse(await response.json());
+		if (parsed.error || !parsed.accessToken) {
+			const message = parsed.error || "Token response did not include access_token";
+			log.failure(`Token refresh failed: ${message}`);
+			if (
+				isPermanentRefreshFailure(undefined, response, message) ||
+				/invalid|expired|revoked|not_found|unauthorized/i.test(message)
+			) {
+				db.deleteOAuthToken(projectId, serverId);
+				log.info(`Deleted invalid token for ${serverId}`);
+			} else {
+				log.warn(`Transient refresh failure for ${serverId}, keeping token`);
+			}
+			return false;
+		}
 
-		const expiresAt = newTokenData.expires_in
-			? Date.now() + newTokenData.expires_in * 1000
-			: undefined;
+		const expiresAt =
+			parsed.expiresIn && Number.isFinite(parsed.expiresIn)
+				? Date.now() + parsed.expiresIn * 1000
+				: undefined;
 
 		db.setOAuthToken(projectId, serverId, {
-			access_token: newTokenData.access_token,
-			refresh_token: newTokenData.refresh_token || tokenData.refresh_token,
-			token_type: newTokenData.token_type || "Bearer",
+			access_token: parsed.accessToken,
+			refresh_token: parsed.refreshToken || tokenData.refresh_token,
+			token_type: parsed.tokenType || "Bearer",
 			expires_at: expiresAt,
-			scope: newTokenData.scope || tokenData.scope,
+			scope: parsed.scope || tokenData.scope,
 		});
 
 		log.success(`Access token refreshed for ${serverId}`);

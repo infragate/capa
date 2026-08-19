@@ -42,6 +42,9 @@ export class MCPProxy {
 	private clients = new Map<string, Client>();
 	/** Launch fingerprint for each cached client (cmd/args/env/cwd/url/…). */
 	private clientFingerprints = new Map<string, string>();
+	/** Coalesce concurrent connects/listTools for the same server. */
+	private connectInFlight = new Map<string, Promise<Client | null>>();
+	private listToolsInFlight = new Map<string, Promise<any[]>>();
 	/** Last unexpected stdio exit reason per server (from transport onerror). */
 	private stdioExitReasons = new Map<string, string>();
 	private logger = logger.child("MCPProxy");
@@ -213,6 +216,36 @@ export class MCPProxy {
 		} = options;
 		// Strip @ prefix from server ID if present
 		const cleanServerId = serverId.replace("@", "");
+		const flightKey = `${cleanServerId}:${connect ? "c" : "nc"}:${timeoutMs}`;
+		const inFlight = this.listToolsInFlight.get(flightKey);
+		if (inFlight) {
+			this.logger.debug(
+				`Coalescing concurrent listTools for ${cleanServerId}`,
+			);
+			return inFlight;
+		}
+
+		const work = this.listToolsOnce(
+			cleanServerId,
+			serverDefinition,
+			{ throwOnError, timeoutMs, connect },
+		).finally(() => {
+			this.listToolsInFlight.delete(flightKey);
+		});
+		this.listToolsInFlight.set(flightKey, work);
+		return work;
+	}
+
+	private async listToolsOnce(
+		cleanServerId: string,
+		serverDefinition: MCPServerDefinition,
+		options: {
+			throwOnError: boolean;
+			timeoutMs: number;
+			connect: boolean;
+		},
+	): Promise<any[]> {
+		const { throwOnError, timeoutMs, connect } = options;
 
 		const resolvedServerDef = resolveVariablesInObject(
 			serverDefinition,
@@ -325,6 +358,30 @@ export class MCPProxy {
 			await this.closeServer(serverId);
 		}
 
+		const inFlight = this.connectInFlight.get(serverId);
+		if (inFlight) {
+			this.logger.debug(
+				`Coalescing concurrent connect for MCP server: ${serverId}`,
+			);
+			return inFlight;
+		}
+
+		const work = this.connectClientOnce(
+			serverId,
+			serverDefinition,
+			fingerprint,
+		).finally(() => {
+			this.connectInFlight.delete(serverId);
+		});
+		this.connectInFlight.set(serverId, work);
+		return work;
+	}
+
+	private async connectClientOnce(
+		serverId: string,
+		serverDefinition: MCPServerDefinition,
+		fingerprint: string,
+	): Promise<Client | null> {
 		this.logger.info(`Creating new MCP client for server: ${serverId}`);
 
 		// For local subprocess-based servers

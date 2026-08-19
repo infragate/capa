@@ -17,7 +17,9 @@ interface ServerToolsPanelProps {
 
 export function ServerToolsPanel({ projectId, serverId, search = '', prefetchedTools }: ServerToolsPanelProps) {
   const { t } = useTranslation('projects');
-  const { data: fetchedData, isLoading, error } = useServerTools(projectId, serverId);
+  const { data: fetchedData, isLoading, error } = useServerTools(projectId, serverId, {
+    enabled: !prefetchedTools,
+  });
 
   const tools = prefetchedTools ?? fetchedData ?? [];
 

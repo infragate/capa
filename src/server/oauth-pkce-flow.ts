@@ -10,6 +10,7 @@ import {
 	resolveAuthorizationEndpoint,
 	resolveTokenEndpoint,
 } from "./oauth-endpoint-resolve";
+import { parseOAuthTokenExchangeResponse } from "./oauth-token-store";
 import { sanitizeOAuthScope } from "./oauth-discovery";
 
 const pkceLogger = logger.child("OAuth2PKCE");
@@ -233,17 +234,28 @@ export async function handleCallback(
 		}
 
 		const tokenData = await tokenResponse.json();
+		const parsed = parseOAuthTokenExchangeResponse(tokenData);
+		if (parsed.error || !parsed.accessToken) {
+			const message =
+				parsed.error || "Token response did not include access_token";
+			log.failure(`Token exchange failed: ${message}`);
+			return {
+				success: false,
+				error: "Failed to exchange authorization code for tokens",
+			};
+		}
 
-		const expiresAt = tokenData.expires_in
-			? Date.now() + tokenData.expires_in * 1000
-			: undefined;
+		const expiresAt =
+			parsed.expiresIn && Number.isFinite(parsed.expiresIn)
+				? Date.now() + parsed.expiresIn * 1000
+				: undefined;
 
 		db.setOAuthToken(project_id, server_id, {
-			access_token: tokenData.access_token,
-			refresh_token: tokenData.refresh_token,
-			token_type: tokenData.token_type || "Bearer",
+			access_token: parsed.accessToken,
+			refresh_token: parsed.refreshToken,
+			token_type: parsed.tokenType || "Bearer",
 			expires_at: expiresAt,
-			scope: tokenData.scope,
+			scope: parsed.scope,
 		});
 
 		log.success(`Tokens stored for ${server_id}`);

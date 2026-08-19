@@ -329,11 +329,15 @@ export function useStartOAuth(projectId: string) {
   });
 }
 
-export function useServerTools(projectId: string | null, serverId: string | null) {
+export function useServerTools(
+  projectId: string | null,
+  serverId: string | null,
+  opts?: { enabled?: boolean },
+) {
   return useQuery({
     queryKey: ['server-tools', projectId, serverId],
     queryFn: () => projectsApi.getServerTools(projectId!, serverId!),
-    enabled: !!projectId && !!serverId,
+    enabled: (opts?.enabled ?? true) && !!projectId && !!serverId,
     select: (data) => data.tools,
     staleTime: 60_000,
     retry: false,

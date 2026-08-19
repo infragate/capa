@@ -40,7 +40,7 @@ export function RegistrySettingsPage() {
   const handleAdded = useCallback(
     (slug: string) => {
       setDialogOpen(false);
-      setFeedback({ type: 'success', message: t('settings.feedback.pending', { slug }) });
+      setFeedback({ type: 'success', message: t('settings.feedback.added', { slug }) });
     },
     [t],
   );

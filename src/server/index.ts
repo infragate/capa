@@ -58,6 +58,7 @@ import {
 	type McpMetaRouteDeps,
 } from "./mcp-meta-routes";
 import { OAuth2Manager } from "./oauth-manager";
+import { syncServerOAuth2Requirement } from "./oauth-server-sync";
 import {
 	handleDeleteProject,
 	handleGetProject,
@@ -1027,28 +1028,20 @@ class CapaServer {
 				);
 			}
 
-			// Ensure URL-based servers that require OAuth have def.oauth2 set (on-demand detection)
+			// Reconcile def.oauth2 with what each URL-based server actually requires.
 			let capabilitiesUpdated = false;
 			for (const server of capabilities.servers) {
-				const hasExplicitAuthOnDemand =
-					server.def.headers &&
-					Object.keys(server.def.headers).some(
-						(k) => k.toLowerCase() === "authorization",
-					);
-				if (server.def.url && !server.def.oauth2 && !hasExplicitAuthOnDemand) {
-					try {
-						const oauth2Config =
-							await this.oauth2Manager.detectOAuth2Requirement(server.def.url, {
-								tlsSkipVerify: server.def.tlsSkipVerify,
-							});
-						if (oauth2Config) {
-							apiLogger.debug(`OAuth2 detected for ${server.id} (on-demand)`);
-							server.def.oauth2 = oauth2Config;
-							capabilitiesUpdated = true;
-						}
-					} catch (detectionError: any) {
-						apiLogger.warn(
-							`OAuth2 detection failed for ${server.id}: ${detectionError?.message ?? detectionError}`,
+				if (!server.def.url) continue;
+				const sync = await syncServerOAuth2Requirement(
+					projectId,
+					server,
+					this.oauth2Manager,
+				);
+				if (sync.changed) {
+					capabilitiesUpdated = true;
+					if (!sync.entry) {
+						apiLogger.debug(
+							`Cleared stale OAuth2 config for ${server.id}`,
 						);
 					}
 				}
@@ -1363,12 +1356,15 @@ class CapaServer {
 					},
 				);
 				if (!detected) {
+					delete server.def.oauth2;
+					this.oauth2Manager.disconnect(projectId, serverId);
+					this.sessionManager.setProjectCapabilities(projectId, capabilities);
 					return new Response(
 						JSON.stringify({
 							error:
-								"Could not discover OAuth authorization endpoints for this server. Check that the MCP URL is reachable.",
+								"This server no longer requires OAuth. Refresh the page and try connecting to the server directly.",
 						}),
-						{ status: 502, headers: { "Content-Type": "application/json" } },
+						{ status: 409, headers: { "Content-Type": "application/json" } },
 					);
 				}
 				configForFlow = {
