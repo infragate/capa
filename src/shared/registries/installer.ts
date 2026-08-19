@@ -10,6 +10,7 @@ import {
 	writeFileSync,
 } from "fs";
 import { basename, join } from "path";
+import { pathToFileURL } from "url";
 import type { RegistrySourceType } from "../../types/database";
 import type { RegistryAdapter, RegistryManifest } from "../../types/registry";
 import type { AuthenticatedFetch } from "../authenticated-fetch";
@@ -581,7 +582,7 @@ async function snapshotForRegistry(
 
 async function loadAdapterFile(filePath: string): Promise<RegistryAdapter> {
 	const mtime = statSync(filePath).mtimeMs;
-	const moduleUrl = `file://${filePath.replace(/\\/g, "/")}?t=${mtime}`;
+	const moduleUrl = `${pathToFileURL(filePath).href}?t=${mtime}`;
 	let module;
 	try {
 		module = await import(moduleUrl);

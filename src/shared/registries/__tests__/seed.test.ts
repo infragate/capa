@@ -66,7 +66,11 @@ describe('seedDefaultRegistries', () => {
     urlPolicySpy.mockRestore();
     managedDirSpy.mockRestore();
     db.close();
-    rmSync(tempDir, { recursive: true, force: true });
+    try {
+      rmSync(tempDir, { recursive: true, force: true });
+    } catch {
+      // Windows can keep sqlite/imported adapter files mapped after db.close()
+    }
   });
 
   it('seeds the provided defaults on a fresh database', async () => {

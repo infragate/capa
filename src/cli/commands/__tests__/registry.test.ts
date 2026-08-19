@@ -62,13 +62,22 @@ describe('registry CLI commands', () => {
     writeFileSync(badAdapterFile, BAD_ADAPTER);
 
     originalFetch = globalThis.fetch;
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const href =
         typeof input === 'string'
           ? input
           : input instanceof URL
             ? input.href
             : input.url;
+      let host = '';
+      try {
+        host = new URL(href).hostname;
+      } catch {
+        host = '';
+      }
+      if (host !== 'example.com') {
+        return originalFetch(input as RequestInfo, init);
+      }
       if (href.includes('never-responds')) {
         throw new TypeError(
           `Failed to fetch ${href}: Unable to connect. Is the computer able to access the url?`,
@@ -348,13 +357,22 @@ describe('registry search CLI command', () => {
     writeFileSync(brokenAdapter, SEARCH_ADAPTER_THROWS);
 
     originalFetch = globalThis.fetch;
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const href =
         typeof input === 'string'
           ? input
           : input instanceof URL
             ? input.href
             : input.url;
+      let host = '';
+      try {
+        host = new URL(href).hostname;
+      } catch {
+        host = '';
+      }
+      if (host !== 'example.com') {
+        return originalFetch(input as RequestInfo, init);
+      }
       const path = new URL(href).pathname;
       if (path.endsWith('/skills-adapter.ts')) {
         return new Response(readFileSync(skillsAdapter, 'utf-8'), {
