@@ -95,4 +95,21 @@ describe('runTasks (--headless)', () => {
     expect(output).toContain(AUTH_URL);
     expect(output).not.toContain(ERASE_SPINNER_LINES);
   });
+
+  it('uses linear output instead of the clack spinner when --headless is set', async () => {
+    restore.push(setIsTTY(process.stdin, true), setIsTTY(process.stdout, true));
+    delete process.env.CI;
+    setFlags({ headless: true });
+
+    const output = await captureStdio(async () => {
+      await runTasks([
+        { title: 'First step', task: async () => {} },
+        { title: 'Second step', task: async () => {} },
+      ]);
+    });
+
+    expect(output).toContain('❯ First step');
+    expect(output).toContain('✔ First step');
+    expect(output).not.toContain(ERASE_SPINNER_LINES);
+  });
 });

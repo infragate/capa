@@ -1,27 +1,128 @@
-import { existsSync, mkdirSync } from "fs";
+import {
+	existsSync,
+	mkdirSync,
+	readdirSync,
+	readFileSync,
+	realpathSync,
+	writeFileSync,
+} from "fs";
+import { join } from "path";
 import type { AuthenticatedFetch } from "../authenticated-fetch";
-import { git } from "./git-cli";
-import { type CachePlatform, getRepoCacheDir, getRepoMirrorDir } from "./paths";
+import { git, gitHttpCredentialEnv } from "./git-cli";
+import {
+	type CachePlatform,
+	getCacheDir,
+	getRepoCacheDir,
+	getRepoMirrorDir,
+} from "./paths";
 import { validateRepoPath } from "./validate";
 
-/**
- * Build the authenticated git URL for cloning, embedding an OAuth token when
- * one is available.
- */
-function buildAuthenticatedRepoUrl(
+function publicHttpsRepoUrl(
 	platform: CachePlatform,
 	repoPath: string,
-	authFetch: AuthenticatedFetch,
 ): string {
 	validateRepoPath(repoPath);
-	const baseHost = `${platform}.com`;
-	const probeUrl = `https://${baseHost}/${repoPath}`;
-	const hasAuth = authFetch.hasAuth(probeUrl);
-	if (!hasAuth) {
-		return `https://${baseHost}/${repoPath}.git`;
+	return `https://${platform}.com/${repoPath}.git`;
+}
+
+/** Strip userinfo from an http(s) URL. Returns null when there is none or the value is not an http(s) URL. */
+function stripUserinfoFromHttpUrl(raw: string): string | null {
+	const trimmed = raw.trim().replace(/^["']|["']$/g, "");
+	try {
+		const u = new URL(trimmed);
+		if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+		if (!u.username && !u.password) return null;
+		u.username = "";
+		u.password = "";
+		let out = u.toString();
+		if (!trimmed.endsWith("/") && out.endsWith("/")) {
+			out = out.slice(0, -1);
+		}
+		return out;
+	} catch {
+		return null;
 	}
-	const token = authFetch.getTokenForUrl(probeUrl);
-	return `https://oauth2:${token}@${baseHost}/${repoPath}.git`;
+}
+
+function stripHttpUrlUserinfo(url: string): string {
+	return stripUserinfoFromHttpUrl(url) ?? url;
+}
+
+function credentialEnvFor(
+	url: string,
+	authFetch: AuthenticatedFetch,
+): Record<string, string> | undefined {
+	if (!authFetch.hasAuth(url)) return undefined;
+	const token = authFetch.getTokenForUrl(url);
+	if (!token) return undefined;
+	return gitHttpCredentialEnv(token);
+}
+
+function scrubGitConfigText(text: string): string {
+	return text.replace(
+		/^([ \t]*(?:push)?url[ \t]*=[ \t]*)(.*)$/gim,
+		(full, prefix: string, value: string) => {
+			const stripped = stripUserinfoFromHttpUrl(value);
+			return stripped ? `${prefix}${stripped}` : full;
+		},
+	);
+}
+
+function scrubMirrorConfigFile(mirrorDir: string): void {
+	const configPath = join(mirrorDir, "config");
+	try {
+		const original = readFileSync(configPath, "utf8");
+		const next = scrubGitConfigText(original);
+		if (next !== original) {
+			writeFileSync(configPath, next);
+		}
+	} catch {
+		// Missing, unreadable, or unwritable configs are left as-is.
+	}
+}
+
+function walkAndScrubMirrors(
+	dir: string,
+	depth: number,
+	seen: Set<string>,
+): void {
+	if (depth > 8) return;
+	let real: string;
+	try {
+		real = realpathSync(dir);
+	} catch {
+		return;
+	}
+	if (seen.has(real)) return;
+	seen.add(real);
+
+	let entries;
+	try {
+		entries = readdirSync(dir, { withFileTypes: true });
+	} catch {
+		return;
+	}
+	for (const entry of entries) {
+		if (entry.isSymbolicLink() || !entry.isDirectory()) continue;
+		// Snapshot trees are huge materialized checkouts — never walk them.
+		if (entry.name === "snapshots") continue;
+		const p = join(dir, entry.name);
+		if (entry.name === "mirror") {
+			scrubMirrorConfigFile(p);
+			continue;
+		}
+		walkAndScrubMirrors(p, depth + 1, seen);
+	}
+}
+
+const scrubbedGitRoots = new Set<string>();
+
+/** Rewrite cached mirror remotes that still embed oauth2:/userinfo tokens. */
+export function scrubCachedMirrorAuthUrls(): void {
+	const gitRoot = join(getCacheDir(), "git");
+	if (scrubbedGitRoots.has(gitRoot)) return;
+	scrubbedGitRoots.add(gitRoot);
+	walkAndScrubMirrors(gitRoot, 0, new Set());
 }
 
 /**
@@ -38,13 +139,17 @@ export async function ensureMirrorClone(
 	repoUrl?: string,
 ): Promise<string> {
 	validateRepoPath(repoPath);
+	scrubCachedMirrorAuthUrls();
 	const mirrorDir = getRepoMirrorDir(platform, repoPath);
 	if (existsSync(mirrorDir)) {
+		scrubMirrorConfigFile(mirrorDir);
 		return mirrorDir;
 	}
 	mkdirSync(getRepoCacheDir(platform, repoPath), { recursive: true });
-	const url =
-		repoUrl ?? buildAuthenticatedRepoUrl(platform, repoPath, authFetch);
+	const url = stripHttpUrlUserinfo(
+		repoUrl ?? publicHttpsRepoUrl(platform, repoPath),
+	);
+	const env = credentialEnvFor(url, authFetch);
 	// Blobless partial clone: fetch the full commit/tree graph (so any SHA, tag,
 	// or branch still resolves offline via resolveRef) but skip all historical
 	// file contents. On a big repo (e.g. remotion) this avoids downloading every
@@ -60,16 +165,41 @@ export async function ensureMirrorClone(
 	//
 	// Requires git >= 2.19. Servers without partial-clone support degrade
 	// gracefully to a full clone (git warns and ignores the filter).
-	await git(["clone", "--mirror", "--filter=blob:none", url, mirrorDir]);
+	await git(["clone", "--mirror", "--filter=blob:none", url, mirrorDir], {
+		env,
+	});
+	await git(["-C", mirrorDir, "remote", "set-url", "origin", url]);
 	return mirrorDir;
 }
 
 /**
  * Update an existing mirror clone (`git remote update`). Used when a requested
  * version/ref isn't yet present in the mirror.
+ *
+ * Credentials are injected per-call via env (never stored in the remote URL).
  */
-export async function fetchMirror(mirrorDir: string): Promise<void> {
-	await git(["-C", mirrorDir, "remote", "update", "--prune"]);
+export async function fetchMirror(
+	mirrorDir: string,
+	authFetch?: AuthenticatedFetch,
+): Promise<void> {
+	scrubCachedMirrorAuthUrls();
+	scrubMirrorConfigFile(mirrorDir);
+	let env: Record<string, string> | undefined;
+	if (authFetch) {
+		try {
+			const { stdout } = await git([
+				"-C",
+				mirrorDir,
+				"remote",
+				"get-url",
+				"origin",
+			]);
+			env = credentialEnvFor(stdout.trim(), authFetch);
+		} catch {
+			// No origin remote — update may still succeed for other remotes.
+		}
+	}
+	await git(["-C", mirrorDir, "remote", "update", "--prune"], { env });
 }
 
 /**
@@ -139,13 +269,14 @@ export interface ResolveResult {
 export async function resolveRef(
 	mirrorDir: string,
 	opts: ResolveOptions,
+	authFetch?: AuthenticatedFetch,
 ): Promise<ResolveResult> {
 	const { version, ref, pinnedSha } = opts;
 
 	if (pinnedSha) {
 		const sha = await tryResolveRefInMirror(mirrorDir, pinnedSha);
 		if (sha) return { sha, version: version ?? null };
-		await fetchMirror(mirrorDir);
+		await fetchMirror(mirrorDir, authFetch);
 		const sha2 = await tryResolveRefInMirror(mirrorDir, pinnedSha);
 		if (sha2) return { sha: sha2, version: version ?? null };
 		throw new Error(
@@ -156,7 +287,7 @@ export async function resolveRef(
 	if (ref) {
 		const sha = await tryResolveRefInMirror(mirrorDir, ref);
 		if (sha) return { sha, version: null };
-		await fetchMirror(mirrorDir);
+		await fetchMirror(mirrorDir, authFetch);
 		const sha2 = await tryResolveRefInMirror(mirrorDir, ref);
 		if (sha2) return { sha: sha2, version: null };
 		throw new Error(`Commit ${ref} not found in repository at ${mirrorDir}`);
@@ -165,7 +296,7 @@ export async function resolveRef(
 	if (version) {
 		const sha = await tryResolveRefInMirror(mirrorDir, version);
 		if (sha) return { sha, version };
-		await fetchMirror(mirrorDir);
+		await fetchMirror(mirrorDir, authFetch);
 		const sha2 = await tryResolveRefInMirror(mirrorDir, version);
 		if (sha2) return { sha: sha2, version };
 		throw new Error(

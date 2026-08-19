@@ -160,17 +160,21 @@ export async function getOrCreateSnapshot(
 	const isUnpinned = !opts.pinnedSha && !opts.ref && !opts.version;
 	if (isUnpinned && mirrorPreexisted) {
 		try {
-			await fetchMirror(mirrorDir);
+			await fetchMirror(mirrorDir, authFetch);
 		} catch {
 			// Offline or transient network failure — fall back to the cached mirror.
 		}
 	}
 
-	const { sha, version } = await resolveRef(mirrorDir, {
-		version: opts.version,
-		ref: opts.ref,
-		pinnedSha: opts.pinnedSha,
-	});
+	const { sha, version } = await resolveRef(
+		mirrorDir,
+		{
+			version: opts.version,
+			ref: opts.ref,
+			pinnedSha: opts.pinnedSha,
+		},
+		authFetch,
+	);
 	const snapshotDir = await materializeSnapshot(
 		mirrorDir,
 		platform,

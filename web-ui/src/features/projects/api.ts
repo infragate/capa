@@ -1,4 +1,4 @@
-import { api } from '../../lib/api';
+import { api, apiAuthHeaders } from '../../lib/api';
 import type {
   ProjectsResponse,
   ProjectDetail,
@@ -158,7 +158,7 @@ export const projectsApi = {
     if (opts?.subdir) form.append('subdir', opts.subdir);
     const res = await fetch(
       `/api/projects/${encodeURIComponent(projectId)}/fs`,
-      { method: 'POST', body: form },
+      { method: 'POST', body: form, headers: apiAuthHeaders() },
     );
     if (!res.ok) {
       const text = await res.text().catch(() => res.statusText);

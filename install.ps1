@@ -239,7 +239,11 @@ function Add-ToPath {
 
 function Install-Capa {
     # Fetch the latest version
-    $APP_VERSION = Get-LatestVersion
+    if ($env:CAPA_VERSION) {
+        $APP_VERSION = $env:CAPA_VERSION -replace '^v', ''
+    } else {
+        $APP_VERSION = Get-LatestVersion
+    }
     
     $bannerInner = 39
     $bannerTitle = "  CAPA Installer v$APP_VERSION"

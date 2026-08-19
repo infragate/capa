@@ -2,6 +2,11 @@ import type { CapaDatabase } from "../../db/database";
 import type { RegistrySourceType } from "../../types/database";
 import type { AuthenticatedFetch } from "../authenticated-fetch";
 import { createAuthenticatedFetch } from "../authenticated-fetch";
+import {
+	BUNDLED_ADAPTER_PINS,
+	bundledSource,
+	type BundledAdapterSlug,
+} from "./bundled";
 import { installRegistry } from "./installer";
 import type { RegistryManager } from "./manager";
 
@@ -11,24 +16,26 @@ export interface DefaultRegistrySeed {
 	slug: string;
 	type: RegistrySourceType;
 	source: string;
+	/** Compiled SHA-256 of the vendored adapter bytes (required for bundled defaults). */
+	contentSha256?: string;
 }
 
-// The example adapters that ship in this repo under `registries/<name>/`.
-// Each is published as a subdirectory of `infragate/capa`, so we can point
-// at them with the same repo-string form a user would type:
-//   capa registry add infragate/capa@<name>
+function bundledSeed(slug: BundledAdapterSlug): DefaultRegistrySeed {
+	return {
+		slug,
+		type: "url",
+		source: bundledSource(slug),
+		contentSha256: BUNDLED_ADAPTER_PINS[slug],
+	};
+}
+
+// First-party adapters ship in this package under `registries/<name>/adapter.ts`.
+// First start copies those bytes into the managed dir and records the compiled
+// content hash. GitHub is never consulted.
 export const DEFAULT_REGISTRIES: DefaultRegistrySeed[] = [
-	{ slug: "skills-sh", type: "github", source: "infragate/capa@skills-sh" },
-	{
-		slug: "claude-plugins",
-		type: "github",
-		source: "infragate/capa@claude-plugins",
-	},
-	{
-		slug: "cursor-marketplace",
-		type: "github",
-		source: "infragate/capa@cursor-marketplace",
-	},
+	bundledSeed("skills-sh"),
+	bundledSeed("claude-plugins"),
+	bundledSeed("cursor-marketplace"),
 ];
 
 export interface SeedLogger {
@@ -105,6 +112,7 @@ export async function seedDefaultRegistries(
 				lastError: null,
 				resolvedRef: result.resolvedRef,
 				installedAt: Date.now(),
+				contentSha256: result.contentSha256,
 			});
 			installed.push(seed.slug);
 			log.success?.(`Seeded default registry "${seed.slug}"`);

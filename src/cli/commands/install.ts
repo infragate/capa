@@ -15,6 +15,8 @@ import { buildInstallTasks } from './install-tasks';
 import type { InstallCtx, InstallOptions } from './install-tasks';
 import { refuseIfWrapWorkspace } from '../utils/wrap/marker';
 import { isUnderWrapWorkspacesDir } from '../../shared/workspaces/paths';
+import { confirmInstallExecution } from './install-confirm';
+import { getInstallErrorMode } from './install-tasks/install-error-policy';
 
 export type { InstallOptions, GetRepoSnapshotFn } from './install-tasks';
 
@@ -40,6 +42,7 @@ export async function installCommand(
   let skipCredentialOpen = false;
   let passthrough = false;
   let persistProviders = true;
+  let dryRun = false;
   if (typeof envFileOrOptions === 'object' && envFileOrOptions !== null) {
     envFile = envFileOrOptions.envFile;
     flagProvider = envFileOrOptions.provider;
@@ -54,6 +57,7 @@ export async function installCommand(
     skipCredentialOpen = !!envFileOrOptions.skipCredentialOpen;
     passthrough = !!envFileOrOptions.passthrough;
     if (envFileOrOptions.persistProviders === false) persistProviders = false;
+    dryRun = !!envFileOrOptions.dryRun;
   } else {
     envFile = envFileOrOptions;
   }
@@ -66,6 +70,7 @@ export async function installCommand(
       noCache,
       projectPath,
       exitProcess,
+      dryRun,
     });
     return;
   }
@@ -83,6 +88,7 @@ export async function installCommand(
       skipPrerequisites,
       skipCredentialOpen,
       persistProviders,
+      dryRun,
       // Only refuse wrap cwd when the caller did not pass an explicit projectPath
       // (wrap itself always passes one).
       refuseWrapCwd:
@@ -106,6 +112,7 @@ async function installCommandBody(opts: {
   skipCredentialOpen: boolean;
   persistProviders: boolean;
   refuseWrapCwd: boolean;
+  dryRun: boolean;
 }): Promise<void> {
   const {
     envFile,
@@ -116,6 +123,7 @@ async function installCommandBody(opts: {
     skipCredentialOpen,
     persistProviders,
     refuseWrapCwd,
+    dryRun,
   } = opts;
   const projectPath = opts.projectPath;
   const identityPath = opts.identityPath;
@@ -148,6 +156,19 @@ async function installCommandBody(opts: {
 
   const reqCmds = capabilities.options?.requiresCommands;
   const projectId = generateProjectId(idPath);
+
+  try {
+    const decision = await confirmInstallExecution({
+      projectId,
+      capabilities,
+      dryRun,
+    });
+    if (decision === 'dry-run') return;
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    failExit(message, exitProcess);
+  }
+
   const serverStatus = await ensureServer(VERSION);
 
   if (!serverStatus.running || !serverStatus.url) {
@@ -210,6 +231,8 @@ async function installCommandBody(opts: {
     failExit(message, exitProcess);
   }
 
+  const installErrorMode = getInstallErrorMode(capabilities);
+
   // Hoisted so the catch block can surface ctx.errors accumulated before the throw.
   const initialCtx: InstallCtx = {
     projectPath,
@@ -234,12 +257,13 @@ async function installCommandBody(opts: {
     skipped: 0,
     warnings: [],
     errors: [],
+    installErrorMode,
   };
 
   try {
     const ctx = await runTasks(
       buildInstallTasks(reqCmds, { skipPrerequisites, skipCredentialOpen }),
-      { exitOnError: true },
+      { exitOnError: installErrorMode === 'stop' },
       initialCtx,
     );
 
@@ -260,9 +284,9 @@ async function installCommandBody(opts: {
       skipped: ctx.skipped,
       elapsedMs: Date.now() - startedAt,
     });
-    // Exit non-zero on accumulated per-task failures (continue-on-error mode).
-    if (initialCtx.failed > 0) {
-      failExit(`Install completed with ${initialCtx.failed} failure(s).`, exitProcess);
+    // Exit non-zero on accumulated failures only when configured to stop.
+    if (installErrorMode === 'stop' && ctx.failed > 0) {
+      failExit(`Install completed with ${ctx.failed} failure(s).`, exitProcess);
     }
   } catch (err: unknown) {
     for (const e of initialCtx.errors) error(e);
@@ -274,13 +298,19 @@ async function installCommandBody(opts: {
       elapsedMs: Date.now() - startedAt,
     });
     if (err instanceof Error) {
+      if (installErrorMode === 'warn') {
+        warn(err.message);
+        return;
+      }
       if (exitProcess) {
         console.error(`✗ ${err.message}`);
         process.exit(1);
       }
       throw err;
     }
-    throw err;
+    if (installErrorMode === 'stop') {
+      throw err;
+    }
   } finally {
     try {
       db.close();

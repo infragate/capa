@@ -1,6 +1,6 @@
 import { createHash } from "crypto";
 import { existsSync, realpathSync } from "fs";
-import { basename, relative, resolve, sep } from "path";
+import { basename, dirname, join, relative, resolve, sep } from "path";
 
 /**
  * Resolve to an absolute path, preferring the realpath when the target exists.
@@ -11,6 +11,15 @@ export function canonicalizePath(projectPath: string): string {
 	const absPath = resolve(projectPath);
 	try {
 		if (existsSync(absPath)) return realpathSync(absPath);
+		let cur = absPath;
+		while (true) {
+			const parent = dirname(cur);
+			if (parent === cur) break;
+			if (existsSync(parent)) {
+				return join(realpathSync(parent), relative(parent, absPath));
+			}
+			cur = parent;
+		}
 	} catch {
 		// Fall through to resolve() when realpath fails (dangling link, race, etc.).
 	}

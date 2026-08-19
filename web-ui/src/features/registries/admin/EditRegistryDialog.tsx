@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { useTranslation } from 'react-i18next';
-import { X, Eye, AlertTriangle, Loader2 } from 'lucide-react';
+import { X, Eye, AlertTriangle, Info, Loader2 } from 'lucide-react';
 import { ApiError } from '../../../lib/api';
 import { useEditRegistry, usePreviewRegistry } from '../hooks';
 import type { RegistryAdminRecord, RegistrySourceType } from '../api';
@@ -200,6 +200,13 @@ export function EditRegistryDialog({
                 />
               </label>
 
+              {isMarketplace && (
+                <div className="flex items-start gap-2 rounded-sm border border-info-border bg-info-bg px-3 py-2 text-xs text-info-text">
+                  <Info className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
+                  <span>{t('addDialog.marketplaceHint')}</span>
+                </div>
+              )}
+
               <div className="flex items-center gap-2">
                 <button
                   type="button"
@@ -237,7 +244,11 @@ export function EditRegistryDialog({
                     />
                   ) : (
                     <div className="flex items-center gap-2 px-3 py-6 text-xs text-text-tertiary">
-                      <AlertTriangle className="h-3.5 w-3.5" />
+                      {isMarketplace ? (
+                        <Info className="h-3.5 w-3.5" />
+                      ) : (
+                        <AlertTriangle className="h-3.5 w-3.5" />
+                      )}
                       <span>
                         {t(
                           isMarketplace
@@ -260,7 +271,11 @@ export function EditRegistryDialog({
 
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border-secondary px-6 py-4">
             {isMarketplace ? (
-              <span className="text-xs text-text-secondary">{t('addDialog.marketplaceHint')}</span>
+              <span className="text-xs text-text-secondary">
+                {preview && changed
+                  ? t('addDialog.marketplaceReady')
+                  : t('addDialog.marketplaceHint')}
+              </span>
             ) : (
               <label
                 className={

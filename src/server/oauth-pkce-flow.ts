@@ -10,8 +10,17 @@ import {
 	resolveAuthorizationEndpoint,
 	resolveTokenEndpoint,
 } from "./oauth-endpoint-resolve";
+import { parseOAuthTokenExchangeResponse } from "./oauth-token-store";
+import { sanitizeOAuthScope } from "./oauth-discovery";
 
 const pkceLogger = logger.child("OAuth2PKCE");
+
+/** Optional DCR metadata; localhost matches typical Keycloak trustedHosts policies. */
+export function clientUriForRegistration(redirectUri: string): string {
+	const redirect = new URL(redirectUri);
+	const port = redirect.port ? `:${redirect.port}` : "";
+	return `http://localhost${port}`;
+}
 
 /**
  * Register a dynamic OAuth client (RFC 7591)
@@ -27,7 +36,7 @@ export async function registerClient(
 		},
 		body: JSON.stringify({
 			client_name: "CAPA - Capabilities Package Manager",
-			client_uri: "https://github.com/infragate/capa",
+			client_uri: clientUriForRegistration(redirectUri),
 			redirect_uris: [redirectUri],
 			grant_types: ["authorization_code", "refresh_token"],
 			response_types: ["code"],
@@ -113,7 +122,10 @@ export async function generateAuthorizationUrl(
 	authUrl.searchParams.set("code_challenge_method", "S256");
 
 	if (oauth2Config.scope) {
-		authUrl.searchParams.set("scope", oauth2Config.scope);
+		const scope = sanitizeOAuthScope(oauth2Config.scope);
+		if (scope) {
+			authUrl.searchParams.set("scope", scope);
+		}
 	}
 
 	log.info(`Generated authorization URL for ${serverId}`);
@@ -222,17 +234,28 @@ export async function handleCallback(
 		}
 
 		const tokenData = await tokenResponse.json();
+		const parsed = parseOAuthTokenExchangeResponse(tokenData);
+		if (parsed.error || !parsed.accessToken) {
+			const message =
+				parsed.error || "Token response did not include access_token";
+			log.failure(`Token exchange failed: ${message}`);
+			return {
+				success: false,
+				error: "Failed to exchange authorization code for tokens",
+			};
+		}
 
-		const expiresAt = tokenData.expires_in
-			? Date.now() + tokenData.expires_in * 1000
-			: undefined;
+		const expiresAt =
+			parsed.expiresIn && Number.isFinite(parsed.expiresIn)
+				? Date.now() + parsed.expiresIn * 1000
+				: undefined;
 
 		db.setOAuthToken(project_id, server_id, {
-			access_token: tokenData.access_token,
-			refresh_token: tokenData.refresh_token,
-			token_type: tokenData.token_type || "Bearer",
+			access_token: parsed.accessToken,
+			refresh_token: parsed.refreshToken,
+			token_type: parsed.tokenType || "Bearer",
 			expires_at: expiresAt,
-			scope: tokenData.scope,
+			scope: parsed.scope,
 		});
 
 		log.success(`Tokens stored for ${server_id}`);

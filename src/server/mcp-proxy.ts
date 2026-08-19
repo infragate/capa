@@ -2,6 +2,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { CapaDatabase } from "../db/database";
 import { logger } from "../shared/logger";
+import { isStdioTrusted } from "../shared/stdio-allowlist";
 import {
 	hasUnresolvedVariables,
 	resolveVariablesInObject,
@@ -41,6 +42,9 @@ export class MCPProxy {
 	private clients = new Map<string, Client>();
 	/** Launch fingerprint for each cached client (cmd/args/env/cwd/url/…). */
 	private clientFingerprints = new Map<string, string>();
+	/** Coalesce concurrent connects/listTools for the same server. */
+	private connectInFlight = new Map<string, Promise<Client | null>>();
+	private listToolsInFlight = new Map<string, Promise<any[]>>();
 	/** Last unexpected stdio exit reason per server (from transport onerror). */
 	private stdioExitReasons = new Map<string, string>();
 	private logger = logger.child("MCPProxy");
@@ -199,11 +203,49 @@ export class MCPProxy {
 	async listTools(
 		serverId: string,
 		serverDefinition: MCPServerDefinition,
-		options: { throwOnError?: boolean; timeoutMs?: number } = {},
+		options: {
+			throwOnError?: boolean;
+			timeoutMs?: number;
+			connect?: boolean;
+		} = {},
 	): Promise<any[]> {
-		const { throwOnError = false, timeoutMs = 15000 } = options;
+		const {
+			throwOnError = false,
+			timeoutMs = 15000,
+			connect = true,
+		} = options;
 		// Strip @ prefix from server ID if present
 		const cleanServerId = serverId.replace("@", "");
+		const flightKey = `${cleanServerId}:${connect ? "c" : "nc"}:${timeoutMs}`;
+		const inFlight = this.listToolsInFlight.get(flightKey);
+		if (inFlight) {
+			this.logger.debug(
+				`Coalescing concurrent listTools for ${cleanServerId}`,
+			);
+			return inFlight;
+		}
+
+		const work = this.listToolsOnce(
+			cleanServerId,
+			serverDefinition,
+			{ throwOnError, timeoutMs, connect },
+		).finally(() => {
+			this.listToolsInFlight.delete(flightKey);
+		});
+		this.listToolsInFlight.set(flightKey, work);
+		return work;
+	}
+
+	private async listToolsOnce(
+		cleanServerId: string,
+		serverDefinition: MCPServerDefinition,
+		options: {
+			throwOnError: boolean;
+			timeoutMs: number;
+			connect: boolean;
+		},
+	): Promise<any[]> {
+		const { throwOnError, timeoutMs, connect } = options;
 
 		const resolvedServerDef = resolveVariablesInObject(
 			serverDefinition,
@@ -213,7 +255,22 @@ export class MCPProxy {
 
 		let client: Client | null;
 		try {
-			client = await this.getOrCreateClient(cleanServerId, resolvedServerDef);
+			if (!connect) {
+				client = this.clients.get(cleanServerId) ?? null;
+				if (!client) {
+					if (throwOnError) {
+						throw new Error(
+							`MCP server "${cleanServerId}" is not connected`,
+						);
+					}
+					return [];
+				}
+			} else {
+				client = await this.getOrCreateClient(
+					cleanServerId,
+					resolvedServerDef,
+				);
+			}
 		} catch (error) {
 			if (error instanceof MCPOAuthDisconnectedError) {
 				if (throwOnError) throw error;
@@ -233,6 +290,10 @@ export class MCPProxy {
 			return result.tools;
 		} catch (error) {
 			if (error instanceof MCPSessionExpiredError) {
+				if (!connect) {
+					if (throwOnError) throw error;
+					return [];
+				}
 				this.logger.warn(
 					`Session expired for ${cleanServerId}, reconnecting...`,
 				);
@@ -297,6 +358,30 @@ export class MCPProxy {
 			await this.closeServer(serverId);
 		}
 
+		const inFlight = this.connectInFlight.get(serverId);
+		if (inFlight) {
+			this.logger.debug(
+				`Coalescing concurrent connect for MCP server: ${serverId}`,
+			);
+			return inFlight;
+		}
+
+		const work = this.connectClientOnce(
+			serverId,
+			serverDefinition,
+			fingerprint,
+		).finally(() => {
+			this.connectInFlight.delete(serverId);
+		});
+		this.connectInFlight.set(serverId, work);
+		return work;
+	}
+
+	private async connectClientOnce(
+		serverId: string,
+		serverDefinition: MCPServerDefinition,
+		fingerprint: string,
+	): Promise<Client | null> {
 		this.logger.info(`Creating new MCP client for server: ${serverId}`);
 
 		// For local subprocess-based servers
@@ -392,6 +477,12 @@ export class MCPProxy {
 		fingerprint: string,
 	): Promise<Client | null> {
 		try {
+			if (!isStdioTrusted(this.projectId, serverDefinition)) {
+				this.logger.warn(
+					`Refusing to spawn untrusted stdio MCP server ${serverId}`,
+				);
+				return null;
+			}
 			this.logger.info(`Creating stdio client for: ${serverId}`);
 			this.logger.debug(
 				`Command: ${serverDefinition.cmd}, Args: ${JSON.stringify(serverDefinition.args || [])}`,

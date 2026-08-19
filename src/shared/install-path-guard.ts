@@ -123,6 +123,19 @@ function relativeFromProjectReal(projectRoot: string, absPath: string): string {
  * on the way is a symlink. Symlinks can redirect capa writes outside the
  * logical provider tree (e.g. `.cursor/skills` → `../skills`).
  */
+/** Non-throwing counterpart to {@link assertCapaOwnedInstallPath}. */
+export function isCapaOwnedInstallPath(
+	projectRoot: string,
+	destPath: string,
+): boolean {
+	try {
+		assertCapaOwnedInstallPath(projectRoot, destPath);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
 export function assertCapaOwnedInstallPath(
 	projectRoot: string,
 	destPath: string,

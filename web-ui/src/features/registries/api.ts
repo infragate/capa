@@ -21,6 +21,7 @@ export interface RegistryAdminRecord {
   lastError: string | null;
   resolvedRef: string | null;
   installedAt: number | null;
+  contentSha256: string | null;
   createdAt: number;
   updatedAt: number;
   manifest: RegistryManifest | null;

@@ -1,15 +1,20 @@
 import type { Database } from "bun:sqlite";
+import {
+	decryptSecretString,
+	encryptSecret,
+} from "../shared/secret-crypto";
 
 export class VariablesRepo {
 	constructor(private db: Database) {}
 
 	set(projectId: string, key: string, value: string): void {
 		const now = Date.now();
+		const stored = encryptSecret(value);
 		this.db.run(
 			`INSERT INTO variables (project_id, key, value, created_at)
        VALUES (?, ?, ?, ?)
        ON CONFLICT(project_id, key) DO UPDATE SET value = ?, created_at = ?`,
-			[projectId, key, value, now, value, now],
+			[projectId, key, stored, now, stored, now],
 		);
 	}
 
@@ -17,7 +22,7 @@ export class VariablesRepo {
 		const result = this.db
 			.query("SELECT value FROM variables WHERE project_id = ? AND key = ?")
 			.get(projectId, key) as { value: string } | null;
-		return result?.value ?? null;
+		return result ? decryptSecretString(result.value) : null;
 	}
 
 	getAll(projectId: string): Record<string, string> {
@@ -27,7 +32,7 @@ export class VariablesRepo {
 
 		const vars: Record<string, string> = {};
 		for (const row of rows) {
-			vars[row.key] = row.value;
+			vars[row.key] = decryptSecretString(row.value);
 		}
 		return vars;
 	}

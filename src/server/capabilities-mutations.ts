@@ -17,6 +17,7 @@ import {
 	jsonError,
 	loadProjectFile,
 } from "./capabilities-route-helpers";
+import { mergeServerDef } from "./secret-redaction";
 import { clientErrorMessage } from "./http-error";
 
 export async function handleAppend(
@@ -149,7 +150,7 @@ export async function handleUpdate(
 				};
 				if (asObj(body.def)) {
 					if (section === "servers") {
-						merged.def = asObj(body.def)!;
+						merged.def = mergeServerDef(asObj(e.def), asObj(body.def)!);
 					} else if (asObj(merged.def)) {
 						merged.def = { ...asObj(merged.def)!, ...asObj(body.def)! };
 					}

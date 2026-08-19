@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach, spyOn } from 'bun:test';
 import {
   getCapaDir,
   getSettingsPath,
@@ -10,15 +10,50 @@ import {
 } from '../config';
 import { homedir } from 'os';
 import { join } from 'path';
-import { existsSync, mkdtempSync, rmSync, renameSync } from 'fs';
+import * as fs from 'fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, renameSync, statSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import type { ServerSettings } from '../../types/database';
+
+const skipModeAsserts = process.platform === 'win32';
+
+function isolateHome(): { home: string; restore: () => void } {
+  const home = mkdtempSync(join(tmpdir(), 'capa-config-home-'));
+  const prevHome = process.env.HOME;
+  const prevProfile = process.env.USERPROFILE;
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  return {
+    home,
+    restore() {
+      if (prevHome === undefined) delete process.env.HOME;
+      else process.env.HOME = prevHome;
+      if (prevProfile === undefined) delete process.env.USERPROFILE;
+      else process.env.USERPROFILE = prevProfile;
+      rmSync(home, { recursive: true, force: true });
+    },
+  };
+}
+
+function modeOf(path: string): number {
+  return statSync(path).mode & 0o777;
+}
 
 describe('config', () => {
   describe('path getters', () => {
     it('should get capa directory', () => {
       const capaDir = getCapaDir();
       expect(capaDir).toBe(join(homedir(), '.capa'));
+    });
+
+    it('follows process.env.HOME / USERPROFILE so tests do not touch the real ~/.capa', () => {
+      const { home, restore } = isolateHome();
+      try {
+        expect(getCapaDir()).toBe(join(home, '.capa'));
+        expect(getSettingsPath()).toBe(join(home, '.capa', 'settings.json'));
+      } finally {
+        restore();
+      }
     });
 
     it('should get settings path', () => {
@@ -87,6 +122,88 @@ describe('config', () => {
       // Verify the actual capa directory exists
       const capaDir = getCapaDir();
       expect(existsSync(capaDir)).toBe(true);
+    });
+
+    it('restricts ~/.capa to 0700 on every call, including existing dirs', async () => {
+      const { home, restore } = isolateHome();
+      try {
+        expect(getCapaDir().startsWith(home)).toBe(true);
+        const capaDir = getCapaDir();
+        mkdirSync(capaDir, { recursive: true });
+        try {
+          chmodSync(capaDir, 0o755);
+        } catch {
+          // win32 may ignore chmod
+        }
+        await ensureCapaDir();
+        expect(existsSync(capaDir)).toBe(true);
+        if (!skipModeAsserts) {
+          expect(modeOf(capaDir)).toBe(0o700);
+        }
+        try {
+          chmodSync(capaDir, 0o755);
+        } catch {
+          // ignore
+        }
+        await ensureCapaDir();
+        if (!skipModeAsserts) {
+          expect(modeOf(capaDir)).toBe(0o700);
+        }
+      } finally {
+        restore();
+      }
+    });
+
+    it('restricts capa.db, wal/shm sidecars, and settings.json to 0600', async () => {
+      const { home, restore } = isolateHome();
+      try {
+        const capaDir = getCapaDir();
+        mkdirSync(capaDir, { recursive: true });
+        const dbPath = join(capaDir, 'capa.db');
+        const settingsPath = getSettingsPath();
+        writeFileSync(dbPath, 'sqlite');
+        writeFileSync(`${dbPath}-wal`, 'wal');
+        writeFileSync(`${dbPath}-shm`, 'shm');
+        writeFileSync(settingsPath, '{}');
+        try {
+          chmodSync(dbPath, 0o644);
+          chmodSync(`${dbPath}-wal`, 0o644);
+          chmodSync(`${dbPath}-shm`, 0o644);
+          chmodSync(settingsPath, 0o644);
+        } catch {
+          // win32 may ignore chmod
+        }
+        await ensureCapaDir();
+        if (!skipModeAsserts) {
+          expect(modeOf(dbPath)).toBe(0o600);
+          expect(modeOf(`${dbPath}-wal`)).toBe(0o600);
+          expect(modeOf(`${dbPath}-shm`)).toBe(0o600);
+          expect(modeOf(settingsPath)).toBe(0o600);
+        }
+      } finally {
+        restore();
+      }
+    });
+
+    it('invokes chmodSync for ~/.capa (0700) and credential files (0600)', async () => {
+      const { restore } = isolateHome();
+      const spy = spyOn(fs, 'chmodSync');
+      try {
+        const capaDir = getCapaDir();
+        mkdirSync(capaDir, { recursive: true });
+        const dbPath = join(capaDir, 'capa.db');
+        const settingsPath = getSettingsPath();
+        writeFileSync(dbPath, 'sqlite');
+        writeFileSync(settingsPath, '{}');
+        await ensureCapaDir();
+        const calls = spy.mock.calls.map(([p, m]) => [String(p), m as number] as const);
+        expect(calls.some(([p, m]) => p === capaDir && m === 0o700)).toBe(true);
+        expect(calls.some(([p, m]) => p === dbPath && m === 0o600)).toBe(true);
+        expect(calls.some(([p, m]) => p === settingsPath && m === 0o600)).toBe(true);
+      } finally {
+        spy.mockRestore();
+        restore();
+      }
     });
   });
 

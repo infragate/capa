@@ -272,4 +272,47 @@ describe('resolvePlugins isolates per-plugin failures', () => {
     expect(built.plugins.some((p) => p.id === 'fail-late')).toBe(false);
   });
 
+  it('returns warnings when every declared plugin fails (caller may treat as fatal)', async () => {
+    const caps: Capabilities = {
+      providers: ['claude-code'],
+      skills: [],
+      servers: [],
+      tools: [],
+      plugins: [
+        {
+          id: 'missing-only',
+          type: 'github',
+          def: { repo: 'owner/missing-only' },
+        },
+      ],
+    };
+
+    const result = await resolvePlugins(
+      caps,
+      projectPath,
+      'proj-isolate',
+      (async () => new Response()) as never,
+      db,
+      async () => {
+        throw new Error('Repository not found');
+      },
+      join(projectPath, 'capabilities.yaml'),
+      new LockfileBuilder(null),
+      {
+        materializeProjectSkills: false,
+        pluginsBaseDir: pluginsBase,
+        trackManaged: false,
+      },
+    );
+
+    expect(result.mergedCapabilities.resolvedPlugins ?? []).toHaveLength(0);
+    expect(
+      result.warnings.some(
+        (w) =>
+          w.includes('missing-only') &&
+          w.includes('failed to resolve and was skipped'),
+      ),
+    ).toBe(true);
+  });
+
 });

@@ -174,6 +174,7 @@ export interface RegistryRow {
   last_error: string | null;
   resolved_ref: string | null;
   installed_at: number | null;
+  content_sha256: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -187,6 +188,7 @@ export interface RegistryRecord {
   lastError: string | null;
   resolvedRef: string | null;
   installedAt: number | null;
+  contentSha256: string | null;
   createdAt: number;
   updatedAt: number;
 }

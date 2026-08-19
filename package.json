@@ -10,7 +10,7 @@
     "dev": "bun run src/cli/index.ts",
     "build:web": "bun run scripts/build-web.ts",
     "prebuild": "bun run scripts/generate-version.ts && bun run scripts/build-web.ts",
-    "build": "bun build src/cli/index.ts --compile --outfile dist/capa --icon logo.ico",
+    "build": "bun build src/cli/index.ts --compile --outfile dist/capa --icon logo.ico && cp -R registries dist/registries",
     "build:win": "bun build src/cli/index.ts --compile --windows-icon=./logo.ico --outfile dist/capa --icon logo.ico",
     "preserver": "bun run build:web",
     "server": "bun run src/server/index.ts",

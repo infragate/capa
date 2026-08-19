@@ -9,6 +9,7 @@ import {
   collectPluginSkillWarnings,
   collectUnreferencedPluginServerWarnings,
 } from './helpers/tool-warnings';
+import { raiseInstallError } from './install-error-policy';
 
 export function resolvePluginsTask(): Task<InstallCtx> {
   return {
@@ -31,6 +32,17 @@ export function resolvePluginsTask(): Task<InstallCtx> {
           );
         ctx.capabilitiesToUse = mergedCapabilities;
         ctx.warnings.push(...pluginWarnings);
+        const declaredPlugins = ctx.capabilities.plugins?.length ?? 0;
+        const resolvedPlugins = ctx.capabilitiesToUse.resolvedPlugins?.length ?? 0;
+        const pluginFailures = pluginWarnings.filter((w) =>
+          w.includes('failed to resolve and was skipped'),
+        );
+        // When every declared plugin fails, treat install as failed — but keep
+        // partial success when at least one plugin resolved (isolation).
+        if (declaredPlugins > 0 && resolvedPlugins === 0 && pluginFailures.length > 0) {
+          raiseInstallError(ctx, pluginFailures.join('\n'));
+          return;
+        }
         for (const dir of tempDirsToCleanup) {
           try {
             rmSync(dir, { recursive: true, force: true });
@@ -40,7 +52,8 @@ export function resolvePluginsTask(): Task<InstallCtx> {
         if (err instanceof BlockedPhraseError) {
           reportBlockedPhraseAndExit(err.skillId, err.filePath, err.phrase, err.pluginName);
         }
-        throw new Error(`Plugin resolution failed: ${err.message}`);
+        raiseInstallError(ctx, `Plugin resolution failed: ${err.message}`);
+        return;
       }
       ctx.warnings.push(...collectPluginSkillWarnings(ctx.capabilitiesToUse));
       ctx.warnings.push(...collectUnreferencedPluginServerWarnings(ctx.capabilitiesToUse));

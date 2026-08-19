@@ -48,8 +48,8 @@
     "addButton": "Add registry",
     "noneTitle": "No registries yet",
     "noneDescription": "Add your first registry adapter or Claude marketplace to start browsing.",
-    "warningTitle": "Trust before adding adapters",
-    "warningBody": "Registry adapters are executable TypeScript — only install them from sources you trust. Claude marketplaces are JSON catalogs and do not run adapter code.",
+    "warningTitle": "Two registry types",
+    "warningBody": "Claude marketplaces are JSON plugin catalogs — CAPA does not execute TypeScript for those. Registry adapters are executable TypeScript; only add adapters from sources you trust.",
     "table": {
       "name": "Registry",
       "type": "Type",
@@ -72,7 +72,7 @@
       "deleteConfirm": "Remove registry \"{{slug}}\"? This deletes its row and any cached files."
     },
     "feedback": {
-      "added": "Registry \"{{slug}}\" added.",
+      "added": "Registry \"{{slug}}\" added and installed.",
       "removed": "Registry \"{{slug}}\" removed.",
       "refreshed": "Registry \"{{slug}}\" refreshed.",
       "edited": "Registry \"{{slug}}\" updated.",
@@ -82,17 +82,18 @@
   },
   "editDialog": {
     "title": "Edit registry \"{{slug}}\"",
-    "description": "Repoint this slug at a different source. The new adapter is downloaded and validated before it replaces the existing one.",
-    "descriptionMarketplace": "Repoint this slug at a different Claude marketplace. The marketplace.json catalog is re-fetched before it replaces the existing one.",
+    "description": "Repoint this slug at a different source. The adapter is re-fetched and installed immediately.",
+    "descriptionMarketplace": "Repoint this slug at a different Claude marketplace. The marketplace.json catalog is re-fetched and installed immediately.",
     "slugImmutable": "The slug is the registry's identity and cannot be renamed. Remove and re-add to change it.",
     "noChanges": "No changes — Save closes the dialog.",
     "submit": "Save changes"
   },
   "addDialog": {
     "title": "Add registry",
-    "description": "Fetch an adapter from a Git repository or HTTPS URL. The file is downloaded and validated before it is enabled.",
-    "descriptionMarketplace": "Add a Claude Code marketplace by owner/repo. Capa fetches .claude-plugin/marketplace.json and lists its plugins.",
-    "marketplaceHint": "Claude marketplaces are JSON catalogs — no executable adapter code.",
+    "description": "Fetch an adapter from a Git repository or HTTPS URL. Adding here installs and activates the registry immediately.",
+    "descriptionMarketplace": "Add a Claude Code marketplace (owner/repo or marketplace.json URL). CAPA fetches the plugin catalog as JSON — no executable adapter code.",
+    "marketplaceHint": "JSON catalog only — no TypeScript is downloaded or executed.",
+    "marketplaceReady": "Preview looks good. Add installs the marketplace immediately.",
     "fields": {
       "mode": "What to add",
       "type": "Source type",
@@ -126,7 +127,7 @@
       "resolvedRef": "Resolved ref: {{ref}}",
       "pluginCount": "{{count}} plugin(s)"
     },
-    "trust": "I have reviewed the adapter source and trust this code.",
+    "trust": "I have reviewed the adapter source and trust this TypeScript code.",
     "submit": "Add registry",
     "cancel": "Cancel",
     "errors": {

@@ -44,8 +44,13 @@ export async function handleGetServerTools(
 			});
 		}
 
+		// HTTP servers: connect on demand so the UI works after a server restart
+		// without requiring a full configure. Stdio servers are never spawned from
+		// this read-only meta route — run configure to warm those clients.
 		const tools = await mcpServer.listServerTools(serverId, capabilities, {
 			throwOnError: true,
+			connect: !!server.def?.url,
+			timeoutMs: 10_000,
 		});
 		return new Response(JSON.stringify({ tools }), {
 			headers: JSON_HEADERS,

@@ -2,6 +2,7 @@ import type { Task } from '../../ui';
 import { createAuthenticatedFetch, AuthenticatedFetch } from '../../../shared/authenticated-fetch';
 import { installHooks } from '../../utils/hooks-installer';
 import { validateHooks } from '../../../shared/hooks-validate';
+import { raiseInstallError } from './install-error-policy';
 import type { CachePlatform } from '../../../shared/cache';
 import type { InstallCtx } from './context';
 import { getRepoSnapshot } from './helpers/repo-snapshot';
@@ -47,9 +48,8 @@ export function installHooksTask(): Task<InstallCtx> {
           : 'Hooks up to date';
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
-        // Warn-but-never-fail: the rest of `capa install` should still finish.
-        ctx.warnings.push(`Failed to install hooks: ${message}`);
-        task.title = 'Hooks install reported warnings';
+        raiseInstallError(ctx, `Failed to install hooks: ${message}`);
+        task.title = 'Hooks install failed';
       }
     },
   };

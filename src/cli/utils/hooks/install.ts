@@ -9,7 +9,8 @@ import { getProvider } from '../../../shared/providers';
 import { getHookScriptDir } from '../../../shared/config';
 import { isSafeHookId } from '../../../shared/hooks-validate';
 import { taskLog } from '../../ui';
-import { resolveHookBody, type ResolvedHookBody } from './resolve-body';
+import { RemoteUrlPolicyError } from '../../../shared/safe-remote-url';
+import { HookBodyIntegrityError, resolveHookBody, type ResolvedHookBody } from './resolve-body';
 import { applyHookEntryToConfig, buildHookEntry } from './config-apply';
 import { scopeHookForProvider, pickMapping, resolveProviderEventName } from './provider-map';
 
@@ -81,6 +82,9 @@ export async function installHooks(opts: InstallHooksOptions): Promise<InstallHo
         opts.lockBuilder.upsertHook(body.lockEntry);
       }
     } catch (err: unknown) {
+      if (err instanceof RemoteUrlPolicyError || err instanceof HookBodyIntegrityError) {
+        throw err;
+      }
       const msg = err instanceof Error ? err.message : String(err);
       warnings.push(`Hook "${hook.id}": failed to resolve body — ${msg}`);
     }

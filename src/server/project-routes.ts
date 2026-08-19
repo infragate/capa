@@ -16,6 +16,7 @@ import type { ConfigureRouteDeps } from "./configure-routes";
 import { runProjectConfigure } from "./configure-routes";
 import type { CapaMCPServer } from "./mcp-handler";
 import { OAuth2Manager } from "./oauth-manager";
+import { redactServerForApi } from "./secret-redaction";
 import { listProjectFs, writeProjectImport } from "./project-fs";
 import { clientErrorMessage } from "./http-error";
 import {
@@ -190,7 +191,7 @@ export async function handleGetProject(
 							const isConnected = requiresOAuth
 								? deps.oauth2Manager.isServerConnected(projectId, s.id)
 								: null;
-							return {
+							return redactServerForApi({
 								id: s.id,
 								type: s.type,
 								url: s.def?.url || null,
@@ -228,7 +229,7 @@ export async function handleGetProject(
 								description: s.description || null,
 								requiresOAuth,
 								isConnected,
-							};
+							});
 						}),
 						resolvedPlugins: capabilities.resolvedPlugins || null,
 						providers: capabilities.providers || [],

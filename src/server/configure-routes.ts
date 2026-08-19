@@ -1,4 +1,8 @@
 import type { CapaDatabase } from "../db/database";
+import {
+	normalizeCapabilities,
+	parseCapabilitiesFile,
+} from "../shared/capabilities";
 import { logger } from "../shared/logger";
 import { detectCapabilitiesFile } from "../shared/paths";
 import { projectUiUrl } from "../shared/ui-urls";
@@ -8,6 +12,11 @@ import type { OAuth2Config } from "../types/oauth";
 import type { CapabilitiesFileWatcher } from "./capabilities-watcher";
 import type { CapaMCPServer, ValidationProgressEvent } from "./mcp-handler";
 import { OAuth2Manager } from "./oauth-manager";
+import {
+	type OAuth2ServerEntry,
+	serverHasExplicitAuthHeader,
+	syncServerOAuth2Requirement,
+} from "./oauth-server-sync";
 import {
 	type EffectiveCapsCacheEntry,
 	loadEffectiveCapabilities,
@@ -142,12 +151,7 @@ export async function runProjectConfigure(
 	// -- OAuth2 detection (parallel) ------------------------------------
 	const oauth2Candidates = capabilitiesToUse.servers.filter((server) => {
 		if (!server.def.url) return false;
-		const hasExplicitAuth =
-			server.def.headers &&
-			Object.keys(server.def.headers).some(
-				(k) => k.toLowerCase() === "authorization",
-			);
-		if (hasExplicitAuth) {
+		if (serverHasExplicitAuthHeader(server)) {
 			apiLogger.debug(
 				`Skipping OAuth2 detection for ${server.id} (explicit auth header configured)`,
 			);
@@ -165,74 +169,28 @@ export async function runProjectConfigure(
 	});
 
 	let oauth2Done = 0;
+	let oauth2CapabilitiesChanged = false;
 	const oauth2Results = await Promise.all(
 		oauth2Candidates.map(async (server) => {
-			const existingOAuth = server.def.oauth2;
-			let entry: {
-				serverId: string;
-				serverUrl: string;
-				displayName: string;
-				isConnected: boolean;
-			} | null = null;
+			let entry: OAuth2ServerEntry | null = null;
 			try {
 				apiLogger.debug(`Checking server: ${server.id}`);
-				const oauth2Config = await deps.oauth2Manager.detectOAuth2Requirement(
-					server.def.url!,
-					{
-						tlsSkipVerify: server.def.tlsSkipVerify,
-					},
+				const sync = await syncServerOAuth2Requirement(
+					projectId,
+					server,
+					deps.oauth2Manager,
 				);
-				if (oauth2Config) {
-					apiLogger.debug(`OAuth2 required for ${server.id}`);
-					let isConnected = deps.oauth2Manager.isServerConnected(
-						projectId,
-						server.id,
-					);
-
-					if (isConnected) {
-						const accessToken = await deps.oauth2Manager.getAccessToken(
-							projectId,
-							server.id,
-							oauth2Config,
-						);
-						isConnected = !!accessToken;
-						if (!isConnected) {
-							apiLogger.warn(`OAuth2 token invalid/expired for ${server.id}`);
-						}
-					}
-
-					const merged: any = { ...(existingOAuth ?? {}), ...oauth2Config };
-					const embeddedClientId =
-						(existingOAuth as any)?.client_id ??
-						(existingOAuth as any)?.clientId ??
-						(existingOAuth as any)?.CLIENT_ID ??
-						(existingOAuth as any)?.oauth?.clientId ??
-						(existingOAuth as any)?.oauth?.client_id;
-					if (embeddedClientId) merged.client_id = embeddedClientId;
-					const embeddedCallbackPort =
-						(existingOAuth as any)?.callback_port ??
-						(existingOAuth as any)?.callbackPort ??
-						(existingOAuth as any)?.CALLBACK_PORT;
-					if (
-						typeof embeddedCallbackPort === "number" &&
-						embeddedCallbackPort > 0
-					) {
-						merged.callback_port = embeddedCallbackPort;
-					} else if (typeof embeddedCallbackPort === "string") {
-						const parsed = Number(embeddedCallbackPort);
-						if (Number.isFinite(parsed) && parsed > 0)
-							merged.callback_port = parsed;
-					}
+				if (sync.changed) oauth2CapabilitiesChanged = true;
+				entry = sync.entry;
+				if (entry) {
 					apiLogger.debug(
-						`OAuth2 merged for ${server.id}: client_id=${merged.client_id ? "set" : "missing"} callback_port=${merged.callback_port ?? "missing"} registrationEndpoint=${merged.registrationEndpoint ? "set" : "missing"}`,
+						`OAuth2 required for ${server.id} (connected=${entry.isConnected})`,
 					);
-					server.def.oauth2 = merged;
-					entry = {
-						serverId: server.id,
-						serverUrl: server.def.url!,
-						displayName: server.displayName ?? server.id,
-						isConnected,
-					};
+					if (!entry.isConnected) {
+						apiLogger.warn(`OAuth2 token invalid/expired for ${server.id}`);
+					}
+				} else if (sync.changed) {
+					apiLogger.debug(`OAuth2 no longer required for ${server.id}`);
 				}
 			} catch (error: any) {
 				apiLogger.warn(
@@ -252,10 +210,10 @@ export async function runProjectConfigure(
 		}),
 	);
 	const oauth2Servers = oauth2Results.filter(
-		(e): e is NonNullable<typeof e> => e !== null,
+		(e): e is OAuth2ServerEntry => e !== null,
 	);
 
-	if (oauth2Servers.length > 0) {
+	if (oauth2CapabilitiesChanged || oauth2Servers.length > 0) {
 		deps.sessionManager.setProjectCapabilities(projectId, capabilitiesToUse);
 	}
 
@@ -355,6 +313,28 @@ export async function runProjectConfigure(
 	};
 }
 
+async function capabilitiesForConfigure(
+	deps: ConfigureRouteDeps,
+	projectId: string,
+	requested: Capabilities,
+): Promise<Capabilities> {
+	const project = deps.db.getProject(projectId);
+	if (!project) {
+		throw new Error("Project not found");
+	}
+	const file = await detectCapabilitiesFile(project.path);
+	if (!file) {
+		throw new Error("No capabilities file on disk for this project");
+	}
+	const onDisk = await parseCapabilitiesFile(file.path, file.format);
+	// Wrap-install compatibility: overlay providers only. Stdio spawn config
+	// (cmd/args/cwd/env) always comes from the on-disk document.
+	if (requested.providers) {
+		onDisk.providers = requested.providers;
+	}
+	return onDisk;
+}
+
 export async function handleProjectConfigure(
 	deps: ConfigureRouteDeps,
 	projectId: string,
@@ -365,11 +345,23 @@ export async function handleProjectConfigure(
 		.toLowerCase()
 		.includes("application/x-ndjson");
 
-	let capabilities: Capabilities;
+	let requested: unknown;
 	try {
-		capabilities = await request.json();
+		requested = await request.json();
 	} catch (error: any) {
 		apiLogger.failure(`Error parsing capabilities: ${error.message}`);
+		return new Response(JSON.stringify({ error: error.message }), {
+			status: 400,
+			headers: JSON_HEADERS,
+		});
+	}
+
+	let capabilities: Capabilities;
+	try {
+		const parsed = normalizeCapabilities(requested);
+		capabilities = await capabilitiesForConfigure(deps, projectId, parsed);
+	} catch (error: any) {
+		apiLogger.failure(`Error: ${error.message}`);
 		return new Response(JSON.stringify({ error: error.message }), {
 			status: 400,
 			headers: JSON_HEADERS,

@@ -25,7 +25,7 @@ const KNOWN_CAPABILITY_KEYS = new Set([
 
 const objectEntry = z.record(z.string(), z.unknown());
 
-const capabilitiesSchema = z
+export const capabilitiesSchema = z
 	.object({
 		providers: z.array(z.string()).optional(),
 		skills: z.preprocess((val) => val ?? [], z.array(objectEntry)),
@@ -445,7 +445,7 @@ function assertPermutation(
 export type OptionsPatch = Partial<
 	Pick<
 		CapabilitiesOptions,
-		"toolExposure" | "requiresCommands" | "security" | "agentActivity"
+		"toolExposure" | "requiresCommands" | "security" | "agentActivity" | "onInstallError"
 	>
 >;
 

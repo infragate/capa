@@ -4,6 +4,7 @@ import { installAgentsFile } from '../../utils/agents-file';
 import type { CachePlatform } from '../../../shared/cache';
 import type { InstallCtx } from './context';
 import { getRepoSnapshot } from './helpers/repo-snapshot';
+import { raiseInstallError } from './install-error-policy';
 
 export function installAgentInstructionsTask(): Task<InstallCtx> {
   return {
@@ -28,7 +29,10 @@ export function installAgentInstructionsTask(): Task<InstallCtx> {
           repoFetchCtx,
         );
       } catch (err: any) {
-        throw new Error(`Failed to install agent instructions files: ${err.message}`);
+        raiseInstallError(
+          ctx,
+          `Failed to install agent instructions files: ${err.message}`,
+        );
       }
     },
   };

@@ -18,7 +18,15 @@ import type { Capabilities, MCPServer } from "../types/capabilities";
 import type { OAuth2Config } from "../types/oauth";
 import type { RegistryCapability } from "../types/registry";
 import { VERSION } from "../version";
-import { initAuth, isLoopbackHost, requireAuth } from "./auth-middleware";
+import { authorizeApiRequest, injectHtmlAuthToken } from "./api-guards";
+import { htmlSecurityHeaders } from "./html-security-headers";
+import { withAllowedHost } from "./host-allowlist";
+import {
+	getSpaAuthToken,
+	initAuth,
+	isLoopbackHost,
+	requireMcpAuth,
+} from "./auth-middleware";
 import { handleCapabilitiesMutation } from "./capabilities-routes";
 import { CapabilitiesFileWatcher } from "./capabilities-watcher";
 import {
@@ -50,6 +58,7 @@ import {
 	type McpMetaRouteDeps,
 } from "./mcp-meta-routes";
 import { OAuth2Manager } from "./oauth-manager";
+import { syncServerOAuth2Requirement } from "./oauth-server-sync";
 import {
 	handleDeleteProject,
 	handleGetProject,
@@ -346,7 +355,11 @@ class CapaServer {
 		status: number,
 	): Response {
 		const requestOrigin = request.headers.get("Origin");
-		const originCheck = isAllowedOrigin(requestOrigin);
+		const originCheck = isAllowedOrigin(
+			requestOrigin,
+			this.settings.server.host,
+			this.settings.server.port,
+		);
 		const headers: Record<string, string> = {};
 		if (originCheck.origin) {
 			headers["Access-Control-Allow-Origin"] = originCheck.origin;
@@ -398,6 +411,18 @@ class CapaServer {
 		request: Request,
 		server: any,
 	): Promise<Response> {
+		return withAllowedHost(
+			request,
+			this.settings.server.host,
+			this.settings.server.port,
+			() => this._dispatchRequest(request, server),
+		);
+	}
+
+	private async _dispatchRequest(
+		request: Request,
+		server: any,
+	): Promise<Response> {
 		const url = new URL(request.url);
 		const path = url.pathname;
 
@@ -426,9 +451,15 @@ class CapaServer {
 		// API endpoints
 		if (path.startsWith("/api/")) {
 			this.logger.debug("API endpoint");
-			const auth = requireAuth(request, this.settings.server.host);
-			if (!auth.ok) {
-				return this.authFailureResponse(request, auth.reason, auth.status);
+			if (request.method === "OPTIONS") {
+				return new Response(null, { status: 204 });
+			}
+			const gate = authorizeApiRequest(request, {
+				host: this.settings.server.host,
+				port: this.settings.server.port,
+			});
+			if (!gate.ok) {
+				return this.authFailureResponse(request, gate.reason, gate.status);
 			}
 			return this.handleAPI(request, server);
 		}
@@ -441,7 +472,7 @@ class CapaServer {
 			this.logger.debug(
 				`MCP endpoint for project: ${projectId}, sub-agent: ${agentId}`,
 			);
-			const auth = requireAuth(request, this.settings.server.host);
+			const auth = requireMcpAuth(request, this.settings.server.host);
 			if (!auth.ok) {
 				return this.authFailureResponse(request, auth.reason, auth.status);
 			}
@@ -453,7 +484,7 @@ class CapaServer {
 		if (mcpMatch) {
 			const projectId = mcpMatch[1];
 			this.logger.debug(`MCP endpoint for project: ${projectId}`);
-			const auth = requireAuth(request, this.settings.server.host);
+			const auth = requireMcpAuth(request, this.settings.server.host);
 			if (!auth.ok) {
 				return this.authFailureResponse(request, auth.reason, auth.status);
 			}
@@ -465,8 +496,12 @@ class CapaServer {
 	}
 
 	private async handleSpa(): Promise<Response> {
-		return new Response(spaHtml as unknown as string, {
-			headers: { "Content-Type": "text/html" },
+		const html = injectHtmlAuthToken(
+			spaHtml as unknown as string,
+			getSpaAuthToken(),
+		);
+		return new Response(html, {
+			headers: htmlSecurityHeaders({ "Content-Type": "text/html" }),
 		});
 	}
 
@@ -993,28 +1028,20 @@ class CapaServer {
 				);
 			}
 
-			// Ensure URL-based servers that require OAuth have def.oauth2 set (on-demand detection)
+			// Reconcile def.oauth2 with what each URL-based server actually requires.
 			let capabilitiesUpdated = false;
 			for (const server of capabilities.servers) {
-				const hasExplicitAuthOnDemand =
-					server.def.headers &&
-					Object.keys(server.def.headers).some(
-						(k) => k.toLowerCase() === "authorization",
-					);
-				if (server.def.url && !server.def.oauth2 && !hasExplicitAuthOnDemand) {
-					try {
-						const oauth2Config =
-							await this.oauth2Manager.detectOAuth2Requirement(server.def.url, {
-								tlsSkipVerify: server.def.tlsSkipVerify,
-							});
-						if (oauth2Config) {
-							apiLogger.debug(`OAuth2 detected for ${server.id} (on-demand)`);
-							server.def.oauth2 = oauth2Config;
-							capabilitiesUpdated = true;
-						}
-					} catch (detectionError: any) {
-						apiLogger.warn(
-							`OAuth2 detection failed for ${server.id}: ${detectionError?.message ?? detectionError}`,
+				if (!server.def.url) continue;
+				const sync = await syncServerOAuth2Requirement(
+					projectId,
+					server,
+					this.oauth2Manager,
+				);
+				if (sync.changed) {
+					capabilitiesUpdated = true;
+					if (!sync.entry) {
+						apiLogger.debug(
+							`Cleared stale OAuth2 config for ${server.id}`,
 						);
 					}
 				}
@@ -1320,16 +1347,8 @@ class CapaServer {
 				...(server.def.oauth2 as OAuth2Config),
 				...(effectiveClientId ? { client_id: effectiveClientId } : {}),
 			};
-			const hasAuthEndpoint = !!(
-				configForFlow.authorizationEndpoint ||
-				(configForFlow as { authorizationUrl?: string }).authorizationUrl
-			);
-			const hasTokenEndpoint = !!(
-				configForFlow.tokenEndpoint ||
-				(configForFlow as { tokenUrl?: string }).tokenUrl
-			);
-			if ((!hasAuthEndpoint || !hasTokenEndpoint) && server.def.url) {
-				apiLogger.info(`Discovering OAuth endpoints for ${serverId}…`);
+			if (server.def.url) {
+				apiLogger.info(`Refreshing OAuth metadata for ${serverId}…`);
 				const detected = await this.oauth2Manager.detectOAuth2Requirement(
 					server.def.url,
 					{
@@ -1337,17 +1356,20 @@ class CapaServer {
 					},
 				);
 				if (!detected) {
+					delete server.def.oauth2;
+					this.oauth2Manager.disconnect(projectId, serverId);
+					this.sessionManager.setProjectCapabilities(projectId, capabilities);
 					return new Response(
 						JSON.stringify({
 							error:
-								"Could not discover OAuth authorization endpoints for this server. Check that the MCP URL is reachable.",
+								"This server no longer requires OAuth. Refresh the page and try connecting to the server directly.",
 						}),
-						{ status: 502, headers: { "Content-Type": "application/json" } },
+						{ status: 409, headers: { "Content-Type": "application/json" } },
 					);
 				}
 				configForFlow = {
-					...detected,
 					...configForFlow,
+					...detected,
 					authorizationEndpoint:
 						configForFlow.authorizationEndpoint ||
 						(configForFlow as { authorizationUrl?: string }).authorizationUrl ||
@@ -1360,6 +1382,7 @@ class CapaServer {
 						configForFlow.resourceServer ||
 						detected.resourceServer ||
 						server.def.url,
+					scope: detected.scope ?? configForFlow.scope,
 					...(effectiveClientId ? { client_id: effectiveClientId } : {}),
 				};
 				server.def.oauth2 = configForFlow;
@@ -1663,7 +1686,11 @@ class CapaServer {
 		}
 
 		const requestOrigin = request.headers.get("Origin");
-		const originCheck = isAllowedOrigin(requestOrigin);
+		const originCheck = isAllowedOrigin(
+			requestOrigin,
+			this.settings.server.host,
+			this.settings.server.port,
+		);
 		const corsHeaders: Record<string, string> = {
 			"Access-Control-Allow-Methods": "POST, GET, OPTIONS",
 			"Access-Control-Allow-Headers": `Content-Type, ${CAPA_CLIENT_HEADER}`,

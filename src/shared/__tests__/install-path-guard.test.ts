@@ -12,6 +12,7 @@ import { tmpdir } from "os";
 import {
 	assertCapaOwnedInstallPath,
 	assertInsideProjectRoot,
+	isCapaOwnedInstallPath,
 	validateProviderInstallRoots,
 } from "../install-path-guard";
 
@@ -60,6 +61,30 @@ describe("install-path-guard", () => {
 		expect(() =>
 			validateProviderInstallRoots(projectDir, ["cursor"]),
 		).toThrow(/symlink/i);
+	});
+
+	it("isCapaOwnedInstallPath returns false through symlink parents", () => {
+		mkdirSync(join(projectDir, "skills"), { recursive: true });
+		symlinkSync(
+			join(projectDir, "skills"),
+			join(projectDir, ".cursor", "skills"),
+		);
+		expect(
+			isCapaOwnedInstallPath(
+				projectDir,
+				join(projectDir, ".cursor", "skills", "demo"),
+			),
+		).toBe(false);
+	});
+
+	it("isCapaOwnedInstallPath returns true for real provider directories", () => {
+		mkdirSync(join(projectDir, ".cursor", "skills"), { recursive: true });
+		expect(
+			isCapaOwnedInstallPath(
+				projectDir,
+				join(projectDir, ".cursor", "skills", "demo"),
+			),
+		).toBe(true);
 	});
 
 	it("allows paths that do not exist yet when parents are safe", () => {

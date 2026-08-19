@@ -1,5 +1,5 @@
 import type { GitIntegrationManager } from "./git-integration-manager";
-import { oauthBridgeResponse } from "./oauth-bridge";
+import { gitOAuthCallbackNeedsBridge, oauthBridgeResponse } from "./oauth-bridge";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
@@ -14,7 +14,7 @@ export async function handleGetIntegrations(
 	deps: GitIntegrationsRouteDeps,
 ): Promise<Response> {
 	try {
-		const integrations = deps.gitIntegrationManager.getAllIntegrations();
+		const integrations = await deps.gitIntegrationManager.getAllIntegrations();
 		return new Response(JSON.stringify({ integrations }), {
 			headers: JSON_HEADERS,
 		});
@@ -26,6 +26,52 @@ export async function handleGetIntegrations(
 	}
 }
 
+function readOAuthNonce(source: Record<string, unknown>): string | null {
+	if (typeof source.state === "string" && source.state.length > 0) {
+		return source.state;
+	}
+	if (typeof source.flowId === "string" && source.flowId.length > 0) {
+		return source.flowId;
+	}
+	return null;
+}
+
+function missingStateResponse(): Response {
+	return new Response(
+		JSON.stringify({ error: "Missing OAuth state or flowId" }),
+		{ status: 400, headers: JSON_HEADERS },
+	);
+}
+
+async function completeGitOAuthCallback(
+	deps: GitIntegrationsRouteDeps,
+	platform: "github" | "gitlab",
+	accessToken: string,
+	state: string,
+	refreshToken?: string,
+	expiresIn?: number,
+): Promise<Response> {
+	const result = await deps.gitIntegrationManager.handleCallback(
+		accessToken,
+		state,
+		refreshToken,
+		expiresIn,
+	);
+
+	if (!result.success) {
+		return new Response(
+			JSON.stringify({ error: result.error || "Invalid or expired OAuth state" }),
+			{ status: 400, headers: JSON_HEADERS },
+		);
+	}
+
+	const redirectUrl = `${deps.uiOrigin()}/ui/integrations?success=${platform}`;
+	return new Response(null, {
+		status: 302,
+		headers: { Location: redirectUrl },
+	});
+}
+
 export async function handleGitHubOAuthStart(
 	deps: GitIntegrationsRouteDeps,
 	request: Request,
@@ -33,15 +79,16 @@ export async function handleGitHubOAuthStart(
 	try {
 		const localCallbackUri = `http://${deps.serverHost}:${deps.serverPort}/api/integrations/github/oauth/callback`;
 
-		const { url: authUrl, flowId } =
+		const { url: authUrl, flowId, state } =
 			await deps.gitIntegrationManager.generateAuthorizationUrl(
 				"github",
 				localCallbackUri,
 			);
 
-		return new Response(JSON.stringify({ authorizationUrl: authUrl, flowId }), {
-			headers: JSON_HEADERS,
-		});
+		return new Response(
+			JSON.stringify({ authorizationUrl: authUrl, flowId, state }),
+			{ headers: JSON_HEADERS },
+		);
 	} catch (error: any) {
 		return new Response(JSON.stringify({ error: error.message }), {
 			status: 500,
@@ -60,6 +107,8 @@ export async function handleGitHubOAuthCallback(
 		let expiresIn: number | undefined;
 		let error: string | null = null;
 
+		let state: string | null = null;
+
 		if (request.method === "POST") {
 			const body = (await request.json()) as Record<string, unknown>;
 			accessToken =
@@ -70,13 +119,10 @@ export async function handleGitHubOAuthCallback(
 				expiresIn = parseInt(String(body.expires_in), 10);
 			}
 			error = typeof body.error === "string" ? body.error : null;
+			state = readOAuthNonce(body);
 		} else {
 			const url = new URL(request.url);
-			if (
-				url.searchParams.has("access_token") ||
-				url.searchParams.has("refresh_token") ||
-				url.searchParams.has("token")
-			) {
+			if (gitOAuthCallbackNeedsBridge(url)) {
 				return oauthBridgeResponse("github");
 			}
 			error = url.searchParams.get("error");
@@ -97,26 +143,18 @@ export async function handleGitHubOAuthCallback(
 			);
 		}
 
-		const result = await deps.gitIntegrationManager.handleCallback(
-			accessToken,
+		if (!state) {
+			return missingStateResponse();
+		}
+
+		return completeGitOAuthCallback(
+			deps,
 			"github",
+			accessToken,
+			state,
 			refreshToken,
 			expiresIn,
 		);
-
-		if (!result.success) {
-			const redirectUrl = `${deps.uiOrigin()}/ui/integrations?error=${encodeURIComponent(result.error || "Unknown error")}`;
-			return new Response(null, {
-				status: 302,
-				headers: { Location: redirectUrl },
-			});
-		}
-
-		const redirectUrl = `${deps.uiOrigin()}/ui/integrations?success=github`;
-		return new Response(null, {
-			status: 302,
-			headers: { Location: redirectUrl },
-		});
 	} catch (error: any) {
 		const redirectUrl = `${deps.uiOrigin()}/ui/integrations?error=${encodeURIComponent(error.message)}`;
 		return new Response(null, {
@@ -133,15 +171,16 @@ export async function handleGitLabOAuthStart(
 	try {
 		const localCallbackUri = `http://${deps.serverHost}:${deps.serverPort}/api/integrations/gitlab/oauth/callback`;
 
-		const { url: authUrl, flowId } =
+		const { url: authUrl, flowId, state } =
 			await deps.gitIntegrationManager.generateAuthorizationUrl(
 				"gitlab",
 				localCallbackUri,
 			);
 
-		return new Response(JSON.stringify({ authorizationUrl: authUrl, flowId }), {
-			headers: JSON_HEADERS,
-		});
+		return new Response(
+			JSON.stringify({ authorizationUrl: authUrl, flowId, state }),
+			{ headers: JSON_HEADERS },
+		);
 	} catch (error: any) {
 		return new Response(JSON.stringify({ error: error.message }), {
 			status: 500,
@@ -159,6 +198,7 @@ export async function handleGitLabOAuthCallback(
 		let refreshToken: string | undefined;
 		let expiresIn: number | undefined;
 		let error: string | null = null;
+		let state: string | null = null;
 
 		if (request.method === "POST") {
 			const body = (await request.json()) as Record<string, unknown>;
@@ -170,13 +210,10 @@ export async function handleGitLabOAuthCallback(
 				expiresIn = parseInt(String(body.expires_in), 10);
 			}
 			error = typeof body.error === "string" ? body.error : null;
+			state = readOAuthNonce(body);
 		} else {
 			const url = new URL(request.url);
-			if (
-				url.searchParams.has("access_token") ||
-				url.searchParams.has("refresh_token") ||
-				url.searchParams.has("token")
-			) {
+			if (gitOAuthCallbackNeedsBridge(url)) {
 				return oauthBridgeResponse("gitlab");
 			}
 			error = url.searchParams.get("error");
@@ -197,26 +234,18 @@ export async function handleGitLabOAuthCallback(
 			);
 		}
 
-		const result = await deps.gitIntegrationManager.handleCallback(
-			accessToken,
+		if (!state) {
+			return missingStateResponse();
+		}
+
+		return completeGitOAuthCallback(
+			deps,
 			"gitlab",
+			accessToken,
+			state,
 			refreshToken,
 			expiresIn,
 		);
-
-		if (!result.success) {
-			const redirectUrl = `${deps.uiOrigin()}/ui/integrations?error=${encodeURIComponent(result.error || "Unknown error")}`;
-			return new Response(null, {
-				status: 302,
-				headers: { Location: redirectUrl },
-			});
-		}
-
-		const redirectUrl = `${deps.uiOrigin()}/ui/integrations?success=gitlab`;
-		return new Response(null, {
-			status: 302,
-			headers: { Location: redirectUrl },
-		});
 	} catch (error: any) {
 		const redirectUrl = `${deps.uiOrigin()}/ui/integrations?error=${encodeURIComponent(error.message)}`;
 		return new Response(null, {

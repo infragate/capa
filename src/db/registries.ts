@@ -16,6 +16,7 @@ function rowToRecord(row: RegistryRow): RegistryRecord {
 		lastError: row.last_error,
 		resolvedRef: row.resolved_ref,
 		installedAt: row.installed_at,
+		contentSha256: row.content_sha256 ?? null,
 		createdAt: row.created_at,
 		updatedAt: row.updated_at,
 	};
@@ -30,6 +31,7 @@ export interface RegistryUpsertInput {
 	lastError?: string | null;
 	resolvedRef?: string | null;
 	installedAt?: number | null;
+	contentSha256?: string | null;
 }
 
 export class RegistriesRepo {
@@ -66,6 +68,10 @@ export class RegistriesRepo {
 			input.installedAt !== undefined
 				? input.installedAt
 				: (existing?.installedAt ?? null);
+		const contentSha256 =
+			input.contentSha256 !== undefined
+				? input.contentSha256
+				: (existing?.contentSha256 ?? null);
 
 		if (existing) {
 			this.db.run(
@@ -77,6 +83,7 @@ export class RegistriesRepo {
            last_error = ?,
            resolved_ref = ?,
            installed_at = ?,
+           content_sha256 = ?,
            updated_at = ?
          WHERE slug = ?`,
 				[
@@ -87,6 +94,7 @@ export class RegistriesRepo {
 					lastError,
 					resolvedRef,
 					installedAt,
+					contentSha256,
 					now,
 					input.slug,
 				],
@@ -94,8 +102,8 @@ export class RegistriesRepo {
 		} else {
 			this.db.run(
 				`INSERT INTO registries
-           (slug, type, source, enabled, status, last_error, resolved_ref, installed_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (slug, type, source, enabled, status, last_error, resolved_ref, installed_at, content_sha256, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 				[
 					input.slug,
 					input.type,
@@ -105,6 +113,7 @@ export class RegistriesRepo {
 					lastError,
 					resolvedRef,
 					installedAt,
+					contentSha256,
 					now,
 					now,
 				],

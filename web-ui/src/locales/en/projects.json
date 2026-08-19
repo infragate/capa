@@ -186,6 +186,7 @@
     "serverOauth": "OAuth2 (optional)",
     "serverOauthClientId": "Client ID",
     "serverOauthClientSecret": "Client secret",
+    "serverOauthClientSecretPlaceholder": "Leave blank to keep the stored secret",
     "serverOauthAuthUrl": "Authorization URL",
     "serverOauthTokenUrl": "Token URL",
     "serverOauthScopes": "Scopes",

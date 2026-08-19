@@ -1,5 +1,6 @@
 import { resolve } from 'path';
 import { getDatabasePath, loadSettings } from '../../../shared/config';
+import { trustStdioServers } from '../../../shared/stdio-allowlist';
 import { CapaDatabase } from '../../../db/database';
 import type { Capabilities } from '../../../types/capabilities';
 import { isUnderWrapWorkspacesDir } from '../../../shared/workspaces/paths';
@@ -10,9 +11,11 @@ import {
 } from '../../../server/tool-call-tracer';
 import type { ShellCommand, ShellToolInfo } from './registry';
 import { buildArgSlugs } from './args';
+import { localApiHeaders } from '../../utils/local-api';
 
 async function fetchShellTools(serverUrl: string, projectId: string): Promise<ShellToolInfo[]> {
   const response = await fetch(`${serverUrl}/api/projects/${projectId}/shell-tools`, {
+    headers: localApiHeaders(),
     signal: AbortSignal.timeout(10000),
   });
   if (!response.ok) {
@@ -70,12 +73,14 @@ async function ensureProjectConfigured(
     db.close();
   }
 
+  trustStdioServers(projectId, capabilities.servers ?? []);
+
   const response = await fetch(`${serverUrl}/api/projects/${encodeURIComponent(projectId)}/configure`, {
     method: 'POST',
-    headers: {
+    headers: localApiHeaders({
       'Content-Type': 'application/json',
       Accept: 'application/json',
-    },
+    }),
     body: JSON.stringify(capabilities),
     signal: AbortSignal.timeout(120000),
   });
@@ -114,7 +119,7 @@ async function fetchToolSchema(
 ): Promise<{ description: string; inputSchema: any }> {
   const response = await fetch(
     `${serverUrl}/api/projects/${projectId}/shell-tool-schema?tool=${encodeURIComponent(toolId)}`,
-    { signal: AbortSignal.timeout(20000) }
+    { headers: localApiHeaders(), signal: AbortSignal.timeout(20000) },
   );
   if (!response.ok) {
     const body = await response.json().catch(() => null) as { error?: string } | null;

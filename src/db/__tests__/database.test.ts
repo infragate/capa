@@ -3,6 +3,7 @@ import { CapaDatabase } from '../database';
 import { mkdtempSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { resetSecretCryptoForTests } from '../../shared/secret-crypto';
 
 /** Windows CI can briefly keep SQLite files open after close(). */
 function removeTempDirWithRetry(dir: string, attempts = 8): void {
@@ -28,15 +29,27 @@ describe('CapaDatabase', () => {
   let db: CapaDatabase;
   let tempDir: string;
   let dbPath: string;
+  let prevHome: string | undefined;
+  let prevProfile: string | undefined;
 
   beforeEach(() => {
     tempDir = mkdtempSync(join(tmpdir(), 'capa-test-'));
+    prevHome = process.env.HOME;
+    prevProfile = process.env.USERPROFILE;
+    process.env.HOME = tempDir;
+    process.env.USERPROFILE = tempDir;
+    resetSecretCryptoForTests();
     dbPath = join(tempDir, 'test.db');
     db = new CapaDatabase(dbPath);
   });
 
   afterEach(() => {
     db.close();
+    resetSecretCryptoForTests();
+    if (prevHome === undefined) delete process.env.HOME;
+    else process.env.HOME = prevHome;
+    if (prevProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = prevProfile;
     removeTempDirWithRetry(tempDir);
   });
 

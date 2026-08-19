@@ -2,10 +2,11 @@ import type { CapaDatabase } from "../db/database";
 import { createAuthenticatedFetch } from "../shared/authenticated-fetch";
 import {
 	deriveSlug,
+	executeStagedRegistry,
 	fetchAdapterSource,
-	installRegistry,
 	isValidSlug,
 	removeInstalledAdapter,
+	stageRegistry,
 } from "../shared/registries/installer";
 import type { RegistryManager } from "../shared/registries/manager";
 import type { RegistrySourceType } from "../types/database";
@@ -39,6 +40,55 @@ function parseTypeQuery(value: string | null): RegistrySourceType | null {
 }
 
 const TYPE_HELP = "github, gitlab, url, claude-marketplace";
+
+type RegistryInstallInput = {
+	slug: string;
+	type: RegistrySourceType;
+	source: string;
+};
+
+/** Stage adapter bytes, execute (import), persist as installed — web UI is explicit approval. */
+async function stageAndInstallRegistry(
+	db: CapaDatabase,
+	manager: RegistryManager,
+	input: RegistryInstallInput,
+	authFetch: ReturnType<typeof createAuthenticatedFetch>,
+	opts: { enabled?: boolean; noCache?: boolean } = {},
+) {
+	const result = await stageRegistry(input, authFetch, opts);
+	try {
+		await executeStagedRegistry(input.slug, result.contentSha256);
+	} catch (err: any) {
+		const message = clientErrorMessage(err);
+		db.upsertRegistry({
+			slug: input.slug,
+			type: input.type,
+			source: input.source,
+			status: "failed",
+			enabled: opts.enabled ?? true,
+			lastError: message,
+			resolvedRef: result.resolvedRef,
+			installedAt: null,
+			contentSha256: result.contentSha256,
+		});
+		await manager.reload().catch(() => {});
+		throw new Error(message);
+	}
+
+	const record = db.upsertRegistry({
+		slug: input.slug,
+		type: input.type,
+		source: input.source,
+		status: "installed",
+		enabled: opts.enabled ?? true,
+		lastError: null,
+		resolvedRef: result.resolvedRef,
+		installedAt: Date.now(),
+		contentSha256: result.contentSha256,
+	});
+	await manager.reload().catch(() => {});
+	return record;
+}
 
 
 export async function listRegistriesHandler(
@@ -113,22 +163,13 @@ export async function createRegistryHandler(
 			return jsonError(`Registry "${installSlug}" already exists.`, 409);
 		}
 
-		const result = await installRegistry(
+		const record = await stageAndInstallRegistry(
+			db,
+			manager,
 			{ slug: installSlug, type, source },
 			authFetch,
 		);
-		const record = db.upsertRegistry({
-			slug: installSlug,
-			type,
-			source,
-			status: "installed",
-			enabled: true,
-			lastError: null,
-			resolvedRef: result.resolvedRef,
-			installedAt: Date.now(),
-		});
-		await manager.reload().catch(() => {});
-		return jsonOk({ registry: record, manifest: result.manifest }, 201);
+		return jsonOk({ registry: record });
 	} catch (err: any) {
 		return jsonError(clientErrorMessage(err), 400);
 	}
@@ -198,22 +239,14 @@ export async function patchRegistryHandler(
 	if (needsReinstall) {
 		try {
 			const authFetch = createAuthenticatedFetch(db);
-			const result = await installRegistry(
+			const record = await stageAndInstallRegistry(
+				db,
+				manager,
 				{ slug, type: newType!, source: newSource },
 				authFetch,
+				{ enabled: hasEnabled ? body.enabled! : existing.enabled },
 			);
-			const record = db.upsertRegistry({
-				slug,
-				type: newType!,
-				source: newSource,
-				status: "installed",
-				enabled: hasEnabled ? body.enabled! : existing.enabled,
-				lastError: null,
-				resolvedRef: result.resolvedRef,
-				installedAt: Date.now(),
-			});
-			await manager.reload().catch(() => {});
-			return jsonOk({ registry: record, manifest: result.manifest });
+			return jsonOk({ registry: record });
 		} catch (err: any) {
 			const message = clientErrorMessage(err);
 			// Persist the new pointer so the user can fix and retry, but mark
@@ -251,22 +284,13 @@ export async function refreshRegistryHandler(
 	}
 	try {
 		const authFetch = createAuthenticatedFetch(db);
-		const result = await installRegistry(
+		const record = await stageAndInstallRegistry(
+			db,
+			manager,
 			{ slug: existing.slug, type: existing.type, source: existing.source },
 			authFetch,
 		);
-		const record = db.upsertRegistry({
-			slug: existing.slug,
-			type: existing.type,
-			source: existing.source,
-			status: "installed",
-			enabled: true,
-			lastError: null,
-			resolvedRef: result.resolvedRef,
-			installedAt: Date.now(),
-		});
-		await manager.reload().catch(() => {});
-		return jsonOk({ registry: record, manifest: result.manifest });
+		return jsonOk({ registry: record });
 	} catch (err: any) {
 		const message = clientErrorMessage(err);
 		db.setRegistryStatus(slug, "failed", message);

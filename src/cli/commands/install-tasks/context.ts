@@ -4,6 +4,7 @@ import type { loadSettings } from '../../../shared/config';
 import type { LockfileBuilder } from '../../../shared/lockfile';
 import type { GetSnapshotResult, CachePlatform } from '../../../shared/cache';
 import type { AuthenticatedFetch } from '../../../shared/authenticated-fetch';
+import type { InstallErrorMode } from './install-error-policy';
 
 export type SkillInstallOutcome = 'installed' | 'skipped' | 'failed';
 
@@ -43,6 +44,8 @@ export interface InstallCtx {
   skipped: number;
   warnings: string[];
   errors: string[];
+  /** warn (default): continue on operational errors; stop: exit non-zero. */
+  installErrorMode: InstallErrorMode;
 }
 
 export interface InstallOptions {
@@ -91,6 +94,11 @@ export interface InstallOptions {
    * Default true.
    */
   persistProviders?: boolean;
+  /**
+   * Print the executable surface (stdio MCP, hooks, formatters, plugins)
+   * and exit without starting the server, writing hooks, or mutating the lock.
+   */
+  dryRun?: boolean;
 }
 
 export type GetRepoSnapshotFn = (

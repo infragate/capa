@@ -10,6 +10,7 @@
 import type { CanonicalHookEvent, Hook, HookSource } from "../types/hooks";
 import { CANONICAL_HOOK_EVENTS } from "../types/hooks";
 import { isSafeHookId } from "./safe-id";
+import { assertPublicHttpsUrlShape } from "./safe-remote-url";
 
 export { isSafeHookId } from "./safe-id";
 
@@ -83,6 +84,13 @@ function validateSource(
 		case "remote":
 			if (!result.url)
 				return { error: `hook "${hookId}" source.type=remote requires url` };
+			try {
+				assertPublicHttpsUrlShape(result.url);
+			} catch (err) {
+				return {
+					error: `hook "${hookId}" source.url is not a public https URL: ${err instanceof Error ? err.message : String(err)}`,
+				};
+			}
 			break;
 		case "github":
 		case "gitlab":

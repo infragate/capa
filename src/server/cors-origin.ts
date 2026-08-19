@@ -1,4 +1,26 @@
-export function isAllowedOrigin(origin: string | null): {
+function stripIpv6Brackets(hostname: string): string {
+	return hostname.startsWith("[") && hostname.endsWith("]")
+		? hostname.slice(1, -1)
+		: hostname;
+}
+
+export function serverHttpOrigin(bindHost: string, bindPort: number): string {
+	const host =
+		bindHost.includes(":") && !bindHost.startsWith("[")
+			? `[${bindHost}]`
+			: bindHost;
+	return `http://${host}:${bindPort}`;
+}
+
+/**
+ * MCP Origin gate. Default allow-list is only the server's own origin.
+ * Extra origins must be listed exactly in CAPA_ALLOWED_ORIGINS.
+ */
+export function isAllowedOrigin(
+	origin: string | null,
+	bindHost: string,
+	bindPort: number,
+): {
 	allowed: boolean;
 	origin?: string;
 } {
@@ -6,19 +28,8 @@ export function isAllowedOrigin(origin: string | null): {
 		return { allowed: false };
 	}
 
-	try {
-		const parsed = new URL(origin);
-		const hostname = stripIpv6Brackets(parsed.hostname);
-		if (
-			parsed.protocol === "http:" &&
-			(hostname === "localhost" ||
-				hostname === "127.0.0.1" ||
-				hostname === "::1")
-		) {
-			return { allowed: true, origin };
-		}
-	} catch {
-		// fall through to env allow-list
+	if (origin === serverHttpOrigin(bindHost, bindPort)) {
+		return { allowed: true, origin };
 	}
 
 	const extras =
@@ -30,10 +41,4 @@ export function isAllowedOrigin(origin: string | null): {
 	}
 
 	return { allowed: false };
-}
-
-function stripIpv6Brackets(hostname: string): string {
-	return hostname.startsWith("[") && hostname.endsWith("]")
-		? hostname.slice(1, -1)
-		: hostname;
 }

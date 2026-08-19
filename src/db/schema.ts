@@ -160,6 +160,7 @@ export function initSchema(db: Database): void {
     `);
 
 	migrateRegistriesAllowClaudeMarketplace(db);
+	ensureColumn(db, "registries", "content_sha256", "TEXT");
 
 	// Tracks individual capa-installed hook entries (one row per
 	// (provider, hook) tuple). `locator` is the JSON-encoded path inside

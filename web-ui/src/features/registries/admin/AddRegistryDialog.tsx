@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { useTranslation } from 'react-i18next';
-import { X, Eye, AlertTriangle, Loader2 } from 'lucide-react';
+import { X, Eye, AlertTriangle, Info, Loader2 } from 'lucide-react';
 import { ApiError } from '../../../lib/api';
 import { useAddRegistry, usePreviewRegistry } from '../hooks';
 import type { RegistrySourceType } from '../api';
@@ -122,7 +122,6 @@ export function AddRegistryDialog({ open, onOpenChange, onAdded }: AddRegistryDi
         slug: slug.trim() || undefined,
       });
       onAdded(res.registry.slug);
-      onOpenChange(false);
     } catch (err) {
       const message =
         err instanceof ApiError
@@ -179,6 +178,13 @@ export function AddRegistryDialog({ open, onOpenChange, onAdded }: AddRegistryDi
                   ))}
                 </div>
               </fieldset>
+
+              {isMarketplace && (
+                <div className="flex items-start gap-2 rounded-sm border border-info-border bg-info-bg px-3 py-2 text-xs text-info-text">
+                  <Info className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
+                  <span>{t('addDialog.marketplaceHint')}</span>
+                </div>
+              )}
 
               {!isMarketplace && (
                 <label className="block">
@@ -271,7 +277,11 @@ export function AddRegistryDialog({ open, onOpenChange, onAdded }: AddRegistryDi
                     />
                   ) : (
                     <div className="flex items-center gap-2 px-3 py-6 text-xs text-text-tertiary">
-                      <AlertTriangle className="h-3.5 w-3.5" />
+                      {isMarketplace ? (
+                        <Info className="h-3.5 w-3.5" />
+                      ) : (
+                        <AlertTriangle className="h-3.5 w-3.5" />
+                      )}
                       <span>
                         {t(
                           isMarketplace
@@ -294,7 +304,11 @@ export function AddRegistryDialog({ open, onOpenChange, onAdded }: AddRegistryDi
 
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border-secondary px-6 py-4">
             {isMarketplace ? (
-              <span className="text-xs text-text-secondary">{t('addDialog.marketplaceHint')}</span>
+              <span className="text-xs text-text-secondary">
+                {preview
+                  ? t('addDialog.marketplaceReady')
+                  : t('addDialog.marketplaceHint')}
+              </span>
             ) : (
               <label
                 className={

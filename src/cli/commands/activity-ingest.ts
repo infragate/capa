@@ -7,10 +7,12 @@
  * as invalid JSON and blocks the action.
  */
 
+import { readFileSync } from "fs";
 import { CANONICAL_HOOK_EVENTS, type CanonicalHookEvent } from "../../types/hooks";
 import { loadSettings } from "../../shared/config";
 import { normalizeActivityHookPayload } from "../../shared/agent-activity-normalize";
 import { getServerStatus } from "../utils/server-manager";
+import { localApiHeaders } from "../utils/local-api";
 
 /** Cursor (and similar) gate events that require a permission decision on stdout. */
 const PERMISSION_GATE_EVENTS = new Set<CanonicalHookEvent>([
@@ -108,7 +110,10 @@ async function postEvent(
 	try {
 		await fetch(url, {
 			method: "POST",
-			headers: { "Content-Type": "application/json", Accept: "application/json" },
+			headers: localApiHeaders({
+				"Content-Type": "application/json",
+				Accept: "application/json",
+			}),
 			body: JSON.stringify({
 				kind: normalized.kind,
 				toolName: normalized.toolName,
@@ -158,7 +163,10 @@ function parseArgs(args: string[]): {
 async function readStdin(): Promise<string> {
 	try {
 		if (process.stdin.isTTY) return "";
-		return await Bun.stdin.text();
+		// Windows: `Bun.stdin.text()` can hang after commander has already
+		// opened the process, so hooks never POST. `readFileSync(0)` reads fd
+		// 0 to EOF immediately (empty pipe → "", piped JSON → payload).
+		return readFileSync(0, "utf8");
 	} catch {
 		return "";
 	}

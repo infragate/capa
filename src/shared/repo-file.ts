@@ -22,6 +22,10 @@ import { join, posix, relative, resolve, sep, win32 } from "path";
 import type { AuthenticatedFetch } from "./authenticated-fetch";
 import type { CachePlatform, GetSnapshotResult } from "./cache";
 import { type ParsedRepo, parseRepoString } from "./repo-string";
+import {
+	fetchPublicHttpsText,
+	RemoteUrlPolicyError,
+} from "./safe-remote-url";
 
 /**
  * Reject repo-relative paths that would escape the snapshot directory when
@@ -347,19 +351,22 @@ export async function fetchTextFile(
 	options: FetchTextFileOptions = {},
 ): Promise<string> {
 	const { authFetch, sourceLabel } = options;
-	const response = authFetch ? await authFetch.fetch(url) : await fetch(url);
+	const fetchImpl = authFetch
+		? (u: string, init?: RequestInit) => authFetch.fetch(u, init)
+		: fetch;
 
-	if (!response.ok) {
+	let body: string;
+	try {
+		body = await fetchPublicHttpsText(url, fetchImpl);
+	} catch (err) {
+		if (err instanceof RemoteUrlPolicyError) throw err;
+		const detail = err instanceof Error ? err.message : String(err);
 		throw new Error(
-			`Failed to fetch ${sourceLabel ? `${sourceLabel} from ` : ""}${url}: ` +
-				`${response.status} ${response.statusText}`,
+			`Failed to fetch ${sourceLabel ? `${sourceLabel} from ` : ""}${url}: ${detail}`,
 		);
 	}
 
-	const contentType = response.headers.get("content-type");
-	const body = await response.text();
-
-	if (looksLikeHtmlPage(body, contentType)) {
+	if (looksLikeHtmlPage(body, null)) {
 		// Trailing space inside `where` so the message reads
 		// `Refusing to install HTML response for <label> from <url>` (or, when
 		// no label is provided, `Refusing to install HTML response from <url>`)

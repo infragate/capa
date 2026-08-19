@@ -193,6 +193,9 @@ export function preserveDiscoveredOAuth2(
 		const prevOAuth = prev?.def?.oauth2;
 		if (!prevOAuth) continue;
 
+		// URL changes invalidate previously discovered OAuth metadata.
+		if (prev?.def?.url !== server.def?.url) continue;
+
 		const prevAuth =
 			prevOAuth.authorizationEndpoint ||
 			(prevOAuth as { authorizationUrl?: string }).authorizationUrl;
