@@ -26,6 +26,7 @@ import {
 } from "./resolve-effective-capabilities";
 import type { SessionManager } from "./session-manager";
 import type { McpServerStateManager } from "./mcp-server-state";
+import { syncAllServersOAuth2Requirements } from "./oauth-server-sync";
 import {
 	resolveSkillDescription,
 	resolveSkillSourceUrl,
@@ -110,6 +111,18 @@ export async function handleGetProject(
 				);
 				deps.sessionManager.setProjectCapabilities(projectId, capabilities);
 				void deps.capsWatcher.watchProject(projectId, project.path);
+
+				// capabilities.yaml may still declare oauth2 after the live URL stopped
+				// requiring it; reconcile before returning requiresOAuth to the UI.
+				const oauthSync = await syncAllServersOAuth2Requirements(
+					projectId,
+					capabilities,
+					deps.oauth2Manager,
+					{ onlyWithExistingOAuth: true },
+				);
+				if (oauthSync.changed) {
+					deps.sessionManager.setProjectCapabilities(projectId, capabilities);
+				}
 			}
 		} catch {
 			// ignore unreadable capabilities file; keep cached capabilities if any
@@ -522,6 +535,7 @@ export function handleGetProjectActivity(
 	beforeIdParam: string | null = null,
 	sessionIdParam: string | null = null,
 	conversationIdParam: string | null = null,
+	generationIdParam: string | null = null,
 ): Response {
 	const project = deps.db.getProject(projectId);
 	if (!project) {
@@ -539,6 +553,9 @@ export function handleGetProjectActivity(
 	const conversationId = conversationIdParam?.trim()
 		? conversationIdParam.trim()
 		: null;
+	const generationId = generationIdParam?.trim()
+		? generationIdParam.trim()
+		: null;
 	const page = deps.db.listToolCalls(projectId, {
 		limit,
 		beforeStartedAt,
@@ -546,6 +563,7 @@ export function handleGetProjectActivity(
 		before: beforeStartedAt,
 		sessionId,
 		conversationId,
+		generationId,
 	});
 	return new Response(JSON.stringify(page), { headers: JSON_HEADERS });
 }

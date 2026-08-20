@@ -59,6 +59,8 @@ export type ToolCallListOptions = {
 	sessionId?: string | null;
 	/** When set, return all rows for this provider conversation id. */
 	conversationId?: string | null;
+	/** When set, return all rows for this provider generation id. */
+	generationId?: string | null;
 };
 
 export type ToolCallListResult = {
@@ -379,6 +381,23 @@ export class ToolCallsRepo {
 		const beforeId = options.beforeId ?? null;
 		const sessionId = options.sessionId?.trim() || null;
 		const conversationId = options.conversationId?.trim() || null;
+		const generationId = options.generationId?.trim() || null;
+
+		if (generationId) {
+			const fetched = this.db
+				.query(
+					`SELECT * FROM tool_calls
+           WHERE project_id = ? AND generation_id = ?
+           ORDER BY started_at ASC, id ASC`,
+				)
+				.all(projectId, generationId) as ToolCallRecord[];
+
+			return {
+				calls: fetched,
+				total: fetched.length,
+				hasMore: false,
+			};
+		}
 
 		if (sessionId) {
 			let fetched: ToolCallRecord[];
@@ -436,13 +455,10 @@ export class ToolCallsRepo {
 		}
 
 		if (conversationId) {
-			const fetched = this.db
-				.query(
-					`SELECT * FROM tool_calls
-           WHERE project_id = ? AND conversation_id = ?
-           ORDER BY started_at DESC, id DESC`,
-				)
-				.all(projectId, conversationId) as ToolCallRecord[];
+			const fetched = this.listToolCallsForConversation(
+				projectId,
+				conversationId,
+			);
 
 			return {
 				calls: fetched,
@@ -457,6 +473,90 @@ export class ToolCallsRepo {
 			beforeStartedAt,
 			beforeId,
 		);
+	}
+
+	/**
+	 * All traces for a provider conversation, including Cursor rows stored under
+	 * an agent-session conversation_id that share a generation with the chat id.
+	 */
+	private listToolCallsForConversation(
+		projectId: string,
+		conversationId: string,
+	): ToolCallRecord[] {
+		const chatId = conversationId.trim();
+		const transcriptNeedle = `%agent-transcripts/${chatId}/%`;
+
+		const seedRows = this.db
+			.query(
+				`SELECT * FROM tool_calls
+         WHERE project_id = ?
+           AND (
+             conversation_id = ?
+             OR (attributes_json IS NOT NULL AND attributes_json LIKE ?)
+           )`,
+			)
+			.all(projectId, chatId, transcriptNeedle) as ToolCallRecord[];
+
+		const allowedConversationIds = new Set<string>([chatId]);
+		const generationIds = new Set<string>();
+		for (const row of seedRows) {
+			const gen = row.generation_id?.trim();
+			if (gen) generationIds.add(gen);
+		}
+
+		for (const genId of generationIds) {
+			const genRows = this.db
+				.query(
+					`SELECT * FROM tool_calls WHERE project_id = ? AND generation_id = ?`,
+				)
+				.all(projectId, genId) as ToolCallRecord[];
+
+			const promptConvIds = new Set<string>();
+			for (const row of genRows) {
+				if (row.kind === "prompt" && row.conversation_id?.trim()) {
+					promptConvIds.add(row.conversation_id.trim());
+				}
+			}
+			if (promptConvIds.size > 1) continue;
+
+			if (!genRows.some((row) => row.conversation_id?.trim() === chatId)) {
+				continue;
+			}
+
+			for (const row of genRows) {
+				const cid = row.conversation_id?.trim();
+				if (!cid || cid === chatId || allowedConversationIds.has(cid)) continue;
+
+				// Do not pull tool rows stored under another chat conversation id
+				// that owns prompts elsewhere, even when generation_id collides.
+				const ownsPromptElsewhere = this.db
+					.query(
+						`SELECT 1 FROM tool_calls
+             WHERE project_id = ? AND conversation_id = ? AND kind = 'prompt'
+             LIMIT 1`,
+					)
+					.get(projectId, cid);
+				if (ownsPromptElsewhere) continue;
+
+				allowedConversationIds.add(cid);
+			}
+		}
+
+		if (allowedConversationIds.size === 1 && seedRows.length === 0) {
+			return [];
+		}
+
+		const placeholders = [...allowedConversationIds]
+			.map(() => "?")
+			.join(", ");
+		return this.db
+			.query(
+				`SELECT * FROM tool_calls
+         WHERE project_id = ?
+           AND conversation_id IN (${placeholders})
+         ORDER BY started_at DESC, id DESC`,
+			)
+			.all(projectId, ...allowedConversationIds) as ToolCallRecord[];
 	}
 
 	/**

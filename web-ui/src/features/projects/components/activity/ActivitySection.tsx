@@ -58,6 +58,7 @@ export function ActivitySection({ projectId }: ActivitySectionProps) {
         </div>
       ) : (
         <ActivityFeed
+          projectId={projectId}
           calls={calls}
           hasMore={hasMore}
           loadingMore={loadingMore}
@@ -78,6 +79,8 @@ export function ActivitySection({ projectId }: ActivitySectionProps) {
           if (!open) setTracesView(null);
         }}
         projectPath={project?.path ?? null}
+        feedCalls={calls}
+        live={live}
       />
     </div>
   );

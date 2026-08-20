@@ -1,22 +1,22 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import * as Dialog from '@radix-ui/react-dialog';
-import { ArrowDown, GitBranch, Loader2, Maximize2, Minimize2, Pause, Search, X } from 'lucide-react';
+import { ArrowDown, Loader2, Maximize2, Minimize2, Pause, Search, X } from 'lucide-react';
 import type { ToolCallRecord } from '../../../../types/api';
 import { cn } from '../../../../lib/utils';
 import {
   type ActivityRun,
   formatDuration,
   formatRelative,
+  resolveActivityRunFromCalls,
   sumRunTokenUsage,
 } from './groupActivityRuns';
 import { ActivitySpanRow } from './ActivitySpanRow';
 import { ActivityRunFileTree } from './ActivityRunFileTree';
 import { ActivityRunSkillsPanel } from './ActivityRunSkillsPanel';
 import { ActivityRunSplitPane } from './ActivityRunSplitPane';
-import { ActivityConversationTimeline } from './ActivityConversationTimeline';
 import {
-  buildConversationTimelineBlocks,
+  sortEventsChronological,
   sortRunsChronological,
 } from './conversationTimeline';
 import {
@@ -28,6 +28,8 @@ import {
 import { sourceLabelText, TokenUsageLabel } from './ActivityShared';
 import { filterActivityCalls, filterRunsBySearch } from './filterActivityCalls';
 import { ActivityProcessDiagram } from './ActivityProcessDiagram';
+import { ActivityRunViewTabs, type ActivityRunRightView } from './ActivityRunViewTabs';
+import { useProjectActivityGeneration } from '../../hooks';
 
 interface ActivityRunDialogProps {
   run: ActivityRun | null;
@@ -38,7 +40,10 @@ interface ActivityRunDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   live?: boolean;
+  projectId?: string | null;
   projectPath?: string | null;
+  /** Live activity feed rows — merged into generation fetch + SSE while open. */
+  feedCalls?: ToolCallRecord[];
   loading?: boolean;
   error?: string | null;
   emptyLabel?: string;
@@ -104,17 +109,32 @@ export function ActivityRunDialog({
   open,
   onOpenChange,
   live = false,
+  projectId = null,
   projectPath = null,
+  feedCalls,
   loading = false,
   error = null,
   emptyLabel,
 }: ActivityRunDialogProps) {
   const { t } = useTranslation('projects');
   const multiMode = (runs?.length ?? 0) > 0;
-  const activeRuns = multiMode ? runs! : run ? [run] : [];
+  const generationQuery = useProjectActivityGeneration(
+    projectId,
+    run?.generationId ?? null,
+    {
+      enabled: open && !multiMode && !!run?.generationId,
+      feedCalls,
+    },
+  );
+  const resolvedRun = useMemo(() => {
+    if (!run || multiMode) return run;
+    if (!run.generationId || !generationQuery.data?.length) return run;
+    return resolveActivityRunFromCalls(generationQuery.data, run);
+  }, [run, multiMode, generationQuery.data]);
+  const activeRuns = multiMode ? runs! : resolvedRun ? [resolvedRun] : [];
   const contentKey = multiMode
     ? activeRuns.map((r) => r.id).join('|')
-    : run?.id ?? '';
+    : resolvedRun?.id ?? '';
   const hasContent = activeRuns.length > 0;
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -124,7 +144,15 @@ export function ActivityRunDialog({
   const [pickedFilePathKey, setPickedFilePathKey] = useState<string | null>(null);
   const [scrollTreePathKey, setScrollTreePathKey] = useState<string | null>(null);
   const [search, setSearch] = useState('');
-  const [rightView, setRightView] = useState<'timeline' | 'process'>('timeline');
+  const [rightView, setRightView] = useState<ActivityRunRightView>('timeline');
+  const [processFitToken, setProcessFitToken] = useState(0);
+
+  const onRightViewChange = (view: ActivityRunRightView) => {
+    setRightView(view);
+    if (view === 'process') {
+      setProcessFitToken((token) => token + 1);
+    }
+  };
   const eventCount = hasContent ? runsEvents(activeRuns).length : 0;
   const prevCountRef = useRef(eventCount);
   const seenIdsRef = useRef<Set<string>>(new Set());
@@ -144,21 +172,16 @@ export function ActivityRunDialog({
     [multiMode, activeRuns, search],
   );
   const displayEvents = useMemo(() => {
-    if (!searchActive) return events;
-    if (multiMode) return runsEvents(filteredRuns);
-    return filterActivityCalls(events, search);
-  }, [searchActive, events, multiMode, filteredRuns, search]);
-  const displayTimelineBlocks = useMemo(
-    () => (multiMode ? buildConversationTimelineBlocks(filteredRuns) : []),
-    [multiMode, filteredRuns],
-  );
-  const runBoundsById = useMemo(() => {
-    const map = new Map<string, { start: number; end: number }>();
-    for (const activeRun of multiMode ? filteredRuns : activeRuns) {
-      map.set(activeRun.id, runTimelineBounds(activeRun, runEvents(activeRun)));
+    let list: ToolCallRecord[];
+    if (!searchActive) {
+      list = events;
+    } else if (multiMode) {
+      list = runsEvents(filteredRuns);
+    } else {
+      return sortEventsChronological(filterActivityCalls(events, search));
     }
-    return map;
-  }, [activeRuns, filteredRuns, multiMode]);
+    return sortEventsChronological(list);
+  }, [searchActive, events, multiMode, filteredRuns, search]);
   const timeline = useMemo(() => {
     if (!hasContent) return { start: 0, end: 1 };
     if (multiMode) {
@@ -374,7 +397,7 @@ export function ActivityRunDialog({
           onOpenAutoFocus={(e) => e.preventDefault()}
           aria-describedby={undefined}
         >
-          {loading ? (
+          {loading || (!multiMode && !!run?.generationId && generationQuery.isLoading) ? (
             <div className="flex flex-1 items-center justify-center gap-2 py-16 text-sm text-text-tertiary">
               <Loader2 size={16} className="animate-spin" />
               {t('activity.loading')}
@@ -426,7 +449,13 @@ export function ActivityRunDialog({
                     )}
                   </Dialog.Description>
                 </div>
-                <div className="flex shrink-0 items-center gap-1">
+                <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                  <ActivityRunViewTabs
+                    value={rightView}
+                    onChange={onRightViewChange}
+                    tracesLabel={t('activity.processAnalysis.tabTraces')}
+                    processLabel={t('activity.processAnalysis.tabProcess')}
+                  />
                   <button
                     type="button"
                     onClick={() => {
@@ -454,22 +483,6 @@ export function ActivityRunDialog({
                     {followLatest
                       ? t('activity.followingLatest')
                       : t('activity.followLatest')}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setRightView((v) => (v === 'process' ? 'timeline' : 'process'))
-                    }
-                    className={cn(
-                      'inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[11px] font-medium cursor-pointer',
-                      rightView === 'process'
-                        ? 'bg-accent-primary/15 text-accent-primary'
-                        : 'bg-bg-tertiary text-text-secondary hover:bg-hover-bg',
-                    )}
-                    title={t('activity.processAnalysis.toggle')}
-                  >
-                    <GitBranch size={12} />
-                    {t('activity.processAnalysis.button')}
                   </button>
                   <button
                     type="button"
@@ -549,9 +562,11 @@ export function ActivityRunDialog({
                 }
                 right={
                   rightView === 'process' ? (
-                    <div className="flex h-full min-h-0 flex-col">
-                      <ActivityProcessDiagram runs={processRuns} viewKey={contentKey} />
-                    </div>
+                    <ActivityProcessDiagram
+                      runs={processRuns}
+                      viewKey={contentKey}
+                      fitToken={processFitToken}
+                    />
                   ) : (
                   <div
                     ref={scrollRef}
@@ -571,15 +586,6 @@ export function ActivityRunDialog({
                       <p className="px-4 py-8 text-center text-sm text-text-tertiary">
                         {t('activity.runSearchNoResults')}
                       </p>
-                    ) : multiMode ? (
-                      <ActivityConversationTimeline
-                        blocks={displayTimelineBlocks}
-                        runBoundsById={runBoundsById}
-                        freshIds={freshIds}
-                        fileLinkedSpanIds={fileLinkedSpanIds}
-                        onInspect={() => setFollowLatest(false)}
-                        onSpanExpandedChange={onSpanExpandedChange}
-                      />
                     ) : (
                       displayEvents.map((ev) => (
                         <ActivitySpanRow

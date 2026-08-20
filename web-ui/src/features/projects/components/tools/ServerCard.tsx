@@ -2,7 +2,6 @@ import { useMemo, useState, type ReactNode } from 'react';
 import {
   ChevronRight,
   Trash2,
-  Lock,
   Plus,
   Check,
   Link2,
@@ -62,7 +61,11 @@ export function ServerCard({
   const [pendingToolName, setPendingToolName] = useState<string | null>(null);
   const configLocked = !!server.sourcePlugin;
   const label = server.displayName || server.id;
-  const isOn = server.enabled === true;
+  const togglingEnabled = setServerEnabled.isPending;
+  const isOn =
+    togglingEnabled && setServerEnabled.variables != null
+      ? setServerEnabled.variables.enabled
+      : server.enabled === true;
   const mutating =
     appendMutation.isPending ||
     deleteMutation.isPending ||
@@ -102,7 +105,13 @@ export function ServerCard({
   async function handleToggleEnabled() {
     setToggleError(null);
     try {
-      await setServerEnabled.mutateAsync({ serverId: server.id, enabled: !isOn });
+      const result = await setServerEnabled.mutateAsync({
+        serverId: server.id,
+        enabled: !isOn,
+      });
+      if (result.enabled && !result.connected && result.error) {
+        setToggleError(result.error);
+      }
     } catch (err) {
       setToggleError((err as Error).message || t('actions.serverToggleFailed'));
     }
@@ -151,7 +160,7 @@ export function ServerCard({
           <Switch
             checked={isOn}
             disabled={mutating}
-            loading={setServerEnabled.isPending}
+            loading={togglingEnabled}
             onCheckedChange={() => void handleToggleEnabled()}
             aria-label={isOn ? t('actions.turnOff') : t('actions.turnOn')}
           />
@@ -224,48 +233,42 @@ export function ServerCard({
               )}
             </button>
           )}
-          {configLocked ? (
-            <span title={t('actions.pluginLocked')} className="p-1.5 text-text-tertiary">
-              <Lock size={14} />
-            </span>
-          ) : (
-            <>
-              <button
-                type="button"
-                title={t('actions.editServer')}
-                disabled={mutating}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onEdit();
-                }}
-                className="rounded-sm p-1.5 text-text-tertiary hover:bg-hover-bg hover:text-text-primary cursor-pointer disabled:opacity-50"
-              >
-                <Pencil size={14} />
-              </button>
-              <button
-                type="button"
-                title={t('actions.delete')}
-                disabled={mutating}
-                onClick={() => {
-                  const cascade = confirm(t('actions.confirmDeleteServer', { id: server.id }));
-                  if (!cascade) return;
-                  const alsoTools = confirm(t('actions.cascadeTools'));
-                  deleteMutation.mutate({
-                    section: 'servers',
-                    entryId: server.id,
-                    cascadeTools: alsoTools,
-                  });
-                }}
-                className="rounded-sm p-1.5 text-text-tertiary hover:bg-error-bg hover:text-error-text cursor-pointer disabled:opacity-50"
-              >
-                {deleteMutation.isPending ? (
-                  <Loader2 size={14} className="animate-spin" />
-                ) : (
-                  <Trash2 size={14} />
-                )}
-              </button>
-            </>
-          )}
+          <button
+            type="button"
+            title={configLocked ? t('actions.pluginLocked') : t('actions.editServer')}
+            disabled={mutating || configLocked}
+            onClick={(e) => {
+              if (configLocked) return;
+              e.stopPropagation();
+              onEdit();
+            }}
+            className="rounded-sm p-1.5 text-text-tertiary hover:bg-hover-bg hover:text-text-primary cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Pencil size={14} />
+          </button>
+          <button
+            type="button"
+            title={configLocked ? t('actions.pluginLocked') : t('actions.delete')}
+            disabled={mutating || configLocked}
+            onClick={() => {
+              if (configLocked) return;
+              const cascade = confirm(t('actions.confirmDeleteServer', { id: server.id }));
+              if (!cascade) return;
+              const alsoTools = confirm(t('actions.cascadeTools'));
+              deleteMutation.mutate({
+                section: 'servers',
+                entryId: server.id,
+                cascadeTools: alsoTools,
+              });
+            }}
+            className="rounded-sm p-1.5 text-text-tertiary hover:bg-error-bg hover:text-error-text cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {deleteMutation.isPending ? (
+              <Loader2 size={14} className="animate-spin" />
+            ) : (
+              <Trash2 size={14} />
+            )}
+          </button>
         </div>
       </div>
 
@@ -280,7 +283,7 @@ export function ServerCard({
                 disabled={mutating}
                 className="inline-flex items-center gap-1 rounded-sm border border-accent-primary bg-accent-primary px-2.5 py-1 text-[11px] font-medium text-bg-secondary cursor-pointer hover:opacity-90 disabled:opacity-50"
               >
-                {setServerEnabled.isPending ? (
+                {togglingEnabled ? (
                   <Loader2 size={12} className="animate-spin" />
                 ) : (
                   <Power size={12} />

@@ -33,6 +33,7 @@ function StatValue({
 
 export function TokenSavingsBar({ stats, loading = false }: TokenSavingsBarProps) {
   const { t } = useTranslation('projects');
+  const initialLoad = loading && !stats;
   const fmtSaved = stats ? formatTokenCount(stats.tokensSaved) : '—';
   const fmtWithout = stats ? formatTokenCount(stats.tokensWithout) : '—';
   const fmtWith = stats ? formatTokenCount(stats.tokensWith) : '—';
@@ -42,9 +43,9 @@ export function TokenSavingsBar({ stats, loading = false }: TokenSavingsBarProps
       <TrendingUp className="h-4 w-4 flex-shrink-0 text-accent-primary" />
       <span>{t('tokenSavings.label')}</span>
       <div className="flex items-center gap-3">
-        <div>
+        <div className="min-w-[3.5rem]">
           <StatValue
-            loading={loading}
+            loading={initialLoad}
             title={`without capa ~${fmtWithout}, with capa ~${fmtWith}, saved ~${fmtSaved}`}
           >
             ~{fmtSaved}
@@ -52,9 +53,9 @@ export function TokenSavingsBar({ stats, loading = false }: TokenSavingsBarProps
           <div className="text-[10px] text-text-tertiary">{t('tokenSavings.saved')}</div>
         </div>
         <div className="h-6 w-px bg-border-tertiary" />
-        <div>
+        <div className="min-w-[2.5rem]">
           <StatValue
-            loading={loading}
+            loading={initialLoad}
             title={stats ? `${stats.reduction.toFixed(1)}% reduction` : undefined}
           >
             {stats ? `${stats.reduction.toFixed(0)}%` : '—'}
@@ -62,9 +63,9 @@ export function TokenSavingsBar({ stats, loading = false }: TokenSavingsBarProps
           <div className="text-[10px] text-text-tertiary">{t('tokenSavings.reduction')}</div>
         </div>
         <div className="h-6 w-px bg-border-tertiary" />
-        <div>
+        <div className="min-w-[2.5rem]">
           <StatValue
-            loading={loading}
+            loading={initialLoad}
             title={stats ? `${stats.overhead.toFixed(1)}% overhead` : undefined}
           >
             {stats ? `${stats.overhead.toFixed(0)}%` : '—'}
@@ -72,21 +73,6 @@ export function TokenSavingsBar({ stats, loading = false }: TokenSavingsBarProps
           <div className="text-[10px] text-text-tertiary">{t('tokenSavings.overhead')}</div>
         </div>
       </div>
-      <span className="min-h-[1.25rem] text-[11px] text-text-tertiary">
-        {loading ? (
-          <span className="inline-flex items-center gap-1.5">
-            <Loader2 size={12} className="animate-spin text-accent-primary" aria-hidden />
-            <span className="sr-only">{t('status.loading', { ns: 'common' })}</span>
-          </span>
-        ) : stats ? (
-          t('tokenSavings.toolCounts', {
-            count: stats.serverCount,
-            proxied: stats.proxiedCount,
-            total: stats.totalServerTools,
-            serverCount: stats.serverCount,
-          })
-        ) : null}
-      </span>
     </div>
   );
 }

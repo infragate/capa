@@ -155,16 +155,19 @@ export async function handleSetServerEnabled(
 					timeoutMs: 15_000,
 				});
 			} catch (error: unknown) {
-				deps.mcpServerState.setEnabled(projectId, serverId, false);
+				// Keep the server enabled — tokens may still be valid and connect
+				// can succeed later without forcing another OAuth round-trip.
+				const detail = clientErrorMessage(error, "Failed to connect MCP server");
+				const needsAuth = /authentication|oauth2|reconnect/i.test(detail);
 				return new Response(
 					JSON.stringify({
-						error: clientErrorMessage(error, "Failed to connect MCP server"),
-						enabled: false,
+						serverId,
+						enabled: true,
+						connected: false,
+						error: detail,
+						needsAuth,
 					}),
-					{
-					status: 502,
-					headers: JSON_HEADERS,
-				},
+					{ headers: JSON_HEADERS },
 				);
 			}
 		} else {

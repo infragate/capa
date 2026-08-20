@@ -2,16 +2,17 @@ import type { ToolCallRecord } from '../../../../types/api';
 import { isCommandSpan } from './buildRunCommands';
 import type { ActivityRun } from './groupActivityRuns';
 
-/** Spans omitted from the process map. */
+/** Spans omitted from the process map (infra / lifecycle, not workflow steps). */
 const SKIP_KINDS = new Set([
   'file',
   'stop',
   'session',
   'compact',
   'setup_tools',
-  'call_tool',
-  'tool',
 ]);
+
+/** Capa on-demand MCP meta-tools — traced again as the real tool via `call_tool` / `tool`. */
+const CAPA_META_TOOL_NAMES = new Set(['call_tool', 'setup_tools']);
 
 /** Canonical labels for well-known agent tools. */
 const TOOL_ALIASES: Record<string, string> = {
@@ -104,8 +105,43 @@ function canonicalAgentToolName(raw: string): string {
   return TOOL_ALIASES[trimmed] ?? TOOL_ALIASES[trimmed.toLowerCase()] ?? trimmed;
 }
 
+/** Provider MCP / Cursor wrappers around capa's `call_tool` / `setup_tools` meta-tools. */
+export function isCapaMetaToolWrapperSpan(ev: ToolCallRecord): boolean {
+  const name = ev.tool_name?.trim() ?? '';
+  if (ev.kind === 'agent_mcp' && CAPA_META_TOOL_NAMES.has(name)) {
+    return true;
+  }
+  if (ev.kind === 'agent_tool' && /^MCP:(call_tool|setup_tools)$/i.test(name)) {
+    return true;
+  }
+  return false;
+}
+
+/** Label/id for provider-native MCP tools (not capa `tool` / `call_tool` spans). */
+function nativeMcpToolName(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return 'MCP';
+  if (/^MCP:/i.test(trimmed)) return trimmed.slice(4).trim() || 'MCP';
+  return trimmed;
+}
+
+function capaToolActivityId(toolName: string): string {
+  return `capa:${toolName}`;
+}
+
+function capaToolActivity(toolName: string): ProcessActivity {
+  return {
+    id: capaToolActivityId(toolName),
+    toolName,
+    label: toolName,
+    avgIndex: 0,
+  };
+}
+
 export function isProcessMiningSpan(ev: ToolCallRecord): boolean {
   if (ev.kind === 'prompt') return true;
+  if (ev.kind === 'call_tool' || ev.kind === 'tool') return true;
+  if (isCapaMetaToolWrapperSpan(ev)) return false;
   return !SKIP_KINDS.has(ev.kind);
 }
 
@@ -121,6 +157,14 @@ export function processActivityForSpan(ev: ToolCallRecord): ProcessActivity | nu
   }
 
   if (!isProcessMiningSpan(ev)) return null;
+
+  if (ev.kind === 'call_tool' || ev.kind === 'tool') {
+    const toolName = ev.tool_name?.trim();
+    if (!toolName || CAPA_META_TOOL_NAMES.has(toolName)) return null;
+    return capaToolActivity(toolName);
+  }
+
+  if (isCapaMetaToolWrapperSpan(ev)) return null;
 
   if (ev.kind === 'shell' || isCommandSpan(ev)) {
     return {
@@ -143,7 +187,11 @@ export function processActivityForSpan(ev: ToolCallRecord): ProcessActivity | nu
   }
 
   if (ev.kind === 'agent_tool' || ev.kind === 'agent_mcp') {
-    const toolName = canonicalAgentToolName(ev.tool_name);
+    const raw = ev.tool_name?.trim() ?? '';
+    const toolName =
+      ev.kind === 'agent_mcp' || /^MCP:/i.test(raw)
+        ? nativeMcpToolName(raw)
+        : canonicalAgentToolName(raw);
     return { id: toolName, toolName, label: toolName, avgIndex: 0 };
   }
 
@@ -332,5 +380,27 @@ export function toMermaidFlowchart(
     `  classDef fail fill:${mermaidStyleColor(colors.errorFill, '#2d1215')},color:${mermaidStyleColor(colors.errorText, '#f87171')},stroke:${mermaidStyleColor(colors.errorStroke, '#1e2036')}`,
   );
 
+  return lines.join('\n');
+}
+
+/** Markdown export for the process diagram (Mermaid block when available). */
+export function graphToMarkdown(graph: ProcessGraph, mermaid?: string | null): string {
+  const lines = ['# Process analysis', ''];
+  if (mermaid?.trim()) {
+    lines.push('```mermaid', mermaid.trim(), '```');
+    return lines.join('\n');
+  }
+  for (const activity of graph.activities) {
+    const count = graph.nodeCounts[activity.id] ?? 0;
+    lines.push(`- ${activity.label} (${count} occurrence${count === 1 ? '' : 's'})`);
+  }
+  if (graph.edges.length > 0) {
+    lines.push('', '## Transitions', '');
+    for (const edge of graph.edges) {
+      const from = graph.activities.find((a) => a.id === edge.from)?.label ?? edge.from;
+      const to = graph.activities.find((a) => a.id === edge.to)?.label ?? edge.to;
+      lines.push(`- ${from} → ${to} (${edge.count}×)`);
+    }
+  }
   return lines.join('\n');
 }
