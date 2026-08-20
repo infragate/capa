@@ -7,8 +7,8 @@ import { getRepoSnapshot } from '../../commands/install-tasks/helpers/repo-snaps
 import { installOneSkill } from '../../commands/install-tasks/helpers/install-one-skill';
 import { resolveRuleBody } from '../../commands/install-tasks/install-rules';
 import { installRules } from '../rules-installer';
-import { installHooks } from '../hooks-installer';
-import { installSubAgentInstructions } from '../agents-file';
+import { installHooks } from '../hooks';
+import { installSubAgentInstructions } from '../agents-file/index';
 import { resolvePlugins } from '../../commands/plugin-install';
 import { upsertNativeMcpServer } from './native-mcp';
 import { expandEnvInRecord, loadEnvFileOptional, openAuthDb } from './env';

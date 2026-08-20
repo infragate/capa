@@ -8,8 +8,8 @@ import { upsertNativeMcpServer } from './native-mcp';
 import { runNativePluginInstall, type NativePluginInstall } from './native-plugin-install';
 import { expandEnvInRecord, emptyCapabilities } from './env';
 import { installRules } from '../rules-installer';
-import { installHooks } from '../hooks-installer';
-import { installSubAgentInstructions } from '../agents-file';
+import { installHooks } from '../hooks';
+import { installSubAgentInstructions } from '../agents-file/index';
 import type { CapaDatabase } from '../../../db/database';
 import type { Plugin } from '../../../types/capabilities';
 

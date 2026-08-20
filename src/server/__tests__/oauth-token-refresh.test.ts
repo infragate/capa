@@ -78,14 +78,14 @@ describe("refreshAccessToken", () => {
 			authorizationEndpoint: "https://example.com/authorize",
 			tokenEndpoint: "https://example.com/token",
 			resourceServer: "https://example.com",
-			client_id: "test-app-id",
+			clientId: "test-app-id",
 		});
 
 		expect(ok).toBe(false);
 		expect(db.getOAuthToken("p1", "mcp-server")).toBeNull();
 	});
 
-	it("uses embedded client_id from oauth2 config when no stored variable exists", async () => {
+	it("uses embedded clientId from oauth2 config when no stored variable exists", async () => {
 		let body = "";
 		globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
 			body = String(init?.body ?? "");
@@ -103,7 +103,7 @@ describe("refreshAccessToken", () => {
 			authorizationEndpoint: "https://example.com/authorize",
 			tokenEndpoint: "https://example.com/token",
 			resourceServer: "https://example.com",
-			client_id: "test-app-id",
+			clientId: "test-app-id",
 		});
 
 		expect(ok).toBe(true);

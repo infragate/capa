@@ -13,4 +13,5 @@
 ## Checklist
 - [ ] Tests added or updated
 - [ ] `bunx tsc --noEmit` passes
+- [ ] `bun run smells` clean vs base (or CI Qlty Smells job green)
 - [ ] Docs updated (if user-facing)

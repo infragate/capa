@@ -173,7 +173,7 @@ export async function addCommand(
           capabilitiesFile.path,
           capabilitiesFile.format,
           'skills',
-          resolved.skill as unknown as Record<string, unknown>,
+          resolved.skill,
         );
       } else if (resolved.capability === 'plugins' && resolved.plugin) {
         if (!capabilities.plugins) capabilities.plugins = [];
@@ -194,7 +194,7 @@ export async function addCommand(
           capabilitiesFile.path,
           capabilitiesFile.format,
           'plugins',
-          { ...newPlugin, id: resolved.itemName } as unknown as Record<string, unknown>,
+          { ...newPlugin, id: resolved.itemName },
         );
       }
 
@@ -233,7 +233,7 @@ export async function addCommand(
       capabilitiesFile.path,
       capabilitiesFile.format,
       'plugins',
-      { id, type: parsed.type, def: parsed.def } as unknown as Record<string, unknown>
+      { id, type: parsed.type, def: parsed.def },
     );
 
     console.log(`✓ Added plugin "${id}" to ${capabilitiesFile.path}`);
@@ -272,7 +272,7 @@ export async function addCommand(
     capabilitiesFile.path,
     capabilitiesFile.format,
     'skills',
-    newSkill as unknown as Record<string, unknown>
+    newSkill,
   );
 
   console.log(`✓ Added skill "${skillDef.id}" to ${capabilitiesFile.path}`);
@@ -296,15 +296,15 @@ async function appendTypedEntry(
   capabilitiesFile: { path: string; format: CapabilitiesFormat },
   maybeInstall: () => Promise<void>,
 ): Promise<void> {
-  let entry: Record<string, unknown>;
-  let section: 'servers' | 'tools' | 'rules' | 'hooks';
+  const { path, format } = capabilitiesFile;
   let label: string;
+  let entryId: string;
 
   if (kind === 'server') {
     if (source) {
       throw new Error('Server mode does not take a positional <source>; use --id/--cmd/--url flags.');
     }
-    entry = buildServerEntry({
+    const entry = buildServerEntry({
       id: options.id,
       type: options.type,
       cmd: options.cmd,
@@ -315,17 +315,17 @@ async function appendTypedEntry(
       cwd: options.cwd,
       description: options.description,
     });
-    section = 'servers';
-    label = 'server';
-    const existing = (capabilities.servers ?? []).find((s) => s.id === entry.id);
-    if (existing) {
+    if ((capabilities.servers ?? []).find((s) => s.id === entry.id)) {
       throw new Error(`Server with id "${entry.id}" already exists in capabilities file.`);
     }
+    await appendCapabilityEntry(path, format, 'servers', entry);
+    label = 'server';
+    entryId = entry.id;
   } else if (kind === 'tool') {
     if (source) {
       throw new Error('Tool mode does not take a positional <source>; use --id and MCP/command flags.');
     }
-    entry = buildToolEntry({
+    const entry = buildToolEntry({
       id: options.id,
       mcpServer: options.mcpServer,
       mcpTool: options.mcpTool,
@@ -334,14 +334,14 @@ async function appendTypedEntry(
       description: options.description,
       group: options.group,
     });
-    section = 'tools';
-    label = 'tool';
-    const existing = (capabilities.tools ?? []).find((t) => t.id === entry.id);
-    if (existing) {
+    if ((capabilities.tools ?? []).find((t) => t.id === entry.id)) {
       throw new Error(`Tool with id "${entry.id}" already exists in capabilities file.`);
     }
+    await appendCapabilityEntry(path, format, 'tools', entry);
+    label = 'tool';
+    entryId = entry.id;
   } else if (kind === 'rule') {
-    entry = await buildRuleEntry({
+    const entry = await buildRuleEntry({
       id: options.id,
       source,
       inline: options.inline,
@@ -349,17 +349,17 @@ async function appendTypedEntry(
       alwaysApply: options.alwaysApply,
       description: options.description,
     });
-    section = 'rules';
-    label = 'rule';
-    const existing = (capabilities.rules ?? []).find((r) => r.id === entry.id);
-    if (existing) {
+    if ((capabilities.rules ?? []).find((r) => r.id === entry.id)) {
       throw new Error(`Rule with id "${entry.id}" already exists in capabilities file.`);
     }
+    await appendCapabilityEntry(path, format, 'rules', entry);
+    label = 'rule';
+    entryId = entry.id;
   } else {
     if (source) {
       throw new Error('Hook mode does not take a positional <source>; use --id/--on/--command flags.');
     }
-    entry = buildHookEntry({
+    const entry = buildHookEntry({
       id: options.id,
       on: options.on,
       type: options.type,
@@ -372,22 +372,15 @@ async function appendTypedEntry(
       sequential: options.sequential,
       description: options.description,
     });
-    section = 'hooks';
-    label = 'hook';
-    const existing = (capabilities.hooks ?? []).find((h) => h.id === entry.id);
-    if (existing) {
+    if ((capabilities.hooks ?? []).find((h) => h.id === entry.id)) {
       throw new Error(`Hook with id "${entry.id}" already exists in capabilities file.`);
     }
+    await appendCapabilityEntry(path, format, 'hooks', entry);
+    label = 'hook';
+    entryId = entry.id;
   }
 
-  await appendCapabilityEntry(
-    capabilitiesFile.path,
-    capabilitiesFile.format,
-    section,
-    entry,
-  );
-
-  console.log(`✓ Added ${label} "${entry.id}" to ${capabilitiesFile.path}`);
+  console.log(`✓ Added ${label} "${entryId}" to ${path}`);
   await maybeInstall();
 }
 

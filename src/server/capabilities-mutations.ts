@@ -1,4 +1,4 @@
-import type { ArrayCapabilitySection } from "../shared/capabilities";
+import type { ArrayCapabilitySection, CapabilitySectionEntryMap } from "../shared/capabilities";
 import {
 	appendCapabilityEntry,
 	parseCapabilitiesFile,
@@ -49,7 +49,12 @@ export async function handleAppend(
 	}
 
 	try {
-		await appendCapabilityEntry(loaded.path, loaded.format, section, body);
+		await appendCapabilityEntry(
+			loaded.path,
+			loaded.format,
+			section,
+			body as CapabilitySectionEntryMap[typeof section],
+		);
 		return await afterWrite(deps, projectId, loaded.path, loaded.format);
 	} catch (err: any) {
 		return jsonError(clientErrorMessage(err), 400);

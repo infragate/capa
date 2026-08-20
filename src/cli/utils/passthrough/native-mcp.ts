@@ -4,28 +4,17 @@
  * `capa`), these helpers write real command/url entries under the server's id.
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { existsSync, writeFileSync, mkdirSync } from 'fs';
 import { dirname } from 'path';
 import { getProvider } from '../../../shared/providers';
 import { readTomlFile, writeTomlFile, setNestedKey } from '../../../shared/toml-io';
 import { getMcpConfigPath } from '../../../shared/providers/handlers';
+import { isPlainObject } from '../../../shared/plugin-manifest/types-helpers';
+import { readTextOrNull } from '../../../shared/fs-utils';
 import type { MCPServerDefinition } from '../../../types/capabilities';
 import type { McpIntegration } from '../../../types/providers';
 
 type McpJsonConfig = Record<string, unknown>;
-
-function isPlainObject(x: unknown): x is Record<string, unknown> {
-  return x !== null && typeof x === 'object' && !Array.isArray(x);
-}
-
-function tryReadFile(path: string): string | null {
-  try {
-    return readFileSync(path, 'utf-8');
-  } catch (err: any) {
-    if (err?.code === 'ENOENT') return null;
-    throw err;
-  }
-}
 
 function parseJsonConfig(raw: string): McpJsonConfig | null {
   try {
@@ -124,7 +113,7 @@ export async function upsertNativeMcpServer(
 
       if (mcp.format === 'json') {
         let config: McpJsonConfig = {};
-        const existing = tryReadFile(configPath);
+        const existing = readTextOrNull(configPath);
         if (existing !== null) {
           const parsed = parseJsonConfig(existing);
           if (parsed === null) {

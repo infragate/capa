@@ -14,7 +14,7 @@ import type { Capabilities, SubAgent } from '../../../types/capabilities';
 import {
   installSubAgentInstructions,
   removeSubAgentInstructions,
-} from '../agents-file';
+} from '../agents-file/index';
 
 describe('subagents install path guard', () => {
   let projectPath: string;

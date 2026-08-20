@@ -1,5 +1,4 @@
 import { existsSync, writeFileSync } from "fs";
-import { createServer, Server as HttpServer } from "http";
 // Import the React SPA bundle as text at compile time - this bundles it into the binary
 import spaHtml from "../../web-ui/dist/index.html" with { type: "text" };
 import { CapaDatabase } from "../db/database";
@@ -10,13 +9,10 @@ import {
 	loadSettings,
 } from "../shared/config";
 import { logger } from "../shared/logger";
-import { parseCapabilitiesFile } from "../shared/capabilities";
 import { RegistryManager } from "../shared/registries/manager";
 import { seedDefaultRegistries } from "../shared/registries/seed";
-import { projectUiUrl } from "../shared/ui-urls";
 import { isUnderWrapWorkspacesDir } from "../shared/workspaces/paths";
-import type { Capabilities, MCPServer } from "../types/capabilities";
-import type { OAuth2Config } from "../types/oauth";
+import type { Capabilities } from "../types/capabilities";
 import type { RegistryCapability } from "../types/registry";
 import { VERSION } from "../version";
 import { authorizeApiRequest, injectHtmlAuthToken } from "./api-guards";
@@ -61,7 +57,14 @@ import {
 } from "./mcp-meta-routes";
 import { McpServerStateManager } from "./mcp-server-state";
 import { OAuth2Manager } from "./oauth-manager";
-import { syncAllServersOAuth2Requirements } from "./oauth-server-sync";
+import {
+	closeAllOAuthCallbackServers,
+	handleGetOAuth2Servers,
+	handleOAuth2Callback,
+	handleOAuth2Disconnect,
+	handleOAuth2Start,
+	type OAuthRouteDeps,
+} from "./oauth-routes";
 import {
 	handleDeleteProject,
 	handleGetProject,
@@ -88,9 +91,7 @@ import {
 	previewRegistryHandler,
 	refreshRegistryHandler,
 } from "./registries-routes";
-import { detectCapabilitiesFile } from "../shared/paths";
-import { type EffectiveCapsCacheEntry, enrichCapabilitiesOAuthFromPlugins } from "./resolve-effective-capabilities";
-import { redactOAuth2ConfigForApi } from "./secret-redaction";
+import { type EffectiveCapsCacheEntry } from "./resolve-effective-capabilities";
 import { SessionManager } from "./session-manager";
 import { SubprocessManager } from "./subprocess-manager";
 import {
@@ -133,14 +134,8 @@ class CapaServer {
 	private oauth2Manager!: OAuth2Manager;
 	private gitIntegrationManager!: GitIntegrationManager;
 	private tokenRefreshScheduler!: TokenRefreshScheduler;
-	private httpServer!: HttpServer;
 	private settings: any;
 	private mcpServers = new Map<string, CapaMCPServer>();
-	/** Claude-style OAuth callback servers: port -> { server, idleTimer }; closed after completion or 5 min idle */
-	private oauthCallbackServers = new Map<
-		number,
-		{ server: HttpServer; idleTimer: ReturnType<typeof setTimeout> }
-	>();
 	private registryManager!: RegistryManager;
 	private capsWatcher!: CapabilitiesFileWatcher;
 	private toolCallTracer!: ToolCallTracer;
@@ -223,6 +218,18 @@ class CapaServer {
 			uiOrigin: () => this.uiOrigin(),
 			serverHost: this.settings.server.host,
 			serverPort: this.settings.server.port,
+		};
+	}
+
+	private oauthRouteDeps(): OAuthRouteDeps {
+		return {
+			db: this.db,
+			sessionManager: this.sessionManager,
+			oauth2Manager: this.oauth2Manager,
+			serverHost: this.settings.server.host,
+			serverPort: this.settings.server.port,
+			uiOrigin: () => this.uiOrigin(),
+			effectiveCapsCache: this.effectiveCapsCache,
 		};
 	}
 
@@ -1050,508 +1057,33 @@ class CapaServer {
 		return handleSetVariables(this.variablesRouteDeps(), projectId, request);
 	}
 
-	private async handleGetOAuth2Servers(projectId: string): Promise<Response> {
-		const apiLogger = this.logger.child("API");
-		apiLogger.info(`Get OAuth2 servers for project: ${projectId}`);
-		try {
-			const capabilities =
-				this.sessionManager.getProjectCapabilities(projectId);
-			if (!capabilities) {
-				return new Response(
-					JSON.stringify({ error: "Project not configured" }),
-					{ status: 404, headers: { "Content-Type": "application/json" } },
-				);
-			}
-
-			const project = this.db.getProject(projectId);
-			if (project) {
-				try {
-					const file = await detectCapabilitiesFile(project.path);
-					if (file) {
-						const authored = await parseCapabilitiesFile(
-							file.path,
-							file.format,
-						);
-						await enrichCapabilitiesOAuthFromPlugins(
-							capabilities,
-							authored,
-							project.path,
-							projectId,
-							file.path,
-							this.db,
-							this.effectiveCapsCache,
-						);
-					}
-				} catch (error: unknown) {
-					apiLogger.warn(
-						`OAuth plugin enrichment skipped for ${projectId}: ${error instanceof Error ? error.message : String(error)}`,
-					);
-				}
-			}
-
-			// Reconcile def.oauth2 with what each URL-based server actually requires.
-			const oauthSync = await syncAllServersOAuth2Requirements(
-				projectId,
-				capabilities,
-				this.oauth2Manager,
-			);
-			if (oauthSync.changed) {
-				this.sessionManager.setProjectCapabilities(projectId, capabilities);
-				for (const entry of oauthSync.entries) {
-					apiLogger.debug(
-						`OAuth2 required for ${entry.serverId} (connected=${entry.isConnected})`,
-					);
-				}
-			}
-
-			const oauth2Servers = capabilities.servers
-				.filter((s: any) => s.def.oauth2)
-				.map((s: MCPServer) => {
-					const isConnected = this.oauth2Manager.isServerConnected(
-						projectId,
-						s.id,
-					);
-					let expiresAt: number | undefined;
-
-					if (isConnected) {
-						const tokenData = this.db.getOAuthToken(projectId, s.id);
-						expiresAt = tokenData?.expires_at ?? undefined;
-					}
-
-					return {
-						serverId: s.id,
-						serverUrl: s.def.url,
-						displayName: s.displayName ?? s.id,
-						isConnected: isConnected,
-						expiresAt: expiresAt,
-						oauth2Config: redactOAuth2ConfigForApi(
-							s.def.oauth2 as Record<string, unknown>,
-						),
-					};
-				});
-
-			return new Response(JSON.stringify({ servers: oauth2Servers }), {
-				headers: { "Content-Type": "application/json" },
-			});
-		} catch (error: any) {
-			// Log full detail server-side, but return a generic message so raw
-			// exception text (stack-trace exposure) never reaches the client.
-			apiLogger.failure(
-				`Error getting OAuth2 servers: ${error?.message ?? error}`,
-			);
-			return new Response(
-				JSON.stringify({ error: "Failed to load OAuth2 servers" }),
-				{ status: 500, headers: { "Content-Type": "application/json" } },
-			);
-		}
+	private handleGetOAuth2Servers(projectId: string): Promise<Response> {
+		return handleGetOAuth2Servers(this.oauthRouteDeps(), projectId);
 	}
 
 	private uiOrigin(): string {
 		return `http://${this.settings.server.host}:${this.settings.server.port}`;
 	}
 
-	/** Close and remove the callback server for a port (after completion or idle timeout). */
-	private closeOAuthCallbackServer(port: number): void {
-		const entry = this.oauthCallbackServers.get(port);
-		if (!entry) return;
-		clearTimeout(entry.idleTimer);
-		entry.server.close();
-		this.oauthCallbackServers.delete(port);
-		this.logger.debug(`OAuth callback server on port ${port} closed`);
-	}
-
-	/**
-	 * Ensure a Claude-style OAuth callback server is listening on the given port.
-	 * Serves GET /callback?code=...&state=... and redirects to main UI after token exchange.
-	 * Closed after completion or after 5 minutes idle. Used when a plugin provides client_id + callbackPort in .mcp.json (e.g. Slack).
-	 * Binds directly and retries on EADDRINUSE (no separate port-availability check).
-	 */
-	private async ensureOAuthCallbackServer(
-		startPort: number,
-		maxAttempts = 10,
-	): Promise<number> {
-		for (let attempt = 0; attempt < maxAttempts; attempt++) {
-			const port = startPort + attempt;
-			if (this.oauthCallbackServers.has(port)) {
-				return port;
-			}
-			try {
-				await this.bindOAuthCallbackServer(port);
-				return port;
-			} catch (err: any) {
-				if (err?.code === "EADDRINUSE") {
-					this.logger.warn(
-						`OAuth callback port ${port} in use, trying ${port + 1}`,
-					);
-					continue;
-				}
-				throw err;
-			}
-		}
-		throw new Error(
-			`Could not bind OAuth callback server after ${maxAttempts} attempts starting at ${startPort}`,
-		);
-	}
-
-	private bindOAuthCallbackServer(port: number): Promise<void> {
-		const self = this;
-		const IDLE_MS = 5 * 60 * 1000; // 5 minutes
-		const mainBase = this.uiOrigin();
-
-		return new Promise((resolve, reject) => {
-			const server = createServer((req, res) => {
-				if (req.method !== "GET" || !req.url) {
-					res.writeHead(405);
-					res.end();
-					return;
-				}
-				const reqUrl = new URL(req.url, `http://127.0.0.1:${port}`);
-				if (reqUrl.pathname !== "/callback") {
-					res.writeHead(404);
-					res.end();
-					return;
-				}
-				const entry = self.oauthCallbackServers.get(port);
-				if (entry) clearTimeout(entry.idleTimer);
-				const closeWhenDone = () => {
-					res.on("finish", () => self.closeOAuthCallbackServer(port));
-				};
-
-				const code = reqUrl.searchParams.get("code");
-				const state = reqUrl.searchParams.get("state");
-				const error = reqUrl.searchParams.get("error");
-				const apiLogger = self.logger.child("API");
-
-				const redirectToUi = (
-					projectId: string | undefined,
-					success: boolean,
-					message?: string,
-					serverId?: string,
-				) => {
-					closeWhenDone();
-					const loc = projectId
-						? projectUiUrl(mainBase, projectId, {
-								...(success
-									? { oauth_success: message ?? "true" }
-									: { oauth_error: message ?? "Unknown error" }),
-								...(serverId ? { server: serverId } : {}),
-							})
-						: `${mainBase}/`;
-					res.writeHead(302, { Location: loc });
-					res.end();
-				};
-
-				if (error) {
-					apiLogger.error(`OAuth2 callback error: ${error}`);
-					let projectId: string | undefined;
-					if (state) {
-						const flow = self.db.getFlowState(state);
-						projectId = flow?.project_id;
-					}
-					redirectToUi(projectId, false, error);
-					return;
-				}
-
-				if (!code || !state) {
-					redirectToUi(undefined, false, "Missing code or state");
-					return;
-				}
-
-				apiLogger.info("OAuth2 callback (Claude-style) received");
-				self.oauth2Manager
-					.handleCallback(code, state)
-					.then((result) => {
-						if (!result.success) {
-							apiLogger.failure(`Callback failed: ${result.error}`);
-							redirectToUi(
-								result.projectId,
-								false,
-								result.error ?? "Token exchange failed",
-							);
-							return;
-						}
-						apiLogger.success(
-							`OAuth2 flow completed for server: ${result.serverId}`,
-						);
-						redirectToUi(result.projectId, true, "true", result.serverId);
-					})
-					.catch((err: any) => {
-						apiLogger.failure(`Callback error: ${err.message}`);
-						redirectToUi(
-							undefined,
-							false,
-							err.message ?? "Token exchange failed",
-						);
-					});
-			});
-
-			server.once("error", reject);
-			server.listen(port, "127.0.0.1", () => {
-				self.logger.info(
-					`OAuth callback server (Claude-style) listening on http://localhost:${port}/callback`,
-				);
-				const idleTimer = setTimeout(() => {
-					self.logger.debug(
-						`OAuth callback server on port ${port} idle for 5 min, closing`,
-					);
-					self.closeOAuthCallbackServer(port);
-				}, IDLE_MS);
-				self.oauthCallbackServers.set(port, { server, idleTimer });
-				server.on("error", (err: any) => {
-					self.logger.failure(
-						`OAuth callback server on port ${port}: ${err.message}`,
-					);
-					self.closeOAuthCallbackServer(port);
-				});
-				resolve();
-			});
-		});
-	}
-
-	private async handleOAuth2Start(
+	private handleOAuth2Start(
 		projectId: string,
 		request: Request,
 	): Promise<Response> {
-		const apiLogger = this.logger.child("API");
-		try {
-			const url = new URL(request.url);
-			const serverId = url.searchParams.get("server");
-
-			if (!serverId) {
-				return new Response(
-					JSON.stringify({ error: "Missing server parameter" }),
-					{ status: 400, headers: { "Content-Type": "application/json" } },
-				);
-			}
-
-			apiLogger.info(`Start OAuth2 flow for server: ${serverId}`);
-
-			const capabilities =
-				this.sessionManager.getProjectCapabilities(projectId);
-			if (!capabilities) {
-				return new Response(
-					JSON.stringify({ error: "Project not configured" }),
-					{ status: 404, headers: { "Content-Type": "application/json" } },
-				);
-			}
-
-			const server = capabilities.servers.find((s: any) => s.id === serverId);
-			if (!server || !server.def.oauth2) {
-				return new Response(
-					JSON.stringify({
-						error: "Server not found or does not require OAuth2",
-					}),
-					{ status: 404, headers: { "Content-Type": "application/json" } },
-				);
-			}
-
-			const oauth2 = server.def.oauth2 as {
-				client_id?: string;
-				clientId?: string;
-				CLIENT_ID?: string;
-				callback_port?: number | string;
-				callbackPort?: number | string;
-				CALLBACK_PORT?: number | string;
-				registrationEndpoint?: string;
-				[k: string]: any;
-			};
-			// Read embedded values with the same fallbacks the configure-handler accepts —
-			// older capabilities stored in the DB (pre-normalization) may still use camelCase
-			// or uppercase snake_case keys. Without this we silently fall back to the capa
-			// server callback URL, which auth servers reject as an unregistered redirect.
-			const effectiveClientId =
-				oauth2.client_id ??
-				oauth2.clientId ??
-				oauth2.CLIENT_ID ??
-				(oauth2 as any).oauth?.clientId ??
-				(oauth2 as any).oauth?.client_id;
-			const callbackPortRaw =
-				oauth2.callback_port ?? oauth2.callbackPort ?? oauth2.CALLBACK_PORT;
-			let effectiveCallbackPort: number | undefined;
-			if (typeof callbackPortRaw === "number" && callbackPortRaw > 0) {
-				effectiveCallbackPort = callbackPortRaw;
-			} else if (typeof callbackPortRaw === "string") {
-				const parsed = Number(callbackPortRaw);
-				if (Number.isFinite(parsed) && parsed > 0)
-					effectiveCallbackPort = parsed;
-			}
-			// Claude-style only when dynamic client registration is not supported and .mcp.json
-			// provides client_id + callbackPort (e.g. Slack). Auth servers register specific
-			// (client_id, redirect_uri) pairs; falling back to the capa-server URL when the
-			// plugin embedded a callbackPort causes the auth server to reject the request.
-			const useClaudeCallback =
-				!!effectiveClientId &&
-				effectiveCallbackPort != null &&
-				!oauth2.registrationEndpoint;
-			let callbackPort = effectiveCallbackPort;
-			if (useClaudeCallback && callbackPort != null) {
-				callbackPort = await this.ensureOAuthCallbackServer(callbackPort);
-			}
-			const redirectUri = useClaudeCallback
-				? `http://localhost:${callbackPort}/callback`
-				: `http://${this.settings.server.host}:${this.settings.server.port}/api/projects/${projectId}/oauth/callback`;
-			apiLogger.debug(
-				`OAuth2 redirect for ${serverId}: ${redirectUri} (useClaudeCallback=${useClaudeCallback}, client_id=${effectiveClientId ? "set" : "missing"}, callback_port=${effectiveCallbackPort ?? "missing"}, registrationEndpoint=${oauth2.registrationEndpoint ? "set" : "missing"})`,
-			);
-
-			// Ensure the OAuth2Config we hand to the manager has the canonical snake_case
-			// client_id populated so generateAuthorizationUrl emits the embedded app id.
-			// Plugin manifests (e.g. Slack) often only embed client_id + callback_port;
-			// discovery fills authorization/token endpoints during configure — but GET
-			// can re-expand plugins and drop those. Discover on demand if still missing.
-			let configForFlow: OAuth2Config = {
-				...(server.def.oauth2 as OAuth2Config),
-				...(effectiveClientId ? { client_id: effectiveClientId } : {}),
-			};
-			if (server.def.url) {
-				apiLogger.info(`Refreshing OAuth metadata for ${serverId}…`);
-				const detected = await this.oauth2Manager.detectOAuth2Requirement(
-					server.def.url,
-					{
-						tlsSkipVerify: server.def.tlsSkipVerify,
-					},
-				);
-				if (!detected) {
-					delete server.def.oauth2;
-					this.oauth2Manager.disconnect(projectId, serverId);
-					this.sessionManager.setProjectCapabilities(projectId, capabilities);
-					return new Response(
-						JSON.stringify({
-							error:
-								"This server no longer requires OAuth. Refresh the page and try connecting to the server directly.",
-						}),
-						{ status: 409, headers: { "Content-Type": "application/json" } },
-					);
-				}
-				configForFlow = {
-					...configForFlow,
-					...detected,
-					authorizationEndpoint:
-						configForFlow.authorizationEndpoint ||
-						(configForFlow as { authorizationUrl?: string }).authorizationUrl ||
-						detected.authorizationEndpoint,
-					tokenEndpoint:
-						configForFlow.tokenEndpoint ||
-						(configForFlow as { tokenUrl?: string }).tokenUrl ||
-						detected.tokenEndpoint,
-					resourceServer:
-						configForFlow.resourceServer ||
-						detected.resourceServer ||
-						server.def.url,
-					scope: detected.scope ?? configForFlow.scope,
-					...(effectiveClientId ? { client_id: effectiveClientId } : {}),
-				};
-				server.def.oauth2 = configForFlow;
-				this.sessionManager.setProjectCapabilities(projectId, capabilities);
-			}
-
-			const { url: authUrl, state } =
-				await this.oauth2Manager.generateAuthorizationUrl(
-					projectId,
-					serverId,
-					configForFlow,
-					redirectUri,
-				);
-
-			apiLogger.success("Authorization URL generated");
-			return new Response(
-				JSON.stringify({ authorizationUrl: authUrl, state }),
-				{ headers: { "Content-Type": "application/json" } },
-			);
-		} catch (error: any) {
-			apiLogger.failure(`Error: ${error.message}`);
-			return new Response(JSON.stringify({ error: error.message }), {
-				status: 500,
-				headers: { "Content-Type": "application/json" },
-			});
-		}
+		return handleOAuth2Start(this.oauthRouteDeps(), projectId, request);
 	}
 
-	private async handleOAuth2Callback(
+	private handleOAuth2Callback(
 		projectId: string,
 		request: Request,
 	): Promise<Response> {
-		const apiLogger = this.logger.child("API");
-		try {
-			const url = new URL(request.url);
-			const code = url.searchParams.get("code");
-			const state = url.searchParams.get("state");
-			const error = url.searchParams.get("error");
-
-			if (error) {
-				apiLogger.error(`OAuth2 callback error: ${error}`);
-				const redirectUrl = projectUiUrl(this.uiOrigin(), projectId, {
-					oauth_error: error,
-				});
-				return new Response(null, {
-					status: 302,
-					headers: { Location: redirectUrl },
-				});
-			}
-
-			if (!code || !state) {
-				return new Response(
-					JSON.stringify({ error: "Missing code or state parameter" }),
-					{ status: 400, headers: { "Content-Type": "application/json" } },
-				);
-			}
-
-			apiLogger.info(`OAuth2 callback for project: ${projectId}`);
-
-			const result = await this.oauth2Manager.handleCallback(code, state);
-
-			if (!result.success) {
-				apiLogger.failure(`Callback failed: ${result.error}`);
-				const redirectUrl = projectUiUrl(this.uiOrigin(), projectId, {
-					oauth_error: result.error || "Unknown error",
-				});
-				return new Response(null, {
-					status: 302,
-					headers: { Location: redirectUrl },
-				});
-			}
-
-			apiLogger.success(`OAuth2 flow completed for server: ${result.serverId}`);
-
-			const redirectUrl = projectUiUrl(this.uiOrigin(), projectId, {
-				oauth_success: "true",
-				...(result.serverId ? { server: result.serverId } : {}),
-			});
-			return new Response(null, {
-				status: 302,
-				headers: { Location: redirectUrl },
-			});
-		} catch (error: any) {
-			const apiLogger = this.logger.child("API");
-			apiLogger.failure(`Error: ${error.message}`);
-			const redirectUrl = projectUiUrl(this.uiOrigin(), projectId, {
-				oauth_error: error.message,
-			});
-			return new Response(null, {
-				status: 302,
-				headers: { Location: redirectUrl },
-			});
-		}
+		return handleOAuth2Callback(this.oauthRouteDeps(), projectId, request);
 	}
 
-	private async handleOAuth2Disconnect(
+	private handleOAuth2Disconnect(
 		projectId: string,
 		serverId: string,
 	): Promise<Response> {
-		const apiLogger = this.logger.child("API");
-		apiLogger.info(`Disconnect OAuth2 for server: ${serverId}`);
-		try {
-			this.oauth2Manager.disconnect(projectId, serverId);
-			return new Response(JSON.stringify({ success: true }), {
-				headers: { "Content-Type": "application/json" },
-			});
-		} catch (error: any) {
-			apiLogger.failure(`Error: ${error.message}`);
-			return new Response(JSON.stringify({ error: error.message }), {
-				status: 500,
-				headers: { "Content-Type": "application/json" },
-			});
-		}
+		return handleOAuth2Disconnect(this.oauthRouteDeps(), projectId, serverId);
 	}
 
 	private handleTokenRefreshStatus(): Promise<Response> {
@@ -1866,13 +1398,7 @@ class CapaServer {
 		// Stop all subprocesses
 		this.subprocessManager.stopAll();
 
-		// Close Claude-style OAuth callback servers
-		for (const [port, entry] of this.oauthCallbackServers) {
-			clearTimeout(entry.idleTimer);
-			entry.server.close();
-			this.logger.debug(`Closed OAuth callback server on port ${port}`);
-		}
-		this.oauthCallbackServers.clear();
+		closeAllOAuthCallbackServers();
 
 		// Close database
 		this.sessionManager.dispose();

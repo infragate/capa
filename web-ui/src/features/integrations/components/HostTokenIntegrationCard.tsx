@@ -1,19 +1,31 @@
-import { useState, useCallback } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import type { Integration } from '../../../types/api';
-import { integrationsApi } from '../api';
+import type { ActionResponse, Integration } from '../../../types/api';
 import { StatusDot } from '../../../components/common/StatusDot';
-import { FaGitlab } from 'react-icons/fa';
 
-interface GitLabSelfManagedCardProps {
+interface HostTokenIntegrationCardProps {
   integration?: Integration;
   onMessage: (text: string, type: 'success' | 'error') => void;
   onDisconnect: (platform: string, host?: string) => void;
   onRefresh: () => void;
+  platform: string;
+  /** i18n key prefix under `integrations` (e.g. `githubEnterprise`) */
+  i18nKey: string;
+  icon: ReactNode;
+  connectFn: (host: string, token: string) => Promise<ActionResponse>;
 }
 
-export function GitLabSelfManagedCard({ integration, onMessage, onDisconnect, onRefresh }: GitLabSelfManagedCardProps) {
+export function HostTokenIntegrationCard({
+  integration,
+  onMessage,
+  onDisconnect,
+  onRefresh,
+  platform,
+  i18nKey,
+  icon,
+  connectFn,
+}: HostTokenIntegrationCardProps) {
   const { t } = useTranslation('integrations');
   const connected = integration?.isConnected ?? false;
   const staleHost = !connected && integration?.host ? integration.host : '';
@@ -21,15 +33,15 @@ export function GitLabSelfManagedCard({ integration, onMessage, onDisconnect, on
   const [token, setToken] = useState('');
   const [showToken, setShowToken] = useState(false);
 
-  const handleConnect = useCallback(async () => {
+  async function handleConnect() {
     if (!host.trim() || !token.trim()) {
-      onMessage(t('gitlabSelfManaged.hostAndTokenRequired'), 'error');
+      onMessage(t(`${i18nKey}.hostAndTokenRequired`), 'error');
       return;
     }
     try {
-      const data = await integrationsApi.connectGitLabSelfManaged(host.trim(), token.trim());
+      const data = await connectFn(host.trim(), token.trim());
       if (data.success) {
-        onMessage(t('gitlabSelfManaged.connected'), 'success');
+        onMessage(t(`${i18nKey}.connected`), 'success');
         setHost('');
         setToken('');
         setTimeout(onRefresh, 500);
@@ -39,15 +51,19 @@ export function GitLabSelfManagedCard({ integration, onMessage, onDisconnect, on
     } catch (err) {
       onMessage(`Failed to connect: ${(err as Error).message}`, 'error');
     }
-  }, [host, token, onMessage, onRefresh, t]);
+  }
+
+  function confirmDisconnect(hostArg?: string) {
+    if (confirm(t(`${i18nKey}.confirmDisconnect`))) onDisconnect(platform, hostArg);
+  }
 
   return (
     <div className="rounded-sm border border-border-secondary bg-bg-tertiary p-5 transition-shadow hover:shadow-[var(--shadow-sm)]">
       <div className="mb-3 flex items-center gap-3">
-        <div className="flex h-10 w-10 items-center justify-center rounded-md border border-border-tertiary bg-bg-secondary overflow-hidden">
-          <FaGitlab className="h-8 w-8 text-[#fc6d26]" />
+        <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-md border border-border-tertiary bg-bg-secondary">
+          {icon}
         </div>
-        <div className="text-base font-medium text-text-primary">{t('gitlabSelfManaged.name')}</div>
+        <div className="text-base font-medium text-text-primary">{t(`${i18nKey}.name`)}</div>
       </div>
       <div className="mb-4">
         <StatusDot
@@ -57,9 +73,7 @@ export function GitLabSelfManagedCard({ integration, onMessage, onDisconnect, on
       </div>
       {connected ? (
         <button
-          onClick={() => {
-            if (confirm(t('gitlabSelfManaged.confirmDisconnect'))) onDisconnect('gitlab-self-managed', integration?.host);
-          }}
+          onClick={() => confirmDisconnect(integration?.host)}
           className="w-full rounded-sm bg-error-btn px-6 py-2.5 text-sm font-medium text-white transition-colors hover:bg-error-btn-hover"
         >
           {t('common:actions.disconnect')}
@@ -71,12 +85,8 @@ export function GitLabSelfManagedCard({ integration, onMessage, onDisconnect, on
               <span>Saved credentials for {staleHost} are no longer valid.</span>
               <button
                 type="button"
-                onClick={() => {
-                  if (confirm(t('gitlabSelfManaged.confirmDisconnect'))) {
-                    onDisconnect('gitlab-self-managed', staleHost);
-                  }
-                }}
-                className="shrink-0 text-error-text hover:underline cursor-pointer"
+                onClick={() => confirmDisconnect(staleHost)}
+                className="shrink-0 cursor-pointer text-error-text hover:underline"
               >
                 Remove
               </button>
@@ -84,32 +94,32 @@ export function GitLabSelfManagedCard({ integration, onMessage, onDisconnect, on
           )}
           <div>
             <label className="mb-2 block text-[13px] font-medium text-text-primary">
-              {t('gitlabSelfManaged.hostLabel')}
+              {t(`${i18nKey}.hostLabel`)}
             </label>
             <input
               type="text"
               value={host}
               onChange={(e) => setHost(e.target.value)}
-              placeholder={t('gitlabSelfManaged.hostPlaceholder')}
+              placeholder={t(`${i18nKey}.hostPlaceholder`)}
               className="w-full rounded-sm border border-border-primary bg-input-bg px-3 py-2.5 font-mono text-sm text-text-primary placeholder:text-text-tertiary focus:border-accent-primary focus:outline-none focus:shadow-[var(--shadow-sm)]"
             />
           </div>
           <div>
             <label className="mb-2 block text-[13px] font-medium text-text-primary">
-              {t('gitlabSelfManaged.tokenLabel')}
+              {t(`${i18nKey}.tokenLabel`)}
             </label>
             <div className="relative">
               <input
                 type={showToken ? 'text' : 'password'}
                 value={token}
                 onChange={(e) => setToken(e.target.value)}
-                placeholder={t('gitlabSelfManaged.tokenPlaceholder')}
+                placeholder={t(`${i18nKey}.tokenPlaceholder`)}
                 className="w-full rounded-sm border border-border-primary bg-input-bg px-3 py-2.5 pr-10 font-mono text-sm text-text-primary placeholder:text-text-tertiary focus:border-accent-primary focus:outline-none focus:shadow-[var(--shadow-sm)]"
               />
               <button
                 type="button"
                 onClick={() => setShowToken(!showToken)}
-                className="absolute right-2 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-sm border-0 bg-transparent text-text-secondary transition-colors hover:bg-border-primary hover:text-text-primary cursor-pointer"
+                className="absolute right-2 top-1/2 flex h-7 w-7 -translate-y-1/2 cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent text-text-secondary transition-colors hover:bg-border-primary hover:text-text-primary"
               >
                 {showToken ? <EyeOff className="h-[18px] w-[18px]" /> : <Eye className="h-[18px] w-[18px]" />}
               </button>

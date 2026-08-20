@@ -7,8 +7,6 @@ import { isUnderWrapWorkspacesDir } from "../shared/workspaces/paths";
 import type {
 	Capabilities,
 	MCPServer,
-	ToolCommandDefinition,
-	ToolMCPDefinition,
 } from "../types/capabilities";
 import type { ToolCallRecord } from "../types/database";
 import type { CapabilitiesFileWatcher } from "./capabilities-watcher";
@@ -170,20 +168,18 @@ export async function handleGetProject(
 								sourcePlugin: t.sourcePlugin || null,
 							};
 							if (t.type === "mcp") {
-								const mcpDef = t.def as ToolMCPDefinition;
-								base.mcpServer = mcpDef.server;
-								base.mcpTool = mcpDef.tool;
-								base.defaults = mcpDef.defaults || null;
-								base.formatter = mcpDef.formatter
+								base.mcpServer = t.def.server;
+								base.mcpTool = t.def.tool;
+								base.defaults = t.def.defaults || null;
+								base.formatter = t.def.formatter
 									? {
-											cmd: mcpDef.formatter.cmd,
-											timeout: mcpDef.formatter.timeout,
+											cmd: t.def.formatter.cmd,
+											timeout: t.def.formatter.timeout,
 										}
 									: null;
 							} else if (t.type === "command") {
-								const cmdDef = t.def as ToolCommandDefinition;
-								base.command = cmdDef.run.cmd;
-								base.commandArgs = cmdDef.run.args || [];
+								base.command = t.def.run.cmd;
+								base.commandArgs = t.def.run.args || [];
 								if (t.group) base.group = t.group;
 							}
 							return base;
@@ -206,20 +202,11 @@ export async function handleGetProject(
 								tlsSkipVerify: s.def?.tlsSkipVerify === true,
 								oauth2: s.def?.oauth2
 									? {
-											clientId:
-												s.def.oauth2.clientId ??
-												s.def.oauth2.client_id ??
-												s.def.oauth2.oauth?.clientId ??
-												null,
+											clientId: s.def.oauth2.clientId ?? null,
 											clientSecret: s.def.oauth2.clientSecret ?? null,
 											authorizationUrl:
-												s.def.oauth2.authorizationUrl ??
-												s.def.oauth2.authorizationEndpoint ??
-												null,
-											tokenUrl:
-												s.def.oauth2.tokenUrl ??
-												s.def.oauth2.tokenEndpoint ??
-												null,
+												s.def.oauth2.authorizationEndpoint ?? null,
+											tokenUrl: s.def.oauth2.tokenEndpoint ?? null,
 											scopes:
 												s.def.oauth2.scopes ??
 												(s.def.oauth2.scope ? [s.def.oauth2.scope] : null),

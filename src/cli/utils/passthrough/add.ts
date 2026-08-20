@@ -4,7 +4,7 @@ import { generateProjectId } from '../../../shared/paths';
 import { getRepoSnapshot } from '../../commands/install-tasks/helpers/repo-snapshot';
 import { resolveRuleBody } from '../../commands/install-tasks/install-rules';
 import { installRules } from '../rules-installer';
-import { installHooks } from '../hooks-installer';
+import { installHooks } from '../hooks';
 import { parseSkillSource } from '../../commands/add-parse-skill';
 import { parsePluginSource } from '../../commands/add-parse-plugin';
 import type { AddCommandOptions } from '../../commands/add';

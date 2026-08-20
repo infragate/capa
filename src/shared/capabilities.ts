@@ -7,8 +7,16 @@ import type {
 	Capabilities,
 	CapabilitiesFormat,
 	CapabilitiesOptions,
+	Hook,
+	MCPServer,
+	Plugin,
+	Rule,
+	Skill,
+	SubAgent,
+	Tool,
 } from "../types/capabilities";
 import { logger } from "./logger";
+import { normalizeOAuth2Block } from "./plugin-manifest/mcp-parser";
 
 const KNOWN_CAPABILITY_KEYS = new Set([
 	"providers",
@@ -23,23 +31,218 @@ const KNOWN_CAPABILITY_KEYS = new Set([
 	"hooks",
 ]);
 
-const objectEntry = z.record(z.string(), z.unknown());
+const sourcePluginSchema = z
+	.object({
+		id: z.string(),
+		name: z.string(),
+		provider: z.enum(["cursor", "claude"]),
+	})
+	.passthrough();
+
+const skillDefSchema = z
+	.object({
+		description: z.string().optional(),
+		requires: z.array(z.string()).optional(),
+		url: z.string().optional(),
+		repo: z.string().optional(),
+		content: z.string().optional(),
+		path: z.string().optional(),
+		version: z.string().optional(),
+		ref: z.string().optional(),
+	})
+	.passthrough();
+
+const skillSchema = z
+	.object({
+		id: z.string(),
+		type: z.enum([
+			"inline",
+			"remote",
+			"github",
+			"gitlab",
+			"local",
+			"installed",
+			"plugin",
+		]),
+		// Some authored/reorder fixtures omit def; treat as empty object.
+		def: skillDefSchema.optional().default({}),
+		sourcePlugin: sourcePluginSchema.optional(),
+	})
+	.passthrough();
+
+const oauth2Schema = z
+	.unknown()
+	.optional()
+	.transform((val) => (val === undefined ? undefined : normalizeOAuth2Block(val)));
+
+const mcpServerDefSchema = z
+	.object({
+		url: z.string().optional(),
+		headers: z.record(z.string(), z.string()).optional(),
+		tlsSkipVerify: z.boolean().optional(),
+		cmd: z.string().optional(),
+		args: z.array(z.string()).optional(),
+		env: z.record(z.string(), z.string()).optional(),
+		cwd: z.string().optional(),
+		oauth2: oauth2Schema,
+	})
+	.passthrough()
+	.refine((d) => !!(d.url || d.cmd), {
+		message: "MCP server def requires url or cmd",
+	});
+
+const mcpServerSchema = z
+	.object({
+		id: z.string(),
+		type: z.literal("mcp"),
+		def: mcpServerDefSchema,
+		sourcePlugin: sourcePluginSchema.optional(),
+		sourcePluginServerKey: z.string().optional(),
+		displayName: z.string().optional(),
+		description: z.string().optional(),
+	})
+	.passthrough();
+
+const toolFormatterSchema = z
+	.object({
+		cmd: z.string(),
+		timeout: z.number().optional(),
+	})
+	.passthrough();
+
+const toolMcpDefSchema = z
+	.object({
+		server: z.string(),
+		tool: z.string(),
+		defaults: z.record(z.string(), z.unknown()).optional(),
+		formatter: toolFormatterSchema.optional(),
+	})
+	.passthrough();
+
+const argumentDefSchema = z
+	.object({
+		name: z.string(),
+		type: z.enum(["string", "number", "boolean", "object", "array"]),
+		description: z.string().optional(),
+		required: z.boolean().optional(),
+		default: z.unknown().optional(),
+	})
+	.passthrough();
+
+const commandSpecSchema = z
+	.object({
+		cmd: z.string(),
+		args: z.array(argumentDefSchema).optional(),
+		dir: z.string().optional(),
+		env: z.record(z.string(), z.string()).optional(),
+		allowShellPlaceholders: z.boolean().optional(),
+	})
+	.passthrough();
+
+const toolCommandDefSchema = z
+	.object({
+		init: commandSpecSchema.optional(),
+		run: commandSpecSchema,
+	})
+	.passthrough();
+
+const toolCommonFields = {
+	id: z.string(),
+	sourcePlugin: sourcePluginSchema.optional(),
+	description: z.string().optional(),
+	group: z.string().optional(),
+};
+
+const toolMcpSchema = z
+	.object({
+		...toolCommonFields,
+		type: z.literal("mcp"),
+		def: toolMcpDefSchema,
+	})
+	.passthrough();
+
+const toolCommandSchema = z
+	.object({
+		...toolCommonFields,
+		type: z.literal("command"),
+		def: toolCommandDefSchema,
+	})
+	.passthrough();
+
+const toolSchema = z.discriminatedUnion("type", [
+	toolMcpSchema,
+	toolCommandSchema,
+]);
+
+const pluginDefSchema = z
+	.object({
+		repo: z.string(),
+		subpath: z.string().optional(),
+		version: z.string().optional(),
+		ref: z.string().optional(),
+		description: z.string().optional(),
+	})
+	.passthrough();
+
+const pluginSchema = z
+	.object({
+		id: z.string().optional(),
+		type: z.enum(["github", "gitlab"]),
+		def: pluginDefSchema,
+		servers: z
+			.record(
+				z.string(),
+				z.object({ as: z.string().optional() }).passthrough(),
+			)
+			.optional(),
+	})
+	.passthrough();
+
+const optionsSchema = z
+	.object({
+		toolExposure: z.enum(["expose-all", "on-demand", "none"]).optional(),
+		agentActivity: z.boolean().optional(),
+		security: z
+			.object({
+				blockedPhrases: z
+					.union([
+						z.array(z.string()),
+						z.object({ file: z.string() }).passthrough(),
+					])
+					.optional(),
+				allowedCharacters: z.string().optional(),
+			})
+			.passthrough()
+			.optional(),
+		requiresCommands: z
+			.array(
+				z
+					.object({
+						cli: z.string(),
+						description: z.string().optional(),
+					})
+					.passthrough(),
+			)
+			.optional(),
+		onInstallError: z.enum(["warn", "stop"]).optional(),
+	})
+	.passthrough();
+
+/** Loose entries for sections Wave 2d will tighten (hooks) or lower priority. */
+const looseEntrySchema = z.record(z.string(), z.unknown());
 
 export const capabilitiesSchema = z
 	.object({
 		providers: z.array(z.string()).optional(),
-		skills: z.preprocess((val) => val ?? [], z.array(objectEntry)),
-		servers: z.preprocess((val) => val ?? [], z.array(objectEntry)),
-		tools: z.preprocess((val) => val ?? [], z.array(objectEntry)),
-		plugins: z.preprocess((val) => val ?? [], z.array(objectEntry)),
-		options: z.preprocess(
-			(val) => val ?? {},
-			z.record(z.string(), z.unknown()),
-		),
+		skills: z.preprocess((val) => val ?? [], z.array(skillSchema)),
+		servers: z.preprocess((val) => val ?? [], z.array(mcpServerSchema)),
+		tools: z.preprocess((val) => val ?? [], z.array(toolSchema)),
+		plugins: z.preprocess((val) => val ?? [], z.array(pluginSchema)),
+		options: z.preprocess((val) => val ?? {}, optionsSchema),
 		agents: z.record(z.string(), z.unknown()).optional(),
-		subagents: z.preprocess((val) => val ?? [], z.array(objectEntry)),
-		rules: z.preprocess((val) => val ?? [], z.array(objectEntry)),
-		hooks: z.preprocess((val) => val ?? [], z.array(objectEntry)),
+		subagents: z.preprocess((val) => val ?? [], z.array(looseEntrySchema)),
+		rules: z.preprocess((val) => val ?? [], z.array(looseEntrySchema)),
+		hooks: z.preprocess((val) => val ?? [], z.array(looseEntrySchema)),
 	})
 	.passthrough();
 
@@ -53,7 +256,14 @@ export function normalizeCapabilities(parsed: unknown): Capabilities {
 		throw new Error("capabilities file is empty or not a YAML/JSON object");
 	}
 
-	const result = capabilitiesSchema.parse(parsed);
+	const result = capabilitiesSchema.safeParse(parsed);
+	if (!result.success) {
+		const detail = result.error.issues
+			.slice(0, 5)
+			.map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`)
+			.join("; ");
+		throw new Error(`Invalid capabilities file: ${detail}`);
+	}
 
 	for (const key of Object.keys(parsed)) {
 		if (!KNOWN_CAPABILITY_KEYS.has(key)) {
@@ -61,7 +271,7 @@ export function normalizeCapabilities(parsed: unknown): Capabilities {
 		}
 	}
 
-	return result as unknown as Capabilities;
+	return result.data as unknown as Capabilities;
 }
 
 export async function parseCapabilitiesFile(
@@ -137,6 +347,17 @@ export type ArrayCapabilitySection =
 	| "rules"
 	| "hooks";
 
+/** Section → entry type for typed append (drops `as unknown as` at call sites). */
+export type CapabilitySectionEntryMap = {
+	skills: Skill;
+	servers: MCPServer;
+	tools: Tool;
+	plugins: Plugin;
+	subagents: SubAgent;
+	rules: Rule;
+	hooks: Hook;
+};
+
 export type CapabilityEntryPredicate = (
 	entry: Record<string, unknown>,
 ) => boolean;
@@ -205,20 +426,21 @@ function yamlItemToObject(item: unknown): Record<string, unknown> | null {
  * The entry is added at the end of the target section's list. If the section
  * is missing it is created.
  */
-export async function appendCapabilityEntry(
+export async function appendCapabilityEntry<S extends ArrayCapabilitySection>(
 	path: string,
 	format: CapabilitiesFormat,
-	section: ArrayCapabilitySection,
-	entry: Record<string, unknown>,
+	section: S,
+	entry: CapabilitySectionEntryMap[S],
 ): Promise<void> {
 	const content = await Bun.file(path).text();
+	const node = entry as unknown as Record<string, unknown>;
 
 	if (format === "json") {
 		const data = JSON.parse(content) as Record<string, unknown>;
 		const list = Array.isArray(data[section])
 			? (data[section] as unknown[])
 			: [];
-		list.push(entry);
+		list.push(node);
 		data[section] = list;
 		await Bun.write(path, JSON.stringify(data, null, 2) + "\n");
 		return;
@@ -227,9 +449,9 @@ export async function appendCapabilityEntry(
 	const doc = parseDocument(content);
 	const existing = doc.get(section);
 	if (isSeq(existing)) {
-		existing.add(doc.createNode(entry));
+		existing.add(doc.createNode(node));
 	} else {
-		doc.set(section, doc.createNode([entry]));
+		doc.set(section, doc.createNode([node]));
 	}
 	await Bun.write(path, doc.toString());
 }

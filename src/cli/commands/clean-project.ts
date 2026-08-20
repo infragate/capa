@@ -11,9 +11,9 @@ import { getAllProviders, getProvider } from '../../shared/providers';
 import type { CapaDatabase } from '../../db/database';
 import type { Capabilities } from '../../types/capabilities';
 import { unregisterMCPServer, unregisterSubAgentMCPServer } from '../utils/mcp-client-manager';
-import { cleanAgentsFile, removeSubAgentInstructions } from '../utils/agents-file';
+import { cleanAgentsFile, removeSubAgentInstructions } from '../utils/agents-file/index';
 import { cleanRules } from '../utils/rules-installer';
-import { cleanHooks } from '../utils/hooks-installer';
+import { cleanHooks } from '../utils/hooks';
 import { stopWrapSessionsForProject } from '../utils/wrap/sessions';
 import { pruneWorkspacesForProject } from '../utils/wrap/workspace';
 

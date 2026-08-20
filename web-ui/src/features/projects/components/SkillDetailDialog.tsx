@@ -3,12 +3,11 @@ import { useTranslation } from 'react-i18next';
 import * as Dialog from '@radix-ui/react-dialog';
 import { ExternalLink, Loader2, Pencil, X } from 'lucide-react';
 import { FaGithub, FaGitlab } from 'react-icons/fa';
-import { marked } from 'marked';
-import DOMPurify from 'dompurify';
 import type { Skill } from '../../../types/api';
 import { Spinner } from '../../../components/common/Spinner';
 import { FileTree } from '../../../components/common/FileTree';
 import { SourceBadge } from '../../../components/common/ServerBadge';
+import { renderMarkdown } from '../../../lib/markdown';
 import { useSkillContent, useUpdateCapability } from '../hooks';
 import { sourceTypeBadgeClasses } from './sourceTypeColors';
 
@@ -17,15 +16,6 @@ interface SkillDetailDialogProps {
   projectId: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-}
-
-function stripFrontmatter(md: string): string {
-  return md.replace(/^---\s*\n[\s\S]*?\n---\s*\n?/, '');
-}
-
-function renderMarkdown(md: string): string {
-  const raw = marked.parse(stripFrontmatter(md), { async: false, gfm: true, breaks: true }) as string;
-  return DOMPurify.sanitize(raw);
 }
 
 function sourceHostKind(raw: string | null | undefined): 'github' | 'gitlab' | 'remote' {

@@ -9,7 +9,7 @@ import { refMatchesTool, skillRequiresRef } from '../../../lib/toolRefs';
 import { ReorderableList } from '../../../components/common/ReorderableList';
 import { SourceBadge } from '../../../components/common/ServerBadge';
 import { sourceTypeBadgeClasses } from './sourceTypeColors';
-import { renderMarkdown } from './registry-browse/markdown';
+import { renderMarkdown } from '../../../lib/markdown';
 import { useAppendCapability, useDeleteCapability, useReorderCapability, useUpdateCapability } from '../hooks';
 import { authoredReorderKeys, isPluginSourced } from '../lib/reorderKeys';
 

@@ -169,8 +169,8 @@ describe('plugin-manifest discovery', () => {
     });
   });
 
-  describe('detectAndParseManifest oauth2 client_id normalization', () => {
-    it('normalizes Cursor "auth.CLIENT_ID" (uppercase) to client_id', () => {
+  describe('detectAndParseManifest oauth2 clientId normalization', () => {
+    it('normalizes Cursor "auth.CLIENT_ID" (uppercase) to clientId', () => {
       // Real-world layout from slackapi/slack-mcp-plugin's .cursor-mcp.json
       mkdirSync(join(root, '.cursor-plugin'), { recursive: true });
       writeFileSync(
@@ -197,7 +197,7 @@ describe('plugin-manifest discovery', () => {
       const slack = manifest!.mcpServers.slack as {
         oauth2?: Record<string, unknown>;
       };
-      expect(slack.oauth2?.client_id).toBe('3660753192626.8903469228982');
+      expect(slack.oauth2?.clientId).toBe('3660753192626.8903469228982');
     });
 
     it('normalizes Claude-style "oauth.clientId" (camelCase) and "callbackPort"', () => {
@@ -227,11 +227,11 @@ describe('plugin-manifest discovery', () => {
       const slack = manifest!.mcpServers.slack as {
         oauth2?: Record<string, unknown>;
       };
-      expect(slack.oauth2?.client_id).toBe('1601185624273.8899143856786');
-      expect(slack.oauth2?.callback_port).toBe(3118);
+      expect(slack.oauth2?.clientId).toBe('1601185624273.8899143856786');
+      expect(slack.oauth2?.callbackPort).toBe(3118);
     });
 
-    it('prefers Claude manifest over Cursor when a plugin ships both (carries callback_port)', () => {
+    it('prefers Claude manifest over Cursor when a plugin ships both (carries callbackPort)', () => {
       // Real-world layout from slackapi/slack-mcp-plugin: both .claude-plugin
       // and .cursor-plugin exist, but only the Claude .mcp.json carries the
       // callbackPort needed for the loopback redirect URI the auth server
@@ -283,11 +283,11 @@ describe('plugin-manifest discovery', () => {
       const slack = manifest!.mcpServers.slack as {
         oauth2?: Record<string, unknown>;
       };
-      expect(slack.oauth2?.client_id).toBe('claude-app-id');
-      expect(slack.oauth2?.callback_port).toBe(3118);
+      expect(slack.oauth2?.clientId).toBe('claude-app-id');
+      expect(slack.oauth2?.callbackPort).toBe(3118);
     });
 
-    it('leaves spec-compliant client_id untouched', () => {
+    it('maps snake_case client_id to canonical clientId', () => {
       mkdirSync(join(root, '.cursor-plugin'), { recursive: true });
       writeFileSync(
         join(root, '.cursor-plugin', 'plugin.json'),
@@ -307,14 +307,14 @@ describe('plugin-manifest discovery', () => {
       const spec = manifest!.mcpServers.spec as {
         oauth2?: Record<string, unknown>;
       };
-      expect(spec.oauth2?.client_id).toBe('already-canonical');
+      expect(spec.oauth2?.clientId).toBe('already-canonical');
     });
 
-    it('injects Cursor CLI loopback port 8787 for cursor-only plugins with embedded client_id', () => {
+    it('injects Cursor CLI loopback port 8787 for cursor-only plugins with embedded clientId', () => {
       // Cursor-only plugin (no .claude-plugin variant). .cursor-mcp.json carries the
-      // OAuth client_id but no callback_port — Cursor itself uses the cursor://
+      // OAuth client id but no callbackPort — Cursor itself uses the cursor://
       // custom scheme which capa cannot receive, so capa must impersonate the
-      // Cursor CLI's loopback (http://localhost:8787/callback) for the same client_id.
+      // Cursor CLI's loopback (http://localhost:8787/callback) for the same clientId.
       mkdirSync(join(root, '.cursor-plugin'), { recursive: true });
       writeFileSync(
         join(root, '.cursor-plugin', 'plugin.json'),
@@ -335,11 +335,11 @@ describe('plugin-manifest discovery', () => {
       const example = manifest!.mcpServers.example as {
         oauth2?: Record<string, unknown>;
       };
-      expect(example.oauth2?.client_id).toBe('cursor-app-id');
-      expect(example.oauth2?.callback_port).toBe(8787);
+      expect(example.oauth2?.clientId).toBe('cursor-app-id');
+      expect(example.oauth2?.callbackPort).toBe(8787);
     });
 
-    it('does not override an explicit callback_port set in a cursor manifest', () => {
+    it('does not override an explicit callbackPort set in a cursor manifest', () => {
       mkdirSync(join(root, '.cursor-plugin'), { recursive: true });
       writeFileSync(
         join(root, '.cursor-plugin', 'plugin.json'),
@@ -359,11 +359,11 @@ describe('plugin-manifest discovery', () => {
       const example = manifest!.mcpServers.example as {
         oauth2?: Record<string, unknown>;
       };
-      expect(example.oauth2?.callback_port).toBe(9999);
+      expect(example.oauth2?.callbackPort).toBe(9999);
     });
 
-    it('does not inject the cursor loopback when no client_id is embedded', () => {
-      // No client_id means dynamic registration is expected — capa's own server
+    it('does not inject the cursor loopback when no clientId is embedded', () => {
+      // No clientId means dynamic registration is expected — capa's own server
       // callback URL is correct in that case, so we must not preempt it.
       mkdirSync(join(root, '.cursor-plugin'), { recursive: true });
       writeFileSync(
@@ -381,7 +381,7 @@ describe('plugin-manifest discovery', () => {
       const example = manifest!.mcpServers.example as {
         oauth2?: Record<string, unknown>;
       };
-      expect(example.oauth2?.callback_port).toBeUndefined();
+      expect(example.oauth2?.callbackPort).toBeUndefined();
     });
   });
 });

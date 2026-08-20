@@ -9,7 +9,7 @@ import {
   unregisterSubAgentMCPServer,
   purgeCursorSubAgentMCPEntries,
 } from '../../utils/mcp-client-manager';
-import { installSubAgentInstructions, removeSubAgentInstructions } from '../../utils/agents-file';
+import { installSubAgentInstructions, removeSubAgentInstructions } from '../../utils/agents-file/index';
 import { parseSkillMd } from '../../../shared/skill-md';
 import type { Capabilities } from '../../../types/capabilities';
 import type { InstallCtx } from './context';

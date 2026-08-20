@@ -7,7 +7,7 @@ import { cn } from '../../../../lib/utils';
 import {
   useProjectActivityConversation,
   useProjectActivitySession,
-} from '../../hooks';
+} from '../../activityHooks';
 import { ActivityRunDialog } from './ActivityRunDialog';
 import {
   type ActivityRun,

@@ -178,8 +178,12 @@ describe('mcp-proxy', () => {
     function makeOauthServerDef(): MCPServerDefinition {
       return {
         url: 'https://mcp.example.com',
-        oauth2: { clientId: 'x', authorizationUrl: 'a', tokenUrl: 't' },
-      } as MCPServerDefinition;
+        oauth2: {
+          clientId: 'x',
+          authorizationEndpoint: 'a',
+          tokenEndpoint: 't',
+        },
+      };
     }
 
     function makeProxyWithDisconnectedOauth(): MCPProxy {

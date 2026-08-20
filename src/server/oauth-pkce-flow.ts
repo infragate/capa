@@ -68,8 +68,8 @@ export async function generateAuthorizationUrl(
 	const codeChallenge = generateCodeChallenge(codeVerifier);
 	const state = generateState();
 
-	let clientId = oauth2Config.client_id ?? "capa";
-	if (!oauth2Config.client_id && oauth2Config.registrationEndpoint) {
+	let clientId = oauth2Config.clientId ?? "capa";
+	if (!oauth2Config.clientId && oauth2Config.registrationEndpoint) {
 		try {
 			log.info("Attempting dynamic client registration...");
 			const registeredClient = await registerClient(
@@ -92,8 +92,8 @@ export async function generateAuthorizationUrl(
 			log.warn(`Dynamic registration failed: ${error.message}`);
 			log.info("Using default client_id");
 		}
-	} else if (oauth2Config.client_id) {
-		log.debug(`Using embedded client_id from server config`);
+	} else if (oauth2Config.clientId) {
+		log.debug(`Using embedded clientId from server config`);
 	}
 
 	db.storeFlowState(

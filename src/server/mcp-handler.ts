@@ -15,8 +15,7 @@ import type {
 	Capabilities,
 	MCPServerDefinition,
 	Tool,
-	ToolCommandDefinition,
-	ToolMCPDefinition,
+	ToolExposureMode,
 } from "../types/capabilities";
 import {
 	getQualifiedToolName,
@@ -56,6 +55,65 @@ export {
 	buildToolSignature,
 	mergeDefaults,
 } from "./mcp-tool-defaults";
+
+/** Meta-tools exposed only when `toolExposure` is `on-demand`. */
+const ON_DEMAND_META_TOOLS: MCPTool[] = [
+	{
+		name: "setup_tools",
+		description:
+			"Activate skills and load their required tools. Should be called when the agent learns (loads) a skill. Returns a compact signature list (`tool_name(required, optional?)`) for every activated tool — full input schemas are returned in the `call_tool` error response when a call is invalid.",
+		inputSchema: {
+			type: "object",
+			properties: {
+				skills: {
+					type: "array",
+					items: { type: "string" },
+					description: "List of skill IDs to activate",
+				},
+			},
+			required: ["skills"],
+		},
+	},
+	{
+		name: "call_tool",
+		description:
+			"Call any activated tool by name. Use `setup_tools` first to discover available tools (returned as compact signatures). If you pass invalid or missing args the full input schema is returned in the error so you can retry.",
+		inputSchema: {
+			type: "object",
+			properties: {
+				name: {
+					type: "string",
+					description: "The name of the tool to call",
+				},
+				data: {
+					type: "object",
+					description: "The input data for the tool",
+				},
+			},
+			required: ["name", "data"],
+		},
+	},
+];
+
+type ToolCallResult = {
+	content: Array<{ type: "text"; text: string }>;
+	isError?: boolean;
+};
+
+type ToolsCallOutcome =
+	| { type: "ok"; result: ToolCallResult }
+	| { type: "unavailable"; message: string }
+	| { type: "not_found"; message: string }
+	| { type: "internal"; message: string }
+	| { type: "exception"; error: Error };
+
+function toolTextError(message: string): {
+	content: Array<{ type: "text"; text: string }>;
+} {
+	return {
+		content: [{ type: "text", text: JSON.stringify({ error: message }) }],
+	};
+}
 
 export interface ShellToolInfo {
 	id: string;
@@ -251,278 +309,284 @@ export class CapaMCPServer {
 		return allowed;
 	}
 
-	private setupHandlers(): void {
-		// List tools handler
-		this.server.setRequestHandler(ListToolsRequestSchema, async (request) => {
+	/**
+	 * Build the tools/list payload for the current project exposure mode.
+	 * Shared by the SDK `ListTools` handler and HTTP `handleMessage`.
+	 */
+	private async buildToolsListResult(): Promise<{ tools: MCPTool[] }> {
+		const capabilities = this.sessionManager.getProjectCapabilities(
+			this.projectId,
+		);
+		const toolExposureMode: ToolExposureMode =
+			capabilities?.options?.toolExposure || "expose-all";
+		this.logger.debug(`Tool exposure mode: ${toolExposureMode}`);
+
+		if (toolExposureMode === "none") {
+			// Project opted out of MCP-driven tool exposure. The agent is
+			// expected to discover and run tools via `capa sh` instead.
+			this.logger.info(
+				"Tool exposure disabled (none) — returning empty tools list",
+			);
+			return { tools: [] };
+		}
+
+		if (toolExposureMode === "expose-all") {
 			const tools: MCPTool[] = [];
-			const capabilities = this.sessionManager.getProjectCapabilities(
-				this.projectId,
-			);
-
-			// Determine tool exposure mode (default to 'expose-all')
-			const toolExposureMode =
-				capabilities?.options?.toolExposure || "expose-all";
-
-			if (toolExposureMode === "none") {
-				// Project opted out of MCP-driven tool exposure. The agent is
-				// expected to discover and run tools via `capa sh` instead. Returning
-				// an empty list is the cleanest signal — most clients render this as
-				// "no tools available" rather than throwing.
-				return { tools: [] };
-			}
-
-			if (toolExposureMode === "expose-all") {
-				// Expose-all mode: Show all tools from all skills immediately.
-				// Sub-agent endpoints additionally filter to only their declared tools.
-				if (capabilities) {
-					const allowedToolIds = this.getAgentAllowedToolIds(capabilities);
-					const allToolIds = this.sessionManager.getAllRequiredToolsForProject(
-						this.projectId,
-					);
-					for (const qualifiedName of allToolIds) {
-						if (allowedToolIds && !allowedToolIds.has(qualifiedName)) continue;
-						const tool = capabilities.tools.find(
-							(t) => getQualifiedToolName(t) === qualifiedName,
-						);
-						if (tool) {
-							const mcpTool = await this.convertToolToMCP(tool, capabilities);
-							tools.push(mcpTool);
-						}
-					}
-				}
-				// Note: setup_tools is NOT included in expose-all mode since all tools are already visible
-			} else {
-				// On-demand mode: Only expose meta-tools (setup_tools and call_tool)
-				tools.push({
-					name: "setup_tools",
-					description:
-						"Activate skills and load their required tools. Should be called when the agent learns (loads) a skill. Returns a compact signature list (`tool_name(required, optional?)`) for every activated tool — full input schemas are returned in the `call_tool` error response when a call is invalid.",
-					inputSchema: {
-						type: "object",
-						properties: {
-							skills: {
-								type: "array",
-								items: { type: "string" },
-								description: "List of skill IDs to activate",
-							},
-						},
-						required: ["skills"],
-					},
-				});
-
-				tools.push({
-					name: "call_tool",
-					description:
-						"Call any activated tool by name. Use `setup_tools` first to discover available tools (returned as compact signatures). If you pass invalid or missing args the full input schema is returned in the error so you can retry.",
-					inputSchema: {
-						type: "object",
-						properties: {
-							name: {
-								type: "string",
-								description: "The name of the tool to call",
-							},
-							data: {
-								type: "object",
-								description: "The input data for the tool",
-							},
-						},
-						required: ["name", "data"],
-					},
-				});
-			}
-
-			return { tools };
-		});
-
-		// Call tool handler
-		this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
-			const { name, arguments: args } = request.params;
-			const { cleanArgs, skipFormatter } = extractCapaShellMeta(
-				(args ?? {}) as Record<string, any>,
-			);
-			const capabilities = this.sessionManager.getProjectCapabilities(
-				this.projectId,
-			);
-			const toolExposureMode =
-				capabilities?.options?.toolExposure || "expose-all";
-
-			// Handle setup_tools
-			if (name === "setup_tools" && toolExposureMode === "on-demand") {
-				return await this.handleSetupTools(cleanArgs as { skills: string[] });
-			}
-
-			// Handle call_tool in on-demand mode
-			if (name === "call_tool" && toolExposureMode === "on-demand") {
-				return await this.handleCallTool(
-					cleanArgs as { name: string; data: object },
-				);
-			}
-
-			// Prevent meta-tools from being called in expose-all mode
-			if (
-				(name === "setup_tools" || name === "call_tool") &&
-				toolExposureMode === "expose-all"
-			) {
-				this.logger.warn(`Meta-tool ${name} called in expose-all mode`);
-				return {
-					content: [
-						{
-							type: "text",
-							text: JSON.stringify({
-								error: `The meta-tool "${name}" is only available in on-demand mode. Your project is configured for expose-all mode.`,
-							}),
-						},
-					],
-				};
-			}
-
-			// Handle other tools
-			// Only require session for on-demand mode
-			if (toolExposureMode === "on-demand") {
-				this.ensureSession();
-			}
-
-			// Sub-agent tool access guard: reject calls to tools outside the agent's allowed set
-			if (this.agentId) {
-				const capabilities = this.sessionManager.getProjectCapabilities(
+			if (capabilities) {
+				const allowedToolIds = this.getAgentAllowedToolIds(capabilities);
+				const allToolIds = this.sessionManager.getAllRequiredToolsForProject(
 					this.projectId,
 				);
-				if (capabilities) {
-					const allowedToolIds = this.getAgentAllowedToolIds(capabilities);
-					if (allowedToolIds) {
-						const normalizedName = normalizeToolName(name);
-						const isAllowed = [...allowedToolIds].some(
-							(id) => normalizeToolName(id) === normalizedName,
-						);
-						if (!isAllowed) {
-							const denied = {
-								content: [
-									{
-										type: "text",
-										text: JSON.stringify({
-											error: `Tool "${name}" is not available on this sub-agent endpoint (${this.agentId}). Use the main capa endpoint to access all tools.`,
-										}),
-									},
-								],
-							};
-							const traceId = this.beginTrace({
-								kind: "tool",
-								toolName: name,
-								args: cleanArgs,
-							});
-							this.finishTraceError(
-								traceId,
-								`Tool not available on sub-agent: ${name}`,
-								denied,
-							);
-							return denied;
-						}
-					}
-				}
-			}
-
-			// Find tool definition
-			const toolDef = this.sessionManager.getToolDefinition(
-				this.projectId,
-				name,
-			);
-			const traceId = this.beginTrace({
-				kind: "tool",
-				toolName: name,
-				args: cleanArgs,
-			});
-			if (!toolDef) {
-				const missing = {
-					content: [
-						{
-							type: "text",
-							text: JSON.stringify({ error: `Tool not found: ${name}` }),
-						},
-					],
-				};
-				this.finishTraceError(traceId, `Tool not found: ${name}`, missing);
-				return missing;
-			}
-
-			// Execute tool based on type
-			try {
-				let result: any;
-				if (toolDef.type === "command") {
-					const executor = new CommandToolExecutor(
-						this.db,
-						this.projectId,
-						this.projectPath,
-					);
-					result = await executor.execute(
-						name,
-						toolDef.def as ToolCommandDefinition,
-						cleanArgs,
-					);
-				} else if (toolDef.type === "mcp") {
-					const mcpDef = toolDef.def as ToolMCPDefinition;
-					const capabilities = this.sessionManager.getProjectCapabilities(
-						this.projectId,
-					);
-					if (!capabilities) {
-						const missingCaps = {
-							content: [
-								{
-									type: "text",
-									text: JSON.stringify({
-										error: "Project capabilities not found",
-									}),
-								},
-							],
-						};
-						this.finishTraceError(
-							traceId,
-							"Project capabilities not found",
-							missingCaps,
-						);
-						return missingCaps;
-					}
-
-					// Find server definition
-					const serverId = mcpDef.server.replace("@", "");
-					const serverDef = capabilities.servers.find((s) => s.id === serverId);
-					if (!serverDef) {
-						const missingServer = {
-							content: [
-								{
-									type: "text",
-									text: JSON.stringify({
-										error: `Server not found: ${serverId}`,
-									}),
-								},
-							],
-						};
-						this.finishTraceError(
-							traceId,
-							`Server not found: ${serverId}`,
-							missingServer,
-						);
-						return missingServer;
-					}
-
-					result = await this.mcpProxy.executeTool(
-						name,
-						mcpDef,
-						serverDef.def,
-						mergeDefaults(mcpDef.defaults, cleanArgs),
-					);
-				}
-
-				const content = await this.buildToolCallContent(result, toolDef, {
-					skipFormatter,
-				});
-				this.finishTraceOk(traceId, content);
-				return content;
-			} catch (error: any) {
-				this.finishTraceError(
-					traceId,
-					error?.message || "Tool execution failed",
+				this.logger.debug(
+					`Exposing ${allowedToolIds ? allowedToolIds.size : allToolIds.length} tool(s) (allowedToolIds=${allowedToolIds ? "set" : "null"})`,
 				);
-				throw error;
+				for (const qualifiedName of allToolIds) {
+					if (allowedToolIds && !allowedToolIds.has(qualifiedName)) continue;
+					const tool = capabilities.tools.find(
+						(t) => getQualifiedToolName(t) === qualifiedName,
+					);
+					if (tool) {
+						tools.push(await this.convertToolToMCP(tool, capabilities));
+					}
+				}
+			}
+			// Note: setup_tools is NOT included — all tools are already visible
+			return { tools };
+		}
+
+		// On-demand: only meta-tools
+		return { tools: ON_DEMAND_META_TOOLS };
+	}
+
+	/**
+	 * Shared tools/call routing for SDK and HTTP adapters.
+	 * `style` preserves historical error-shape quirks between transports
+	 * (SDK soft content vs HTTP JSON-RPC errors; HTTP always accepts setup_tools).
+	 */
+	private async resolveToolsCall(
+		name: string,
+		args: Record<string, unknown> | undefined,
+		style: "sdk" | "http",
+	): Promise<ToolsCallOutcome> {
+		const { cleanArgs, skipFormatter } = extractCapaShellMeta(
+			(args ?? {}) as Record<string, any>,
+		);
+		const capabilities = this.sessionManager.getProjectCapabilities(
+			this.projectId,
+		);
+		const toolExposureMode: ToolExposureMode =
+			capabilities?.options?.toolExposure || "expose-all";
+
+		if (name === "setup_tools") {
+			// HTTP historically accepts setup_tools in any mode; SDK only in on-demand.
+			if (toolExposureMode === "on-demand" || style === "http") {
+				if (style === "http") {
+					this.logger.info(
+						`Activating skills: ${(cleanArgs as { skills?: string[] }).skills?.join(", ") ?? ""}`,
+					);
+				}
+				return {
+					type: "ok",
+					result: await this.handleSetupTools(
+						cleanArgs as { skills: string[] },
+					),
+				};
+			}
+			if (toolExposureMode === "expose-all") {
+				this.logger.warn(`Meta-tool ${name} called in expose-all mode`);
+				return {
+					type: "unavailable",
+					message: `The meta-tool "${name}" is only available in on-demand mode. Your project is configured for expose-all mode.`,
+				};
+			}
+			// mode === 'none': fall through to direct tool lookup (SDK quirk)
+		}
+
+		if (name === "call_tool") {
+			if (toolExposureMode === "on-demand") {
+				return {
+					type: "ok",
+					result: await this.handleCallTool(
+						cleanArgs as { name: string; data: object },
+					),
+				};
+			}
+			if (style === "http") {
+				this.logger.warn("call_tool is only available in on-demand mode");
+				return {
+					type: "unavailable",
+					message: "call_tool is only available in on-demand mode",
+				};
+			}
+			if (toolExposureMode === "expose-all") {
+				this.logger.warn(`Meta-tool ${name} called in expose-all mode`);
+				return {
+					type: "unavailable",
+					message: `The meta-tool "${name}" is only available in on-demand mode. Your project is configured for expose-all mode.`,
+				};
+			}
+			// mode === 'none': fall through (SDK quirk)
+		}
+
+		if (toolExposureMode === "on-demand") {
+			this.ensureSession();
+		}
+
+		if (this.agentId && capabilities) {
+			const allowedToolIds = this.getAgentAllowedToolIds(capabilities);
+			if (allowedToolIds) {
+				const normalizedName = normalizeToolName(name);
+				const isAllowed = [...allowedToolIds].some(
+					(id) => normalizeToolName(id) === normalizedName,
+				);
+				if (!isAllowed) {
+					if (style === "http") {
+						this.logger.warn(
+							`Sub-agent "${this.agentId}" attempted to call unauthorized tool: ${name}`,
+						);
+					}
+					const denied = toolTextError(
+						`Tool "${name}" is not available on this sub-agent endpoint (${this.agentId}). Use the main capa endpoint to access all tools.`,
+					);
+					const deniedTraceId = this.beginTrace({
+						kind: "tool",
+						toolName: name,
+						args: cleanArgs,
+					});
+					this.finishTraceError(
+						deniedTraceId,
+						`Tool not available on sub-agent: ${name}`,
+						denied,
+					);
+					return { type: "ok", result: denied };
+				}
+			}
+		}
+
+		const toolDef = this.sessionManager.getToolDefinition(this.projectId, name);
+		const traceId = this.beginTrace({
+			kind: "tool",
+			toolName: name,
+			args: cleanArgs,
+		});
+		if (!toolDef) {
+			const message = `Tool not found: ${name}`;
+			if (style === "http") {
+				this.logger.warn("Tool not found");
+				this.finishTraceError(traceId, message);
+				return { type: "not_found", message };
+			}
+			const missing = toolTextError(message);
+			this.finishTraceError(traceId, message, missing);
+			return { type: "ok", result: missing };
+		}
+
+		if (style === "http") {
+			this.logger.debug(`Tool type: ${toolDef.type}`);
+		}
+
+		try {
+			let result: unknown;
+			if (toolDef.type === "command") {
+				if (style === "http") this.logger.debug("Executing command tool...");
+				const executor = new CommandToolExecutor(
+					this.db,
+					this.projectId,
+					this.projectPath,
+				);
+				result = await executor.execute(name, toolDef.def, cleanArgs);
+				if (style === "http") {
+					this.logger.debug(
+						`Command executed, success: ${(result as { success?: boolean }).success}`,
+					);
+				}
+			} else {
+				if (style === "http") this.logger.debug("Executing MCP tool...");
+				const mcpDef = toolDef.def;
+				const caps =
+					capabilities ??
+					this.sessionManager.getProjectCapabilities(this.projectId);
+				if (!caps) {
+					const message = "Project capabilities not found";
+					if (style === "http") {
+						this.logger.warn(message);
+						this.finishTraceError(traceId, message);
+						return { type: "internal", message };
+					}
+					const missingCaps = toolTextError(message);
+					this.finishTraceError(traceId, message, missingCaps);
+					return { type: "ok", result: missingCaps };
+				}
+
+				const serverId = mcpDef.server.replace("@", "");
+				const serverDef = caps.servers.find((s) => s.id === serverId);
+				if (!serverDef) {
+					const message = `Server not found: ${serverId}`;
+					if (style === "http") {
+						this.logger.warn(message);
+						this.finishTraceError(traceId, message);
+						return { type: "internal", message };
+					}
+					const missingServer = toolTextError(message);
+					this.finishTraceError(traceId, message, missingServer);
+					return { type: "ok", result: missingServer };
+				}
+
+				if (style === "http") {
+					this.logger.debug(`Using MCP server: ${serverId}`);
+				}
+				result = await this.mcpProxy.executeTool(
+					name,
+					mcpDef,
+					serverDef.def,
+					mergeDefaults(mcpDef.defaults, cleanArgs),
+				);
+				if (style === "http") this.logger.debug("MCP tool executed");
+			}
+
+			const content = await this.buildToolCallContent(result, toolDef, {
+				skipFormatter,
+			});
+			this.finishTraceOk(traceId, content);
+			return { type: "ok", result: content };
+		} catch (error: any) {
+			const message = error?.message || "Tool execution failed";
+			this.finishTraceError(traceId, message);
+			if (style === "http") {
+				this.logger.failure(`Tool execution error: ${error.message}`);
+				return {
+					type: "exception",
+					error: error instanceof Error ? error : new Error(message),
+				};
+			}
+			throw error;
+		}
+	}
+
+	private setupHandlers(): void {
+		this.server.setRequestHandler(ListToolsRequestSchema, async () => {
+			return await this.buildToolsListResult();
+		});
+
+		this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
+			const outcome = await this.resolveToolsCall(
+				request.params.name,
+				request.params.arguments as Record<string, unknown> | undefined,
+				"sdk",
+			);
+			switch (outcome.type) {
+				case "ok":
+					return outcome.result;
+				case "unavailable":
+				case "not_found":
+				case "internal":
+					return toolTextError(outcome.message);
+				case "exception":
+					throw outcome.error;
+				default: {
+					const _exhaustive: never = outcome;
+					return _exhaustive;
+				}
 			}
 		});
 	}
@@ -766,7 +830,7 @@ export class CapaMCPServer {
 				);
 				result = await executor.execute(
 					toolName,
-					toolDef.def as ToolCommandDefinition,
+					toolDef.def,
 					toolData as Record<string, any>,
 				);
 				this.logger.debug(`Command executed, success: ${result.success}`);
@@ -788,7 +852,7 @@ export class CapaMCPServer {
 				}
 			} else if (toolDef.type === "mcp") {
 				this.logger.debug("Executing MCP tool...");
-				const mcpDef = toolDef.def as ToolMCPDefinition;
+				const mcpDef = toolDef.def;
 				const capabilities = this.sessionManager.getProjectCapabilities(
 					this.projectId,
 				);
@@ -889,7 +953,7 @@ export class CapaMCPServer {
 		const result: ShellToolInfo[] = [];
 		for (const tool of capabilities.tools) {
 			if (tool.type === "mcp") {
-				const mcpDef = tool.def as ToolMCPDefinition;
+				const mcpDef = tool.def;
 				const serverId = mcpDef.server.replace("@", "");
 				const info: ShellToolInfo = {
 					id: getQualifiedToolName(tool),
@@ -919,7 +983,7 @@ export class CapaMCPServer {
 				if (tool.group) {
 					info.group = tool.group;
 				}
-				const def = tool.def as ToolCommandDefinition;
+				const def = tool.def;
 				if (def.run.args) {
 					const cmdDefaults: Record<string, any> = {};
 					for (const arg of def.run.args) {
@@ -965,7 +1029,7 @@ export class CapaMCPServer {
 			};
 		}
 
-		const mcpDef = tool.def as ToolMCPDefinition;
+		const mcpDef = tool.def;
 		const serverId = mcpDef.server.replace("@", "");
 		const serverDef = capabilities.servers.find((s) => s.id === serverId);
 		if (!serverDef) {
@@ -1029,11 +1093,12 @@ export class CapaMCPServer {
 		}
 
 		// Group MCP tools by server so we make one listTools call per server.
-		const mcpTools = capabilities.tools.filter((t) => t.type === "mcp");
-		const byServer = new Map<string, Tool[]>();
+		const mcpTools = capabilities.tools.filter(
+			(t): t is Extract<Tool, { type: "mcp" }> => t.type === "mcp",
+		);
+		const byServer = new Map<string, typeof mcpTools>();
 		for (const tool of mcpTools) {
-			const mcpDef = tool.def as ToolMCPDefinition;
-			const serverId = mcpDef.server.replace("@", "");
+			const serverId = tool.def.server.replace("@", "");
 			const bucket = byServer.get(serverId);
 			if (bucket) {
 				bucket.push(tool);
@@ -1083,7 +1148,7 @@ export class CapaMCPServer {
 							.join(", ");
 
 						for (const tool of tools) {
-							const mcpDef = tool.def as ToolMCPDefinition;
+							const mcpDef = tool.def;
 							const qualifiedName = getQualifiedToolName(tool);
 							if (remoteByName.has(mcpDef.tool)) {
 								batch.push({
@@ -1104,7 +1169,7 @@ export class CapaMCPServer {
 						}
 					} catch (error: any) {
 						for (const tool of tools) {
-							const mcpDef = tool.def as ToolMCPDefinition;
+							const mcpDef = tool.def;
 							batch.push({
 								toolId: getQualifiedToolName(tool),
 								success: false,
@@ -1145,7 +1210,7 @@ export class CapaMCPServer {
 		}
 
 		if (tool.type === "command") {
-			const def = tool.def as ToolCommandDefinition;
+			const def = tool.def;
 			const properties: any = {};
 			const required: string[] = [];
 
@@ -1179,7 +1244,7 @@ export class CapaMCPServer {
 			return mcpTool;
 		} else {
 			// MCP tool - fetch the actual schema from the MCP server
-			const mcpDef = tool.def as ToolMCPDefinition;
+			const mcpDef = tool.def;
 			const serverId = mcpDef.server.replace("@", "");
 			const serverDef = capabilities.servers.find((s) => s.id === serverId);
 
@@ -1355,341 +1420,61 @@ export class CapaMCPServer {
 		// Handle tools/list
 		if (message.method === "tools/list") {
 			this.logger.info("List tools request");
-			const tools: MCPTool[] = [];
-			const capabilities = this.sessionManager.getProjectCapabilities(
-				this.projectId,
-			);
-
-			// Determine tool exposure mode (default to 'expose-all')
-			const toolExposureMode =
-				capabilities?.options?.toolExposure || "expose-all";
-			this.logger.debug(`Tool exposure mode: ${toolExposureMode}`);
-
-			if (toolExposureMode === "none") {
-				// Project opted out of MCP-driven tool exposure. The agent is
-				// expected to discover and run tools via `capa sh` instead. Returning
-				// an empty list is the cleanest signal — most clients render this as
-				// "no tools available" rather than throwing.
-				this.logger.info(
-					"Tool exposure disabled (none) — returning empty tools list",
-				);
-				return {
-					jsonrpc: "2.0",
-					id: message.id,
-					result: { tools: [] },
-				};
-			}
-
-			if (toolExposureMode === "expose-all") {
-				// Expose-all mode: Show all tools from all skills immediately.
-				// Sub-agent endpoints additionally filter to only their declared tools.
-				if (capabilities) {
-					const allowedToolIds = this.getAgentAllowedToolIds(capabilities);
-					const allToolIds = this.sessionManager.getAllRequiredToolsForProject(
-						this.projectId,
-					);
-					this.logger.debug(
-						`Exposing ${allowedToolIds ? allowedToolIds.size : allToolIds.length} tool(s) (allowedToolIds=${allowedToolIds ? "set" : "null"})`,
-					);
-					for (const qualifiedName of allToolIds) {
-						if (allowedToolIds && !allowedToolIds.has(qualifiedName)) continue;
-						const tool = capabilities.tools.find(
-							(t) => getQualifiedToolName(t) === qualifiedName,
-						);
-						if (tool) {
-							const mcpTool = await this.convertToolToMCP(tool, capabilities);
-							tools.push(mcpTool);
-						}
-					}
-				}
-				// Note: setup_tools is NOT included in expose-all mode since all tools are already visible
-			} else {
-				// On-demand mode: Only expose meta-tools (setup_tools and call_tool)
-				tools.push({
-					name: "setup_tools",
-					description:
-						"Activate skills and load their required tools. Should be called when the agent learns (loads) a skill. Returns a compact signature list (`tool_name(required, optional?)`) for every activated tool — full input schemas are returned in the `call_tool` error response when a call is invalid.",
-					inputSchema: {
-						type: "object",
-						properties: {
-							skills: {
-								type: "array",
-								items: { type: "string" },
-								description: "List of skill IDs to activate",
-							},
-						},
-						required: ["skills"],
-					},
-				});
-
-				tools.push({
-					name: "call_tool",
-					description:
-						"Call any activated tool by name. Use `setup_tools` first to discover available tools (returned as compact signatures). If you pass invalid or missing args the full input schema is returned in the error so you can retry.",
-					inputSchema: {
-						type: "object",
-						properties: {
-							name: {
-								type: "string",
-								description: "The name of the tool to call",
-							},
-							data: {
-								type: "object",
-								description: "The input data for the tool",
-							},
-						},
-						required: ["name", "data"],
-					},
-				});
-			}
-
+			const result = await this.buildToolsListResult();
 			this.logger.info(
-				`Returning ${tools.length} tool(s): ${tools.map((t) => t.name).join(", ")}`,
+				`Returning ${result.tools.length} tool(s): ${result.tools.map((t) => t.name).join(", ")}`,
 			);
 			return {
 				jsonrpc: "2.0",
 				id: message.id,
-				result: {
-					tools,
-				},
+				result,
 			};
 		}
 
 		// Handle tools/call
 		if (message.method === "tools/call") {
 			const { name, arguments: args } = message.params;
-			const { cleanArgs, skipFormatter } = extractCapaShellMeta(
-				(args ?? {}) as Record<string, any>,
-			);
 			this.logger.info(`Call tool: ${name}`);
 			this.logger.debug(`Arguments: ${JSON.stringify(args)}`);
 
-			// Handle setup_tools
-			if (name === "setup_tools") {
-				this.logger.info(
-					`Activating skills: ${(cleanArgs as { skills?: string[] }).skills?.join(", ") ?? ""}`,
-				);
-				const result = await this.handleSetupTools(
-					cleanArgs as { skills: string[] },
-				);
-				return {
-					jsonrpc: "2.0",
-					id: message.id,
-					result,
-				};
-			}
-
-			// Handle call_tool
-			if (name === "call_tool") {
-				const capabilities = this.sessionManager.getProjectCapabilities(
-					this.projectId,
-				);
-				const toolExposureMode =
-					capabilities?.options?.toolExposure || "expose-all";
-
-				if (toolExposureMode !== "on-demand") {
-					this.logger.warn("call_tool is only available in on-demand mode");
-					return {
-						jsonrpc: "2.0",
-						id: message.id,
-						error: {
-							code: -32601,
-							message: "call_tool is only available in on-demand mode",
-						},
-					};
-				}
-
-				const result = await this.handleCallTool(
-					cleanArgs as { name: string; data: object },
-				);
-				return {
-					jsonrpc: "2.0",
-					id: message.id,
-					result,
-				};
-			}
-
-			// Prevent meta-tools from being called in expose-all mode
-			if (name === "setup_tools" || name === "call_tool") {
-				const capabilities = this.sessionManager.getProjectCapabilities(
-					this.projectId,
-				);
-				const toolExposureMode =
-					capabilities?.options?.toolExposure || "expose-all";
-
-				if (toolExposureMode === "expose-all") {
-					this.logger.warn(`Meta-tool ${name} called in expose-all mode`);
-					return {
-						jsonrpc: "2.0",
-						id: message.id,
-						error: {
-							code: -32601,
-							message: `The meta-tool "${name}" is only available in on-demand mode. Your project is configured for expose-all mode.`,
-						},
-					};
-				}
-			}
-
-			// Handle other tools
-			const capabilities = this.sessionManager.getProjectCapabilities(
-				this.projectId,
-			);
-			const toolExposureMode =
-				capabilities?.options?.toolExposure || "expose-all";
-
-			// Only require session for on-demand mode
-			if (toolExposureMode === "on-demand") {
-				this.ensureSession();
-			}
-
-			// Sub-agent tool access guard: reject calls to tools outside the agent's allowed set
-			if (this.agentId && capabilities) {
-				const allowedToolIds = this.getAgentAllowedToolIds(capabilities);
-				if (allowedToolIds) {
-					const normalizedName = normalizeToolName(name);
-					const isAllowed = [...allowedToolIds].some(
-						(id) => normalizeToolName(id) === normalizedName,
-					);
-					if (!isAllowed) {
-						this.logger.warn(
-							`Sub-agent "${this.agentId}" attempted to call unauthorized tool: ${name}`,
-						);
-						const denied = {
-							content: [
-								{
-									type: "text",
-									text: JSON.stringify({
-										error: `Tool "${name}" is not available on this sub-agent endpoint (${this.agentId}). Use the main capa endpoint to access all tools.`,
-									}),
-								},
-							],
-						};
-						const deniedTraceId = this.beginTrace({
-							kind: "tool",
-							toolName: name,
-							args: cleanArgs,
-						});
-						this.finishTraceError(
-							deniedTraceId,
-							`Tool not available on sub-agent: ${name}`,
-							denied,
-						);
-						return {
-							jsonrpc: "2.0",
-							id: message.id,
-							result: denied,
-						};
-					}
-				}
-			}
-
-			// Find tool definition
-			const toolDef = this.sessionManager.getToolDefinition(
-				this.projectId,
+			const outcome = await this.resolveToolsCall(
 				name,
+				args as Record<string, unknown> | undefined,
+				"http",
 			);
-			const traceId = this.beginTrace({
-				kind: "tool",
-				toolName: name,
-				args: cleanArgs,
-			});
-			if (!toolDef) {
-				this.logger.warn("Tool not found");
-				this.finishTraceError(traceId, `Tool not found: ${name}`);
-				return {
-					jsonrpc: "2.0",
-					id: message.id,
-					error: {
-						code: -32601,
-						message: `Tool not found: ${name}`,
-					},
-				};
-			}
-
-			this.logger.debug(`Tool type: ${toolDef.type}`);
-
-			// Execute tool based on type
-			let result: any;
-			try {
-				if (toolDef.type === "command") {
-					this.logger.debug("Executing command tool...");
-					const executor = new CommandToolExecutor(
-						this.db,
-						this.projectId,
-						this.projectPath,
-					);
-					result = await executor.execute(
-						name,
-						toolDef.def as ToolCommandDefinition,
-						cleanArgs,
-					);
-					this.logger.debug(`Command executed, success: ${result.success}`);
-				} else if (toolDef.type === "mcp") {
-					this.logger.debug("Executing MCP tool...");
-					const mcpDef = toolDef.def as ToolMCPDefinition;
-					const caps = this.sessionManager.getProjectCapabilities(this.projectId);
-					if (!caps) {
-						this.logger.warn("Project capabilities not found");
-						this.finishTraceError(traceId, "Project capabilities not found");
-						return {
-							jsonrpc: "2.0",
-							id: message.id,
-							error: {
-								code: -32603,
-								message: "Project capabilities not found",
-							},
-						};
-					}
-
-					// Find server definition
-					const serverId = mcpDef.server.replace("@", "");
-					const serverDef = caps.servers.find((s) => s.id === serverId);
-					if (!serverDef) {
-						this.logger.warn(`Server not found: ${serverId}`);
-						this.finishTraceError(traceId, `Server not found: ${serverId}`);
-						return {
-							jsonrpc: "2.0",
-							id: message.id,
-							error: {
-								code: -32603,
-								message: `Server not found: ${serverId}`,
-							},
-						};
-					}
-
-					this.logger.debug(`Using MCP server: ${serverId}`);
-					result = await this.mcpProxy.executeTool(
-						name,
-						mcpDef,
-						serverDef.def,
-						mergeDefaults(mcpDef.defaults, cleanArgs),
-					);
-					this.logger.debug("MCP tool executed");
+			switch (outcome.type) {
+				case "ok":
+					return {
+						jsonrpc: "2.0",
+						id: message.id,
+						result: outcome.result,
+					};
+				case "unavailable":
+				case "not_found":
+					return {
+						jsonrpc: "2.0",
+						id: message.id,
+						error: { code: -32601, message: outcome.message },
+					};
+				case "internal":
+					return {
+						jsonrpc: "2.0",
+						id: message.id,
+						error: { code: -32603, message: outcome.message },
+					};
+				case "exception":
+					return {
+						jsonrpc: "2.0",
+						id: message.id,
+						error: {
+							code: -32603,
+							message: outcome.error.message || "Tool execution failed",
+						},
+					};
+				default: {
+					const _exhaustive: never = outcome;
+					return _exhaustive;
 				}
-
-				const content = await this.buildToolCallContent(result, toolDef, {
-					skipFormatter,
-				});
-				this.finishTraceOk(traceId, content);
-				return {
-					jsonrpc: "2.0",
-					id: message.id,
-					result: content,
-				};
-			} catch (error: any) {
-				this.logger.failure(`Tool execution error: ${error.message}`);
-				this.finishTraceError(
-					traceId,
-					error.message || "Tool execution failed",
-				);
-				return {
-					jsonrpc: "2.0",
-					id: message.id,
-					error: {
-						code: -32603,
-						message: error.message || "Tool execution failed",
-					},
-				};
 			}
 		}
 

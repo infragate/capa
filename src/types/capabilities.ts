@@ -4,25 +4,24 @@ import type { Plugin, SourcePlugin, ResolvedPluginInfo } from './plugin';
 import type { Rule } from './rules';
 import type { Hook } from './hooks';
 
-/** OAuth2 settings on MCP server definitions (plugin manifest or auto-detected). */
+/**
+ * Canonical OAuth2 settings on MCP server definitions.
+ * Aliases (`client_id`, `CLIENT_ID`, `authorizationUrl`, nested `oauth`, …)
+ * are normalized once at plugin/capabilities ingest — do not re-read them downstream.
+ */
 export interface OAuth2Config {
   clientId?: string;
   clientSecret?: string;
-  authorizationUrl?: string;
-  tokenUrl?: string;
-  scopes?: string[];
-  redirectUri?: string;
-  pkce?: boolean;
-  /** Auto-detected / runtime fields */
+  callbackPort?: number;
   authorizationEndpoint?: string;
   tokenEndpoint?: string;
   resourceServer?: string;
   registrationEndpoint?: string;
+  /** Space-delimited scope string from discovery / WWW-Authenticate. */
   scope?: string;
-  client_id?: string;
-  callback_port?: number;
-  callbackPort?: number;
-  oauth?: { clientId?: string; [key: string]: unknown };
+  scopes?: string[];
+  redirectUri?: string;
+  pkce?: boolean;
 }
 
 export type CapabilitiesFormat = 'json' | 'yaml';
@@ -332,6 +331,11 @@ export interface MCPServer {
   description?: string;
 }
 
+/**
+ * MCP server transport. Remote (`url`) and stdio (`cmd`) share optional fields
+ * that only apply to one side; Zod load refine requires at least one of url|cmd.
+ * Full remote|stdio split deferred — large call-site blast radius.
+ */
 export interface MCPServerDefinition {
   // For remote MCP servers
   url?: string;
@@ -344,14 +348,12 @@ export interface MCPServerDefinition {
   env?: Record<string, string>;
   /** Working directory for subprocess (e.g. plugin root) */
   cwd?: string;
-  // OAuth2 config (auto-detected, not user-specified)
+  // OAuth2 config (auto-detected / plugin-embedded; normalized at ingest)
   oauth2?: OAuth2Config;
 }
 
-export interface Tool {
+type ToolCommon = {
   id: string;
-  type: 'mcp' | 'command';
-  def: ToolMCPDefinition | ToolCommandDefinition;
   sourcePlugin?: SourcePlugin;
   /** Human-readable description shown in capa sh */
   description?: string;
@@ -361,7 +363,11 @@ export interface Tool {
    * it is displayed at the top level directly.
    */
   group?: string;
-}
+};
+
+export type Tool =
+  | (ToolCommon & { type: 'mcp'; def: ToolMCPDefinition })
+  | (ToolCommon & { type: 'command'; def: ToolCommandDefinition });
 
 export interface ToolFormatterDefinition {
   /** Shell command that reads the serialized tool output on stdin and writes transformed output to stdout. */
@@ -413,8 +419,7 @@ export interface ArgumentDefinition {
  */
 export function getQualifiedToolName(tool: Tool): string {
   if (tool.type === 'mcp') {
-    const mcpDef = tool.def as ToolMCPDefinition;
-    const serverId = mcpDef.server.replace('@', '');
+    const serverId = tool.def.server.replace('@', '');
     return `${serverId}.${tool.id}`;
   }
   if (tool.group) {

@@ -1,6 +1,6 @@
 import type { Task } from '../../ui';
 import { createAuthenticatedFetch, AuthenticatedFetch } from '../../../shared/authenticated-fetch';
-import { installHooks } from '../../utils/hooks-installer';
+import { installHooks } from '../../utils/hooks';
 import { validateHooks } from '../../../shared/hooks-validate';
 import { raiseInstallError } from './install-error-policy';
 import type { CachePlatform } from '../../../shared/cache';

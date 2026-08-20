@@ -6,7 +6,7 @@
 import { basename, resolve, relative } from 'path';
 import { access } from 'fs/promises';
 import { constants } from 'fs';
-import { CANONICAL_HOOK_EVENTS, type CanonicalHookEvent, type Hook, type HookSource } from '../../types/hooks';
+import { CANONICAL_HOOK_EVENTS, type Hook, type HookSource } from '../../types/hooks';
 import type { Rule } from '../../types/rules';
 import type { MCPServer, Tool } from '../../types/capabilities';
 
@@ -40,7 +40,7 @@ export interface BuildServerOptions {
   description?: string;
 }
 
-export function buildServerEntry(opts: BuildServerOptions): Record<string, unknown> {
+export function buildServerEntry(opts: BuildServerOptions): MCPServer {
   const serverType = (opts.type ?? 'mcp').trim().toLowerCase();
   if (serverType !== 'mcp') {
     throw new Error(
@@ -59,31 +59,34 @@ export function buildServerEntry(opts: BuildServerOptions): Record<string, unkno
     throw new Error('Server requires exactly one of --cmd or --url.');
   }
 
-  const def: Record<string, unknown> = {};
   if (hasCmd) {
-    def.cmd = opts.cmd!.trim();
+    const def: MCPServer['def'] = { cmd: opts.cmd!.trim() };
     if (opts.arg && opts.arg.length > 0) def.args = opts.arg;
     const env = parseKeyValueList(opts.env);
     if (env) def.env = env;
     if (opts.cwd?.trim()) def.cwd = opts.cwd.trim();
-  } else {
-    def.url = opts.url!.trim();
-    const headers = parseKeyValueList(opts.header);
-    if (headers) def.headers = headers;
+    return {
+      id,
+      type: 'mcp',
+      def,
+      ...(opts.description?.trim() ? { description: opts.description.trim() } : {}),
+    };
   }
 
-  const entry: Record<string, unknown> = {
+  const def: MCPServer['def'] = { url: opts.url!.trim() };
+  const headers = parseKeyValueList(opts.header);
+  if (headers) def.headers = headers;
+  return {
     id,
     type: 'mcp',
     def,
+    ...(opts.description?.trim() ? { description: opts.description.trim() } : {}),
   };
-  if (opts.description?.trim()) entry.description = opts.description.trim();
-  return entry;
 }
 
-/** Narrow helper for typed tests / callers. */
+/** @deprecated Use {@link buildServerEntry} — already returns MCPServer. */
 export function buildServerEntryAsMcp(opts: BuildServerOptions): MCPServer {
-  return buildServerEntry(opts) as unknown as MCPServer;
+  return buildServerEntry(opts);
 }
 
 export interface BuildToolOptions {
@@ -96,7 +99,7 @@ export interface BuildToolOptions {
   group?: string;
 }
 
-export function buildToolEntry(opts: BuildToolOptions): Record<string, unknown> {
+export function buildToolEntry(opts: BuildToolOptions): Tool {
   const id = opts.id?.trim();
   if (!id) {
     throw new Error('Tool requires --id <id>.');
@@ -111,15 +114,18 @@ export function buildToolEntry(opts: BuildToolOptions): Record<string, unknown> 
     throw new Error('Tool requires either --mcp-server + --mcp-tool, or --command.');
   }
 
+  const common = {
+    id,
+    ...(opts.description?.trim() ? { description: opts.description.trim() } : {}),
+    ...(opts.group?.trim() ? { group: opts.group.trim() } : {}),
+  };
+
   if (hasCommand) {
-    const entry: Record<string, unknown> = {
-      id,
+    return {
+      ...common,
       type: 'command',
       def: { run: { cmd: opts.command!.trim() } },
     };
-    if (opts.description?.trim()) entry.description = opts.description.trim();
-    if (opts.group?.trim()) entry.group = opts.group.trim();
-    return entry;
   }
 
   if (!opts.mcpServer?.trim() || !opts.mcpTool?.trim()) {
@@ -128,25 +134,23 @@ export function buildToolEntry(opts: BuildToolOptions): Record<string, unknown> 
   let server = opts.mcpServer.trim();
   if (!server.startsWith('@')) server = `@${server}`;
 
-  const def: Record<string, unknown> = {
+  const def: Extract<Tool, { type: 'mcp' }>['def'] = {
     server,
     tool: opts.mcpTool.trim(),
   };
   const defaults = parseKeyValueList(opts.default);
   if (defaults) def.defaults = defaults;
 
-  const entry: Record<string, unknown> = {
-    id,
+  return {
+    ...common,
     type: 'mcp',
     def,
   };
-  if (opts.description?.trim()) entry.description = opts.description.trim();
-  if (opts.group?.trim()) entry.group = opts.group.trim();
-  return entry;
 }
 
+/** @deprecated Use {@link buildToolEntry} — already returns Tool. */
 export function buildToolEntryAsTool(opts: BuildToolOptions): Tool {
-  return buildToolEntry(opts) as unknown as Tool;
+  return buildToolEntry(opts);
 }
 
 export interface ParsedRuleSource {
@@ -270,7 +274,7 @@ export interface BuildRuleOptions {
   description?: string;
 }
 
-export async function buildRuleEntry(opts: BuildRuleOptions): Promise<Record<string, unknown>> {
+export async function buildRuleEntry(opts: BuildRuleOptions): Promise<Rule> {
   if (opts.inline !== undefined && opts.source) {
     throw new Error('Rule cannot combine --inline with a positional source.');
   }
@@ -289,7 +293,7 @@ export async function buildRuleEntry(opts: BuildRuleOptions): Promise<Record<str
     throw new Error('Rule requires a positional <source> or --inline <content>.');
   }
 
-  const entry: Record<string, unknown> = {
+  const entry: Rule = {
     id: parsed.id,
     type: parsed.type,
   };
@@ -303,8 +307,8 @@ export async function buildRuleEntry(opts: BuildRuleOptions): Promise<Record<str
   return entry;
 }
 
-export function buildRuleEntryAsRule(entry: Record<string, unknown>): Rule {
-  return entry as unknown as Rule;
+export function buildRuleEntryAsRule(entry: Rule): Rule {
+  return entry;
 }
 
 export interface BuildHookOptions {
@@ -352,7 +356,7 @@ function parseHookSource(raw: string): HookSource {
   );
 }
 
-export function buildHookEntry(opts: BuildHookOptions): Record<string, unknown> {
+export function buildHookEntry(opts: BuildHookOptions): Hook {
   const id = opts.id?.trim();
   if (!id) {
     throw new Error('Hook requires --id <id>.');
@@ -393,9 +397,9 @@ export function buildHookEntry(opts: BuildHookOptions): Record<string, unknown> 
     }
   }
 
-  const entry: Record<string, unknown> = {
+  const entry: Hook = {
     id,
-    on: isCanonical ? (on as CanonicalHookEvent) : on,
+    on: on as Hook['on'],
     type: hookType,
   };
   if (hasCommand) entry.command = opts.command!.trim();
@@ -416,7 +420,7 @@ export function buildHookEntry(opts: BuildHookOptions): Record<string, unknown> 
 }
 
 export function buildHookEntryAsHook(opts: BuildHookOptions): Hook {
-  return buildHookEntry(opts) as unknown as Hook;
+  return buildHookEntry(opts);
 }
 
 /** Kind flags that are mutually exclusive on `capa add`. */
