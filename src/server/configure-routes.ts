@@ -13,7 +13,10 @@ import type { OAuth2Config } from "../types/oauth";
 import type { CapabilitiesFileWatcher } from "./capabilities-watcher";
 import { matchRoute } from "./match-route";
 import type { CapaMCPServer, ValidationProgressEvent } from "./mcp-handler";
-import type { McpServerStateManager } from "./mcp-server-state";
+import {
+	type McpServerStateManager,
+	syncProjectServerEnablement,
+} from "./mcp-server-state";
 import { OAuth2Manager } from "./oauth-manager";
 import {
 	type OAuth2ServerEntry,
@@ -78,9 +81,28 @@ export async function applyProjectCapabilitiesOnly(
 		deps.effectiveCapsCache.delete(projectId);
 	}
 
+	const previousCapabilities =
+		deps.sessionManager.getProjectCapabilities(projectId);
 	deps.sessionManager.setProjectCapabilities(projectId, capabilitiesToUse);
 	if (project) {
 		void deps.capsWatcher.watchProject(projectId, project.path);
+	}
+
+	// UI capability writes (add/remove servers) use this light path instead of
+	// full configure — still auto-enable servers present in capabilities.
+	if (deps.mcpServerState) {
+		syncProjectServerEnablement(
+			deps.mcpServerState,
+			projectId,
+			capabilitiesToUse.servers,
+			previousCapabilities?.servers,
+		);
+		const mcpServer = deps.getOrCreateMCPServer(projectId);
+		if (mcpServer) {
+			await mcpServer.disconnectNonEnabledServers((serverId) =>
+				deps.mcpServerState!.isEnabled(projectId, serverId),
+			);
+		}
 	}
 
 	apiLogger.success(
@@ -290,9 +312,15 @@ export async function runProjectConfigure(
 		apiLogger.failure(`Tool validation error: ${error.message}`);
 	}
 
-	// Install validation connects servers temporarily; drop connections for
-	// servers the user has not explicitly enabled in the UI.
+	// Install / UI / wrap configure: enable every server in capabilities and
+	// drop connections for servers removed from the project.
 	if (deps.mcpServerState) {
+		syncProjectServerEnablement(
+			deps.mcpServerState,
+			projectId,
+			capabilitiesToUse.servers,
+			previousCapabilities?.servers,
+		);
 		const mcpServer = deps.getOrCreateMCPServer(projectId);
 		if (mcpServer) {
 			await mcpServer.disconnectNonEnabledServers((serverId) =>

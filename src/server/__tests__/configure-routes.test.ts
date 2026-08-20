@@ -7,6 +7,7 @@ import type { Capabilities } from "../../types/capabilities";
 import { afterWrite, type CapabilitiesRouteDeps } from "../capabilities-route-helpers";
 import type { CapabilitiesFileWatcher } from "../capabilities-watcher";
 import {
+	applyProjectCapabilitiesOnly,
 	handleProjectConfigure,
 	type ConfigureRouteDeps,
 } from "../configure-routes";
@@ -61,6 +62,7 @@ describe("handleProjectConfigure", () => {
 				}
 				return [];
 			},
+			disconnectNonEnabledServers: async () => {},
 		} as unknown as CapaMCPServer;
 		deps = {
 			db,
@@ -116,6 +118,50 @@ describe("handleProjectConfigure", () => {
 		expect(res.status).toBe(200);
 		expect(validatedCmds).toEqual(["echo"]);
 		expect(validatedCmds).not.toContain("touch");
+	});
+
+	it("enables on-disk servers after configure", async () => {
+		const mcpServerState = new McpServerStateManager();
+		deps.mcpServerState = mcpServerState;
+		deps.syncProjectMcpClients = async () => {};
+
+		const res = await handleProjectConfigure(
+			deps,
+			"proj-1",
+			new Request("http://127.0.0.1/api/projects/proj-1/configure", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					providers: [],
+					skills: [],
+					tools: [],
+					servers: [],
+				}),
+			}),
+		);
+		expect(res.status).toBe(200);
+		expect(mcpServerState.isEnabled("proj-1", "safe")).toBe(true);
+	});
+
+	it("enables on-disk servers after light capability refresh (UI writes)", async () => {
+		const mcpServerState = new McpServerStateManager();
+		deps.mcpServerState = mcpServerState;
+
+		const caps: Capabilities = {
+			providers: [],
+			skills: [],
+			tools: [],
+			servers: [
+				{
+					id: "safe",
+					type: "mcp",
+					def: { cmd: "echo", args: ["ok"] },
+				},
+			],
+		};
+
+		await applyProjectCapabilitiesOnly(deps, "proj-1", caps);
+		expect(mcpServerState.isEnabled("proj-1", "safe")).toBe(true);
 	});
 
 	it("overlays non-empty providers from the request onto on-disk caps", async () => {
