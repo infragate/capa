@@ -9,15 +9,18 @@ import {
   Unlink,
   Pencil,
   Loader2,
+  Power,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { Server, ToolSchema } from '../../../../types/api';
 import { highlightText, isFormFieldTarget, matchesSearch } from '../../../../lib/utils';
 import { Spinner } from '../../../../components/common/Spinner';
+import { Switch } from '../../../../components/common/Switch';
 import {
   useAppendCapability,
   useDeleteCapability,
   useDisconnectOAuth,
+  useSetServerEnabled,
   useStartOAuth,
 } from '../../hooks';
 import { remoteToolAnchor, serverAnchor, suggestConfiguredToolId, toolMatchesSearch } from './anchors';
@@ -54,14 +57,18 @@ export function ServerCard({
   const appendMutation = useAppendCapability(projectId);
   const startOAuth = useStartOAuth(projectId);
   const disconnectOAuth = useDisconnectOAuth(projectId);
+  const setServerEnabled = useSetServerEnabled(projectId);
+  const [toggleError, setToggleError] = useState<string | null>(null);
   const [pendingToolName, setPendingToolName] = useState<string | null>(null);
-  const locked = !!server.sourcePlugin;
+  const configLocked = !!server.sourcePlugin;
   const label = server.displayName || server.id;
+  const isOn = server.enabled === true;
   const mutating =
     appendMutation.isPending ||
     deleteMutation.isPending ||
     startOAuth.isPending ||
-    disconnectOAuth.isPending;
+    disconnectOAuth.isPending ||
+    setServerEnabled.isPending;
 
   const visibleTools = useMemo(() => {
     if (!tools) return undefined;
@@ -92,6 +99,15 @@ export function ServerCard({
     }
   }
 
+  async function handleToggleEnabled() {
+    setToggleError(null);
+    try {
+      await setServerEnabled.mutateAsync({ serverId: server.id, enabled: !isOn });
+    } catch (err) {
+      setToggleError((err as Error).message || t('actions.serverToggleFailed'));
+    }
+  }
+
   async function handleUseTool(tool: ToolSchema) {
     setPendingToolName(tool.name);
     try {
@@ -115,7 +131,7 @@ export function ServerCard({
 
   return (
     <div
-      className="rounded-sm border border-border-tertiary bg-bg-tertiary"
+      className={`rounded-sm border border-border-tertiary bg-bg-tertiary ${!isOn ? 'opacity-80' : ''}`}
       data-link-anchor={serverAnchor(server.id)}
     >
       <div className="flex items-start gap-1 p-2">
@@ -137,6 +153,11 @@ export function ServerCard({
               className="font-mono text-xs font-medium text-text-primary"
               dangerouslySetInnerHTML={{ __html: highlightText(label, search) }}
             />
+            {!isOn && (
+              <span className="rounded-sm bg-bg-secondary px-1.5 py-0.5 text-[10px] text-text-tertiary">
+                {t('actions.serverOff')}
+              </span>
+            )}
             {server.requiresOAuth && (
               <span
                 className={`rounded-sm px-1.5 py-0.5 text-[10px] ${
@@ -145,7 +166,7 @@ export function ServerCard({
                     : 'bg-[hsl(40_80%_50%/0.15)] text-[hsl(40_80%_45%)]'
                 }`}
               >
-                {server.isConnected ? t('actions.connected') : t('actions.needsOAuth')}
+                {server.isConnected ? t('actions.authenticated') : t('actions.needsOAuth')}
               </span>
             )}
           </div>
@@ -154,43 +175,54 @@ export function ServerCard({
               {server.url || [server.cmd, ...(server.args || [])].join(' ')}
             </div>
           )}
+          {toggleError ? (
+            <p className="mt-1 text-[11px] text-error-text">{toggleError}</p>
+          ) : null}
         </div>
-        <div className="flex shrink-0 items-center gap-1">
+        <div className="flex shrink-0 items-center gap-1 self-center">
+          <Switch
+            checked={isOn}
+            disabled={mutating}
+            loading={setServerEnabled.isPending}
+            onCheckedChange={() => void handleToggleEnabled()}
+            aria-label={isOn ? t('actions.turnOff') : t('actions.turnOn')}
+          />
           {server.requiresOAuth && !server.isConnected && (
             <button
               type="button"
               onClick={() => void handleConnect()}
               disabled={mutating}
-              className="inline-flex items-center gap-1 rounded-sm border border-border-tertiary px-2 py-1 text-[11px] cursor-pointer hover:bg-hover-bg disabled:opacity-50"
+              className="inline-flex items-center gap-1 rounded-sm border border-accent-primary bg-accent-primary px-2 py-1 text-[11px] font-medium text-bg-secondary cursor-pointer hover:opacity-90 disabled:opacity-50"
             >
               {startOAuth.isPending ? (
                 <Loader2 size={12} className="animate-spin" />
               ) : (
                 <Link2 size={12} />
               )}
-              {t('actions.connect')}
+              {t('actions.authenticate')}
             </button>
           )}
           {server.requiresOAuth && server.isConnected && (
             <button
               type="button"
               disabled={mutating}
+              title={t('actions.logout')}
+              aria-label={t('actions.logout')}
               onClick={() => {
-                if (confirm(t('oauth.confirmDisconnect', { name: label }))) {
+                if (confirm(t('oauth.confirmLogout', { name: label }))) {
                   disconnectOAuth.mutate(server.id);
                 }
               }}
-              className="inline-flex items-center gap-1 rounded-sm border border-border-tertiary px-2 py-1 text-[11px] cursor-pointer hover:bg-hover-bg disabled:opacity-50"
+              className="inline-flex items-center justify-center rounded-sm border border-error-border bg-error-bg p-1.5 text-error-text cursor-pointer hover:opacity-90 disabled:opacity-50"
             >
               {disconnectOAuth.isPending ? (
-                <Loader2 size={12} className="animate-spin" />
+                <Loader2 size={14} className="animate-spin" />
               ) : (
-                <Unlink size={12} />
+                <Unlink size={14} />
               )}
-              {t('actions.disconnect')}
             </button>
           )}
-          {locked ? (
+          {configLocked ? (
             <span title={t('actions.pluginLocked')} className="p-1.5 text-text-tertiary">
               <Lock size={14} />
             </span>
@@ -237,21 +269,38 @@ export function ServerCard({
 
       {expanded && (
         <div className="border-t border-border-secondary px-2 pb-2 pt-2">
-          {server.requiresOAuth && !server.isConnected ? (
+          {!isOn ? (
             <div className="flex flex-col items-center gap-2 py-3 text-center">
-              <p className="text-[11px] text-text-tertiary">{t('tool.connectFirst')}</p>
+              <p className="text-[11px] text-text-tertiary">{t('tool.turnOnFirst')}</p>
+              <button
+                type="button"
+                onClick={() => void handleToggleEnabled()}
+                disabled={mutating}
+                className="inline-flex items-center gap-1 rounded-sm border border-accent-primary bg-accent-primary px-2.5 py-1 text-[11px] font-medium text-bg-secondary cursor-pointer hover:opacity-90 disabled:opacity-50"
+              >
+                {setServerEnabled.isPending ? (
+                  <Loader2 size={12} className="animate-spin" />
+                ) : (
+                  <Power size={12} />
+                )}
+                {t('actions.turnOn')}
+              </button>
+            </div>
+          ) : server.requiresOAuth && !server.isConnected ? (
+            <div className="flex flex-col items-center gap-2 py-3 text-center">
+              <p className="text-[11px] text-text-tertiary">{t('tool.authenticateFirst')}</p>
               <button
                 type="button"
                 onClick={() => void handleConnect()}
                 disabled={mutating}
-                className="inline-flex items-center gap-1 rounded-sm border border-border-tertiary px-2.5 py-1 text-[11px] text-text-secondary cursor-pointer hover:bg-hover-bg disabled:opacity-50"
+                className="inline-flex items-center gap-1 rounded-sm border border-accent-primary bg-accent-primary px-2.5 py-1 text-[11px] font-medium text-bg-secondary cursor-pointer hover:opacity-90 disabled:opacity-50"
               >
                 {startOAuth.isPending ? (
                   <Loader2 size={12} className="animate-spin" />
                 ) : (
                   <Link2 size={12} />
                 )}
-                {t('actions.connect')}
+                {t('actions.authenticate')}
               </button>
             </div>
           ) : !visibleTools ? (

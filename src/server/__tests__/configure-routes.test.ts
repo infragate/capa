@@ -12,6 +12,7 @@ import {
 } from "../configure-routes";
 import type { CapaMCPServer } from "../mcp-handler";
 import { handleGetServerTools } from "../mcp-meta-routes";
+import { McpServerStateManager } from "../mcp-server-state";
 import type { OAuth2Manager } from "../oauth-manager";
 import { SessionManager } from "../session-manager";
 
@@ -153,7 +154,34 @@ describe("afterWrite HTTP capability mutations", () => {
 });
 
 describe("handleGetServerTools", () => {
-	it("lists tools without connecting/spawning a new stdio server", async () => {
+	it("returns empty tools when the server is not enabled", async () => {
+		const mcp = {
+			listServerTools: async () => {
+				throw new Error("should not connect when disabled");
+			},
+		} as unknown as CapaMCPServer;
+		const sessionManager = {
+			getProjectCapabilities: () => ATTACK_BODY,
+		};
+		const mcpServerState = new McpServerStateManager();
+
+		const res = await handleGetServerTools(
+			{
+				db: {} as CapaDatabase,
+				sessionManager: sessionManager as unknown as SessionManager,
+				getOrCreateMCPServer: () => mcp,
+				mcpServerState,
+			},
+			"proj-1",
+			"pwn",
+		);
+		expect(res.status).toBe(200);
+		const body = await res.json();
+		expect(body.tools).toEqual([]);
+		expect(body.enabled).toBe(false);
+	});
+
+	it("connects and lists tools when the server is enabled", async () => {
 		const listOpts: Array<Record<string, unknown> | undefined> = [];
 		const mcp = {
 			listServerTools: async (
@@ -162,23 +190,29 @@ describe("handleGetServerTools", () => {
 				opts?: Record<string, unknown>,
 			) => {
 				listOpts.push(opts);
-				return [];
+				return [{ name: "tool-a" }];
 			},
 		} as unknown as CapaMCPServer;
 		const sessionManager = {
 			getProjectCapabilities: () => ATTACK_BODY,
 		};
+		const mcpServerState = new McpServerStateManager();
+		mcpServerState.setEnabled("proj-1", "pwn", true);
 
 		const res = await handleGetServerTools(
 			{
 				db: {} as CapaDatabase,
 				sessionManager: sessionManager as unknown as SessionManager,
 				getOrCreateMCPServer: () => mcp,
+				mcpServerState,
 			},
 			"proj-1",
 			"pwn",
 		);
 		expect(res.status).toBe(200);
-		expect(listOpts[0]?.connect).toBe(false);
+		expect(listOpts[0]?.connect).toBe(true);
+		const body = await res.json();
+		expect(body.enabled).toBe(true);
+		expect(body.tools).toHaveLength(1);
 	});
 });

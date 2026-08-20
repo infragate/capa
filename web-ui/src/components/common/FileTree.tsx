@@ -153,6 +153,7 @@ function FileTreeNode({
   searchQuery,
   onFileSelect,
   scrollPathKey,
+  selectableLabels = false,
 }: {
   node: TreeNode;
   depth?: number;
@@ -163,6 +164,7 @@ function FileTreeNode({
   searchQuery?: string;
   onFileSelect?: (pathKey: string) => void;
   scrollPathKey?: string | null;
+  selectableLabels?: boolean;
 }) {
   const [open, setOpen] = useState(defaultExpanded);
   const rowRef = useRef<HTMLButtonElement>(null);
@@ -211,6 +213,7 @@ function FileTreeNode({
             searchQuery={searchQuery}
             onFileSelect={onFileSelect}
             scrollPathKey={scrollPathKey}
+            selectableLabels={selectableLabels}
           />
         ))}
       </>
@@ -252,6 +255,7 @@ function FileTreeNode({
           'min-w-0 flex-1 truncate',
           showAsFile ? 'text-text-secondary' : 'font-medium text-text-primary',
           isSelected && 'text-text-primary',
+          selectableLabels && showAsFile && 'select-text',
         )}
       >
         {node.name}
@@ -337,6 +341,7 @@ export function FileTree({
   onFileSelect,
   scrollPathKey,
   directoryPathKeys,
+  selectableLabels = false,
 }: {
   files: string[];
   annotations?: Record<string, FileTreeFileMeta>;
@@ -349,6 +354,8 @@ export function FileTree({
   scrollPathKey?: string | null;
   /** Display paths that are directories (e.g. Grep search roots). */
   directoryPathKeys?: ReadonlySet<string> | readonly string[];
+  /** Allow selecting/copying file name text inside rows. */
+  selectableLabels?: boolean;
 }) {
   const tree = useMemo(
     () => buildTree(files, directoryPathKeys),
@@ -365,6 +372,7 @@ export function FileTree({
       searchQuery={searchQuery}
       onFileSelect={onFileSelect}
       scrollPathKey={scrollPathKey}
+      selectableLabels={selectableLabels}
     />
   );
   if (variant === 'plain') {

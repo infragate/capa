@@ -25,6 +25,7 @@ import {
 	preserveDiscoveredOAuth2,
 } from "./resolve-effective-capabilities";
 import type { SessionManager } from "./session-manager";
+import type { McpServerStateManager } from "./mcp-server-state";
 import {
 	resolveSkillDescription,
 	resolveSkillSourceUrl,
@@ -40,6 +41,7 @@ export interface ProjectRouteDeps {
 	effectiveCapsCache: Map<string, EffectiveCapsCacheEntry>;
 	projectEventClients: Map<string, Set<(chunk: Uint8Array) => void>>;
 	configureDeps: ConfigureRouteDeps;
+	mcpServerState: McpServerStateManager;
 }
 
 export async function handleGetProjects(
@@ -191,6 +193,7 @@ export async function handleGetProject(
 							const isConnected = requiresOAuth
 								? deps.oauth2Manager.isServerConnected(projectId, s.id)
 								: null;
+							const enabled = deps.mcpServerState.isEnabled(projectId, s.id);
 							return redactServerForApi({
 								id: s.id,
 								type: s.type,
@@ -229,6 +232,7 @@ export async function handleGetProject(
 								description: s.description || null,
 								requiresOAuth,
 								isConnected,
+								enabled,
 							});
 						}),
 						resolvedPlugins: capabilities.resolvedPlugins || null,
@@ -516,6 +520,8 @@ export function handleGetProjectActivity(
 	limitParam: string | null,
 	beforeParam: string | null = null,
 	beforeIdParam: string | null = null,
+	sessionIdParam: string | null = null,
+	conversationIdParam: string | null = null,
 ): Response {
 	const project = deps.db.getProject(projectId);
 	if (!project) {
@@ -529,11 +535,17 @@ export function handleGetProjectActivity(
 	const parsedBefore = beforeParam ? Number.parseInt(beforeParam, 10) : NaN;
 	const beforeStartedAt = Number.isFinite(parsedBefore) ? parsedBefore : null;
 	const beforeId = beforeIdParam?.trim() ? beforeIdParam.trim() : null;
+	const sessionId = sessionIdParam?.trim() ? sessionIdParam.trim() : null;
+	const conversationId = conversationIdParam?.trim()
+		? conversationIdParam.trim()
+		: null;
 	const page = deps.db.listToolCalls(projectId, {
 		limit,
 		beforeStartedAt,
 		beforeId,
 		before: beforeStartedAt,
+		sessionId,
+		conversationId,
 	});
 	return new Response(JSON.stringify(page), { headers: JSON_HEADERS });
 }

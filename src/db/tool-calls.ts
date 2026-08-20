@@ -5,7 +5,7 @@ import {
 } from "../shared/activity-run-boundary";
 import type { ToolCallRecord, ToolCallStats } from "../types/database";
 
-export const TOOL_CALLS_PER_PROJECT_CAP = 1000;
+export const TOOL_CALLS_PER_PROJECT_CAP = 10_000;
 export const TOOL_CALLS_PAGE_SIZE_DEFAULT = 50;
 export const TOOL_CALLS_PAGE_SIZE_MAX = 100;
 
@@ -55,6 +55,10 @@ export type ToolCallListOptions = {
 	beforeId?: string | null;
 	/** @deprecated Prefer beforeStartedAt + beforeId. Kept for older clients. */
 	before?: number | null;
+	/** When set, return only rows for this agent session id. */
+	sessionId?: string | null;
+	/** When set, return all rows for this provider conversation id. */
+	conversationId?: string | null;
 };
 
 export type ToolCallListResult = {
@@ -74,6 +78,13 @@ export { isActivityRunCloser, isActivityRunOpener };
 
 /** Cap how far we walk older rows to complete a cut-off run. */
 const RUN_BOUNDARY_EXPAND_MAX = TOOL_CALLS_PER_PROJECT_CAP;
+
+type ActivityPageUnit = {
+	unitKey: string;
+	kind: "conversation" | "orphan";
+	maxStarted: number;
+	traceCount: number;
+};
 
 export class ToolCallsRepo {
 	constructor(private db: Database) {}
@@ -189,6 +200,15 @@ export class ToolCallsRepo {
 		const row = this.db
 			.query("SELECT COUNT(*) AS n FROM tool_calls WHERE project_id = ?")
 			.get(projectId) as { n: number };
+		return row.n;
+	}
+
+	countForSession(projectId: string, sessionId: string): number {
+		const row = this.db
+			.query(
+				"SELECT COUNT(*) AS n FROM tool_calls WHERE project_id = ? AND session_id = ?",
+			)
+			.get(projectId, sessionId) as { n: number };
 		return row.n;
 	}
 
@@ -330,7 +350,7 @@ export class ToolCallsRepo {
 		projectId: string,
 		options: ToolCallListOptions = {},
 	): ToolCallListResult {
-		const limit = Math.max(
+		const traceBudget = Math.max(
 			1,
 			Math.min(
 				options.limit ?? TOOL_CALLS_PAGE_SIZE_DEFAULT,
@@ -339,59 +359,241 @@ export class ToolCallsRepo {
 		);
 		const beforeStartedAt = options.beforeStartedAt ?? options.before ?? null;
 		const beforeId = options.beforeId ?? null;
+		const sessionId = options.sessionId?.trim() || null;
+		const conversationId = options.conversationId?.trim() || null;
 
-		const fetched = (
-			beforeStartedAt == null
-				? this.db
-						.query(
-							`SELECT * FROM tool_calls
-             WHERE project_id = ?
-             ORDER BY started_at DESC, id DESC
-             LIMIT ?`,
-						)
-						.all(projectId, limit + 1)
-				: beforeId
-					? this.db
-							.query(
-								`SELECT * FROM tool_calls
-             WHERE project_id = ?
-               AND (started_at < ? OR (started_at = ? AND id < ?))
-             ORDER BY started_at DESC, id DESC
-             LIMIT ?`,
-							)
-							.all(
-								projectId,
-								beforeStartedAt,
-								beforeStartedAt,
-								beforeId,
-								limit + 1,
-							)
-					: this.db
-							.query(
-								`SELECT * FROM tool_calls
-             WHERE project_id = ? AND started_at < ?
-             ORDER BY started_at DESC, id DESC
-             LIMIT ?`,
-							)
-							.all(projectId, beforeStartedAt, limit + 1)
-		) as ToolCallRecord[];
+		if (sessionId) {
+			const fetched = this.db
+				.query(
+					`SELECT * FROM tool_calls
+           WHERE project_id = ? AND session_id = ?
+           ORDER BY started_at DESC, id DESC
+           LIMIT ?`,
+				)
+				.all(projectId, sessionId, traceBudget + 1) as ToolCallRecord[];
 
-		const overflow = fetched.length > limit;
-		if (overflow) fetched.pop();
+			const overflow = fetched.length > traceBudget;
+			if (overflow) fetched.pop();
 
-		const calls = this.expandOlderToRunBoundary(projectId, fetched);
-
-		let hasMore = false;
-		if (calls.length > 0) {
-			const oldest = calls[calls.length - 1]!;
-			hasMore = this.hasRowBefore(projectId, oldest.started_at, oldest.id);
+			return {
+				calls: fetched,
+				total: this.countForSession(projectId, sessionId),
+				hasMore: overflow,
+			};
 		}
+
+		if (conversationId) {
+			const fetched = this.db
+				.query(
+					`SELECT * FROM tool_calls
+           WHERE project_id = ? AND conversation_id = ?
+           ORDER BY started_at DESC, id DESC`,
+				)
+				.all(projectId, conversationId) as ToolCallRecord[];
+
+			return {
+				calls: fetched,
+				total: fetched.length,
+				hasMore: false,
+			};
+		}
+
+		return this.listRecentByActivityUnits(
+			projectId,
+			traceBudget,
+			beforeStartedAt,
+			beforeId,
+		);
+	}
+
+	/**
+	 * Paginate activity by full conversations (or orphan run units), packing
+	 * units until the trace budget is reached. A single unit larger than the
+	 * budget is returned alone.
+	 */
+	private listRecentByActivityUnits(
+		projectId: string,
+		traceBudget: number,
+		beforeStartedAt: number | null,
+		beforeId: string | null,
+	): ToolCallListResult {
+		const cursor =
+			beforeStartedAt != null && beforeId
+				? this.resolveActivityPageCursor(
+						projectId,
+						beforeStartedAt,
+						beforeId,
+					)
+				: null;
+
+		const units = this.listActivityPageUnits(projectId, cursor);
+		const selected = this.selectUnitsByTraceBudget(units, traceBudget);
+		const calls = this.fetchTracesForActivityUnits(projectId, selected);
 
 		return {
 			calls,
 			total: this.count(projectId),
-			hasMore,
+			hasMore: selected.length < units.length,
 		};
+	}
+
+	private listActivityPageUnits(
+		projectId: string,
+		cursor?: { maxStarted: number; unitKey: string } | null,
+	): ActivityPageUnit[] {
+		const conversationRows = this.db
+			.query(
+				`SELECT conversation_id AS unit_key, MAX(started_at) AS max_started, COUNT(*) AS trace_count
+         FROM tool_calls
+         WHERE project_id = ? AND conversation_id IS NOT NULL
+         GROUP BY conversation_id`,
+			)
+			.all(projectId) as Array<{
+			unit_key: string;
+			max_started: number;
+			trace_count: number;
+		}>;
+
+		const orphanRows = this.db
+			.query(
+				`SELECT COALESCE(generation_id, id) AS unit_key, MAX(started_at) AS max_started, COUNT(*) AS trace_count
+         FROM tool_calls
+         WHERE project_id = ? AND conversation_id IS NULL
+         GROUP BY COALESCE(generation_id, id)`,
+			)
+			.all(projectId) as Array<{
+			unit_key: string;
+			max_started: number;
+			trace_count: number;
+		}>;
+
+		let units: ActivityPageUnit[] = [
+			...conversationRows.map((row) => ({
+				unitKey: row.unit_key,
+				kind: "conversation" as const,
+				maxStarted: Number(row.max_started),
+				traceCount: Number(row.trace_count),
+			})),
+			...orphanRows.map((row) => ({
+				unitKey: row.unit_key,
+				kind: "orphan" as const,
+				maxStarted: Number(row.max_started),
+				traceCount: Number(row.trace_count),
+			})),
+		];
+
+		units.sort((a, b) => {
+			if (b.maxStarted !== a.maxStarted) return b.maxStarted - a.maxStarted;
+			return b.unitKey.localeCompare(a.unitKey);
+		});
+
+		if (cursor) {
+			units = units.filter(
+				(unit) =>
+					unit.maxStarted < cursor.maxStarted ||
+					(unit.maxStarted === cursor.maxStarted &&
+						unit.unitKey < cursor.unitKey),
+			);
+		}
+
+		return units;
+	}
+
+	private resolveActivityPageCursor(
+		projectId: string,
+		beforeStartedAt: number,
+		beforeId: string,
+	): { maxStarted: number; unitKey: string } {
+		const row = this.get(beforeId);
+		if (!row || row.project_id !== projectId) {
+			return { maxStarted: beforeStartedAt, unitKey: "" };
+		}
+
+		if (row.conversation_id) {
+			const summary = this.db
+				.query(
+					`SELECT MAX(started_at) AS max_started FROM tool_calls
+           WHERE project_id = ? AND conversation_id = ?`,
+				)
+				.get(projectId, row.conversation_id) as { max_started: number };
+			return {
+				maxStarted: Number(summary.max_started),
+				unitKey: row.conversation_id,
+			};
+		}
+
+		const orphanKey = row.generation_id ?? row.id;
+		const summary = this.db
+			.query(
+				`SELECT MAX(started_at) AS max_started FROM tool_calls
+         WHERE project_id = ? AND conversation_id IS NULL
+           AND (generation_id = ? OR (generation_id IS NULL AND id = ?))`,
+			)
+			.get(projectId, orphanKey, orphanKey) as { max_started: number } | null;
+
+		return {
+			maxStarted: summary
+				? Number(summary.max_started)
+				: beforeStartedAt,
+			unitKey: orphanKey,
+		};
+	}
+
+	private selectUnitsByTraceBudget(
+		units: ActivityPageUnit[],
+		traceBudget: number,
+	): ActivityPageUnit[] {
+		const selected: ActivityPageUnit[] = [];
+		let accumulated = 0;
+
+		for (const unit of units) {
+			if (selected.length === 0) {
+				selected.push(unit);
+				accumulated += unit.traceCount;
+				if (unit.traceCount > traceBudget) break;
+				continue;
+			}
+			if (accumulated + unit.traceCount > traceBudget) break;
+			selected.push(unit);
+			accumulated += unit.traceCount;
+		}
+
+		return selected;
+	}
+
+	private fetchTracesForActivityUnits(
+		projectId: string,
+		units: ActivityPageUnit[],
+	): ToolCallRecord[] {
+		const calls: ToolCallRecord[] = [];
+		for (const unit of units) {
+			if (unit.kind === "conversation") {
+				const rows = this.db
+					.query(
+						`SELECT * FROM tool_calls
+             WHERE project_id = ? AND conversation_id = ?
+             ORDER BY started_at DESC, id DESC`,
+					)
+					.all(projectId, unit.unitKey) as ToolCallRecord[];
+				calls.push(...rows);
+			} else {
+				const rows = this.db
+					.query(
+						`SELECT * FROM tool_calls
+             WHERE project_id = ? AND conversation_id IS NULL
+               AND (generation_id = ? OR (generation_id IS NULL AND id = ?))
+             ORDER BY started_at DESC, id DESC`,
+					)
+					.all(projectId, unit.unitKey, unit.unitKey) as ToolCallRecord[];
+				calls.push(...rows);
+			}
+		}
+
+		calls.sort((a, b) => {
+			if (b.started_at !== a.started_at) return b.started_at - a.started_at;
+			return b.id.localeCompare(a.id);
+		});
+		return calls;
 	}
 
 	/**

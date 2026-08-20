@@ -22,6 +22,7 @@ interface ActivityFeedProps {
   onLoadMore: () => void;
   live?: boolean;
   projectPath?: string | null;
+  onViewConversation?: (conversationId: string) => void;
 }
 
 function RunRow({
@@ -93,10 +94,12 @@ function ConversationBlock({
   conversation,
   maxMs,
   onOpenRun,
+  onViewConversation,
 }: {
   conversation: ActivityConversation;
   maxMs: number;
   onOpenRun: (id: string) => void;
+  onViewConversation?: (conversationId: string) => void;
 }) {
   const { t } = useTranslation('projects');
   const multi = conversation.generations.length > 1;
@@ -114,6 +117,19 @@ function ConversationBlock({
         <span className="min-w-0 flex-1 truncate" title={isOrphan ? undefined : conversation.id}>
           {title}
         </span>
+        {!isOrphan && onViewConversation ? (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onViewConversation(conversation.id);
+            }}
+            className="shrink-0 rounded bg-bg-secondary px-1.5 py-0.5 text-[10px] font-medium normal-case tracking-normal text-accent-primary hover:bg-hover-bg cursor-pointer"
+            title={conversation.id}
+          >
+            {t('activity.viewConversation')}
+          </button>
+        ) : null}
         {conversation.source ? (
           <span className="shrink-0 rounded bg-bg-secondary px-1.5 py-0.5 text-[10px] font-medium normal-case tracking-normal text-text-secondary">
             {sourceLabelText(conversation.source, t)}
@@ -146,6 +162,7 @@ export function ActivityFeed({
   onLoadMore,
   live = false,
   projectPath = null,
+  onViewConversation,
 }: ActivityFeedProps) {
   const { t } = useTranslation('projects');
   const conversations = useMemo(
@@ -191,6 +208,7 @@ export function ActivityFeed({
             conversation={conversation}
             maxMs={maxMs}
             onOpenRun={setSelectedId}
+            onViewConversation={onViewConversation}
           />
         ))}
         {hasMore && (

@@ -66,7 +66,8 @@
     "description": "Connect to external services using OAuth 2.0 authentication. Click \"Connect\" to authorize access.",
     "connectedTo": "Successfully connected to {{name}}",
     "disconnectedFrom": "Disconnected from {{name}}",
-    "confirmDisconnect": "Disconnect from {{name}}?"
+    "confirmDisconnect": "Disconnect from {{name}}?",
+    "confirmLogout": "Log out from {{name}}?"
   },
   "actions": {
     "add": "Add",
@@ -82,8 +83,17 @@
     "saveServer": "Save server",
     "connect": "Connect",
     "disconnect": "Disconnect",
+    "authenticate": "Authenticate",
+    "logout": "Logout",
+    "authenticated": "Authenticated",
     "connected": "Connected",
     "needsOAuth": "Needs OAuth",
+    "on": "On",
+    "off": "Off",
+    "turnOn": "Turn on",
+    "turnOff": "Turn off",
+    "serverToggleFailed": "Could not update server state",
+    "serverOff": "Off",
     "needsOAuthCount": "{{count}} need OAuth",
     "addSkill": "Add skill",
     "addServer": "Add server",
@@ -237,7 +247,8 @@
     "pendingOAuth": "{{count}} service requires OAuth connection",
     "pendingOAuth_other": "{{count}} services require OAuth connection",
     "configure": "Configure",
-    "connect": "Connect"
+    "connect": "Connect",
+    "authenticate": "Authenticate"
   },
   "noConfig": {
     "title": "No configuration required",
@@ -310,7 +321,57 @@
       "searchPlaceholder": "Filter files…",
       "expandAll": "Expand all",
       "collapseAll": "Collapse all",
-      "noSearchResults": "No files match your filter."
+      "noSearchResults": "No files match your filter.",
+      "export": "Export"
+    },
+    "runSkills": {
+      "aria": "Skills used in this run",
+      "heading": "Skills",
+      "empty": "No skills detected from file activity.",
+      "emptyHint": "Skills appear when the agent reads or edits a SKILL.md file.",
+      "count": "{{count}} skill",
+      "count_other": "{{count}} skills"
+    },
+    "runCommands": {
+      "aria": "Shell commands in this run",
+      "heading": "Commands",
+      "empty": "No shell commands in this run yet.",
+      "emptyHint": "Shell and terminal tool spans will appear here.",
+      "count": "{{count}} command",
+      "count_other": "{{count}} commands",
+      "searchPlaceholder": "Filter commands…",
+      "noSearchResults": "No commands match your filter.",
+      "export": "Export"
+    },
+    "searchPlaceholder": "Search activity…",
+    "runSearchPlaceholder": "Search traces…",
+    "runSearchNoResults": "No traces match your search.",
+    "searchMatchCount": "{{matched}} of {{total}} events match",
+    "session": "Session",
+    "viewConversation": "All turns",
+    "allTurns": "All turns",
+    "concurrentTurns": "{{count}} overlapping turn",
+    "concurrentTurns_other": "{{count}} overlapping turns",
+    "sessionTraces": "Session traces",
+    "conversationTraces": "Conversation traces",
+    "sessionTracesEmpty": "No traces found for this session.",
+    "conversationTracesEmpty": "No traces found for this conversation.",
+    "closeSession": "Close session view",
+    "closeTracesView": "Close traces view",
+    "enterFullscreen": "Full screen",
+    "exitFullscreen": "Exit full screen",
+    "processAnalysis": {
+      "button": "Process Analysis",
+      "toggle": "Toggle process mining diagram",
+      "empty": "No tool activity to analyze in this view.",
+      "singleActivity": "Only one activity type found — need at least two steps for transitions.",
+      "summary": "{{activities}} activities · {{transitions}} transitions · {{traces}} traces",
+      "panHint": "Drag to pan · scroll to zoom",
+      "occurrences": "{{count}} occurrence",
+      "occurrences_other": "{{count}} occurrences",
+      "nodeErrors": "{{count}} error",
+      "nodeErrors_other": "{{count}} errors",
+      "renderError": "Unable to render the process diagram."
     }
   },
   "tool": {
@@ -319,6 +380,8 @@
     "requiredBy": "required by",
     "noToolsOnServer": "No tools found on this server",
     "connectFirst": "Connect to this server first to list its tools",
+    "turnOnFirst": "Turn on this server to list its tools",
+    "authenticateFirst": "Authenticate with this server first to list its tools",
     "serverUnreachable": "Server unreachable",
     "commandsGroup": "Commands"
   },

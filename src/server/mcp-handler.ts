@@ -25,6 +25,7 @@ import {
 } from "../types/capabilities";
 import { VERSION } from "../version";
 import { MCPProxy } from "./mcp-proxy";
+import type { McpServerStateManager } from "./mcp-server-state";
 import {
 	applyDefaultsToSchema,
 	buildCallToolErrorPayload,
@@ -124,6 +125,7 @@ export class CapaMCPServer {
 		projectPath: string,
 		agentId?: string,
 		tracer?: ToolCallTracer | null,
+		mcpServerState?: McpServerStateManager,
 	) {
 		this.db = db;
 		this.sessionManager = sessionManager;
@@ -131,7 +133,10 @@ export class CapaMCPServer {
 		this.projectPath = projectPath;
 		this.agentId = agentId ?? null;
 		this.tracer = tracer ?? null;
-		this.mcpProxy = new MCPProxy(db, projectId, projectPath);
+		this.mcpProxy = new MCPProxy(db, projectId, projectPath, {
+			isServerEnabled: (serverId) =>
+				mcpServerState?.isEnabled(projectId, serverId) ?? false,
+		});
 
 		this.server = new Server(
 			{
@@ -862,6 +867,7 @@ export class CapaMCPServer {
 			throwOnError?: boolean;
 			connect?: boolean;
 			timeoutMs?: number;
+			bypassEnabledCheck?: boolean;
 		} = {},
 	): Promise<any[]> {
 		const serverDef = capabilities.servers.find((s) => s.id === serverId);
@@ -1067,6 +1073,7 @@ export class CapaMCPServer {
 						const remoteTools = await this.mcpProxy.listTools(
 							serverId,
 							serverDef.def,
+							{ bypassEnabledCheck: true },
 						);
 						const remoteByName = new Map<string, any>(
 							remoteTools.map((t: any) => [t.name, t]),
@@ -1696,6 +1703,16 @@ export class CapaMCPServer {
 				message: `Method not found: ${message.method}`,
 			},
 		};
+	}
+
+	async disconnectNonEnabledServers(
+		isEnabled: (serverId: string) => boolean,
+	): Promise<void> {
+		for (const serverId of this.mcpProxy.getConnectedServerIds()) {
+			if (!isEnabled(serverId)) {
+				await this.mcpProxy.closeServer(serverId);
+			}
+		}
 	}
 
 	async close(): Promise<void> {
