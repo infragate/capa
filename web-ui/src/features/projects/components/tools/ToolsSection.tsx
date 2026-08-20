@@ -27,6 +27,10 @@ import { ConfiguredToolsPanel } from './ConfiguredToolsPanel';
 import { ServerDialog } from './ServerDialog';
 import { CommandToolDialog } from './CommandToolDialog';
 
+function serverToolsFetchEnabled(server: Server): boolean {
+  return !!server.enabled && !(server.requiresOAuth && !server.isConnected);
+}
+
 interface ToolsSectionProps {
   projectId: string;
   skills: Skill[];
@@ -128,7 +132,7 @@ export function ToolsSection({
       queryFn: () => projectsApi.getServerTools(projectId, server.id),
       staleTime: 60_000,
       retry: false,
-      enabled: server.enabled && !(server.requiresOAuth && !server.isConnected),
+      enabled: serverToolsFetchEnabled(server),
     })),
   });
 
@@ -225,8 +229,12 @@ export function ToolsSection({
 
   const existingToolIds = useMemo(() => new Set(tools.map((t) => t.id)), [tools]);
 
-  const tokenSavingsLoading =
-    servers.length > 0 && serverToolQueries.some((q) => q.isLoading || q.isPending);
+  const tokenSavingsLoading = serverToolQueries.some((q, i) => {
+    const server = servers[i];
+    if (!server || !serverToolsFetchEnabled(server)) return false;
+    // Disabled queries stay isPending forever; only count active fetches.
+    return q.isLoading;
+  });
   const tokenSavings = useMemo(() => {
     if (servers.length === 0 || tokenSavingsLoading) return null;
     return computeTokenSavings(tools as EnrichedTool[], serverToolsMap, servers.length);
