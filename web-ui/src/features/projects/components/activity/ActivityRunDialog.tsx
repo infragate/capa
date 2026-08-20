@@ -12,7 +12,6 @@ import {
 } from './groupActivityRuns';
 import { ActivitySpanRow } from './ActivitySpanRow';
 import { ActivityRunFileTree } from './ActivityRunFileTree';
-import { ActivityRunCommandsList } from './ActivityRunCommandsList';
 import { ActivityRunSkillsPanel } from './ActivityRunSkillsPanel';
 import { ActivityRunSplitPane } from './ActivityRunSplitPane';
 import { ActivityConversationTimeline } from './ActivityConversationTimeline';
@@ -274,17 +273,6 @@ export function ActivityRunDialog({
           .getElementById(`activity-span-${first}`)
           ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
       }
-    });
-  }
-
-  function onCommandSelect(spanId: string) {
-    setPickedFilePathKey(null);
-    setExpandedSpanIds(new Set([spanId]));
-    setFollowLatest(false);
-    requestAnimationFrame(() => {
-      document
-        .getElementById(`activity-span-${spanId}`)
-        ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     });
   }
 
@@ -555,14 +543,6 @@ export function ActivityRunDialog({
                       <ActivityRunSkillsPanel
                         events={displayEvents}
                         projectPath={projectPath}
-                      />
-                    </div>
-                    <div className="hidden min-h-0 w-[min(280px,38%)] shrink-0 lg:flex">
-                      <ActivityRunCommandsList
-                        events={displayEvents}
-                        runId={fileTreeRunId}
-                        selectedSpanIds={expandedSpanIds}
-                        onCommandSelect={onCommandSelect}
                       />
                     </div>
                   </div>
