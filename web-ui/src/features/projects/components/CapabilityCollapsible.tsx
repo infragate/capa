@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import * as Collapsible from '@radix-ui/react-collapsible';
 import { ChevronDown, Plus, type LucideIcon } from 'lucide-react';
 
@@ -7,6 +7,11 @@ interface CapabilityCollapsibleProps {
   count: number;
   icon?: LucideIcon;
   defaultOpen?: boolean;
+  /**
+   * When this becomes true, open the section once (user can still collapse).
+   * Useful for surfacing auth-needed servers without locking the accordion open.
+   */
+  suggestOpen?: boolean;
   /** When set, section is forced open (e.g. while searching). */
   forceOpen?: boolean;
   /**
@@ -29,6 +34,7 @@ export function CapabilityCollapsible({
   count,
   icon: Icon,
   defaultOpen = false,
+  suggestOpen = false,
   forceOpen,
   keepMounted = false,
   onAdd,
@@ -38,7 +44,10 @@ export function CapabilityCollapsible({
   badges,
   dialog,
 }: CapabilityCollapsibleProps) {
-  const [open, setOpen] = useState(defaultOpen);
+  const [open, setOpen] = useState(defaultOpen || suggestOpen);
+  useEffect(() => {
+    if (suggestOpen) setOpen(true);
+  }, [suggestOpen]);
   const effectiveOpen = forceOpen ? true : open;
   // Only mount heavy body content when visible or briefly needed for an in-body dialog
   const bodyMounted = effectiveOpen || keepMounted;
