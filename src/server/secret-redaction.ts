@@ -54,6 +54,15 @@ export function redactServerForApi<T extends ApiServerSecrets>(server: T): T {
 	return { ...server, env, headers, oauth2 };
 }
 
+/** Strip secrets from oauth2 blocks returned by OAuth listing APIs. */
+export function redactOAuth2ConfigForApi(
+	oauth2: Record<string, unknown> | null | undefined,
+): Record<string, unknown> | null | undefined {
+	if (!oauth2) return oauth2;
+	const { clientSecret: _a, client_secret: _b, ...rest } = oauth2;
+	return rest;
+}
+
 export function mergeServerDef(
 	existing: Record<string, unknown> | null | undefined,
 	incoming: Record<string, unknown>,

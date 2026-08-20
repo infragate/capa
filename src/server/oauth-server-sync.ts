@@ -52,13 +52,6 @@ export function mergeEmbeddedOAuthFields(
 		merged.callback_port = callbackPort;
 	}
 
-	const clientSecret =
-		embedded?.clientSecret ??
-		(embedded as { client_secret?: string } | undefined)?.client_secret;
-	if (clientSecret && !merged.clientSecret) {
-		merged.clientSecret = clientSecret;
-	}
-
 	return merged;
 }
 

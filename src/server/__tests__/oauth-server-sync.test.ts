@@ -4,6 +4,7 @@ import type { OAuth2Config } from "../../types/oauth";
 import type { OAuth2Manager } from "../oauth-manager";
 import {
 	mergeDetectedOAuth2,
+	mergeEmbeddedOAuthFields,
 	mergePluginEmbeddedOAuth,
 	syncServerOAuth2Requirement,
 } from "../oauth-server-sync";
@@ -109,6 +110,20 @@ describe("mergeDetectedOAuth2", () => {
 		expect(merged.client_id).toBe("embedded-app");
 		expect(merged.callback_port).toBe(3111);
 		expect(merged.authorizationEndpoint).toBe("https://auth.example/authorize");
+	});
+});
+
+describe("mergeEmbeddedOAuthFields", () => {
+	it("does not copy clientSecret from embedded oauth", () => {
+		const merged = mergeEmbeddedOAuthFields(
+			{ authorizationEndpoint: "https://auth.example/authorize" },
+			{
+				client_id: "plugin-app-id",
+				clientSecret: "top-secret",
+			} as OAuth2Config,
+		);
+		expect(merged?.client_id).toBe("plugin-app-id");
+		expect(merged?.clientSecret).toBeUndefined();
 	});
 });
 

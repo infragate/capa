@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { mergeServerDef, redactServerForApi } from "../secret-redaction";
+import { mergeServerDef, redactOAuth2ConfigForApi, redactServerForApi } from "../secret-redaction";
 
 const ENV_SECRET = "mcp-env-secret-ABCDEFGH";
 const HEADER_SECRET = "Bearer mcp-header-secret-1234";
@@ -28,6 +28,21 @@ describe("redactServerForApi", () => {
 		expect(json).not.toContain("api-key-value-9999");
 		expect(redacted.oauth2?.clientSecret).toBeUndefined();
 		expect(redacted.oauth2?.clientId).toBe("public-client");
+	});
+});
+
+describe("redactOAuth2ConfigForApi", () => {
+	it("strips clientSecret and client_secret from oauth2 listing payloads", () => {
+		const redacted = redactOAuth2ConfigForApi({
+			client_id: "public-client",
+			clientSecret: OAUTH_SECRET,
+			client_secret: "snake-secret",
+			authorizationEndpoint: "https://auth.example/authorize",
+		});
+		expect(redacted?.client_id).toBe("public-client");
+		expect(redacted?.clientSecret).toBeUndefined();
+		expect(redacted?.client_secret).toBeUndefined();
+		expect(JSON.stringify(redacted)).not.toContain(OAUTH_SECRET);
 	});
 });
 

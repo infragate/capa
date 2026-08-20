@@ -183,15 +183,16 @@ export async function loadEffectiveCapabilities(
  */
 export async function enrichCapabilitiesOAuthFromPlugins(
 	capabilities: Capabilities,
+	authored: Capabilities,
 	projectPath: string,
 	projectId: string,
 	capabilitiesFilePath: string,
 	db: CapaDatabase,
 	cache?: Map<string, EffectiveCapsCacheEntry>,
 ): Promise<void> {
-	if ((capabilities.plugins?.length ?? 0) === 0) return;
+	if ((authored.plugins?.length ?? 0) === 0) return;
 	const fromPlugins = await loadEffectiveCapabilities(
-		capabilities,
+		authored,
 		projectPath,
 		projectId,
 		capabilitiesFilePath,
