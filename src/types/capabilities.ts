@@ -332,6 +332,16 @@ export interface MCPServer {
 }
 
 /**
+ * Literal secret string (`${VarName}` allowed) or on-demand external source.
+ * External sources are resolved at connect time and never stored in capa's DB.
+ */
+export type SecretValue =
+  | string
+  | { fromEnv: string }
+  | { fromCommand: string }
+  | { fromFile: string };
+
+/**
  * MCP server transport. Remote (`url`) and stdio (`cmd`) share optional fields
  * that only apply to one side; Zod load refine requires at least one of url|cmd.
  * Full remote|stdio split deferred — large call-site blast radius.
@@ -339,13 +349,13 @@ export interface MCPServer {
 export interface MCPServerDefinition {
   // For remote MCP servers
   url?: string;
-  headers?: Record<string, string>;
+  headers?: Record<string, SecretValue>;
   /** Skip TLS certificate verification (e.g. for self-signed certs on internal servers) */
   tlsSkipVerify?: boolean;
   // For local MCP servers (subprocess)
   cmd?: string;
   args?: string[];
-  env?: Record<string, string>;
+  env?: Record<string, SecretValue>;
   /** Working directory for subprocess (e.g. plugin root) */
   cwd?: string;
   // OAuth2 config (auto-detected / plugin-embedded; normalized at ingest)

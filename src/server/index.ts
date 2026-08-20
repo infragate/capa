@@ -13,6 +13,7 @@ import { RegistryManager } from "../shared/registries/manager";
 import { seedDefaultRegistries } from "../shared/registries/seed";
 import { isUnderWrapWorkspacesDir } from "../shared/workspaces/paths";
 import type { Capabilities } from "../types/capabilities";
+import { getSecretStorageTier } from "../shared/secret-crypto";
 import { VERSION } from "../version";
 import { type ActivityRouteDeps, dispatchActivity } from "./activity-routes";
 import { authorizeApiRequest, injectHtmlAuthToken } from "./api-guards";
@@ -425,6 +426,7 @@ class CapaServer {
 					status: "ok",
 					version: VERSION,
 					uptime: uptime,
+					secretStorage: { tier: getSecretStorageTier() },
 				}),
 				{ headers: { "Content-Type": "application/json" } },
 			);

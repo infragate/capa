@@ -4,9 +4,11 @@ import type { CapaDatabase } from "../db/database";
 import { logger } from "../shared/logger";
 import { isStdioTrusted } from "../shared/stdio-allowlist";
 import {
-	hasUnresolvedVariables,
-	resolveVariablesInObject,
-} from "../shared/variable-resolver";
+	hasUnresolvedMcpSecrets,
+	resolveMcpServerDef,
+	SecretValueResolveError,
+	secretValueMapForFingerprint,
+} from "../shared/secret-value";
 import type {
 	MCPServerDefinition,
 	ToolMCPDefinition,
@@ -87,15 +89,35 @@ export class MCPProxy {
 			`Tool name: ${definition.tool}, Args: ${JSON.stringify(args)}`,
 		);
 
-		// Resolve variables in server definition
-		const resolvedServerDef = resolveVariablesInObject(
-			serverDefinition,
-			this.projectId,
-			this.db,
-		);
+		if (
+			serverDefinition.cmd &&
+			!isStdioTrusted(this.projectId, serverDefinition)
+		) {
+			this.logger.warn(
+				`Refusing to spawn untrusted stdio MCP server ${serverId}`,
+			);
+			throw new MCPStdioUntrustedError(serverId);
+		}
 
-		// Check for unresolved variables
-		if (hasUnresolvedVariables(resolvedServerDef)) {
+		let resolvedServerDef: MCPServerDefinition;
+		try {
+			resolvedServerDef = await resolveMcpServerDef(serverDefinition, {
+				projectId: this.projectId,
+				projectPath: this.projectPath,
+				db: this.db,
+			});
+		} catch (error) {
+			const msg =
+				error instanceof SecretValueResolveError
+					? error.message
+					: error instanceof Error
+						? error.message
+						: String(error);
+			this.logger.failure(`Secret resolve failed: ${msg}`);
+			return { success: false, error: msg };
+		}
+
+		if (hasUnresolvedMcpSecrets(resolvedServerDef)) {
 			this.logger.failure("Unresolved variables in server configuration");
 			return {
 				success: false,
@@ -269,11 +291,41 @@ export class MCPProxy {
 	): Promise<any[]> {
 		const { throwOnError, timeoutMs, connect, bypassEnabledCheck } = options;
 
-		const resolvedServerDef = resolveVariablesInObject(
-			serverDefinition,
-			this.projectId,
-			this.db,
-		);
+		if (
+			serverDefinition.cmd &&
+			!isStdioTrusted(this.projectId, serverDefinition)
+		) {
+			const err = new MCPStdioUntrustedError(cleanServerId);
+			if (throwOnError) throw err;
+			this.logger.warn(
+				`Refusing to spawn untrusted stdio MCP server ${cleanServerId}`,
+			);
+			return [];
+		}
+
+		let resolvedServerDef: MCPServerDefinition;
+		try {
+			resolvedServerDef = await resolveMcpServerDef(serverDefinition, {
+				projectId: this.projectId,
+				projectPath: this.projectPath,
+				db: this.db,
+			});
+		} catch (error) {
+			if (throwOnError) throw error;
+			this.logger.failure(
+				`Secret resolve failed: ${error instanceof Error ? error.message : String(error)}`,
+			);
+			return [];
+		}
+
+		if (hasUnresolvedMcpSecrets(resolvedServerDef)) {
+			if (throwOnError) {
+				throw new Error(
+					"Server configuration has unresolved variables. Please configure credentials.",
+				);
+			}
+			return [];
+		}
 
 		let client: Client | null;
 		try {
@@ -508,23 +560,23 @@ export class MCPProxy {
 		serverDefinition: MCPServerDefinition,
 		fingerprint: string,
 	): Promise<Client | null> {
-		if (!isStdioTrusted(this.projectId, serverDefinition)) {
-			this.logger.warn(
-				`Refusing to spawn untrusted stdio MCP server ${serverId}`,
-			);
-			throw new MCPStdioUntrustedError(serverId);
-		}
-
 		try {
 			this.logger.info(`Creating stdio client for: ${serverId}`);
 			this.logger.debug(
 				`Command: ${serverDefinition.cmd}, Args: ${JSON.stringify(serverDefinition.args || [])}`,
 			);
 
+			const stringEnv: Record<string, string> = {};
+			if (serverDefinition.env) {
+				for (const [k, v] of Object.entries(serverDefinition.env)) {
+					if (typeof v === "string") stringEnv[k] = v;
+				}
+			}
+
 			const transport = new StdioClientTransport({
 				command: serverDefinition.cmd!,
 				args: serverDefinition.args || [],
-				env: { ...process.env, ...serverDefinition.env } as Record<
+				env: { ...process.env, ...stringEnv } as Record<
 					string,
 					string
 				>,
@@ -754,10 +806,10 @@ export function mcpServerLaunchFingerprint(def: MCPServerDefinition): string {
 	return JSON.stringify({
 		cmd: def.cmd ?? null,
 		args: def.args ?? null,
-		env: sorted(def.env),
+		env: sorted(secretValueMapForFingerprint(def.env)),
 		cwd: def.cwd ?? null,
 		url: def.url ?? null,
-		headers: sorted(def.headers),
+		headers: sorted(secretValueMapForFingerprint(def.headers)),
 		tlsSkipVerify: def.tlsSkipVerify ?? false,
 	});
 }

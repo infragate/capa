@@ -2,11 +2,9 @@ import type { CapaDatabase } from "../db/database";
 import { parseCapabilitiesFile } from "../shared/capabilities";
 import { detectCapabilitiesFile } from "../shared/paths";
 import { trustStdioServers } from "../shared/stdio-allowlist";
-import { resolveVariablesInObject } from "../shared/variable-resolver";
 import type {
 	Capabilities,
 	MCPServer,
-	MCPServerDefinition,
 } from "../types/capabilities";
 import { clientErrorMessage } from "./http-error";
 import { matchRoute } from "./match-route";
@@ -17,19 +15,10 @@ import { resolveSkillContentById } from "./skill-content";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
-/** Record stdio launch approval using resolved cmd/args/env (matches connect-time checks). */
-function trustResolvedStdioServer(
-	projectId: string,
-	server: MCPServer,
-	db: CapaDatabase,
-): void {
+/** Record stdio launch approval from authored defs (secret pointers, not resolved values). */
+function trustAuthoredStdioServer(projectId: string, server: MCPServer): void {
 	if (!server.def?.cmd) return;
-	const resolvedDef = resolveVariablesInObject(
-		server.def,
-		projectId,
-		db,
-	) as MCPServerDefinition;
-	trustStdioServers(projectId, [{ ...server, def: resolvedDef }]);
+	trustStdioServers(projectId, [server]);
 }
 
 export interface McpMetaRouteDeps {
@@ -149,7 +138,7 @@ export async function handleSetServerEnabled(
 		}
 
 		if (body.enabled) {
-			trustResolvedStdioServer(projectId, server, deps.db);
+			trustAuthoredStdioServer(projectId, server);
 
 			deps.mcpServerState.setEnabled(projectId, serverId, true);
 

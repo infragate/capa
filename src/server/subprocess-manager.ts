@@ -127,7 +127,12 @@ export class SubprocessManager {
 
 		// Parse command
 		const args = definition.args || [];
-		const env = { ...process.env, ...definition.env };
+		const env: NodeJS.ProcessEnv = { ...process.env };
+		if (definition.env) {
+			for (const [k, v] of Object.entries(definition.env)) {
+				if (typeof v === "string") env[k] = v;
+			}
+		}
 		const cwd = definition.cwd ?? projectPath;
 
 		this.logger.debug(`Working directory: ${cwd}`);

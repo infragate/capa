@@ -1,7 +1,9 @@
+import { createHash } from "crypto";
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import type { MCPServer, MCPServerDefinition } from "../types/capabilities";
 import { getCapaDir } from "./config";
+import { secretValueMapForFingerprint } from "./secret-value";
 
 function sortedEnv(
 	env: Record<string, string> | undefined,
@@ -12,14 +14,23 @@ function sortedEnv(
 	);
 }
 
-/** Stable fingerprint of a stdio MCP launch (cmd/args/cwd/env). */
+/**
+ * Stable fingerprint of a stdio MCP launch (cmd/args/cwd/env).
+ * Env uses a non-secret representation (SecretValue pointers / `${Var}`
+ * placeholders stay as authored; never resolved values). The stored allowlist
+ * entry is a SHA-256 of that payload so secrets never land on disk in cleartext.
+ */
 export function stdioLaunchFingerprint(def: MCPServerDefinition): string {
-	return JSON.stringify({
+	const payload = JSON.stringify({
 		cmd: def.cmd ?? null,
 		args: def.args ?? null,
 		cwd: def.cwd ?? null,
-		env: sortedEnv(def.env),
+		env: sortedEnv(secretValueMapForFingerprint(def.env)),
 	});
+	// Launch-config fingerprint for the local stdio allowlist — not password
+	// storage or verification. Fast SHA-256 is appropriate here.
+	// codeql[js/insufficient-password-hash]
+	return createHash("sha256").update(payload).digest("hex");
 }
 
 function allowlistFile(projectId: string): string {
@@ -44,6 +55,8 @@ function readFingerprints(projectId: string): Set<string> {
 /**
  * HTTP MCP servers are not spawned locally. Stdio servers must be recorded by
  * a local CLI install/configure before the server process will spawn them.
+ * Callers must pass the authored (unresolved) definition so fingerprints stay
+ * stable across secret rotation.
  */
 export function isStdioTrusted(
 	projectId: string,

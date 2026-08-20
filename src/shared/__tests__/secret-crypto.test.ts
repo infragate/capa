@@ -14,13 +14,16 @@ describe("secret-crypto", () => {
 	let home: string;
 	let prevHome: string | undefined;
 	let prevProfile: string | undefined;
+	let prevStore: string | undefined;
 
 	beforeEach(() => {
 		home = mkdtempSync(join(tmpdir(), "capa-crypto-home-"));
 		prevHome = process.env.HOME;
 		prevProfile = process.env.USERPROFILE;
+		prevStore = process.env.CAPA_SECRET_STORE;
 		process.env.HOME = home;
 		process.env.USERPROFILE = home;
+		process.env.CAPA_SECRET_STORE = "file";
 		resetSecretCryptoForTests();
 	});
 
@@ -30,6 +33,8 @@ describe("secret-crypto", () => {
 		else process.env.HOME = prevHome;
 		if (prevProfile === undefined) delete process.env.USERPROFILE;
 		else process.env.USERPROFILE = prevProfile;
+		if (prevStore === undefined) delete process.env.CAPA_SECRET_STORE;
+		else process.env.CAPA_SECRET_STORE = prevStore;
 		rmSync(home, { recursive: true, force: true });
 	});
 

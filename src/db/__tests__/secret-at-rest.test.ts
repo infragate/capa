@@ -22,6 +22,7 @@ describe("credential at-rest encryption", () => {
 		prevProfile = process.env.USERPROFILE;
 		process.env.HOME = home;
 		process.env.USERPROFILE = home;
+		process.env.CAPA_SECRET_STORE = "file";
 		resetSecretCryptoForTests();
 		dbPath = join(home, "test.db");
 		db = new CapaDatabase(dbPath);
@@ -35,6 +36,7 @@ describe("credential at-rest encryption", () => {
 		else process.env.HOME = prevHome;
 		if (prevProfile === undefined) delete process.env.USERPROFILE;
 		else process.env.USERPROFILE = prevProfile;
+		delete process.env.CAPA_SECRET_STORE;
 		try {
 			rmSync(home, { recursive: true, force: true });
 		} catch {

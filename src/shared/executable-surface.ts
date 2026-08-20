@@ -1,10 +1,11 @@
 import { createHash } from 'crypto';
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import type { Capabilities } from '../types/capabilities';
+import type { Capabilities, SecretValue } from '../types/capabilities';
 import type { Hook } from '../types/hooks';
 import type { Plugin } from '../types/plugin';
 import { getCapaDir } from './config';
+import { secretValueMapForFingerprint } from './secret-value';
 
 export interface SurfaceServer {
   id: string;
@@ -41,12 +42,21 @@ export interface SurfaceCommandTool {
   cmd: string;
 }
 
+/** Shell command used to resolve an MCP env/header secret at connect time. */
+export interface SurfaceSecretCommand {
+  serverId: string;
+  kind: 'env' | 'headers';
+  key: string;
+  command: string;
+}
+
 export interface ExecutableSurface {
   servers: SurfaceServer[];
   hooks: SurfaceHook[];
   formatters: SurfaceFormatter[];
   plugins: SurfacePlugin[];
   commandTools: SurfaceCommandTool[];
+  secretCommands: SurfaceSecretCommand[];
 }
 
 function sortedRecord(
@@ -56,9 +66,33 @@ function sortedRecord(
   return Object.fromEntries(Object.entries(env).sort(([a], [b]) => a.localeCompare(b)));
 }
 
+function collectFromCommandEntries(
+  serverId: string,
+  kind: 'env' | 'headers',
+  record: Record<string, SecretValue> | undefined,
+  out: SurfaceSecretCommand[],
+): void {
+  if (!record) return;
+  for (const [key, value] of Object.entries(record)) {
+    if (
+      value &&
+      typeof value === 'object' &&
+      'fromCommand' in value &&
+      typeof value.fromCommand === 'string' &&
+      value.fromCommand.length > 0
+    ) {
+      out.push({ serverId, kind, key, command: value.fromCommand });
+    }
+  }
+}
+
 export function collectExecutableSurface(capabilities: Capabilities): ExecutableSurface {
   const servers: SurfaceServer[] = [];
+  const secretCommands: SurfaceSecretCommand[] = [];
   for (const server of capabilities.servers ?? []) {
+    collectFromCommandEntries(server.id, 'env', server.def?.env, secretCommands);
+    collectFromCommandEntries(server.id, 'headers', server.def?.headers, secretCommands);
+
     const cmd = server.def?.cmd;
     if (!cmd) continue;
     const entry: SurfaceServer = {
@@ -67,11 +101,18 @@ export function collectExecutableSurface(capabilities: Capabilities): Executable
       args: server.def.args ?? [],
     };
     if (server.def.cwd) entry.cwd = server.def.cwd;
-    const env = sortedRecord(server.def.env);
+    const env = sortedRecord(secretValueMapForFingerprint(server.def.env));
     if (env) entry.env = env;
     servers.push(entry);
   }
   servers.sort((a, b) => a.id.localeCompare(b.id));
+  secretCommands.sort((a, b) => {
+    const byServer = a.serverId.localeCompare(b.serverId);
+    if (byServer !== 0) return byServer;
+    const byKind = a.kind.localeCompare(b.kind);
+    if (byKind !== 0) return byKind;
+    return a.key.localeCompare(b.key);
+  });
 
   const hooks: SurfaceHook[] = [];
   for (const hook of (capabilities.hooks ?? []) as Hook[]) {
@@ -118,7 +159,7 @@ export function collectExecutableSurface(capabilities: Capabilities): Executable
   }
   commandTools.sort((a, b) => a.id.localeCompare(b.id));
 
-  return { servers, hooks, formatters, plugins, commandTools };
+  return { servers, hooks, formatters, plugins, commandTools, secretCommands };
 }
 
 export function fingerprintExecutableSurface(surface: ExecutableSurface): string {
@@ -132,10 +173,11 @@ export function formatExecutableSurface(surface: ExecutableSurface): string {
     surface.hooks.length > 0 ||
     surface.formatters.length > 0 ||
     surface.plugins.length > 0 ||
-    surface.commandTools.length > 0;
+    surface.commandTools.length > 0 ||
+    surface.secretCommands.length > 0;
 
   if (!hasAnything) {
-    return '(no executable MCP servers, hooks, formatters, or plugins)';
+    return '(no executable MCP servers, hooks, formatters, plugins, or secret commands)';
   }
 
   if (surface.servers.length > 0) {
@@ -143,6 +185,12 @@ export function formatExecutableSurface(surface: ExecutableSurface): string {
     for (const server of surface.servers) {
       const argv = [server.cmd, ...server.args].join(' ');
       lines.push(`  - ${server.id}: ${argv}`);
+    }
+  }
+  if (surface.secretCommands.length > 0) {
+    lines.push('MCP secret commands (fromCommand):');
+    for (const entry of surface.secretCommands) {
+      lines.push(`  - ${entry.serverId} ${entry.kind}.${entry.key}: ${entry.command}`);
     }
   }
   if (surface.hooks.length > 0) {

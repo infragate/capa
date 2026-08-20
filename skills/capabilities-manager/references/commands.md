@@ -48,7 +48,9 @@ Reads the capabilities file and:
 
 Before any changes run, capa prints the **executable surface** (MCP stdio servers, hooks, command tools, plugins) and asks for confirmation. Re-running install with an unchanged surface skips the prompt. In CI or other non-interactive environments, pass `--yes`. Use `--dry-run` to preview the surface without installing.
 
-Project secrets (`${VarName}`) are encrypted at rest in `~/.capa/capa.db`. The Web UI and HTTP API return `{ isSet, hint }` metadata only — never raw values.
+Project secrets (`${VarName}`) are encrypted at rest in `~/.capa/capa.db` with AES-256-GCM. The 256-bit master key prefers the OS keyring (`@napi-rs/keyring`: macOS Keychain, Windows Credential Manager/DPAPI, Linux Secret Service) and falls back to `~/.capa/master.key` (documented file tier — typical on headless Linux / CI). Token refresh re-encrypts rows in SQLite and never rewrites the keyring item. `capa status` and `/health` report the active tier (`keychain` | `dpapi` | `libsecret` | `file`). Force the file tier with `CAPA_SECRET_STORE=file`. The Web UI and HTTP API return `{ isSet, hint }` metadata only — never raw values.
+
+MCP `env` / `headers` may also use on-demand sources (`fromEnv` / `fromCommand` / `fromFile`) that are resolved at connect time and are never stored by capa — see the capabilities schema.
 
 **Flags**:
 - `-e, --env [file]`: Load variables from a `.env` file instead of using the web UI
@@ -242,7 +244,7 @@ capa start              # Start the CAPA server (background)
 capa start -f           # Start in foreground (for debugging)
 capa stop               # Stop the CAPA server + active wrap sessions
 capa restart            # Restart the CAPA server
-capa status             # Check server health, uptime, and Web UI URL
+capa status             # Check server health, uptime, secret-storage tier, and Web UI URL
 ```
 
 **When to use**: Managing the background MCP server that handles tool execution, credential management, the Web UI, registries, and activity ingest.

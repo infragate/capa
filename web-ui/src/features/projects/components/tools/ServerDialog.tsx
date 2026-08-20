@@ -5,24 +5,12 @@ import { useTranslation } from 'react-i18next';
 import type { Server } from '../../../../types/api';
 import { useAppendCapability, useUpdateCapability } from '../../hooks';
 import { capaIdErrorMessage, sanitizeCapaIdInput } from '../../../../lib/ids';
-import { KeyValueEditor } from './KeyValueEditor';
-
-function pairsToRecord(pairs: Array<{ key: string; value: string }>): Record<string, string> | undefined {
-  const out: Record<string, string> = {};
-  for (const p of pairs) {
-    const k = p.key.trim();
-    if (!k) continue;
-    out[k] = p.value;
-  }
-  return Object.keys(out).length > 0 ? out : undefined;
-}
-
-function recordToPairs(
-  record: Record<string, string> | null | undefined,
-): Array<{ key: string; value: string }> {
-  if (!record) return [];
-  return Object.entries(record).map(([key, value]) => ({ key, value }));
-}
+import {
+  SecretValueEditor,
+  recordToSecretPairs,
+  secretPairsToRecord,
+  type SecretValuePair,
+} from './SecretValueEditor';
 
 function serverHasAdvanced(server: Server): boolean {
   return !!(
@@ -56,8 +44,8 @@ export function ServerDialog({
   const [args, setArgs] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [description, setDescription] = useState('');
-  const [headers, setHeaders] = useState<Array<{ key: string; value: string }>>([]);
-  const [env, setEnv] = useState<Array<{ key: string; value: string }>>([]);
+  const [headers, setHeaders] = useState<SecretValuePair[]>([]);
+  const [env, setEnv] = useState<SecretValuePair[]>([]);
   const [cwd, setCwd] = useState('');
   const [tlsSkipVerify, setTlsSkipVerify] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -105,8 +93,8 @@ export function ServerDialog({
     setArgs((s.args || []).join(' '));
     setDisplayName(s.displayName || '');
     setDescription(s.description || '');
-    setHeaders(recordToPairs(s.headers));
-    setEnv(recordToPairs(s.env));
+    setHeaders(recordToSecretPairs(s.headers));
+    setEnv(recordToSecretPairs(s.env));
     setCwd(s.cwd || '');
     setTlsSkipVerify(!!s.tlsSkipVerify);
     setOauthClientId(s.oauth2?.clientId || '');
@@ -145,7 +133,7 @@ export function ServerDialog({
           };
 
     if (mode === 'http') {
-      const headerMap = pairsToRecord(headers);
+      const headerMap = secretPairsToRecord(headers);
       if (headerMap) def.headers = headerMap;
       if (tlsSkipVerify) def.tlsSkipVerify = true;
 
@@ -163,7 +151,7 @@ export function ServerDialog({
       if (oauthPkce) oauth2.pkce = true;
       if (Object.keys(oauth2).length > 0) def.oauth2 = oauth2;
     } else {
-      const envMap = pairsToRecord(env);
+      const envMap = secretPairsToRecord(env);
       if (envMap) def.env = envMap;
       if (cwd.trim()) def.cwd = cwd.trim();
     }
@@ -324,12 +312,12 @@ export function ServerDialog({
                       <>
                         <div>
                           <div className="mb-1.5 text-xs text-text-secondary">{t('actions.serverHeaders')}</div>
-                          <KeyValueEditor
+                          <SecretValueEditor
                             pairs={headers}
                             onChange={setHeaders}
                             keyLabel={t('actions.serverKvKey')}
-                            valueLabel={t('actions.serverKvValue')}
                             addLabel={t('actions.serverAddPair')}
+                            t={t}
                           />
                         </div>
                         <label className="flex items-start gap-2 text-xs text-text-secondary cursor-pointer">
@@ -420,12 +408,12 @@ export function ServerDialog({
                       <>
                         <div>
                           <div className="mb-1.5 text-xs text-text-secondary">{t('actions.serverEnv')}</div>
-                          <KeyValueEditor
+                          <SecretValueEditor
                             pairs={env}
                             onChange={setEnv}
                             keyLabel={t('actions.serverKvKey')}
-                            valueLabel={t('actions.serverKvValue')}
                             addLabel={t('actions.serverAddPair')}
+                            t={t}
                           />
                         </div>
                         <label className="block text-xs text-text-secondary">
