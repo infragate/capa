@@ -8,7 +8,7 @@ import { access } from 'fs/promises';
 import { constants } from 'fs';
 import { CANONICAL_HOOK_EVENTS, type Hook, type HookSource } from '../../types/hooks';
 import type { Rule } from '../../types/rules';
-import type { MCPServer, Tool } from '../../types/capabilities';
+import type { MCPServer, Tool, SecretValue } from '../../types/capabilities';
 
 export function parseKeyValue(raw: string): { key: string; value: string } {
   const eq = raw.indexOf('=');
@@ -28,14 +28,50 @@ export function parseKeyValueList(items: string[] | undefined): Record<string, s
   return out;
 }
 
+function applySecretSources(
+  target: Record<string, SecretValue>,
+  items: string[] | undefined,
+  kind: 'fromEnv' | 'fromCommand' | 'fromFile',
+): void {
+  if (!items) return;
+  for (const item of items) {
+    const { key, value } = parseKeyValue(item);
+    if (!value.trim()) {
+      throw new Error(`Expected KEY=VALUE for ${kind}, got: ${item}`);
+    }
+    target[key] = { [kind]: value } as SecretValue;
+  }
+}
+
+export function buildSecretValueMap(opts: {
+  literals?: string[];
+  fromEnv?: string[];
+  fromCommand?: string[];
+  fromFile?: string[];
+}): Record<string, SecretValue> | undefined {
+  const out: Record<string, SecretValue> = {};
+  const literals = parseKeyValueList(opts.literals);
+  if (literals) Object.assign(out, literals);
+  applySecretSources(out, opts.fromEnv, 'fromEnv');
+  applySecretSources(out, opts.fromCommand, 'fromCommand');
+  applySecretSources(out, opts.fromFile, 'fromFile');
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 export interface BuildServerOptions {
   id?: string;
   type?: string;
   cmd?: string;
   arg?: string[];
   env?: string[];
+  envFromEnv?: string[];
+  envFromCommand?: string[];
+  envFromFile?: string[];
   url?: string;
   header?: string[];
+  headerFromEnv?: string[];
+  headerFromCommand?: string[];
+  headerFromFile?: string[];
   cwd?: string;
   description?: string;
 }
@@ -59,10 +95,22 @@ export function buildServerEntry(opts: BuildServerOptions): MCPServer {
     throw new Error('Server requires exactly one of --cmd or --url.');
   }
 
+  const env = buildSecretValueMap({
+    literals: opts.env,
+    fromEnv: opts.envFromEnv,
+    fromCommand: opts.envFromCommand,
+    fromFile: opts.envFromFile,
+  });
+  const headers = buildSecretValueMap({
+    literals: opts.header,
+    fromEnv: opts.headerFromEnv,
+    fromCommand: opts.headerFromCommand,
+    fromFile: opts.headerFromFile,
+  });
+
   if (hasCmd) {
     const def: MCPServer['def'] = { cmd: opts.cmd!.trim() };
     if (opts.arg && opts.arg.length > 0) def.args = opts.arg;
-    const env = parseKeyValueList(opts.env);
     if (env) def.env = env;
     if (opts.cwd?.trim()) def.cwd = opts.cwd.trim();
     return {
@@ -74,7 +122,6 @@ export function buildServerEntry(opts: BuildServerOptions): MCPServer {
   }
 
   const def: MCPServer['def'] = { url: opts.url!.trim() };
-  const headers = parseKeyValueList(opts.header);
   if (headers) def.headers = headers;
   return {
     id,

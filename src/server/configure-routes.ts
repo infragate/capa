@@ -7,10 +7,8 @@ import { logger } from "../shared/logger";
 import { detectCapabilitiesFile } from "../shared/paths";
 import { trustStdioServers } from "../shared/stdio-allowlist";
 import { projectUiUrl } from "../shared/ui-urls";
-import {
-	extractAllVariables,
-	resolveVariablesInObject,
-} from "../shared/variable-resolver";
+import { extractAllVariables } from "../shared/variable-resolver";
+import { resolveMcpServerDef } from "../shared/secret-value";
 import type { Capabilities } from "../types/capabilities";
 import type { OAuth2Config } from "../types/oauth";
 import type { CapabilitiesFileWatcher } from "./capabilities-watcher";
@@ -242,13 +240,23 @@ export async function runProjectConfigure(
 
 	// -- Tool validation (parallel per server) --------------------------
 	apiLogger.info("Validating tools...");
-	trustStdioServers(
-		projectId,
-		(capabilitiesToUse.servers ?? []).map((server) => ({
-			...server,
-			def: resolveVariablesInObject(server.def, projectId, deps.db),
-		})),
+	const projectForTrust = deps.db.getProject(projectId);
+	const projectPath = projectForTrust?.path ?? process.cwd();
+	const trustedServers = await Promise.all(
+		(capabilitiesToUse.servers ?? []).map(async (server) => {
+			try {
+				const def = await resolveMcpServerDef(server.def, {
+					projectId,
+					projectPath,
+					db: deps.db,
+				});
+				return { ...server, def };
+			} catch {
+				return server;
+			}
+		}),
 	);
+	trustStdioServers(projectId, trustedServers);
 	let toolValidationResults: any[] = [];
 	try {
 		const mcpServer = deps.getOrCreateMCPServer(projectId);
@@ -354,7 +362,9 @@ async function capabilitiesForConfigure(
 	const onDisk = await parseCapabilitiesFile(file.path, file.format);
 	// Wrap-install compatibility: overlay providers only. Stdio spawn config
 	// (cmd/args/cwd/env) always comes from the on-disk document.
-	if (requested.providers) {
+	// Ignore empty provider arrays — wrapping with no identity providers used
+	// to send `providers: []`, which blocked plugin MCP expansion.
+	if (requested.providers && requested.providers.length > 0) {
 		onDisk.providers = requested.providers;
 	}
 	return onDisk;

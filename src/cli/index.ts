@@ -121,8 +121,14 @@ if (process.argv[2] === '__server__') {
       .option('--cmd <bin>', 'Server stdio command')
       .option('--arg <token>', 'Server stdio arg (repeatable)', collectRepeatable, [])
       .option('--env-var <KEY=VAL>', 'Server env var (repeatable)', collectRepeatable, [])
+      .option('--env-from-env <KEY=VAR>', 'Server env from process env (repeatable)', collectRepeatable, [])
+      .option('--env-from-command <KEY=CMD>', 'Server env from command stdout (repeatable)', collectRepeatable, [])
+      .option('--env-from-file <KEY=PATH>', 'Server env from file contents (repeatable)', collectRepeatable, [])
       .option('--url <url>', 'Remote MCP server URL')
       .option('--header <KEY=VAL>', 'Remote MCP header (repeatable)', collectRepeatable, [])
+      .option('--header-from-env <KEY=VAR>', 'Remote MCP header from process env (repeatable)', collectRepeatable, [])
+      .option('--header-from-command <KEY=CMD>', 'Remote MCP header from command stdout (repeatable)', collectRepeatable, [])
+      .option('--header-from-file <KEY=PATH>', 'Remote MCP header from file contents (repeatable)', collectRepeatable, [])
       .option('--cwd <path>', 'Server working directory')
       .option('--description <text>', 'Optional description')
       .option('--mcp-server <id>', 'Tool: MCP server reference (@id or id)')
@@ -159,8 +165,14 @@ if (process.argv[2] === '__server__') {
           arg: options.arg,
           // Commander --env is already used for .env file; server env uses --env-var
           env: options.envVar,
+          envFromEnv: options.envFromEnv,
+          envFromCommand: options.envFromCommand,
+          envFromFile: options.envFromFile,
           url: options.url,
           header: options.header,
+          headerFromEnv: options.headerFromEnv,
+          headerFromCommand: options.headerFromCommand,
+          headerFromFile: options.headerFromFile,
           cwd: options.cwd,
           description: options.description,
           mcpServer: options.mcpServer,

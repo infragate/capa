@@ -82,7 +82,11 @@ describe("handleProjectConfigure", () => {
 	afterEach(() => {
 		sessionManager.dispose();
 		db.close();
-		rmSync(dir, { recursive: true, force: true });
+		try {
+			rmSync(dir, { recursive: true, force: true });
+		} catch {
+			// Windows may keep the sqlite handle briefly; ignore cleanup races.
+		}
 	});
 
 	it("rejects a non-object capabilities body with 400 and does not spawn", async () => {
@@ -112,6 +116,55 @@ describe("handleProjectConfigure", () => {
 		expect(res.status).toBe(200);
 		expect(validatedCmds).toEqual(["echo"]);
 		expect(validatedCmds).not.toContain("touch");
+	});
+
+	it("overlays non-empty providers from the request onto on-disk caps", async () => {
+		const res = await handleProjectConfigure(
+			deps,
+			"proj-1",
+			new Request("http://127.0.0.1/api/projects/proj-1/configure", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					providers: ["cursor"],
+					skills: [],
+					tools: [],
+					servers: [],
+				}),
+			}),
+		);
+		expect(res.status).toBe(200);
+		const caps = sessionManager.getProjectCapabilities("proj-1");
+		expect(caps?.providers).toEqual(["cursor"]);
+		expect(caps?.servers.map((s) => s.id)).toEqual(["safe"]);
+	});
+
+	it("does not clear on-disk providers when the request sends an empty list", async () => {
+		writeFileSync(
+			join(dir, "capabilities.yaml"),
+			`providers: [cursor]
+servers:
+  - id: safe
+    type: mcp
+    def:
+      cmd: echo
+tools: []
+skills: []
+`,
+		);
+		const res = await handleProjectConfigure(
+			deps,
+			"proj-1",
+			new Request("http://127.0.0.1/api/projects/proj-1/configure", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(ATTACK_BODY),
+			}),
+		);
+		expect(res.status).toBe(200);
+		const caps = sessionManager.getProjectCapabilities("proj-1");
+		expect(caps?.providers).toEqual(["cursor"]);
+		expect(validatedCmds).toEqual(["echo"]);
 	});
 });
 

@@ -75,4 +75,48 @@ describe("mergeServerDef", () => {
 			"keep-secret",
 		);
 	});
+
+	it("preserves secret source objects in env and headers", () => {
+		const merged = mergeServerDef(
+			{
+				env: { A: { fromEnv: "OLD" } },
+				headers: { Authorization: { fromCommand: "op read old" } },
+			},
+			{
+				env: { A: { fromEnv: "NEW" }, B: { fromFile: "./b" } },
+				headers: { Authorization: { fromCommand: "op read new" } },
+			},
+		);
+		expect(merged.env).toEqual({
+			A: { fromEnv: "NEW" },
+			B: { fromFile: "./b" },
+		});
+		expect(merged.headers).toEqual({
+			Authorization: { fromCommand: "op read new" },
+		});
+	});
+});
+
+describe("redactServerForApi secret sources", () => {
+	it("keeps fromEnv/fromCommand/fromFile pointers while blanking literals", () => {
+		const redacted = redactServerForApi({
+			env: {
+				LITERAL: "secret-literal",
+				EXT: { fromEnv: "EXT_VAR" },
+			},
+			headers: {
+				Authorization: { fromCommand: "op read x" },
+				Accept: "application/json",
+			},
+		});
+		expect(redacted.env).toEqual({
+			LITERAL: "",
+			EXT: { fromEnv: "EXT_VAR" },
+		});
+		expect(redacted.headers).toEqual({
+			Authorization: { fromCommand: "op read x" },
+			Accept: "application/json",
+		});
+		expect(JSON.stringify(redacted)).not.toContain("secret-literal");
+	});
 });

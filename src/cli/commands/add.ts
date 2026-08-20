@@ -40,8 +40,14 @@ export interface AddCommandOptions {
   cmd?: string;
   arg?: string[];
   env?: string[];
+  envFromEnv?: string[];
+  envFromCommand?: string[];
+  envFromFile?: string[];
   url?: string;
   header?: string[];
+  headerFromEnv?: string[];
+  headerFromCommand?: string[];
+  headerFromFile?: string[];
   cwd?: string;
   description?: string;
   // Tool flags
@@ -310,8 +316,14 @@ async function appendTypedEntry(
       cmd: options.cmd,
       arg: options.arg,
       env: options.env,
+      envFromEnv: options.envFromEnv,
+      envFromCommand: options.envFromCommand,
+      envFromFile: options.envFromFile,
       url: options.url,
       header: options.header,
+      headerFromEnv: options.headerFromEnv,
+      headerFromCommand: options.headerFromCommand,
+      headerFromFile: options.headerFromFile,
       cwd: options.cwd,
       description: options.description,
     });

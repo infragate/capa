@@ -1,11 +1,18 @@
+import type { SecretValue } from "../shared/secret-value";
+import { isSecretValueObject } from "../shared/secret-value";
+
 const SENSITIVE_HEADER =
 	/^(authorization|proxy-authorization)$|token|api-?key|secret|password|bearer/i;
 
-function asStringMap(value: unknown): Record<string, string> {
+function asSecretValueMap(
+	value: unknown,
+): Record<string, SecretValue> {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-	const out: Record<string, string> = {};
+	const out: Record<string, SecretValue> = {};
 	for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
-		if (typeof raw === "string") out[key] = raw;
+		if (typeof raw === "string" || isSecretValueObject(raw)) {
+			out[key] = raw;
+		}
 	}
 	return out;
 }
@@ -20,8 +27,8 @@ export function isSensitiveHeaderName(name: string): boolean {
 }
 
 export interface ApiServerSecrets {
-	env?: Record<string, string> | null;
-	headers?: Record<string, string> | null;
+	env?: Record<string, SecretValue> | null;
+	headers?: Record<string, SecretValue> | null;
 	oauth2?: {
 		clientId?: string | null;
 		clientSecret?: string | null;
@@ -31,14 +38,24 @@ export interface ApiServerSecrets {
 }
 
 export function redactServerForApi<T extends ApiServerSecrets>(server: T): T {
-	const env = server.env
-		? Object.fromEntries(Object.keys(server.env).map((key) => [key, ""]))
-		: server.env;
+	let env = server.env;
+	if (env) {
+		const next: Record<string, SecretValue> = {};
+		for (const [key, value] of Object.entries(env)) {
+			// Keep external source pointers; blank only literal secret strings.
+			next[key] = isSecretValueObject(value) ? value : "";
+		}
+		env = next;
+	}
 
 	let headers = server.headers;
 	if (headers) {
-		const next: Record<string, string> = {};
+		const next: Record<string, SecretValue> = {};
 		for (const [key, value] of Object.entries(headers)) {
+			if (isSecretValueObject(value)) {
+				next[key] = value;
+				continue;
+			}
 			if (isSensitiveHeaderName(key)) continue;
 			next[key] = value;
 		}
@@ -71,19 +88,20 @@ export function mergeServerDef(
 	const merged: Record<string, unknown> = { ...prev, ...incoming };
 
 	if (incoming.env !== undefined) {
-		const prevEnv = asStringMap(prev.env);
-		const nextEnv = asStringMap(incoming.env);
-		const env: Record<string, string> = {};
+		const prevEnv = asSecretValueMap(prev.env);
+		const nextEnv = asSecretValueMap(incoming.env);
+		const env: Record<string, SecretValue> = {};
 		for (const [key, value] of Object.entries(nextEnv)) {
-			env[key] = value === "" && key in prevEnv ? prevEnv[key] : value;
+			env[key] =
+				value === "" && key in prevEnv ? prevEnv[key] : value;
 		}
 		merged.env = env;
 	}
 
 	if (incoming.headers !== undefined) {
-		const prevHeaders = asStringMap(prev.headers);
-		const nextHeaders = asStringMap(incoming.headers);
-		const headers: Record<string, string> = { ...nextHeaders };
+		const prevHeaders = asSecretValueMap(prev.headers);
+		const nextHeaders = asSecretValueMap(incoming.headers);
+		const headers: Record<string, SecretValue> = { ...nextHeaders };
 		for (const [key, value] of Object.entries(prevHeaders)) {
 			if (key in nextHeaders) {
 				if (nextHeaders[key] === "") headers[key] = value;
@@ -92,7 +110,9 @@ export function mergeServerDef(
 			if (isSensitiveHeaderName(key)) headers[key] = value;
 		}
 		for (const [key, value] of Object.entries(nextHeaders)) {
-			if (value === "" && key in prevHeaders) headers[key] = prevHeaders[key];
+			if (value === "" && key in prevHeaders) {
+				headers[key] = prevHeaders[key];
+			}
 		}
 		merged.headers = headers;
 	}

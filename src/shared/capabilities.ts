@@ -17,6 +17,7 @@ import type {
 } from "../types/capabilities";
 import { logger } from "./logger";
 import { normalizeOAuth2Block } from "./plugin-manifest/mcp-parser";
+import { secretValueRecordSchema } from "./secret-value";
 
 const KNOWN_CAPABILITY_KEYS = new Set([
 	"providers",
@@ -78,11 +79,11 @@ const oauth2Schema = z
 const mcpServerDefSchema = z
 	.object({
 		url: z.string().optional(),
-		headers: z.record(z.string(), z.string()).optional(),
+		headers: secretValueRecordSchema.optional(),
 		tlsSkipVerify: z.boolean().optional(),
 		cmd: z.string().optional(),
 		args: z.array(z.string()).optional(),
-		env: z.record(z.string(), z.string()).optional(),
+		env: secretValueRecordSchema.optional(),
 		cwd: z.string().optional(),
 		oauth2: oauth2Schema,
 	})

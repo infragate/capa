@@ -2,11 +2,10 @@ import type { CapaDatabase } from "../db/database";
 import { parseCapabilitiesFile } from "../shared/capabilities";
 import { detectCapabilitiesFile } from "../shared/paths";
 import { trustStdioServers } from "../shared/stdio-allowlist";
-import { resolveVariablesInObject } from "../shared/variable-resolver";
+import { resolveMcpServerDef } from "../shared/secret-value";
 import type {
 	Capabilities,
 	MCPServer,
-	MCPServerDefinition,
 } from "../types/capabilities";
 import { clientErrorMessage } from "./http-error";
 import { matchRoute } from "./match-route";
@@ -18,18 +17,24 @@ import { resolveSkillContentById } from "./skill-content";
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
 /** Record stdio launch approval using resolved cmd/args/env (matches connect-time checks). */
-function trustResolvedStdioServer(
+async function trustResolvedStdioServer(
 	projectId: string,
+	projectPath: string,
 	server: MCPServer,
 	db: CapaDatabase,
-): void {
+): Promise<void> {
 	if (!server.def?.cmd) return;
-	const resolvedDef = resolveVariablesInObject(
-		server.def,
-		projectId,
-		db,
-	) as MCPServerDefinition;
-	trustStdioServers(projectId, [{ ...server, def: resolvedDef }]);
+	try {
+		const resolvedDef = await resolveMcpServerDef(server.def, {
+			projectId,
+			projectPath,
+			db,
+		});
+		trustStdioServers(projectId, [{ ...server, def: resolvedDef }]);
+	} catch {
+		// Fall back to unresolved def for allowlist recording.
+		trustStdioServers(projectId, [server]);
+	}
 }
 
 export interface McpMetaRouteDeps {
@@ -149,7 +154,13 @@ export async function handleSetServerEnabled(
 		}
 
 		if (body.enabled) {
-			trustResolvedStdioServer(projectId, server, deps.db);
+			const project = deps.db.getProject(projectId);
+			await trustResolvedStdioServer(
+				projectId,
+				project?.path ?? process.cwd(),
+				server,
+				deps.db,
+			);
 
 			deps.mcpServerState.setEnabled(projectId, serverId, true);
 

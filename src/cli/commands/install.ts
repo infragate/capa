@@ -26,6 +26,27 @@ function failExit(message: string, exitProcess: boolean): never {
   throw new Error(message);
 }
 
+/**
+ * Providers sent to POST /configure for a wrap (shadow) install.
+ * Prefer identity authored/stored providers so wrap-with-claude does not
+ * reconfigure a cursor identity session — but when the identity project has
+ * no providers yet, fall back to the wrap provider so plugin MCP servers
+ * still expand for this configure (without persisting that preference).
+ */
+export function resolveWrapConfigureProviders(opts: {
+  authoredProviders: string[];
+  storedProviders: string[];
+  resolvedProviders: string[];
+}): string[] {
+  if (opts.authoredProviders.length > 0) {
+    return opts.authoredProviders.map((p) => validateProvider(p));
+  }
+  if (opts.storedProviders.length > 0) {
+    return opts.storedProviders;
+  }
+  return opts.resolvedProviders;
+}
+
 export async function installCommand(
   envFileOrOptions?: string | boolean | InstallOptions,
 ): Promise<void> {
@@ -207,18 +228,20 @@ async function installCommandBody(opts: {
     // Shadow wrap: local file writes use `resolvedProviders` (e.g. claude-code),
     // but POST /configure must keep the identity project's authored providers
     // so the real repo / live session stay on cursor (or whatever the file says).
+    // When the identity project has no providers yet, fall back to the wrap
+    // provider so plugin MCP servers still expand for this configure — without
+    // persisting that preference (persistProviders is false for wrap).
     isWrapInstall =
       !!identityPath &&
       (process.platform === 'win32'
         ? resolve(identityPath).toLowerCase() !== resolve(projectPath).toLowerCase()
         : resolve(identityPath) !== resolve(projectPath));
     if (isWrapInstall) {
-      if (authoredProviders.length > 0) {
-        configureProviders = authoredProviders.map((p) => validateProvider(p));
-      } else {
-        const stored = db.getProjectProviders(projectId);
-        configureProviders = stored.length > 0 ? stored : [];
-      }
+      configureProviders = resolveWrapConfigureProviders({
+        authoredProviders,
+        storedProviders: db.getProjectProviders(projectId),
+        resolvedProviders,
+      });
     } else {
       configureProviders = resolvedProviders;
     }

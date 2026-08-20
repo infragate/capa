@@ -18,7 +18,7 @@ import { tryResolveRegistryItem } from '../../commands/resolve-registry-source';
 import { upsertNativeMcpServer } from './native-mcp';
 import { passthroughInstallSkill } from './install-skill';
 import { passthroughInstallPlugin } from './install-plugin';
-import { expandEnvInRecord, loadEnvFileOptional, openAuthDb, resolvePassthroughProviders } from './env';
+import { expandSecretRecord, loadEnvFileOptional, openAuthDb, resolvePassthroughProviders } from './env';
 import type { Skill, MCPServer } from '../../../types/capabilities';
 import type { Plugin } from '../../../types/capabilities';
 import type { Rule } from '../../../types/rules';
@@ -155,15 +155,21 @@ export async function passthroughAdd(
         cmd: options.cmd,
         arg: options.arg,
         env: options.env,
+        envFromEnv: options.envFromEnv,
+        envFromCommand: options.envFromCommand,
+        envFromFile: options.envFromFile,
         url: options.url,
         header: options.header,
+        headerFromEnv: options.headerFromEnv,
+        headerFromCommand: options.headerFromCommand,
+        headerFromFile: options.headerFromFile,
         cwd: options.cwd,
         description: options.description,
       }) as unknown as MCPServer;
       const def = {
         ...entry.def,
-        env: expandEnvInRecord(entry.def.env),
-        headers: expandEnvInRecord(entry.def.headers),
+        env: await expandSecretRecord(entry.def.env, projectPath),
+        headers: await expandSecretRecord(entry.def.headers, projectPath),
       };
       const mcpResult = await upsertNativeMcpServer(projectPath, entry.id, def, providers);
       warnings.push(...mcpResult.warnings);

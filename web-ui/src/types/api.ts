@@ -82,14 +82,20 @@ export interface ServerOAuth2Config {
   pkce: boolean;
 }
 
+export type SecretValue =
+  | string
+  | { fromEnv: string }
+  | { fromCommand: string }
+  | { fromFile: string };
+
 export interface Server {
   id: string;
   type: string;
   url: string | null;
   cmd: string | null;
   args: string[] | null;
-  env?: Record<string, string> | null;
-  headers?: Record<string, string> | null;
+  env?: Record<string, SecretValue> | null;
+  headers?: Record<string, SecretValue> | null;
   cwd?: string | null;
   tlsSkipVerify?: boolean;
   oauth2?: ServerOAuth2Config | null;

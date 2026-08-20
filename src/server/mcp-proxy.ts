@@ -4,9 +4,11 @@ import type { CapaDatabase } from "../db/database";
 import { logger } from "../shared/logger";
 import { isStdioTrusted } from "../shared/stdio-allowlist";
 import {
-	hasUnresolvedVariables,
-	resolveVariablesInObject,
-} from "../shared/variable-resolver";
+	hasUnresolvedMcpSecrets,
+	resolveMcpServerDef,
+	SecretValueResolveError,
+	secretValueMapForFingerprint,
+} from "../shared/secret-value";
 import type {
 	MCPServerDefinition,
 	ToolMCPDefinition,
@@ -87,15 +89,25 @@ export class MCPProxy {
 			`Tool name: ${definition.tool}, Args: ${JSON.stringify(args)}`,
 		);
 
-		// Resolve variables in server definition
-		const resolvedServerDef = resolveVariablesInObject(
-			serverDefinition,
-			this.projectId,
-			this.db,
-		);
+		let resolvedServerDef: MCPServerDefinition;
+		try {
+			resolvedServerDef = await resolveMcpServerDef(serverDefinition, {
+				projectId: this.projectId,
+				projectPath: this.projectPath,
+				db: this.db,
+			});
+		} catch (error) {
+			const msg =
+				error instanceof SecretValueResolveError
+					? error.message
+					: error instanceof Error
+						? error.message
+						: String(error);
+			this.logger.failure(`Secret resolve failed: ${msg}`);
+			return { success: false, error: msg };
+		}
 
-		// Check for unresolved variables
-		if (hasUnresolvedVariables(resolvedServerDef)) {
+		if (hasUnresolvedMcpSecrets(resolvedServerDef)) {
 			this.logger.failure("Unresolved variables in server configuration");
 			return {
 				success: false,
@@ -269,11 +281,29 @@ export class MCPProxy {
 	): Promise<any[]> {
 		const { throwOnError, timeoutMs, connect, bypassEnabledCheck } = options;
 
-		const resolvedServerDef = resolveVariablesInObject(
-			serverDefinition,
-			this.projectId,
-			this.db,
-		);
+		let resolvedServerDef: MCPServerDefinition;
+		try {
+			resolvedServerDef = await resolveMcpServerDef(serverDefinition, {
+				projectId: this.projectId,
+				projectPath: this.projectPath,
+				db: this.db,
+			});
+		} catch (error) {
+			if (throwOnError) throw error;
+			this.logger.failure(
+				`Secret resolve failed: ${error instanceof Error ? error.message : String(error)}`,
+			);
+			return [];
+		}
+
+		if (hasUnresolvedMcpSecrets(resolvedServerDef)) {
+			if (throwOnError) {
+				throw new Error(
+					"Server configuration has unresolved variables. Please configure credentials.",
+				);
+			}
+			return [];
+		}
 
 		let client: Client | null;
 		try {
@@ -754,10 +784,10 @@ export function mcpServerLaunchFingerprint(def: MCPServerDefinition): string {
 	return JSON.stringify({
 		cmd: def.cmd ?? null,
 		args: def.args ?? null,
-		env: sorted(def.env),
+		env: sorted(secretValueMapForFingerprint(def.env)),
 		cwd: def.cwd ?? null,
 		url: def.url ?? null,
-		headers: sorted(def.headers),
+		headers: sorted(secretValueMapForFingerprint(def.headers)),
 		tlsSkipVerify: def.tlsSkipVerify ?? false,
 	});
 }

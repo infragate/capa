@@ -11,7 +11,7 @@ import { installHooks } from '../hooks';
 import { installSubAgentInstructions } from '../agents-file/index';
 import { resolvePlugins } from '../../commands/plugin-install';
 import { upsertNativeMcpServer } from './native-mcp';
-import { expandEnvInRecord, loadEnvFileOptional, openAuthDb } from './env';
+import { expandSecretRecord, loadEnvFileOptional, openAuthDb } from './env';
 import type { MCPServer } from '../../../types/capabilities';
 import type { GetSnapshotResult } from '../../../shared/cache';
 import { getInstallErrorMode } from '../../commands/install-tasks/install-error-policy';
@@ -216,8 +216,8 @@ export async function passthroughInstall(opts: {
       }
       const def = {
         ...server.def,
-        env: expandEnvInRecord(server.def.env),
-        headers: expandEnvInRecord(server.def.headers),
+        env: await expandSecretRecord(server.def.env, projectPath),
+        headers: await expandSecretRecord(server.def.headers, projectPath),
       };
       const mcpResult = await upsertNativeMcpServer(projectPath, server.id, def, providers);
       warnings.push(...mcpResult.warnings);
