@@ -8,7 +8,6 @@ import { detectCapabilitiesFile } from "../shared/paths";
 import { trustStdioServers } from "../shared/stdio-allowlist";
 import { projectUiUrl } from "../shared/ui-urls";
 import { extractAllVariables } from "../shared/variable-resolver";
-import { resolveMcpServerDef } from "../shared/secret-value";
 import type { Capabilities } from "../types/capabilities";
 import type { OAuth2Config } from "../types/oauth";
 import type { CapabilitiesFileWatcher } from "./capabilities-watcher";
@@ -240,23 +239,8 @@ export async function runProjectConfigure(
 
 	// -- Tool validation (parallel per server) --------------------------
 	apiLogger.info("Validating tools...");
-	const projectForTrust = deps.db.getProject(projectId);
-	const projectPath = projectForTrust?.path ?? process.cwd();
-	const trustedServers = await Promise.all(
-		(capabilitiesToUse.servers ?? []).map(async (server) => {
-			try {
-				const def = await resolveMcpServerDef(server.def, {
-					projectId,
-					projectPath,
-					db: deps.db,
-				});
-				return { ...server, def };
-			} catch {
-				return server;
-			}
-		}),
-	);
-	trustStdioServers(projectId, trustedServers);
+	// Trust authored defs only — never resolve secrets into the allowlist fingerprint.
+	trustStdioServers(projectId, capabilitiesToUse.servers ?? []);
 	let toolValidationResults: any[] = [];
 	try {
 		const mcpServer = deps.getOrCreateMCPServer(projectId);

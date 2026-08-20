@@ -89,6 +89,16 @@ export class MCPProxy {
 			`Tool name: ${definition.tool}, Args: ${JSON.stringify(args)}`,
 		);
 
+		if (
+			serverDefinition.cmd &&
+			!isStdioTrusted(this.projectId, serverDefinition)
+		) {
+			this.logger.warn(
+				`Refusing to spawn untrusted stdio MCP server ${serverId}`,
+			);
+			throw new MCPStdioUntrustedError(serverId);
+		}
+
 		let resolvedServerDef: MCPServerDefinition;
 		try {
 			resolvedServerDef = await resolveMcpServerDef(serverDefinition, {
@@ -280,6 +290,18 @@ export class MCPProxy {
 		},
 	): Promise<any[]> {
 		const { throwOnError, timeoutMs, connect, bypassEnabledCheck } = options;
+
+		if (
+			serverDefinition.cmd &&
+			!isStdioTrusted(this.projectId, serverDefinition)
+		) {
+			const err = new MCPStdioUntrustedError(cleanServerId);
+			if (throwOnError) throw err;
+			this.logger.warn(
+				`Refusing to spawn untrusted stdio MCP server ${cleanServerId}`,
+			);
+			return [];
+		}
 
 		let resolvedServerDef: MCPServerDefinition;
 		try {
@@ -538,23 +560,23 @@ export class MCPProxy {
 		serverDefinition: MCPServerDefinition,
 		fingerprint: string,
 	): Promise<Client | null> {
-		if (!isStdioTrusted(this.projectId, serverDefinition)) {
-			this.logger.warn(
-				`Refusing to spawn untrusted stdio MCP server ${serverId}`,
-			);
-			throw new MCPStdioUntrustedError(serverId);
-		}
-
 		try {
 			this.logger.info(`Creating stdio client for: ${serverId}`);
 			this.logger.debug(
 				`Command: ${serverDefinition.cmd}, Args: ${JSON.stringify(serverDefinition.args || [])}`,
 			);
 
+			const stringEnv: Record<string, string> = {};
+			if (serverDefinition.env) {
+				for (const [k, v] of Object.entries(serverDefinition.env)) {
+					if (typeof v === "string") stringEnv[k] = v;
+				}
+			}
+
 			const transport = new StdioClientTransport({
 				command: serverDefinition.cmd!,
 				args: serverDefinition.args || [],
-				env: { ...process.env, ...serverDefinition.env } as Record<
+				env: { ...process.env, ...stringEnv } as Record<
 					string,
 					string
 				>,

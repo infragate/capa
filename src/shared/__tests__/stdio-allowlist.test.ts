@@ -38,6 +38,22 @@ describe('stdio-allowlist', () => {
     const c = stdioLaunchFingerprint({ cmd: 'node', args: ['b.js'], cwd: '/tmp' });
     expect(a).toBe(b);
     expect(a).not.toBe(c);
+    // Hashed — never persists cleartext env in the fingerprint string itself.
+    expect(a).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('fingerprints secret pointers without resolved values', () => {
+    const authored = stdioLaunchFingerprint({
+      cmd: 'node',
+      args: ['a.js'],
+      env: { TOKEN: { fromEnv: 'MY_TOKEN' } },
+    });
+    const resolved = stdioLaunchFingerprint({
+      cmd: 'node',
+      args: ['a.js'],
+      env: { TOKEN: 'super-secret-value' },
+    });
+    expect(authored).not.toBe(resolved);
   });
 
   it('does not trust stdio servers until CLI records them', () => {

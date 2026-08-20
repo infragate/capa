@@ -24,6 +24,27 @@ export function getSecretStorageTier(): SecretStorageTier {
 	return cachedTier ?? "file";
 }
 
+/**
+ * Report the active (or preferred) storage tier without creating or migrating
+ * a master key. Used by `capa status` so a read-only check stays read-only.
+ */
+export function peekSecretStorageTier(): SecretStorageTier {
+	if (cachedTier) return cachedTier;
+	if (forceFileTier()) return "file";
+
+	const keyring = tryOpenKeyring();
+	if (keyring) {
+		const stored = keyring.getPassword();
+		if (stored) {
+			const buf = Buffer.from(stored, "base64");
+			if (buf.length === 32) return tierForPlatform();
+		}
+	}
+
+	if (readFileKey()) return "file";
+	return "file";
+}
+
 export function getMasterKey(): Buffer {
 	return loadMasterKey();
 }

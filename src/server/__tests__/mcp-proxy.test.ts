@@ -46,22 +46,33 @@ describe('mcp-proxy', () => {
   });
 
   it('routes stdio servers (cmd) vs http servers (url) via getOrCreateClient', async () => {
-    const proxy = new MCPProxy(makeMockDb(), 'proj-1', '/tmp/project');
-    const routes: Array<'stdio' | 'http'> = [];
+    const capaDir = mkdtempSync(join(tmpdir(), 'capa-mcp-proxy-route-'));
+    const dirSpy = spyOn(config, 'getCapaDir').mockReturnValue(capaDir);
+    try {
+      const projectId = 'proj-route';
+      const stdioDef: MCPServerDefinition = { cmd: 'node', args: ['server.js'] };
+      trustStdio(projectId, stdioDef);
 
-    (proxy as any).getOrCreateClient = async (
-      _serverId: string,
-      serverDefinition: MCPServerDefinition,
-    ) => {
-      if (serverDefinition.cmd) routes.push('stdio');
-      else if (serverDefinition.url) routes.push('http');
-      return null;
-    };
+      const proxy = new MCPProxy(makeMockDb(), projectId, '/tmp/project');
+      const routes: Array<'stdio' | 'http'> = [];
 
-    await proxy.listTools('stdio-server', { cmd: 'node', args: ['server.js'] });
-    await proxy.listTools('http-server', { url: 'https://mcp.example.com' });
+      (proxy as any).getOrCreateClient = async (
+        _serverId: string,
+        serverDefinition: MCPServerDefinition,
+      ) => {
+        if (serverDefinition.cmd) routes.push('stdio');
+        else if (serverDefinition.url) routes.push('http');
+        return null;
+      };
 
-    expect(routes).toEqual(['stdio', 'http']);
+      await proxy.listTools('stdio-server', stdioDef);
+      await proxy.listTools('http-server', { url: 'https://mcp.example.com' });
+
+      expect(routes).toEqual(['stdio', 'http']);
+    } finally {
+      dirSpy.mockRestore();
+      rmSync(capaDir, { recursive: true, force: true });
+    }
   });
 
   it('strips @ prefix from server id before connecting', async () => {

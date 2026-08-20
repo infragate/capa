@@ -12,6 +12,7 @@ import { join } from "path";
 import {
 	getMasterKey,
 	getSecretStorageTier,
+	peekSecretStorageTier,
 	resetMasterKeyStoreForTests,
 } from "../master-key-store";
 
@@ -66,5 +67,11 @@ describe("master-key-store", () => {
 		writeFileSync(join(dir, "master.key"), seeded);
 		resetMasterKeyStoreForTests();
 		expect(Buffer.compare(getMasterKey(), seeded)).toBe(0);
+	});
+
+	it("peekSecretStorageTier does not create a master key", () => {
+		expect(peekSecretStorageTier()).toBe("file");
+		expect(existsSync(join(home, ".capa", "master.key"))).toBe(false);
+		expect(existsSync(join(home, ".capa"))).toBe(false);
 	});
 });

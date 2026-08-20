@@ -69,6 +69,37 @@ describe('executable-surface', () => {
     expect(surface.plugins).toEqual([
       { id: 'shady', type: 'github', repo: 'evil/shady-plugin' },
     ]);
+    expect(surface.secretCommands).toEqual([]);
+  });
+
+  it('collects fromCommand secret sources on MCP env and headers', () => {
+    const surface = collectExecutableSurface(
+      caps({
+        servers: [
+          {
+            id: 'remote',
+            type: 'mcp',
+            def: {
+              url: 'https://example.com/mcp',
+              env: { TOKEN: { fromCommand: 'op read token' } },
+              headers: { Authorization: { fromCommand: 'echo Bearer x' } },
+            },
+          },
+        ],
+      }),
+    );
+
+    expect(surface.servers).toEqual([]);
+    expect(surface.secretCommands).toEqual([
+      { serverId: 'remote', kind: 'env', key: 'TOKEN', command: 'op read token' },
+      {
+        serverId: 'remote',
+        kind: 'headers',
+        key: 'Authorization',
+        command: 'echo Bearer x',
+      },
+    ]);
+    expect(formatExecutableSurface(surface)).toContain('op read token');
   });
 
   it('changes fingerprint when a server command changes', () => {

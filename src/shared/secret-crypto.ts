@@ -2,6 +2,7 @@ import { createCipheriv, createDecipheriv, randomBytes } from "crypto";
 import {
 	getMasterKey,
 	getSecretStorageTier,
+	peekSecretStorageTier,
 	preferKeyringMasterKey,
 	resetMasterKeyStoreForTests,
 	type SecretStorageTier,
@@ -10,7 +11,7 @@ import {
 export const SECRET_CIPHER_PREFIX = "enc:v1:";
 
 export type { SecretStorageTier };
-export { getSecretStorageTier, preferKeyringMasterKey };
+export { getSecretStorageTier, peekSecretStorageTier, preferKeyringMasterKey };
 
 export function resetSecretCryptoForTests(): void {
 	resetMasterKeyStoreForTests();

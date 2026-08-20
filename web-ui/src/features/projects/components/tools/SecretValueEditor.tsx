@@ -41,9 +41,12 @@ export function secretPairsToRecord(
   for (const p of pairs) {
     const k = p.key.trim();
     if (!k) continue;
-    const v = p.value;
+    const v = p.value.trim();
     if (p.source === 'literal') {
       out[k] = v;
+    } else if (!v) {
+      // Skip empty fromEnv/fromCommand/fromFile — schema requires min length 1.
+      continue;
     } else if (p.source === 'fromEnv') {
       out[k] = { fromEnv: v };
     } else if (p.source === 'fromCommand') {

@@ -1,11 +1,11 @@
-import { getSecretStorageTier } from '../../shared/secret-crypto';
+import { peekSecretStorageTier } from '../../shared/secret-crypto';
 import { getServerStatus } from '../utils/server-manager';
 
 export async function statusCommand(): Promise<void> {
   console.log('Checking capa server status...\n');
 
   const status = await getServerStatus();
-  const localTier = getSecretStorageTier();
+  const localTier = peekSecretStorageTier();
 
   if (!status.running) {
     console.log('Status: ✗ Not running');
