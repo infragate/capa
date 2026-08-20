@@ -4,26 +4,24 @@ import { isSystemActivityHookId } from "../shared/agent-activity";
 import { parseCapabilitiesFile } from "../shared/capabilities";
 import { detectCapabilitiesFile } from "../shared/paths";
 import { isUnderWrapWorkspacesDir } from "../shared/workspaces/paths";
-import type {
-	Capabilities,
-	MCPServer,
-} from "../types/capabilities";
+import type { Capabilities, MCPServer } from "../types/capabilities";
 import type { ToolCallRecord } from "../types/database";
 import type { CapabilitiesFileWatcher } from "./capabilities-watcher";
 import type { ConfigureRouteDeps } from "./configure-routes";
 import { runProjectConfigure } from "./configure-routes";
-import type { CapaMCPServer } from "./mcp-handler";
-import { OAuth2Manager } from "./oauth-manager";
-import { redactServerForApi } from "./secret-redaction";
-import { listProjectFs, writeProjectImport } from "./project-fs";
 import { clientErrorMessage } from "./http-error";
+import { matchRoute } from "./match-route";
+import type { CapaMCPServer } from "./mcp-handler";
+import type { McpServerStateManager } from "./mcp-server-state";
+import { OAuth2Manager } from "./oauth-manager";
+import { listProjectFs, writeProjectImport } from "./project-fs";
 import {
 	type EffectiveCapsCacheEntry,
 	loadEffectiveCapabilities,
 	preserveDiscoveredOAuth2,
 } from "./resolve-effective-capabilities";
+import { redactServerForApi } from "./secret-redaction";
 import type { SessionManager } from "./session-manager";
-import type { McpServerStateManager } from "./mcp-server-state";
 import {
 	resolveSkillDescription,
 	resolveSkillSourceUrl,
@@ -248,26 +246,27 @@ export async function handleGetProject(
 						hooks: (capabilities.hooks || [])
 							.filter((h) => !isSystemActivityHookId(h.id))
 							.map((h) => ({
-							id: h.id,
-							description: h.description || null,
-							on: h.on,
-							type: h.type || "command",
-							providers: h.providers || [],
-							matcher: h.matcher || null,
-							timeout: h.timeout ?? null,
-							failClosed: h.failClosed ?? false,
-							sequential: h.sequential ?? false,
-							sourceType: h.source?.type || null,
-							command: h.command ?? null,
-							prompt: h.prompt ?? null,
-							sourceContent:
-								h.source?.type === "inline" &&
-								typeof (h.source as { content?: unknown }).content === "string"
-									? (h.source as { content: string }).content
-									: null,
-							installed: installedHooksByHookId.get(h.id) ?? [],
-							sourcePlugin: h.sourcePlugin || null,
-						})),
+								id: h.id,
+								description: h.description || null,
+								on: h.on,
+								type: h.type || "command",
+								providers: h.providers || [],
+								matcher: h.matcher || null,
+								timeout: h.timeout ?? null,
+								failClosed: h.failClosed ?? false,
+								sequential: h.sequential ?? false,
+								sourceType: h.source?.type || null,
+								command: h.command ?? null,
+								prompt: h.prompt ?? null,
+								sourceContent:
+									h.source?.type === "inline" &&
+									typeof (h.source as { content?: unknown }).content ===
+										"string"
+										? (h.source as { content: string }).content
+										: null,
+								installed: installedHooksByHookId.get(h.id) ?? [],
+								sourcePlugin: h.sourcePlugin || null,
+							})),
 						plugins: (capabilities.plugins || []).map((p) => ({
 							id: p.id || null,
 							type: p.type,
@@ -299,8 +298,7 @@ export async function handleGetProject(
 						options: capabilities.options
 							? {
 									toolExposure: capabilities.options.toolExposure || null,
-									agentActivity:
-										capabilities.options.agentActivity !== false,
+									agentActivity: capabilities.options.agentActivity !== false,
 									security: capabilities.options.security
 										? {
 												blockedPhrases:
@@ -635,4 +633,45 @@ export function handleProjectEvents(
 			Connection: "keep-alive",
 		},
 	});
+}
+
+/**
+ * Dispatcher for core `/api/projects…` routes (list/get/delete, events, fs).
+ * Returns null if the path is not handled here.
+ */
+export async function dispatchProjects(
+	deps: ProjectRouteDeps,
+	path: string,
+	method: string,
+	request: Request,
+	bunServer?: { timeout?: (req: Request, seconds: number) => void },
+): Promise<Response | null> {
+	if (path === "/api/projects" && method === "GET") {
+		return handleGetProjects(deps);
+	}
+
+	const project = matchRoute(path, "/api/projects/:projectId");
+	if (project && method === "GET") {
+		return handleGetProject(deps, project.projectId);
+	}
+	if (project && method === "DELETE") {
+		return handleDeleteProject(deps, project.projectId);
+	}
+
+	const events = matchRoute(path, "/api/projects/:projectId/events");
+	if (events && method === "GET") {
+		// Bun closes quiet streams after ~10s unless idle timeout is disabled.
+		bunServer?.timeout?.(request, 0);
+		return handleProjectEvents(deps, events.projectId);
+	}
+
+	const fs = matchRoute(path, "/api/projects/:projectId/fs");
+	if (fs && method === "GET") {
+		return handleProjectFsList(deps, fs.projectId, request);
+	}
+	if (fs && method === "POST") {
+		return handleProjectFsUpload(deps, fs.projectId, request);
+	}
+
+	return null;
 }

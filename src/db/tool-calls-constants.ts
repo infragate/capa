@@ -1,0 +1,3 @@
+export const TOOL_CALLS_PER_PROJECT_CAP = 10_000;
+export const TOOL_CALLS_PAGE_SIZE_DEFAULT = 50;
+export const TOOL_CALLS_PAGE_SIZE_MAX = 100;

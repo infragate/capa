@@ -6,13 +6,17 @@ import {
 import { logger } from "../shared/logger";
 import { detectCapabilitiesFile } from "../shared/paths";
 import { trustStdioServers } from "../shared/stdio-allowlist";
-import { resolveVariablesInObject } from "../shared/variable-resolver";
 import { projectUiUrl } from "../shared/ui-urls";
-import { extractAllVariables } from "../shared/variable-resolver";
+import {
+	extractAllVariables,
+	resolveVariablesInObject,
+} from "../shared/variable-resolver";
 import type { Capabilities } from "../types/capabilities";
 import type { OAuth2Config } from "../types/oauth";
 import type { CapabilitiesFileWatcher } from "./capabilities-watcher";
+import { matchRoute } from "./match-route";
 import type { CapaMCPServer, ValidationProgressEvent } from "./mcp-handler";
+import type { McpServerStateManager } from "./mcp-server-state";
 import { OAuth2Manager } from "./oauth-manager";
 import {
 	type OAuth2ServerEntry,
@@ -24,7 +28,6 @@ import {
 	loadEffectiveCapabilities,
 } from "./resolve-effective-capabilities";
 import type { SessionManager } from "./session-manager";
-import type { McpServerStateManager } from "./mcp-server-state";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
@@ -474,4 +477,21 @@ export async function handleProjectConfigure(
 			"Cache-Control": "no-cache",
 		},
 	});
+}
+
+/**
+ * Dispatcher for `/api/projects/:id/configure`.
+ * Returns null if the path is not the configure route.
+ */
+export async function dispatchConfigure(
+	deps: ConfigureRouteDeps,
+	path: string,
+	method: string,
+	request: Request,
+): Promise<Response | null> {
+	const config = matchRoute(path, "/api/projects/:projectId/configure");
+	if (config && method === "POST") {
+		return handleProjectConfigure(deps, config.projectId, request);
+	}
+	return null;
 }

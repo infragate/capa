@@ -6,10 +6,9 @@ import { detectCapabilitiesFile } from "../shared/paths";
 import { projectUiUrl } from "../shared/ui-urls";
 import type { MCPServer } from "../types/capabilities";
 import type { OAuth2Config } from "../types/oauth";
+import { matchRoute } from "./match-route";
 import type { OAuth2Manager } from "./oauth-manager";
-import {
-	syncAllServersOAuth2Requirements,
-} from "./oauth-server-sync";
+import { syncAllServersOAuth2Requirements } from "./oauth-server-sync";
 import {
 	type EffectiveCapsCacheEntry,
 	enrichCapabilitiesOAuthFromPlugins,
@@ -518,4 +517,44 @@ export async function handleOAuth2Disconnect(
 			headers: JSON_HEADERS,
 		});
 	}
+}
+
+/**
+ * Dispatcher for project OAuth2 API routes.
+ * Returns null if the path is not an OAuth2 route.
+ */
+export async function dispatchOAuth(
+	deps: OAuthRouteDeps,
+	path: string,
+	method: string,
+	request: Request,
+): Promise<Response | null> {
+	const servers = matchRoute(path, "/api/projects/:projectId/oauth-servers");
+	if (servers && method === "GET") {
+		return handleGetOAuth2Servers(deps, servers.projectId);
+	}
+
+	const start = matchRoute(path, "/api/projects/:projectId/oauth/start");
+	if (start && method === "POST") {
+		return handleOAuth2Start(deps, start.projectId, request);
+	}
+
+	const callback = matchRoute(path, "/api/projects/:projectId/oauth/callback");
+	if (callback && method === "GET") {
+		return handleOAuth2Callback(deps, callback.projectId, request);
+	}
+
+	const disconnect = matchRoute(
+		path,
+		"/api/projects/:projectId/oauth/:serverId",
+	);
+	if (disconnect && method === "DELETE") {
+		return handleOAuth2Disconnect(
+			deps,
+			disconnect.projectId,
+			disconnect.serverId,
+		);
+	}
+
+	return null;
 }

@@ -39,3 +39,21 @@ export async function handleForceTokenRefresh(
 		});
 	}
 }
+
+/**
+ * Dispatcher for `/api/token-refresh…` routes.
+ * Returns null if the path is not a token-refresh route.
+ */
+export async function dispatchTokenRefresh(
+	deps: TokenRefreshRouteDeps,
+	path: string,
+	method: string,
+): Promise<Response | null> {
+	if (path === "/api/token-refresh/status" && method === "GET") {
+		return handleTokenRefreshStatus(deps);
+	}
+	if (path === "/api/token-refresh/check" && method === "POST") {
+		return handleForceTokenRefresh(deps);
+	}
+	return null;
+}
