@@ -5,6 +5,8 @@ import {
 } from "../shared/capabilities";
 import { logger } from "../shared/logger";
 import { detectCapabilitiesFile } from "../shared/paths";
+import { trustStdioServers } from "../shared/stdio-allowlist";
+import { resolveVariablesInObject } from "../shared/variable-resolver";
 import { projectUiUrl } from "../shared/ui-urls";
 import { extractAllVariables } from "../shared/variable-resolver";
 import type { Capabilities } from "../types/capabilities";
@@ -22,6 +24,7 @@ import {
 	loadEffectiveCapabilities,
 } from "./resolve-effective-capabilities";
 import type { SessionManager } from "./session-manager";
+import type { McpServerStateManager } from "./mcp-server-state";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
@@ -39,6 +42,7 @@ export interface ConfigureRouteDeps {
 		servers: Capabilities["servers"],
 		previousServers?: Capabilities["servers"],
 	) => void | Promise<void>;
+	mcpServerState?: McpServerStateManager;
 }
 
 /**
@@ -235,6 +239,13 @@ export async function runProjectConfigure(
 
 	// -- Tool validation (parallel per server) --------------------------
 	apiLogger.info("Validating tools...");
+	trustStdioServers(
+		projectId,
+		(capabilitiesToUse.servers ?? []).map((server) => ({
+			...server,
+			def: resolveVariablesInObject(server.def, projectId, deps.db),
+		})),
+	);
 	let toolValidationResults: any[] = [];
 	try {
 		const mcpServer = deps.getOrCreateMCPServer(projectId);
@@ -282,6 +293,17 @@ export async function runProjectConfigure(
 		}
 	} catch (error: any) {
 		apiLogger.failure(`Tool validation error: ${error.message}`);
+	}
+
+	// Install validation connects servers temporarily; drop connections for
+	// servers the user has not explicitly enabled in the UI.
+	if (deps.mcpServerState) {
+		const mcpServer = deps.getOrCreateMCPServer(projectId);
+		if (mcpServer) {
+			await mcpServer.disconnectNonEnabledServers((serverId) =>
+				deps.mcpServerState!.isEnabled(projectId, serverId),
+			);
+		}
 	}
 
 	if (missingVars.length > 0 || needsOAuth2Connection) {

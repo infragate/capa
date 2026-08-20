@@ -97,6 +97,8 @@ export interface Server {
   displayName: string | null;
   requiresOAuth: boolean;
   isConnected: boolean | null;
+  /** Whether the user has turned this MCP server on in the UI. */
+  enabled: boolean;
   description?: string | null;
 }
 
@@ -317,6 +319,15 @@ export interface ToolPropertySchema {
 
 export interface ServerToolsResponse {
   tools: ToolSchema[];
+  enabled?: boolean;
+  connected?: boolean;
+}
+
+export interface SetServerEnabledResponse {
+  serverId: string;
+  enabled: boolean;
+  connected: boolean;
+  error?: string;
 }
 
 export interface Integration {

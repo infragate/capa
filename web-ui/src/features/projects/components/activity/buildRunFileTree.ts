@@ -10,8 +10,12 @@ export type RunFileChangeFlags = {
 export type RunFileEntry = RunFileChangeFlags & {
   /** Normalized absolute or project-relative path (posix slashes). */
   path: string;
-  /** Grep/Glob search root — render as folder even when a leaf. */
-  isDirectory?: boolean;
+  /** Path was a Grep/Glob search scope (not a concrete file read/write). */
+  searchRoot?: boolean;
+  /** Path was touched as a concrete file (Read/Write/Delete/provider file row). */
+  fileTouch?: boolean;
+  /** Search scope was passed with a trailing separator — directory intent. */
+  searchRootIsDirectory?: boolean;
 };
 
 const READ_TOOLS = new Set(['Read', 'read', 'read_file', 'ReadFile']);
@@ -64,13 +68,34 @@ export function normalizePath(raw: string): string {
   return raw.replace(/\\/g, '/').replace(/\/+/g, '/');
 }
 
+/** Canonical map key — no trailing separators. */
+function normalizeStoredPath(raw: string): string {
+  return normalizePath(raw).replace(/\/+$/, '');
+}
+
+type MergePatch = Partial<RunFileChangeFlags> & {
+  searchRoot?: boolean;
+  fileTouch?: boolean;
+  searchRootIsDirectory?: boolean;
+};
+
+/** Trailing separator in the raw tool arg signals directory search scope. */
+function searchRootLooksLikeDirectory(rawPath: string): boolean {
+  const trimmed = rawPath.trim();
+  return trimmed.endsWith('/') || trimmed.endsWith('\\');
+}
+
+function isStrictPathPrefix(prefix: string, path: string): boolean {
+  return path.startsWith(`${prefix}/`);
+}
+
 function mergeFlags(
   map: Map<string, RunFileEntry>,
   filePath: string,
-  patch: Partial<RunFileChangeFlags> & { isDirectory?: boolean },
+  patch: MergePatch,
   realProjectPath?: string | null,
 ): void {
-  let path = normalizePath(filePath);
+  let path = normalizeStoredPath(filePath);
   path = remapWrapShadowPath(path, realProjectPath);
   if (!path) return;
   const prev = map.get(path) ?? {
@@ -78,21 +103,38 @@ function mergeFlags(
     read: false,
     modified: false,
     deleted: false,
-    isDirectory: false,
+    searchRoot: false,
+    fileTouch: false,
+    searchRootIsDirectory: false,
   };
-  const isDirectory =
-    patch.isDirectory === true
-      ? true
-      : patch.isDirectory === false
-        ? false
-        : prev.isDirectory;
   map.set(path, {
     ...prev,
     read: prev.read || !!patch.read,
     modified: prev.modified || !!patch.modified,
     deleted: prev.deleted || !!patch.deleted,
-    isDirectory,
+    searchRoot: prev.searchRoot || !!patch.searchRoot,
+    fileTouch: prev.fileTouch || !!patch.fileTouch,
+    searchRootIsDirectory:
+      prev.searchRootIsDirectory || !!patch.searchRootIsDirectory,
   });
+}
+
+/**
+ * Folder leaves come from Grep/Glob directory scopes only.
+ * Intermediate folders are implied by nesting in {@link FileTree}.
+ */
+function deriveDirectoryPathKeys(
+  relPaths: string[],
+  entryByRel: Map<string, RunFileEntry>,
+): string[] {
+  const keys: string[] = [];
+  for (const rel of relPaths) {
+    const entry = entryByRel.get(rel);
+    if (!entry?.searchRoot || entry.fileTouch) continue;
+    if (relPaths.some((p) => p !== rel && isStrictPathPrefix(rel, p))) continue;
+    if (entry.searchRootIsDirectory) keys.push(rel);
+  }
+  return keys;
 }
 
 /**
@@ -119,8 +161,11 @@ export function collectRunFileChanges(
         pathFromArgs(args) ||
         (looksLikePath(tool) ? normalizePath(tool) : null);
       if (!p) continue;
-      if (ev.kind === 'skill') mergeFlags(map, p, { read: true }, realProjectPath);
-      else mergeFlags(map, p, { modified: true }, realProjectPath);
+      if (ev.kind === 'skill') {
+        mergeFlags(map, p, { read: true, fileTouch: true }, realProjectPath);
+      } else {
+        mergeFlags(map, p, { modified: true, fileTouch: true }, realProjectPath);
+      }
       continue;
     }
 
@@ -129,29 +174,74 @@ export function collectRunFileChanges(
     const fromArgs = pathFromArgs(args);
 
     if (READ_TOOLS.has(tool)) {
-      if (fromArgs) mergeFlags(map, fromArgs, { read: true, isDirectory: false }, realProjectPath);
-      else if (looksLikePath(tool)) mergeFlags(map, tool, { read: true, isDirectory: false }, realProjectPath);
+      if (fromArgs) {
+        mergeFlags(map, fromArgs, { read: true, fileTouch: true }, realProjectPath);
+      } else if (looksLikePath(tool)) {
+        mergeFlags(map, tool, { read: true, fileTouch: true }, realProjectPath);
+      }
       continue;
     }
 
     if (tool === 'Grep' || tool === 'grep' || tool === 'Glob' || tool === 'glob') {
-      if (fromArgs) mergeFlags(map, fromArgs, { read: true, isDirectory: true }, realProjectPath);
+      if (fromArgs) {
+        mergeFlags(
+          map,
+          fromArgs,
+          {
+            read: true,
+            searchRoot: true,
+            searchRootIsDirectory: searchRootLooksLikeDirectory(fromArgs),
+          },
+          realProjectPath,
+        );
+      }
       continue;
     }
 
     if (tool === 'Delete' || tool === 'delete') {
-      if (fromArgs) mergeFlags(map, fromArgs, { deleted: true, isDirectory: false }, realProjectPath);
-      else if (looksLikePath(tool)) mergeFlags(map, tool, { deleted: true, isDirectory: false }, realProjectPath);
+      if (fromArgs) {
+        mergeFlags(map, fromArgs, { deleted: true, fileTouch: true }, realProjectPath);
+      } else if (looksLikePath(tool)) {
+        mergeFlags(map, tool, { deleted: true, fileTouch: true }, realProjectPath);
+      }
       continue;
     }
 
     if (WRITE_TOOLS.has(tool)) {
-      if (fromArgs) mergeFlags(map, fromArgs, { modified: true, isDirectory: false }, realProjectPath);
-      else if (looksLikePath(tool)) mergeFlags(map, tool, { modified: true, isDirectory: false }, realProjectPath);
+      if (fromArgs) {
+        mergeFlags(map, fromArgs, { modified: true, fileTouch: true }, realProjectPath);
+      } else if (looksLikePath(tool)) {
+        mergeFlags(map, tool, { modified: true, fileTouch: true }, realProjectPath);
+      }
     }
   }
 
   return [...map.values()].sort((a, b) => a.path.localeCompare(b.path));
+}
+
+const SKILL_MD_SUFFIX = /\/SKILL\.md$/i;
+
+/** Parent folder name for a touched `…/SKILL.md` path (e.g. `debug/SKILL.md` → `debug`). */
+export function skillFolderFromSkillMdPath(path: string): string | null {
+  const normalized = normalizePath(path);
+  if (!SKILL_MD_SUFFIX.test(normalized)) return null;
+  const parts = normalized.split('/').filter(Boolean);
+  if (parts.length < 2) return null;
+  const folder = parts[parts.length - 2]!.trim();
+  return folder || null;
+}
+
+/** Unique skill folder names inferred from touched `SKILL.md` files in a run. */
+export function collectRunSkillFolders(
+  events: ToolCallRecord[],
+  options?: { realProjectPath?: string | null },
+): string[] {
+  const folders = new Set<string>();
+  for (const entry of collectRunFileChanges(events, options)) {
+    const folder = skillFolderFromSkillMdPath(entry.path);
+    if (folder) folders.add(folder);
+  }
+  return [...folders].sort((a, b) => a.localeCompare(b));
 }
 
 export interface RunFileTreeNode {
@@ -193,10 +283,14 @@ export function commonPathPrefix(paths: string[]): string {
 }
 
 function displayPath(fullPath: string, prefix: string): string {
-  if (prefix && fullPath.startsWith(prefix)) {
-    return fullPath.slice(prefix.length);
+  const normalized = normalizePath(fullPath);
+  if (!prefix) return normalized;
+  const base = normalizePath(prefix).replace(/\/+$/, '');
+  if (normalized === base) return '';
+  if (normalized.startsWith(`${base}/`)) {
+    return normalized.slice(base.length + 1);
   }
-  return fullPath;
+  return normalized;
 }
 
 function resolveDisplayPrefix(
@@ -230,17 +324,19 @@ export function runFilesForFileTree(
   const prefix = resolveDisplayPrefix(paths, options?.realProjectPath);
   const files: string[] = [];
   const annotations: Record<string, RunFileChangeFlags> = {};
-  const directoryPathKeys: string[] = [];
+  const entryByRel = new Map<string, RunFileEntry>();
   for (const entry of entries) {
     const rel = displayPath(entry.path, prefix);
+    if (!rel) continue;
     files.push(rel);
+    entryByRel.set(rel, entry);
     annotations[rel] = {
       read: entry.read,
       modified: entry.modified,
       deleted: entry.deleted,
     };
-    if (entry.isDirectory) directoryPathKeys.push(rel);
   }
+  const directoryPathKeys = deriveDirectoryPathKeys(files, entryByRel);
   return { files, annotations, directoryPathKeys };
 }
 

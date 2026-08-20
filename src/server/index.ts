@@ -55,8 +55,10 @@ import {
 	handleGetShellToolSchema,
 	handleGetShellTools,
 	handleGetSkillContent,
+	handleSetServerEnabled,
 	type McpMetaRouteDeps,
 } from "./mcp-meta-routes";
+import { McpServerStateManager } from "./mcp-server-state";
 import { OAuth2Manager } from "./oauth-manager";
 import { syncServerOAuth2Requirement } from "./oauth-server-sync";
 import {
@@ -145,6 +147,7 @@ class CapaServer {
 	>();
 	/** Cached plugin-expanded capabilities keyed by project id */
 	private effectiveCapsCache = new Map<string, EffectiveCapsCacheEntry>();
+	private mcpServerStateManager = new McpServerStateManager();
 	private startTime: number = Date.now();
 	private logger = logger.child("CapaServer");
 
@@ -159,6 +162,7 @@ class CapaServer {
 			uiOrigin: () => this.uiOrigin(),
 			syncProjectMcpClients: (projectId, servers, previousServers) =>
 				this.syncProjectMcpClients(projectId, servers, previousServers),
+			mcpServerState: this.mcpServerStateManager,
 		};
 	}
 
@@ -184,6 +188,7 @@ class CapaServer {
 			effectiveCapsCache: this.effectiveCapsCache,
 			projectEventClients: this.projectEventClients,
 			configureDeps: this.configureRouteDeps(),
+			mcpServerState: this.mcpServerStateManager,
 		};
 	}
 
@@ -199,6 +204,7 @@ class CapaServer {
 			db: this.db,
 			sessionManager: this.sessionManager,
 			getOrCreateMCPServer: (id) => this.getOrCreateMCPServer(id),
+			mcpServerState: this.mcpServerStateManager,
 		};
 	}
 
@@ -547,6 +553,8 @@ class CapaServer {
 				url.searchParams.get("limit"),
 				url.searchParams.get("before"),
 				url.searchParams.get("beforeId"),
+				url.searchParams.get("sessionId"),
+				url.searchParams.get("conversationId"),
 			);
 		}
 
@@ -687,6 +695,15 @@ class CapaServer {
 			const projectId = serverToolsMatch[1];
 			const serverId = serverToolsMatch[2];
 			return this.handleGetServerTools(projectId, serverId);
+		}
+
+		const serverEnabledMatch = path.match(
+			/^\/api\/projects\/([^/]+)\/servers\/([^/]+)\/enabled$/,
+		);
+		if (serverEnabledMatch && request.method === "POST") {
+			const projectId = serverEnabledMatch[1];
+			const serverId = serverEnabledMatch[2];
+			return this.handleSetServerEnabled(projectId, serverId, request);
 		}
 
 		// Skill SKILL.md content for the project-detail UI
@@ -919,6 +936,7 @@ class CapaServer {
 			project.path,
 			agentId,
 			this.toolCallTracer,
+			this.mcpServerStateManager,
 		);
 		this.mcpServers.set(cacheKey, mcpServer);
 		return mcpServer;
@@ -929,6 +947,19 @@ class CapaServer {
 		serverId: string,
 	): Promise<Response> {
 		return handleGetServerTools(this.mcpMetaRouteDeps(), projectId, serverId);
+	}
+
+	private handleSetServerEnabled(
+		projectId: string,
+		serverId: string,
+		request: Request,
+	): Promise<Response> {
+		return handleSetServerEnabled(
+			this.mcpMetaRouteDeps(),
+			projectId,
+			serverId,
+			request,
+		);
 	}
 
 	private handleGetSkillContent(
@@ -1679,6 +1710,7 @@ class CapaServer {
 				project.path,
 				agentId,
 				this.toolCallTracer,
+				this.mcpServerStateManager,
 			);
 
 			this.mcpServers.set(cacheKey, mcpServer);

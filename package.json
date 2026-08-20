@@ -40,6 +40,7 @@
     "listr2": "^11.0.0",
     "lucide-react": "^1.14.0",
     "marked": "^18.0.3",
+    "mermaid": "^11.17.0",
     "nanoid": "^6.0.0",
     "picocolors": "^1.1.1",
     "react": "^19.2.6",

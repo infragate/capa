@@ -1,6 +1,7 @@
 import { detectCapabilitiesFile, generateProjectId } from '../../../shared/paths';
 import { parseCapabilitiesFile } from '../../../shared/capabilities';
-import { getServerStatus } from '../../utils/server-manager';
+import { ensureServer } from '../../utils/server-manager';
+import { VERSION } from '../../../version';
 import { resolveProjectIdentityPath } from '../../utils/wrap/marker';
 import { slugify } from '../../../shared/slug';
 import { parseShellGlobalFlags, parseInlineArgs, resolveArgs, classifyUnknownCommand } from './args';
@@ -183,9 +184,9 @@ export async function shellCommand(args: string[]): Promise<void> {
     process.exit(1);
   }
 
-  const status = await getServerStatus();
+  const status = await ensureServer(VERSION, { quiet: true, stopWrapSessions: false });
   if (!status.running || !status.url) {
-    console.error('Capa server is not running. Start it with "capa start".');
+    console.error('Capa server is not running and could not be started.');
     process.exit(1);
   }
 

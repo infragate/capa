@@ -128,7 +128,7 @@ export function ToolsSection({
       queryFn: () => projectsApi.getServerTools(projectId, server.id),
       staleTime: 60_000,
       retry: false,
-      enabled: !(server.requiresOAuth && !server.isConnected),
+      enabled: server.enabled && !(server.requiresOAuth && !server.isConnected),
     })),
   });
 

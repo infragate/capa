@@ -15,15 +15,21 @@ import { VERSION } from "../version";
 import { HttpMCPTransport } from "./http-mcp-transport";
 import {
 	MCPOAuthDisconnectedError,
+	MCPServerDisabledError,
 	MCPSessionExpiredError,
+	MCPStdioUntrustedError,
 } from "./mcp-proxy-errors";
 import { OAuth2Manager } from "./oauth-manager";
 import { HiddenStdioClientTransport as StdioClientTransport } from "./stdio-client-transport";
 
 export {
 	MCPOAuthDisconnectedError,
+	MCPServerDisabledError,
 	MCPSessionExpiredError,
+	MCPStdioUntrustedError,
 } from "./mcp-proxy-errors";
+
+export type McpEnabledCheck = (serverId: string) => boolean;
 
 /** Timeout for MCP client.connect() — prevents hanging on an unresponsive server (ms). */
 const MCP_CONNECT_TIMEOUT_MS = 15_000;
@@ -48,12 +54,20 @@ export class MCPProxy {
 	/** Last unexpected stdio exit reason per server (from transport onerror). */
 	private stdioExitReasons = new Map<string, string>();
 	private logger = logger.child("MCPProxy");
+	private isServerEnabled: McpEnabledCheck;
 
-	constructor(db: CapaDatabase, projectId: string, projectPath: string) {
+	constructor(
+		db: CapaDatabase,
+		projectId: string,
+		projectPath: string,
+		options: { isServerEnabled?: McpEnabledCheck } = {},
+	) {
 		this.db = db;
 		this.projectId = projectId;
 		this.projectPath = projectPath;
 		this.oauth2Manager = new OAuth2Manager(db);
+		this.isServerEnabled =
+			options.isServerEnabled ?? (() => true);
 	}
 
 	/**
@@ -96,6 +110,10 @@ export class MCPProxy {
 			client = await this.getOrCreateClient(serverId, resolvedServerDef);
 		} catch (error) {
 			if (error instanceof MCPOAuthDisconnectedError) {
+				this.logger.failure(error.message);
+				return { success: false, error: error.message };
+			}
+			if (error instanceof MCPServerDisabledError) {
 				this.logger.failure(error.message);
 				return { success: false, error: error.message };
 			}
@@ -207,12 +225,15 @@ export class MCPProxy {
 			throwOnError?: boolean;
 			timeoutMs?: number;
 			connect?: boolean;
+			/** Skip enabled-state gate (install-time validation only). */
+			bypassEnabledCheck?: boolean;
 		} = {},
 	): Promise<any[]> {
 		const {
 			throwOnError = false,
 			timeoutMs = 15000,
 			connect = true,
+			bypassEnabledCheck = false,
 		} = options;
 		// Strip @ prefix from server ID if present
 		const cleanServerId = serverId.replace("@", "");
@@ -228,7 +249,7 @@ export class MCPProxy {
 		const work = this.listToolsOnce(
 			cleanServerId,
 			serverDefinition,
-			{ throwOnError, timeoutMs, connect },
+			{ throwOnError, timeoutMs, connect, bypassEnabledCheck },
 		).finally(() => {
 			this.listToolsInFlight.delete(flightKey);
 		});
@@ -243,9 +264,10 @@ export class MCPProxy {
 			throwOnError: boolean;
 			timeoutMs: number;
 			connect: boolean;
+			bypassEnabledCheck: boolean;
 		},
 	): Promise<any[]> {
-		const { throwOnError, timeoutMs, connect } = options;
+		const { throwOnError, timeoutMs, connect, bypassEnabledCheck } = options;
 
 		const resolvedServerDef = resolveVariablesInObject(
 			serverDefinition,
@@ -269,9 +291,14 @@ export class MCPProxy {
 				client = await this.getOrCreateClient(
 					cleanServerId,
 					resolvedServerDef,
+					bypassEnabledCheck,
 				);
 			}
 		} catch (error) {
+			if (error instanceof MCPServerDisabledError) {
+				if (throwOnError) throw error;
+				return [];
+			}
 			if (error instanceof MCPOAuthDisconnectedError) {
 				if (throwOnError) throw error;
 				return [];
@@ -342,7 +369,12 @@ export class MCPProxy {
 	private async getOrCreateClient(
 		serverId: string,
 		serverDefinition: MCPServerDefinition,
+		bypassEnabledCheck = false,
 	): Promise<Client | null> {
+		if (!bypassEnabledCheck && !this.isServerEnabled(serverId)) {
+			throw new MCPServerDisabledError(serverId);
+		}
+
 		const fingerprint = mcpServerLaunchFingerprint(serverDefinition);
 		const existing = this.clients.get(serverId);
 		if (existing) {
@@ -476,13 +508,14 @@ export class MCPProxy {
 		serverDefinition: MCPServerDefinition,
 		fingerprint: string,
 	): Promise<Client | null> {
+		if (!isStdioTrusted(this.projectId, serverDefinition)) {
+			this.logger.warn(
+				`Refusing to spawn untrusted stdio MCP server ${serverId}`,
+			);
+			throw new MCPStdioUntrustedError(serverId);
+		}
+
 		try {
-			if (!isStdioTrusted(this.projectId, serverDefinition)) {
-				this.logger.warn(
-					`Refusing to spawn untrusted stdio MCP server ${serverId}`,
-				);
-				return null;
-			}
 			this.logger.info(`Creating stdio client for: ${serverId}`);
 			this.logger.debug(
 				`Command: ${serverDefinition.cmd}, Args: ${JSON.stringify(serverDefinition.args || [])}`,
@@ -633,6 +666,11 @@ export class MCPProxy {
 		} finally {
 			if (timer) clearTimeout(timer);
 		}
+	}
+
+	/** Server IDs with an active cached client. */
+	getConnectedServerIds(): string[] {
+		return [...this.clients.keys()];
 	}
 
 	/**

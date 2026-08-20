@@ -1,12 +1,22 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Eye, FilePenLine, Search, Trash2 } from 'lucide-react';
+import { Download, Eye, FilePenLine, Search, Trash2 } from 'lucide-react';
 import type { ToolCallRecord } from '../../../../types/api';
 import { FileTree } from '../../../../components/common/FileTree';
 import {
   collectRunFileChanges,
   runFilesForFileTreeFiltered,
 } from './buildRunFileTree';
+
+function downloadTextFile(filename: string, content: string) {
+  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
 
 interface ActivityRunFileTreeProps {
   events: ToolCallRecord[];
@@ -57,15 +67,31 @@ export function ActivityRunFileTree({
       aria-label={t('activity.runFiles.aria')}
     >
       <div className="shrink-0 space-y-2 border-b border-border-secondary px-3 py-2">
-        <div>
-          <h3 className="text-[10px] font-semibold uppercase tracking-[0.06em] text-text-secondary">
-            {t('activity.runFiles.heading')}
-          </h3>
-          <p className="mt-0.5 text-[10px] leading-snug text-text-tertiary">
-            {fileCount === 0
-              ? t('activity.runFiles.empty')
-              : t('activity.runFiles.count', { count: fileCount })}
-          </p>
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            <h3 className="text-[10px] font-semibold uppercase tracking-[0.06em] text-text-secondary">
+              {t('activity.runFiles.heading')}
+            </h3>
+            <p className="mt-0.5 text-[10px] leading-snug text-text-tertiary">
+              {fileCount === 0
+                ? t('activity.runFiles.empty')
+                : t('activity.runFiles.count', { count: fileCount })}
+            </p>
+          </div>
+          {fileCount > 0 ? (
+            <button
+              type="button"
+              onClick={() => {
+                const paths = entries.map((e) => e.path).sort();
+                downloadTextFile(`run-${runId}-files.txt`, paths.join('\n'));
+              }}
+              className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium text-text-secondary hover:bg-hover-bg"
+              title={t('activity.runFiles.export')}
+            >
+              <Download size={11} />
+              {t('activity.runFiles.export')}
+            </button>
+          ) : null}
         </div>
         <div className="relative">
           <Search
@@ -120,6 +146,7 @@ export function ActivityRunFileTree({
             onFileSelect={onFileSelect}
             directoryPathKeys={directoryPathKeys}
             scrollPathKey={scrollPathKey}
+            selectableLabels
           />
         )}
       </div>

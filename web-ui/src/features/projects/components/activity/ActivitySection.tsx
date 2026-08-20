@@ -1,11 +1,14 @@
+import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Activity as ActivityIcon } from 'lucide-react';
+import { Activity as ActivityIcon, Search } from 'lucide-react';
 import { Spinner } from '../../../../components/common/Spinner';
 import { Alert } from '../../../../components/common/Alert';
 import { useProjectActivity, useProject } from '../../hooks';
 import { ActivityChart } from './ActivityChart';
 import { ActivityFeed } from './ActivityFeed';
 import { ActivityStatsBar } from './ActivityStats';
+import { ActivityTracesDialog, type ActivityTracesView } from './ActivitySessionDialog';
+import { filterActivityCalls } from './filterActivityCalls';
 
 interface ActivitySectionProps {
   projectId: string;
@@ -13,6 +16,8 @@ interface ActivitySectionProps {
 
 export function ActivitySection({ projectId }: ActivitySectionProps) {
   const { t } = useTranslation('projects');
+  const [search, setSearch] = useState('');
+  const [tracesView, setTracesView] = useState<ActivityTracesView | null>(null);
   const {
     calls,
     stats,
@@ -24,6 +29,17 @@ export function ActivitySection({ projectId }: ActivitySectionProps) {
     loadMore,
   } = useProjectActivity(projectId);
   const { data: project } = useProject(projectId);
+
+  const filteredCalls = useMemo(
+    () => filterActivityCalls(calls, search),
+    [calls, search],
+  );
+  const searchActive = search.trim().length > 0;
+
+  useEffect(() => {
+    if (!searchActive || !hasMore || loadingMore) return;
+    void loadMore();
+  }, [searchActive, hasMore, loadingMore, loadMore]);
 
   return (
     <div
@@ -45,6 +61,33 @@ export function ActivitySection({ projectId }: ActivitySectionProps) {
         <ActivityChart buckets={stats?.buckets} />
       </div>
 
+      <div className="border-b border-border-secondary px-5 py-3">
+        <div className="relative max-w-md">
+          <Search
+            size={14}
+            className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-text-tertiary"
+            aria-hidden
+          />
+          <input
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder={t('activity.searchPlaceholder')}
+            className="w-full rounded-md border border-border-secondary bg-bg-secondary py-2 pl-8 pr-3 text-xs text-text-primary placeholder:text-text-tertiary focus:border-accent-primary/50 focus:outline-none"
+          />
+        </div>
+        {searchActive ? (
+          <p className="mt-2 text-[11px] text-text-tertiary">
+            {hasMore || loadingMore
+              ? t('activity.searchLoadingHistory')
+              : t('activity.searchMatchCount', {
+                  matched: filteredCalls.length,
+                  total: calls.length,
+                })}
+          </p>
+        ) : null}
+      </div>
+
       {isLoading ? (
         <div className="px-5 py-8">
           <Spinner label={t('activity.loading')} />
@@ -55,14 +98,27 @@ export function ActivitySection({ projectId }: ActivitySectionProps) {
         </div>
       ) : (
         <ActivityFeed
-          calls={calls}
+          calls={filteredCalls}
           hasMore={hasMore}
           loadingMore={loadingMore}
           onLoadMore={() => void loadMore()}
           live={live}
           projectPath={project?.path ?? null}
+          onViewConversation={(conversationId) =>
+            setTracesView({ kind: 'conversation', id: conversationId })
+          }
         />
       )}
+
+      <ActivityTracesDialog
+        projectId={projectId}
+        view={tracesView}
+        open={tracesView != null}
+        onOpenChange={(open) => {
+          if (!open) setTracesView(null);
+        }}
+        projectPath={project?.path ?? null}
+      />
     </div>
   );
 }
