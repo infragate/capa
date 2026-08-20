@@ -16,6 +16,28 @@ describe("isAllowedOrigin", () => {
 		});
 	});
 
+	it("allows loopback aliases for the same port when bound to 127.0.0.1", () => {
+		expect(isAllowedOrigin("http://localhost:5912", "127.0.0.1", 5912)).toEqual({
+			allowed: true,
+			origin: "http://localhost:5912",
+		});
+		expect(isAllowedOrigin("http://[::1]:5912", "127.0.0.1", 5912)).toEqual({
+			allowed: true,
+			origin: "http://[::1]:5912",
+		});
+	});
+
+	it("allows loopback aliases when bound to wildcard 0.0.0.0", () => {
+		expect(isAllowedOrigin("http://127.0.0.1:5912", "0.0.0.0", 5912)).toEqual({
+			allowed: true,
+			origin: "http://127.0.0.1:5912",
+		});
+		expect(isAllowedOrigin("http://localhost:5912", "0.0.0.0", 5912)).toEqual({
+			allowed: true,
+			origin: "http://localhost:5912",
+		});
+	});
+
 	it("rejects other localhost ports unless listed in CAPA_ALLOWED_ORIGINS", () => {
 		delete process.env.CAPA_ALLOWED_ORIGINS;
 		expect(isAllowedOrigin("http://localhost:5173", "127.0.0.1", 5912)).toEqual({

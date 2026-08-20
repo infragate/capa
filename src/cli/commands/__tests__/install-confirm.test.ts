@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach, afterAll, mock, spyOn } from 'bun:test';
 import { existsSync, mkdtempSync, rmSync, writeFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -30,6 +30,10 @@ mock.module('../../utils/server-manager', () => ({
 
 const originalFetch = globalThis.fetch;
 globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+afterAll(() => {
+  globalThis.fetch = originalFetch;
+});
 
 const { installCommand } = await import(new URL('../install.ts', import.meta.url).href);
 

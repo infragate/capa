@@ -11,7 +11,6 @@ import {
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { validateAndRepairShadowWorkspace } from '../validate-shadow-workspace';
-import { WORKSPACE_MARKER } from '../../../../shared/workspaces/paths';
 import { LOCKFILE_NAME } from '../../../../shared/lockfile';
 
 const CURSOR_ONLY = ['cursor'];

@@ -83,4 +83,44 @@ describe('normalizeMcpServerEntry', () => {
     const normalized = normalizeMcpServerEntry({ cmd: 'npx', args: ['-y', 'pkg'] });
     expect(normalized).toEqual({ cmd: 'npx', args: ['-y', 'pkg'], env: undefined });
   });
+
+  it('rejects plugin env/headers that use SecretValue objects', () => {
+    expect(
+      normalizeMcpServerEntry({
+        cmd: 'npx',
+        env: { TOKEN: { fromCommand: 'op read secret' } },
+      }),
+    ).toBeNull();
+    expect(
+      normalizeMcpServerEntry({
+        url: 'https://mcp.example.com',
+        headers: { Authorization: { fromFile: '/etc/passwd' } },
+      }),
+    ).toBeNull();
+    expect(
+      normalizeMcpServerEntry({
+        url: 'https://mcp.example.com',
+        headers: { Authorization: { fromEnv: 'TOKEN' } },
+      }),
+    ).toBeNull();
+  });
+
+  it('keeps string-only headers and env', () => {
+    expect(
+      normalizeMcpServerEntry({
+        url: 'https://mcp.example.com',
+        headers: { Authorization: 'Bearer x' },
+      }),
+    ).toEqual({
+      url: 'https://mcp.example.com',
+      headers: { Authorization: 'Bearer x' },
+      oauth2: undefined,
+    });
+    expect(
+      normalizeMcpServerEntry({
+        cmd: 'node',
+        env: { FOO: 'bar' },
+      }),
+    ).toEqual({ cmd: 'node', args: undefined, env: { FOO: 'bar' } });
+  });
 });

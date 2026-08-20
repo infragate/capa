@@ -179,6 +179,24 @@ export function normalizeOAuth2Block(
 }
 
 /**
+ * Plugin manifests are untrusted: only plain string maps are accepted for
+ * headers/env. SecretValue objects (`fromCommand` / `fromFile` / `fromEnv`)
+ * must come from user-owned capabilities, never from a plugin MCP entry.
+ */
+function stringRecordOnly(
+	value: unknown,
+): Record<string, string> | undefined | null {
+	if (value === undefined || value === null) return undefined;
+	if (!isPlainObject(value)) return null;
+	const out: Record<string, string> = {};
+	for (const [key, entry] of Object.entries(value)) {
+		if (typeof entry !== "string") return null;
+		out[key] = entry;
+	}
+	return out;
+}
+
+/**
  * Normalize one MCP server entry from manifest.
  * Supports subprocess (command/cmd + args/env) and remote HTTP (url + headers/oauth).
  */
@@ -190,24 +208,24 @@ export function normalizeMcpServerEntry(
 
 	const url = parsed.url;
 	if (typeof url === "string" && url.length > 0) {
+		const headers = stringRecordOnly(parsed.headers);
+		if (headers === null) return null;
 		const rawOauth = parsed.oauth2 ?? parsed.oauth ?? parsed.auth;
 		return {
 			url,
-			headers: isPlainObject(parsed.headers)
-				? (parsed.headers as Record<string, string>)
-				: undefined,
+			headers,
 			oauth2: normalizeOAuth2Block(rawOauth),
 		};
 	}
 
 	const command = parsed.command ?? parsed.cmd;
 	if (typeof command !== "string") return null;
+	const env = stringRecordOnly(parsed.env);
+	if (env === null) return null;
 	return {
 		cmd: command,
 		args: Array.isArray(parsed.args) ? parsed.args : undefined,
-		env: isPlainObject(parsed.env)
-			? (parsed.env as Record<string, string>)
-			: undefined,
+		env,
 	};
 }
 
