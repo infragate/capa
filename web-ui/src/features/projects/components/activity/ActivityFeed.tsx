@@ -16,6 +16,7 @@ import {
 import { LatencyBar, sourceLabelText, TokenUsageLabel } from './ActivityShared';
 
 interface ActivityFeedProps {
+  projectId: string;
   calls: ToolCallRecord[];
   hasMore: boolean;
   loadingMore: boolean;
@@ -113,7 +114,13 @@ function ConversationBlock({
 
   return (
     <div className="border-b border-border-secondary/90 last:border-b-0">
-      <div className="flex items-center gap-2 bg-bg-tertiary/40 px-3 py-1.5 text-[10px] font-medium uppercase tracking-[0.06em] text-text-tertiary">
+      <div
+        className={cn(
+          'sticky top-[29px] z-[1] flex min-h-[29px] items-center gap-2',
+          'border-b border-border-secondary/90 bg-bg-tertiary/95 px-3 py-1.5',
+          'text-[10px] font-medium uppercase tracking-[0.06em] text-text-tertiary backdrop-blur-sm',
+        )}
+      >
         <span className="min-w-0 flex-1 truncate" title={isOrphan ? undefined : conversation.id}>
           {title}
         </span>
@@ -156,6 +163,7 @@ function ConversationBlock({
 }
 
 export function ActivityFeed({
+  projectId,
   calls,
   hasMore,
   loadingMore,
@@ -192,7 +200,7 @@ export function ActivityFeed({
   return (
     <>
       <div className="max-h-[560px] overflow-y-auto">
-        <div className="sticky top-0 z-[1] flex items-center gap-2 border-b border-border-secondary bg-bg-secondary/95 px-3 py-1.5 text-[10px] font-medium uppercase tracking-[0.07em] text-text-tertiary backdrop-blur-sm">
+        <div className="sticky top-0 z-[2] flex min-h-[29px] items-center gap-2 border-b border-border-secondary bg-bg-secondary/95 px-3 py-1.5 text-[10px] font-medium uppercase tracking-[0.07em] text-text-tertiary backdrop-blur-sm">
           <span className="w-4 shrink-0" />
           <span className="min-w-0 flex-1">{t('activity.colName')}</span>
           <span className="w-14 shrink-0 text-right">{t('activity.colSpans')}</span>
@@ -228,11 +236,13 @@ export function ActivityFeed({
 
       <ActivityRunDialog
         run={selectedRun}
+        projectId={projectId}
         open={selectedId != null && selectedRun != null}
         onOpenChange={(next) => {
           if (!next) setSelectedId(null);
         }}
         live={live}
+        feedCalls={calls}
         projectPath={projectPath}
       />
     </>

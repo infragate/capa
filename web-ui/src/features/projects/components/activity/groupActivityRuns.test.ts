@@ -4,6 +4,7 @@ import {
   groupActivityConversations,
   groupActivityRuns,
   isCapaToolCall,
+  resolveActivityRunFromCalls,
 } from './groupActivityRuns';
 
 function call(
@@ -223,6 +224,50 @@ describe('groupActivityRuns', () => {
     const runs = groupActivityConversations(calls).flatMap((c) => c.generations);
     expect(runs.find((r) => r.id === 'conv-a:gen-shared')?.title).toBe('chat a');
     expect(runs.find((r) => r.id === 'conv-b:gen-shared')?.title).toBe('chat b');
+  });
+
+  it('resolves a full generation from fetched API rows', () => {
+    const generationId = 'gen-1';
+    const calls = [
+      call({
+        id: '3',
+        kind: 'agent_tool',
+        tool_name: 'Read',
+        started_at: 300,
+        conversation_id: 'conv-a',
+        generation_id: generationId,
+      }),
+      call({
+        id: '2',
+        kind: 'shell',
+        tool_name: 'ls',
+        started_at: 200,
+        conversation_id: 'conv-a',
+        generation_id: generationId,
+      }),
+      call({
+        id: '1',
+        kind: 'prompt',
+        tool_name: 'go',
+        started_at: 100,
+        conversation_id: 'conv-a',
+        generation_id: generationId,
+      }),
+    ];
+    const fallback = {
+      id: 'conv-a:gen-1',
+      conversationId: 'conv-a',
+      generationId,
+      title: 'go',
+      prompt: calls[2]!,
+      spans: [calls[2]!],
+      started_at: 100,
+      source: 'cursor',
+      hasError: false,
+      duration_ms: 200,
+    };
+    const resolved = resolveActivityRunFromCalls(calls, fallback);
+    expect(resolved.spans.map((s) => s.id)).toEqual(['2', '3']);
   });
 });
 

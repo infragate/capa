@@ -10,6 +10,7 @@ import type {
   Tool,
   ToolCallRecord,
 } from '../../types/api';
+import { reconcileCursorActivityConversationIds } from '../../../../src/shared/activity-correlation-reconcile';
 import { configuredToolReorderKey } from './components/tools/anchors';
 import { reorderByKey, serverReorderKey, skillReorderKey } from './lib/reorderKeys';
 
@@ -50,6 +51,30 @@ function reorderSkillsByKey(skills: Skill[], keys: string[]): Skill[] {
 
 function reorderServersByKey(servers: Server[], keys: string[]): Server[] {
   return reorderByKey(servers, keys, serverReorderKey);
+}
+
+function shouldFetchServerTools(server: Server): boolean {
+  return !!server.enabled && !(server.requiresOAuth && !server.isConnected);
+}
+
+function patchProjectServerEnabled(
+  qc: ReturnType<typeof useQueryClient>,
+  projectId: string,
+  serverId: string,
+  enabled: boolean,
+): void {
+  qc.setQueryData<ProjectDetail>(['project', projectId], (old) => {
+    if (!old?.capabilities?.servers) return old;
+    return {
+      ...old,
+      capabilities: {
+        ...old.capabilities,
+        servers: old.capabilities.servers.map((s) =>
+          s.id === serverId ? { ...s, enabled } : s,
+        ),
+      },
+    };
+  });
 }
 
 export function useProjects() {
@@ -291,18 +316,166 @@ export function useProjectActivitySession(
   });
 }
 
-export function useProjectActivityConversation(
+export function useProjectActivityGeneration(
   projectId: string | null,
-  conversationId: string | null,
+  generationId: string | null,
+  opts?: {
+    /** Live feed rows to merge (covers rows not yet fetched + SSE overlap). */
+    feedCalls?: ToolCallRecord[];
+    /** When false, skips fetch/subscribe (dialog closed). */
+    enabled?: boolean;
+  },
 ) {
-  return useQuery({
-    queryKey: ['activity-conversation', projectId, conversationId],
+  const enabled =
+    opts?.enabled ?? (!!projectId && !!generationId);
+  const feedCalls = opts?.feedCalls;
+  const [mergedCalls, setMergedCalls] = useState<ToolCallRecord[]>([]);
+
+  const query = useQuery({
+    queryKey: ['activity-generation', projectId, generationId],
     queryFn: () =>
-      projectsApi.getActivity(projectId!, { conversationId: conversationId! }),
-    enabled: !!projectId && !!conversationId,
+      projectsApi.getActivity(projectId!, { generationId: generationId! }),
+    enabled: enabled && !!projectId && !!generationId,
     select: (data) => data.calls,
     staleTime: 30_000,
   });
+
+  const mergeGenerationCalls = useCallback(
+    (sources: ToolCallRecord[][]) => {
+      if (!generationId) return [];
+      const byId = new Map<string, ToolCallRecord>();
+      for (const source of sources) {
+        for (const call of source) {
+          if (call.generation_id === generationId) {
+            byId.set(call.id, call);
+          }
+        }
+      }
+      return [...byId.values()].sort(
+        (a, b) => a.started_at - b.started_at || a.id.localeCompare(b.id),
+      );
+    },
+    [generationId],
+  );
+
+  useEffect(() => {
+    if (!enabled) {
+      setMergedCalls([]);
+      return;
+    }
+    setMergedCalls(
+      mergeGenerationCalls([
+        query.data ?? [],
+        feedCalls ?? [],
+      ]),
+    );
+  }, [enabled, query.data, feedCalls, mergeGenerationCalls]);
+
+  useEffect(() => {
+    if (!enabled || !projectId || !generationId) return;
+
+    const onToolCall = (ev: MessageEvent) => {
+      try {
+        const record = JSON.parse(String(ev.data)) as ToolCallRecord;
+        if (record.generation_id !== generationId) return;
+        setMergedCalls((prev) => {
+          const idx = prev.findIndex((c) => c.id === record.id);
+          const next =
+            idx === -1
+              ? [...prev, record]
+              : prev.map((c, i) => (i === idx ? record : c));
+          return mergeGenerationCalls([next]);
+        });
+      } catch {
+        // ignore malformed events
+      }
+    };
+
+    return subscribeProjectEvents(projectId, { onToolCall });
+  }, [enabled, projectId, generationId, mergeGenerationCalls]);
+
+  return {
+    ...query,
+    data: mergedCalls,
+  };
+}
+
+export function useProjectActivityConversation(
+  projectId: string | null,
+  conversationId: string | null,
+  opts?: {
+    /** Live feed rows to merge (covers rows not yet fetched + SSE overlap). */
+    feedCalls?: ToolCallRecord[];
+    /** When false, skips fetch/subscribe (dialog closed). */
+    enabled?: boolean;
+  },
+) {
+  const enabled =
+    opts?.enabled ?? (!!projectId && !!conversationId);
+  const feedCalls = opts?.feedCalls;
+  const [mergedCalls, setMergedCalls] = useState<ToolCallRecord[]>([]);
+
+  const query = useQuery({
+    queryKey: ['activity-conversation', projectId, conversationId],
+    queryFn: () =>
+      projectsApi.getActivity(projectId!, { conversationId: conversationId! }),
+    enabled: enabled && !!projectId && !!conversationId,
+    select: (data) => data.calls,
+    staleTime: 30_000,
+  });
+
+  const mergeConversationCalls = useCallback(
+    (sources: ToolCallRecord[][]) => {
+      if (!conversationId) return [];
+      const byId = new Map<string, ToolCallRecord>();
+      for (const source of sources) {
+        for (const call of source) byId.set(call.id, call);
+      }
+      const reconciled = reconcileCursorActivityConversationIds([...byId.values()]);
+      return reconciled.filter((c) => c.conversation_id === conversationId);
+    },
+    [conversationId],
+  );
+
+  useEffect(() => {
+    if (!enabled) {
+      setMergedCalls([]);
+      return;
+    }
+    setMergedCalls(
+      mergeConversationCalls([
+        query.data ?? [],
+        feedCalls ?? [],
+      ]),
+    );
+  }, [enabled, query.data, feedCalls, mergeConversationCalls]);
+
+  useEffect(() => {
+    if (!enabled || !projectId || !conversationId) return;
+
+    const onToolCall = (ev: MessageEvent) => {
+      try {
+        const record = JSON.parse(String(ev.data)) as ToolCallRecord;
+        setMergedCalls((prev) => {
+          const idx = prev.findIndex((c) => c.id === record.id);
+          const next =
+            idx === -1
+              ? [record, ...prev]
+              : prev.map((c, i) => (i === idx ? record : c));
+          return mergeConversationCalls([next]);
+        });
+      } catch {
+        // ignore malformed events
+      }
+    };
+
+    return subscribeProjectEvents(projectId, { onToolCall });
+  }, [enabled, projectId, conversationId, mergeConversationCalls]);
+
+  return {
+    ...query,
+    data: mergedCalls,
+  };
 }
 
 export function useVariables(projectId: string | null) {
@@ -347,13 +520,21 @@ export function useDeleteVariable(projectId: string) {
 }
 
 export function useOAuth2Servers(projectId: string | null) {
-  return useQuery({
+  const qc = useQueryClient();
+  const query = useQuery({
     queryKey: ['oauth2-servers', projectId],
     queryFn: () => projectsApi.getOAuth2Servers(projectId!),
     enabled: !!projectId,
     retry: false,
     select: (data) => data.servers,
   });
+
+  useEffect(() => {
+    if (!projectId || !query.isSuccess) return;
+    void qc.invalidateQueries({ queryKey: ['project', projectId] });
+  }, [projectId, qc, query.isSuccess, query.dataUpdatedAt]);
+
+  return query;
 }
 
 export function useDisconnectOAuth(projectId: string) {
@@ -371,11 +552,24 @@ export function useDisconnectOAuth(projectId: string) {
 export function useSetServerEnabled(projectId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ serverId, enabled }: { serverId: string; enabled: boolean }) =>
-      projectsApi.setServerEnabled(projectId, serverId, enabled),
-    onSuccess: (_data, { serverId }) => {
-      qc.invalidateQueries({ queryKey: ['project', projectId] });
-      qc.invalidateQueries({ queryKey: ['server-tools', projectId, serverId] });
+    mutationFn: async ({ serverId, enabled }: { serverId: string; enabled: boolean }) => {
+      const result = await projectsApi.setServerEnabled(projectId, serverId, enabled);
+      patchProjectServerEnabled(qc, projectId, serverId, result.enabled);
+
+      if (result.enabled) {
+        const project = qc.getQueryData<ProjectDetail>(['project', projectId]);
+        const server = project?.capabilities?.servers.find((s) => s.id === serverId);
+        if (server && shouldFetchServerTools(server)) {
+          await qc.fetchQuery({
+            queryKey: ['server-tools', projectId, serverId],
+            queryFn: () => projectsApi.getServerTools(projectId, serverId),
+          });
+        }
+      } else {
+        qc.removeQueries({ queryKey: ['server-tools', projectId, serverId] });
+      }
+
+      return result;
     },
   });
 }

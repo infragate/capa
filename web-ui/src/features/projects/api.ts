@@ -73,13 +73,14 @@ export const projectsApi = {
       `/api/projects/${encodeURIComponent(projectId)}/skills/${encodeURIComponent(skillId)}/content`,
     ),
 
-  getActivity: (projectId: string, opts?: { limit?: number; before?: number; beforeId?: string; sessionId?: string; conversationId?: string }) => {
+  getActivity: (projectId: string, opts?: { limit?: number; before?: number; beforeId?: string; sessionId?: string; conversationId?: string; generationId?: string }) => {
     const params = new URLSearchParams();
     params.set('limit', String(opts?.limit ?? 50));
     if (opts?.before != null) params.set('before', String(opts.before));
     if (opts?.beforeId) params.set('beforeId', opts.beforeId);
     if (opts?.sessionId) params.set('sessionId', opts.sessionId);
     if (opts?.conversationId) params.set('conversationId', opts.conversationId);
+    if (opts?.generationId) params.set('generationId', opts.generationId);
     return api.get<ActivityResponse>(
       `/api/projects/${encodeURIComponent(projectId)}/activity?${params}`,
     );

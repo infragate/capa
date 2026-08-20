@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import * as Dialog from '@radix-ui/react-dialog';
 import { Loader2, X } from 'lucide-react';
+import type { ToolCallRecord } from '../../../../types/api';
 import { cn } from '../../../../lib/utils';
 import {
   useProjectActivityConversation,
@@ -27,6 +28,9 @@ interface ActivityTracesDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   projectPath?: string | null;
+  /** Optional live feed rows for conversation aggregate + SSE merge. */
+  feedCalls?: ToolCallRecord[];
+  live?: boolean;
 }
 
 export function ActivityTracesDialog({
@@ -35,6 +39,8 @@ export function ActivityTracesDialog({
   open,
   onOpenChange,
   projectPath = null,
+  feedCalls,
+  live = false,
 }: ActivityTracesDialogProps) {
   const { t } = useTranslation('projects');
   const sessionQuery = useProjectActivitySession(
@@ -44,6 +50,10 @@ export function ActivityTracesDialog({
   const conversationQuery = useProjectActivityConversation(
     open && view?.kind === 'conversation' ? projectId : null,
     open && view?.kind === 'conversation' ? view.id : null,
+    {
+      enabled: open && view?.kind === 'conversation',
+      feedCalls,
+    },
   );
 
   const conversationRuns = useMemo(() => {
@@ -66,17 +76,21 @@ export function ActivityTracesDialog({
         error={conversationQuery.error ? (conversationQuery.error as Error).message : null}
         emptyLabel={t('activity.conversationTracesEmpty')}
         projectPath={projectPath}
+        live={live}
       />
     );
   }
 
   return (
     <ActivitySessionTracesDialog
+      projectId={projectId}
       sessionId={view?.kind === 'session' ? view.id : null}
       open={open}
       onOpenChange={onOpenChange}
       projectPath={projectPath}
       query={sessionQuery}
+      feedCalls={feedCalls}
+      live={live}
     />
   );
 }
@@ -85,17 +99,23 @@ export function ActivityTracesDialog({
 export const ActivitySessionDialog = ActivityTracesDialog;
 
 function ActivitySessionTracesDialog({
+  projectId,
   sessionId,
   open,
   onOpenChange,
   projectPath,
   query,
+  feedCalls,
+  live = false,
 }: {
+  projectId: string;
   sessionId: string | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   projectPath?: string | null;
   query: ReturnType<typeof useProjectActivitySession>;
+  feedCalls?: ToolCallRecord[];
+  live?: boolean;
 }) {
   const { t } = useTranslation('projects');
   const { data: calls, isLoading, error } = query;
@@ -175,10 +195,13 @@ function ActivitySessionTracesDialog({
 
       <ActivityRunDialog
         run={selectedRun}
+        projectId={projectId}
         open={selectedRunId != null && selectedRun != null}
         onOpenChange={(next) => {
           if (!next) setSelectedRunId(null);
         }}
+        feedCalls={feedCalls}
+        live={live}
         projectPath={projectPath}
       />
     </>

@@ -229,16 +229,20 @@ export function ToolsSection({
 
   const existingToolIds = useMemo(() => new Set(tools.map((t) => t.id)), [tools]);
 
-  const tokenSavingsLoading = serverToolQueries.some((q, i) => {
-    const server = servers[i];
-    if (!server || !serverToolsFetchEnabled(server)) return false;
-    // Disabled queries stay isPending forever; only count active fetches.
-    return q.isLoading;
-  });
+  // Only block the bar on the very first load (no cached tool lists yet).
+  // Server toggles refetch one server at a time — keep showing last stats.
+  const tokenSavingsLoading =
+    servers.length > 0 &&
+    Object.keys(serverToolsMap).length === 0 &&
+    serverToolQueries.some((q, i) => {
+      const server = servers[i];
+      if (!server || !serverToolsFetchEnabled(server)) return false;
+      return q.isLoading;
+    });
   const tokenSavings = useMemo(() => {
-    if (servers.length === 0 || tokenSavingsLoading) return null;
+    if (servers.length === 0) return null;
     return computeTokenSavings(tools as EnrichedTool[], serverToolsMap, servers.length);
-  }, [tools, servers, serverToolsMap, serverToolsDataKey, tokenSavingsLoading]);
+  }, [tools, servers, serverToolsMap, serverToolsDataKey]);
 
   return (
     <div

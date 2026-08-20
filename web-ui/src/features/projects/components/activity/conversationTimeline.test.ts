@@ -1,15 +1,21 @@
 import { describe, expect, it } from 'bun:test';
 import type { ActivityRun } from './groupActivityRuns';
 import {
-  buildConversationTimelineBlocks,
-  runsOverlap,
+  runPromptTime,
+  runTightBounds,
+  sortEventsChronological,
   sortRunsChronological,
 } from './conversationTimeline';
+import type { ToolCallRecord } from '../../../../types/api';
 
 function run(
   id: string,
   started_at: number,
   duration_ms: number,
+  extra?: Partial<ActivityRun> & {
+    prompt?: ToolCallRecord | null;
+    spans?: ToolCallRecord[];
+  },
 ): ActivityRun {
   return {
     id,
@@ -22,42 +28,96 @@ function run(
     source: 'cursor',
     hasError: false,
     duration_ms,
+    ...extra,
+  };
+}
+
+function span(
+  id: string,
+  started_at: number,
+  duration_ms: number,
+  status: ToolCallRecord['status'] = 'ok',
+  kind = 'agent_tool',
+): ToolCallRecord {
+  return {
+    id,
+    project_id: 'p',
+    session_id: null,
+    started_at,
+    duration_ms,
+    status,
+    source: 'cursor',
+    kind,
+    tool_name: id,
+    meta_tool: null,
+    args_json: null,
+    result_preview: null,
+    result_bytes: null,
+    result_tokens: null,
+    input_tokens: null,
+    output_tokens: null,
+    cache_read_tokens: null,
+    cache_write_tokens: null,
+    error_message: null,
+    agent_id: null,
+    conversation_id: 'conv-1',
+    generation_id: 'gen-1',
+    model: null,
+    attributes_json: null,
   };
 }
 
 describe('conversationTimeline', () => {
-  it('sorts runs earliest-first', () => {
-    const sorted = sortRunsChronological([run('b', 200, 50), run('a', 100, 50)]);
-    expect(sorted.map((r) => r.id)).toEqual(['a', 'b']);
+  it('sorts by prompt time, not min span time', () => {
+    const laterPrompt = run('b', 50, 100, {
+      prompt: span('prompt-b', 200, 1, 'ok', 'prompt'),
+      spans: [span('tool-b', 50, 10)],
+    });
+    const earlierPrompt = run('a', 500, 100, {
+      prompt: span('prompt-a', 100, 1, 'ok', 'prompt'),
+      spans: [span('tool-a', 500, 10)],
+    });
+    expect(runPromptTime(laterPrompt)).toBe(200);
+    expect(runPromptTime(earlierPrompt)).toBe(100);
+    expect(sortRunsChronological([laterPrompt, earlierPrompt]).map((r) => r.id)).toEqual([
+      'a',
+      'b',
+    ]);
   });
 
-  it('detects overlapping runs', () => {
-    expect(runsOverlap(run('a', 0, 100), run('b', 50, 100), 10_000)).toBe(true);
-    expect(runsOverlap(run('a', 0, 40), run('b', 100, 40), 10_000)).toBe(false);
-  });
-
-  it('groups overlapping runs into concurrent blocks', () => {
-    const blocks = buildConversationTimelineBlocks(
-      [run('a', 0, 100), run('b', 50, 100), run('c', 300, 50)],
-      10_000,
+  it('uses stop time as the turn end bound', () => {
+    const bounds = runTightBounds(
+      run('turn-a', 0, 999_999, {
+        prompt: span('prompt-a', 0, 1, 'ok', 'prompt'),
+        spans: [
+          span('tool-a', 10, 80, 'running'),
+          span('stop-a', 90, 5, 'ok', 'stop'),
+        ],
+      }),
+      50_000,
     );
-    expect(blocks).toHaveLength(2);
-    expect(blocks[0]?.kind).toBe('concurrent');
-    if (blocks[0]?.kind === 'concurrent') {
-      expect(blocks[0].runs.map((r) => r.id)).toEqual(['a', 'b']);
-    }
-    expect(blocks[1]?.kind).toBe('single');
-    if (blocks[1]?.kind === 'single') {
-      expect(blocks[1].run.id).toBe('c');
-    }
+    expect(bounds.start).toBe(0);
+    expect(bounds.end).toBe(95);
   });
 
-  it('orders blocks chronologically', () => {
-    const blocks = buildConversationTimelineBlocks(
-      [run('late', 500, 20), run('early', 100, 20)],
-      10_000,
-    );
-    expect(blocks[0]?.kind).toBe('single');
-    if (blocks[0]?.kind === 'single') expect(blocks[0].run.id).toBe('early');
+  it('sorts events globally by started_at across generations', () => {
+    const genA = span('tool-a', 200, 10);
+    genA.generation_id = 'gen-a';
+    const genB = span('tool-b', 100, 10);
+    genB.generation_id = 'gen-b';
+    const sessionStart = span('sess-start', 0, 1, 'ok', 'session');
+    sessionStart.tool_name = 'sessionStart';
+    sessionStart.generation_id = 'conv-1';
+    const sessionEnd = span('sess-end', 500, 1, 'ok', 'session');
+    sessionEnd.tool_name = 'sessionEnd';
+    sessionEnd.generation_id = 'conv-1';
+
+    const sorted = sortEventsChronological([genA, genB, sessionEnd, sessionStart]);
+    expect(sorted.map((e) => e.id)).toEqual([
+      'sess-start',
+      'tool-b',
+      'tool-a',
+      'sess-end',
+    ]);
   });
 });

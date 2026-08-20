@@ -60,7 +60,7 @@ import {
 } from "./mcp-meta-routes";
 import { McpServerStateManager } from "./mcp-server-state";
 import { OAuth2Manager } from "./oauth-manager";
-import { syncServerOAuth2Requirement } from "./oauth-server-sync";
+import { syncAllServersOAuth2Requirements } from "./oauth-server-sync";
 import {
 	handleDeleteProject,
 	handleGetProject,
@@ -555,6 +555,7 @@ class CapaServer {
 				url.searchParams.get("beforeId"),
 				url.searchParams.get("sessionId"),
 				url.searchParams.get("conversationId"),
+				url.searchParams.get("generationId"),
 			);
 		}
 
@@ -1060,25 +1061,18 @@ class CapaServer {
 			}
 
 			// Reconcile def.oauth2 with what each URL-based server actually requires.
-			let capabilitiesUpdated = false;
-			for (const server of capabilities.servers) {
-				if (!server.def.url) continue;
-				const sync = await syncServerOAuth2Requirement(
-					projectId,
-					server,
-					this.oauth2Manager,
-				);
-				if (sync.changed) {
-					capabilitiesUpdated = true;
-					if (!sync.entry) {
-						apiLogger.debug(
-							`Cleared stale OAuth2 config for ${server.id}`,
-						);
-					}
-				}
-			}
-			if (capabilitiesUpdated) {
+			const oauthSync = await syncAllServersOAuth2Requirements(
+				projectId,
+				capabilities,
+				this.oauth2Manager,
+			);
+			if (oauthSync.changed) {
 				this.sessionManager.setProjectCapabilities(projectId, capabilities);
+				for (const entry of oauthSync.entries) {
+					apiLogger.debug(
+						`OAuth2 required for ${entry.serverId} (connected=${entry.isConnected})`,
+					);
+				}
 			}
 
 			const oauth2Servers = capabilities.servers

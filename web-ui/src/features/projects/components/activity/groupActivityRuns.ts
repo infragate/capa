@@ -82,6 +82,25 @@ export function groupActivityConversations(
   return conversations.sort((a, b) => b.started_at - a.started_at);
 }
 
+export function resolveActivityRunFromCalls(
+	calls: ToolCallRecord[],
+	fallback: ActivityRun,
+): ActivityRun {
+	if (calls.length === 0) return fallback;
+	const runs = groupActivityConversations(calls);
+	for (const conversation of runs) {
+		const match =
+			conversation.generations.find((g) => g.id === fallback.id) ??
+			conversation.generations.find(
+				(g) =>
+					fallback.generationId != null &&
+					g.generationId === fallback.generationId,
+			);
+		if (match) return match;
+	}
+	return fallback;
+}
+
 /**
  * Flatten conversations to generations (newest-first). Kept for callers that
  * only need the turn list.

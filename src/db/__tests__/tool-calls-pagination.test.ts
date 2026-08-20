@@ -144,6 +144,84 @@ describe('ToolCallsRepo conversation pagination', () => {
     expect(page.hasMore).toBe(false);
   });
 
+  it('returns all traces when filtering by generationId', () => {
+    const generationId = 'gen-one';
+    db.insertToolCall({
+      ...baseRow('tool-1', 300, 'agent-session'),
+      kind: 'agent_tool',
+      tool_name: 'Grep',
+      generation_id: generationId,
+    });
+    db.insertToolCall({
+      ...baseRow('prompt-1', 100, 'chat-id'),
+      kind: 'prompt',
+      tool_name: 'hello',
+      generation_id: generationId,
+    });
+    db.insertToolCall({
+      ...baseRow('other-1', 50, 'chat-id'),
+      kind: 'prompt',
+      tool_name: 'other',
+      generation_id: 'gen-two',
+    });
+
+    const page = db.listToolCalls('proj', { generationId });
+    expect(page.calls.map((c) => c.id)).toEqual(['prompt-1', 'tool-1']);
+  });
+
+  it('includes Cursor agent-session rows when filtering by chat conversationId', () => {
+    const chatId = '5838f384-e543-41e8-be49-57fb1de0d433';
+    const agentSessionId = '6b74a2c7-5d30-4160-8b01-e8106e144ff3';
+    const generationId = 'e972af4d-ba8b-4d82-a839-b3b0a9b2aafd';
+
+    db.insertToolCall({
+      ...baseRow('tool-1', 300, agentSessionId),
+      kind: 'agent_tool',
+      tool_name: 'Grep',
+      generation_id: generationId,
+    });
+    db.insertToolCall({
+      ...baseRow('prompt-1', 100, chatId),
+      kind: 'prompt',
+      tool_name: 'fix the alert',
+      generation_id: generationId,
+    });
+
+    const page = db.listToolCalls('proj', { conversationId: chatId });
+    expect(page.calls.map((c) => c.id).sort()).toEqual(['prompt-1', 'tool-1']);
+  });
+
+  it('does not leak rows from another conversation that shares a generation_id', () => {
+    const sharedGen = 'gen-shared';
+    db.insertToolCall({
+      ...baseRow('b-tool', 200, 'conv-b'),
+      kind: 'agent_tool',
+      tool_name: 'Read',
+      generation_id: sharedGen,
+    });
+    db.insertToolCall({
+      ...baseRow('b-prompt', 190, 'conv-b'),
+      kind: 'prompt',
+      tool_name: 'chat b',
+      generation_id: sharedGen,
+    });
+    db.insertToolCall({
+      ...baseRow('a-tool', 100, 'conv-a'),
+      kind: 'agent_tool',
+      tool_name: 'Grep',
+      generation_id: sharedGen,
+    });
+    db.insertToolCall({
+      ...baseRow('a-prompt', 90, 'conv-a'),
+      kind: 'prompt',
+      tool_name: 'chat a',
+      generation_id: sharedGen,
+    });
+
+    const page = db.listToolCalls('proj', { conversationId: 'conv-a' });
+    expect(page.calls.map((c) => c.id).sort()).toEqual(['a-prompt', 'a-tool']);
+  });
+
   it('paginates session traces with before/beforeId cursor', () => {
     for (let i = 0; i < 120; i++) {
       db.insertToolCall({

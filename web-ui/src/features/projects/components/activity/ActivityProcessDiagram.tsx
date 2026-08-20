@@ -8,29 +8,36 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Download, Loader2 } from 'lucide-react';
 import mermaid from 'mermaid';
 import type { ActivityRun } from './groupActivityRuns';
 import {
   buildProcessGraph,
+  graphToMarkdown,
   toMermaidFlowchart,
   type MermaidClassColors,
   type ProcessGraph,
 } from './buildProcessGraph';
+import {
+  downloadText,
+  exportBaseName,
+  exportSvgAsPng,
+  fitDiagramTransform,
+} from './processDiagramExport';
+import {
+  DEFAULT_DIAGRAM_TRANSFORM,
+  DIAGRAM_MAX_SCALE,
+  DIAGRAM_MIN_SCALE,
+  type ViewTransform,
+} from './processDiagramTypes';
 
 interface ActivityProcessDiagramProps {
   runs: ActivityRun[];
   /** Changes when viewing a different run/conversation; pan/zoom resets only then. */
   viewKey: string;
+  /** Increment when the user switches to process view — triggers one fit-to-view. */
+  fitToken?: number;
 }
-
-const MIN_SCALE = 0.15;
-const MAX_SCALE = 3;
-
-type ViewTransform = {
-  scale: number;
-  x: number;
-  y: number;
-};
 
 function cssVar(name: string, fallback: string): string {
   if (typeof document === 'undefined') return fallback;
@@ -58,10 +65,8 @@ function capaMermaidColors(): MermaidClassColors {
 }
 
 function clampScale(scale: number): number {
-  return Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale));
+  return Math.min(DIAGRAM_MAX_SCALE, Math.max(DIAGRAM_MIN_SCALE, scale));
 }
-
-const DEFAULT_TRANSFORM: ViewTransform = { scale: 1, x: 24, y: 24 };
 
 /** Survives ProcessMermaid remounts during live diagram updates. */
 const viewTransformByKey = new Map<string, ViewTransform>();
@@ -76,15 +81,15 @@ function usePersistedViewTransform(viewKey: string): [
   useEffect(() => {
     if (activeDiagramViewKey === viewKey) return;
     activeDiagramViewKey = viewKey;
-    viewTransformByKey.set(viewKey, DEFAULT_TRANSFORM);
+    viewTransformByKey.set(viewKey, DEFAULT_DIAGRAM_TRANSFORM);
     forceRender((n) => n + 1);
   }, [viewKey]);
 
-  const transform = viewTransformByKey.get(viewKey) ?? DEFAULT_TRANSFORM;
+  const transform = viewTransformByKey.get(viewKey) ?? DEFAULT_DIAGRAM_TRANSFORM;
 
   const setTransform = useCallback(
     (next: ViewTransform | ((prev: ViewTransform) => ViewTransform)) => {
-      const prev = viewTransformByKey.get(viewKey) ?? DEFAULT_TRANSFORM;
+      const prev = viewTransformByKey.get(viewKey) ?? DEFAULT_DIAGRAM_TRANSFORM;
       const value = typeof next === 'function' ? next(prev) : next;
       viewTransformByKey.set(viewKey, value);
       forceRender((n) => n + 1);
@@ -95,16 +100,109 @@ function usePersistedViewTransform(viewKey: string): [
   return [transform, setTransform];
 }
 
-function ProcessMermaid({ graph, viewKey }: { graph: ProcessGraph; viewKey: string }) {
+function ProcessDiagramExportBar({
+  graph,
+  viewKey,
+  svgMarkup,
+  mermaidDefinition,
+}: {
+  graph: ProcessGraph;
+  viewKey: string;
+  svgMarkup: string | null;
+  mermaidDefinition: string | null;
+}) {
+  const { t } = useTranslation('projects');
+  const [exportingPng, setExportingPng] = useState(false);
+  const baseName = exportBaseName(viewKey);
+
+  const onExportMarkdown = useCallback(() => {
+    downloadText(
+      graphToMarkdown(graph, mermaidDefinition),
+      `${baseName}.md`,
+      'text/markdown;charset=utf-8',
+    );
+  }, [baseName, graph, mermaidDefinition]);
+
+  const onExportSvg = useCallback(() => {
+    if (!svgMarkup) return;
+    downloadText(svgMarkup, `${baseName}.svg`, 'image/svg+xml;charset=utf-8');
+  }, [baseName, svgMarkup]);
+
+  const onExportPng = useCallback(async () => {
+    if (!svgMarkup || exportingPng) return;
+    setExportingPng(true);
+    try {
+      await exportSvgAsPng(svgMarkup, `${baseName}.png`, cssVar('--bg-tertiary', '#141627'));
+    } catch (err) {
+      console.error('Process diagram PNG export failed', err);
+    } finally {
+      setExportingPng(false);
+    }
+  }, [baseName, exportingPng, svgMarkup]);
+
+  return (
+    <div className="flex shrink-0 flex-wrap items-center justify-end gap-1 border-b border-border-secondary px-3 py-1.5">
+      <span className="mr-auto inline-flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-text-tertiary">
+        <Download size={11} aria-hidden />
+        {t('activity.processAnalysis.export')}
+      </span>
+      <button
+        type="button"
+        disabled={!svgMarkup || exportingPng}
+        onClick={() => void onExportPng()}
+        className="rounded-md px-2 py-1 text-[11px] font-medium text-text-secondary hover:bg-hover-bg disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
+      >
+        {exportingPng ? (
+          <span className="inline-flex items-center gap-1">
+            <Loader2 size={11} className="animate-spin" aria-hidden />
+            {t('activity.processAnalysis.exportPng')}
+          </span>
+        ) : (
+          t('activity.processAnalysis.exportPng')
+        )}
+      </button>
+      <button
+        type="button"
+        disabled={!svgMarkup}
+        onClick={onExportSvg}
+        className="rounded-md px-2 py-1 text-[11px] font-medium text-text-secondary hover:bg-hover-bg disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
+      >
+        {t('activity.processAnalysis.exportSvg')}
+      </button>
+      <button
+        type="button"
+        onClick={onExportMarkdown}
+        className="rounded-md px-2 py-1 text-[11px] font-medium text-text-secondary hover:bg-hover-bg cursor-pointer"
+      >
+        {t('activity.processAnalysis.exportMarkdown')}
+      </button>
+    </div>
+  );
+}
+
+function ProcessMermaid({
+  graph,
+  viewKey,
+  fitToken,
+  onDiagramReady,
+}: {
+  graph: ProcessGraph;
+  viewKey: string;
+  fitToken: number;
+  onDiagramReady: (payload: { svg: string; mermaidDefinition: string } | null) => void;
+}) {
   const { t } = useTranslation('projects');
   const rawId = useId();
   const renderId = `capaProcess${rawId.replace(/[^a-zA-Z0-9]/g, '')}`;
   const viewportRef = useRef<HTMLDivElement>(null);
+  const svgHostRef = useRef<HTMLDivElement>(null);
   const [svg, setSvg] = useState('');
   const [failed, setFailed] = useState(false);
   const [transform, setTransform] = usePersistedViewTransform(viewKey);
   const transformRef = useRef(transform);
   transformRef.current = transform;
+  const lastFitTokenRef = useRef(-1);
+  const mermaidDefinitionRef = useRef('');
   const [themeKey, setThemeKey] = useState(
     () => document.documentElement.getAttribute('data-theme') ?? 'dark',
   );
@@ -131,6 +229,7 @@ function ProcessMermaid({ graph, viewKey }: { graph: ProcessGraph; viewKey: stri
     const definition = toMermaidFlowchart(graph, colors, (count) =>
       t('activity.processAnalysis.nodeErrors', { count }),
     );
+    mermaidDefinitionRef.current = definition;
     const textPrimary = colors.edgeLabelText;
 
     mermaid.initialize({
@@ -171,6 +270,7 @@ function ProcessMermaid({ graph, viewKey }: { graph: ProcessGraph; viewKey: stri
         if (!cancelled) {
           setSvg(next);
           setFailed(false);
+          onDiagramReady({ svg: next, mermaidDefinition: definition });
         }
       })
       .catch((err: unknown) => {
@@ -178,13 +278,23 @@ function ProcessMermaid({ graph, viewKey }: { graph: ProcessGraph; viewKey: stri
         if (!cancelled) {
           setSvg('');
           setFailed(true);
+          onDiagramReady(null);
         }
       });
 
     return () => {
       cancelled = true;
     };
-  }, [graph, renderId, t, themeKey]);
+  }, [graph, onDiagramReady, renderId, t, themeKey]);
+
+  useEffect(() => {
+    if (!svg || fitToken <= 0 || lastFitTokenRef.current === fitToken) return;
+    const viewport = viewportRef.current;
+    const svgRoot = svgHostRef.current?.querySelector('svg');
+    if (!viewport || !svgRoot) return;
+    lastFitTokenRef.current = fitToken;
+    setTransform(fitDiagramTransform(viewport, svgRoot));
+  }, [fitToken, setTransform, svg]);
 
   const onPointerDown = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
     if (e.button !== 0) return;
@@ -209,7 +319,7 @@ function ProcessMermaid({ graph, viewKey }: { graph: ProcessGraph; viewKey: stri
       x: drag.originX + (e.clientX - drag.startX),
       y: drag.originY + (e.clientY - drag.startY),
     }));
-  }, []);
+  }, [setTransform]);
 
   const endDrag = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
     if (dragRef.current?.pointerId === e.pointerId) {
@@ -238,7 +348,7 @@ function ProcessMermaid({ graph, viewKey }: { graph: ProcessGraph; viewKey: stri
     };
     viewport.addEventListener('wheel', onNativeWheel, { passive: false });
     return () => viewport.removeEventListener('wheel', onNativeWheel);
-  }, []);
+  }, [setTransform]);
 
   return (
     <div
@@ -259,6 +369,7 @@ function ProcessMermaid({ graph, viewKey }: { graph: ProcessGraph; viewKey: stri
       ) : null}
       {svg ? (
         <div
+          ref={svgHostRef}
           className="pointer-events-none origin-top-left select-none [&_*]:select-none [&_svg]:h-auto [&_svg]:max-w-none [&_.edgeLabel_rect]:stroke-none [&_span.edgeLabel]:border-0 [&_span.edgeLabel]:bg-transparent [&_span.edgeLabel]:p-0"
           style={{
             transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})`,
@@ -270,9 +381,20 @@ function ProcessMermaid({ graph, viewKey }: { graph: ProcessGraph; viewKey: stri
   );
 }
 
-export function ActivityProcessDiagram({ runs, viewKey }: ActivityProcessDiagramProps) {
+export function ActivityProcessDiagram({ runs, viewKey, fitToken = 0 }: ActivityProcessDiagramProps) {
   const { t } = useTranslation('projects');
   const graph = useMemo(() => buildProcessGraph(runs), [runs]);
+  const [exportPayload, setExportPayload] = useState<{
+    svg: string;
+    mermaidDefinition: string;
+  } | null>(null);
+
+  const onDiagramReady = useCallback(
+    (payload: { svg: string; mermaidDefinition: string } | null) => {
+      setExportPayload(payload);
+    },
+    [],
+  );
 
   if (graph.activities.length === 0) {
     return (
@@ -284,31 +406,45 @@ export function ActivityProcessDiagram({ runs, viewKey }: ActivityProcessDiagram
 
   if (graph.edges.length === 0) {
     return (
-      <div className="px-4 py-8">
-        <p className="text-center text-sm text-text-tertiary">
-          {t('activity.processAnalysis.singleActivity')}
-        </p>
-        <ul className="mx-auto mt-4 max-w-md space-y-2">
-          {graph.activities.map((activity) => (
-            <li
-              key={activity.id}
-              className="rounded-md border border-border-secondary bg-bg-primary px-3 py-2 text-xs"
-            >
-              <div className="font-medium text-text-primary">{activity.label}</div>
-              <div className="mt-1 tabular-nums text-[10px] text-text-tertiary">
-                {t('activity.processAnalysis.occurrences', {
-                  count: graph.nodeCounts[activity.id] ?? 0,
-                })}
-              </div>
-            </li>
-          ))}
-        </ul>
+      <div className="flex h-full min-h-0 flex-col">
+        <ProcessDiagramExportBar
+          graph={graph}
+          viewKey={viewKey}
+          svgMarkup={null}
+          mermaidDefinition={null}
+        />
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-8">
+          <p className="text-center text-sm text-text-tertiary">
+            {t('activity.processAnalysis.singleActivity')}
+          </p>
+          <ul className="mx-auto mt-4 max-w-md space-y-2">
+            {graph.activities.map((activity) => (
+              <li
+                key={activity.id}
+                className="rounded-md border border-border-secondary bg-bg-primary px-3 py-2 text-xs"
+              >
+                <div className="font-medium text-text-primary">{activity.label}</div>
+                <div className="mt-1 tabular-nums text-[10px] text-text-tertiary">
+                  {t('activity.processAnalysis.occurrences', {
+                    count: graph.nodeCounts[activity.id] ?? 0,
+                  })}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="flex h-full min-h-0 flex-col">
+      <ProcessDiagramExportBar
+        graph={graph}
+        viewKey={viewKey}
+        svgMarkup={exportPayload?.svg ?? null}
+        mermaidDefinition={exportPayload?.mermaidDefinition ?? null}
+      />
       <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border-secondary px-4 py-2 text-[11px] text-text-tertiary">
         <span>
           {t('activity.processAnalysis.summary', {
@@ -319,7 +455,14 @@ export function ActivityProcessDiagram({ runs, viewKey }: ActivityProcessDiagram
         </span>
         <span>{t('activity.processAnalysis.panHint')}</span>
       </div>
-      <ProcessMermaid graph={graph} viewKey={viewKey} />
+      <div className="min-h-0 flex-1">
+        <ProcessMermaid
+          graph={graph}
+          viewKey={viewKey}
+          fitToken={fitToken}
+          onDiagramReady={onDiagramReady}
+        />
+      </div>
     </div>
   );
 }

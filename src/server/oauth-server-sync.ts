@@ -89,14 +89,8 @@ export async function syncServerOAuth2Requirement(
 			server.def.oauth2 = merged;
 
 			let isConnected = oauth2Manager.isServerConnected(projectId, server.id);
-			if (isConnected) {
-				const accessToken = await oauth2Manager.getAccessToken(
-					projectId,
-					server.id,
-					merged,
-				);
-				isConnected = !!accessToken;
-			}
+			// Token row presence is the source of truth for "authenticated" in the UI.
+			// Refresh may fail transiently without invalidating stored credentials.
 
 			return {
 				changed,
@@ -130,4 +124,40 @@ export async function syncServerOAuth2Requirement(
 			},
 		};
 	}
+}
+
+export type SyncAllServersOAuth2Result = {
+	changed: boolean;
+	entries: OAuth2ServerEntry[];
+};
+
+/**
+ * Probe URL-based servers and align def.oauth2 with live requirements.
+ * When `onlyWithExistingOAuth` is true, skips servers with no oauth2 block
+ * (avoids probing every server on each project page load).
+ */
+export async function syncAllServersOAuth2Requirements(
+	projectId: string,
+	capabilities: { servers: MCPServer[] },
+	oauth2Manager: OAuth2Manager,
+	options?: { onlyWithExistingOAuth?: boolean },
+): Promise<SyncAllServersOAuth2Result> {
+	const onlyWithExistingOAuth = options?.onlyWithExistingOAuth === true;
+	let changed = false;
+	const entries: OAuth2ServerEntry[] = [];
+
+	for (const server of capabilities.servers) {
+		if (!server.def.url) continue;
+		if (onlyWithExistingOAuth && !server.def.oauth2) continue;
+
+		const sync = await syncServerOAuth2Requirement(
+			projectId,
+			server,
+			oauth2Manager,
+		);
+		if (sync.changed) changed = true;
+		if (sync.entry) entries.push(sync.entry);
+	}
+
+	return { changed, entries };
 }

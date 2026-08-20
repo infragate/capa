@@ -1,7 +1,7 @@
 /**
- * Reconcile provider activity rows whose conversation_id disagrees within the
- * same generation (Cursor Agent CLI sends chat id on prompts and a separate
- * agent-session id on tool/shell hooks).
+ * Reconcile rows that share a `generation_id` but disagree on `conversation_id`.
+ * Anchor kinds (`prompt`, `stop`) pick the canonical id; every sibling span in
+ * that generation is rewritten to match.
  */
 
 export type ActivityCorrelationRow = {
@@ -45,66 +45,46 @@ function transcriptPathFromRow(row: ActivityCorrelationRow): string | null {
 	return typeof path === "string" ? path : null;
 }
 
-/**
- * Rewrite `conversation_id` on Cursor rows so a generation's prompt, tools,
- * and stops share the composer/chat id used in transcript paths.
- */
+function anchorConversationId(row: ActivityCorrelationRow): string | null {
+	if (row.kind === "prompt") return row.conversation_id?.trim() || null;
+	if (row.kind === "stop") {
+		return (
+			row.conversation_id?.trim() ||
+			chatConversationIdFromTranscriptPath(transcriptPathFromRow(row))
+		);
+	}
+	return null;
+}
+
+/** @deprecated Name kept for callers; logic is generation-scoped, not provider-specific. */
 export function reconcileCursorActivityConversationIds<
 	T extends ActivityCorrelationRow,
 >(calls: readonly T[]): T[] {
-	const chatByGeneration = new Map<string, string>();
+	const canonicalByGeneration = new Map<string, string>();
 	const ambiguousGenerations = new Set<string>();
-	const chatByAgentSession = new Map<string, string>();
-
-	const noteChatForGeneration = (generationId: string, chatId: string) => {
-		if (ambiguousGenerations.has(generationId)) return;
-		const existing = chatByGeneration.get(generationId);
-		if (existing && existing !== chatId) {
-			chatByGeneration.delete(generationId);
-			ambiguousGenerations.add(generationId);
-			return;
-		}
-		chatByGeneration.set(generationId, chatId);
-	};
 
 	for (const call of calls) {
-		if (call.source !== "cursor") continue;
 		const generationId = call.generation_id?.trim();
-		if (!generationId) continue;
+		const anchorId = anchorConversationId(call);
+		if (!generationId || !anchorId) continue;
 
-		let chatId: string | null = null;
-		if (call.kind === "prompt" && call.conversation_id?.trim()) {
-			chatId = call.conversation_id.trim();
+		if (ambiguousGenerations.has(generationId)) continue;
+		const existing = canonicalByGeneration.get(generationId);
+		if (existing && existing !== anchorId) {
+			canonicalByGeneration.delete(generationId);
+			ambiguousGenerations.add(generationId);
+			continue;
 		}
-		if (!chatId && call.kind === "stop") {
-			chatId = chatConversationIdFromTranscriptPath(
-				transcriptPathFromRow(call),
-			);
-		}
-		if (chatId) noteChatForGeneration(generationId, chatId);
+		canonicalByGeneration.set(generationId, anchorId);
 	}
 
-	if (chatByGeneration.size === 0) return [...calls];
+	if (canonicalByGeneration.size === 0) return [...calls];
 
-	const reconciled = calls.map((call) => {
-		if (call.source !== "cursor") return call;
+	return calls.map((call) => {
 		const generationId = call.generation_id?.trim();
 		if (!generationId || ambiguousGenerations.has(generationId)) return call;
-		const chatId = chatByGeneration.get(generationId);
-		if (!chatId || call.conversation_id === chatId) return call;
-		const priorSession = call.conversation_id?.trim();
-		if (priorSession) chatByAgentSession.set(priorSession, chatId);
-		return { ...call, conversation_id: chatId };
-	});
-
-	if (chatByAgentSession.size === 0) return reconciled;
-
-	return reconciled.map((call) => {
-		if (call.source !== "cursor") return call;
-		const sessionId = call.conversation_id?.trim();
-		if (!sessionId) return call;
-		const chatId = chatByAgentSession.get(sessionId);
-		if (!chatId || sessionId === chatId) return call;
-		return { ...call, conversation_id: chatId };
+		const canonical = canonicalByGeneration.get(generationId);
+		if (!canonical || call.conversation_id === canonical) return call;
+		return { ...call, conversation_id: canonical };
 	});
 }
