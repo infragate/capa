@@ -11,7 +11,7 @@ import {
 import { homedir } from 'os';
 import { join } from 'path';
 import * as fs from 'fs';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, renameSync, statSync, writeFileSync } from 'fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import type { ServerSettings } from '../../types/database';
 
@@ -155,7 +155,7 @@ describe('config', () => {
     });
 
     it('restricts capa.db, wal/shm sidecars, and settings.json to 0600', async () => {
-      const { home, restore } = isolateHome();
+      const { restore } = isolateHome();
       try {
         const capaDir = getCapaDir();
         mkdirSync(capaDir, { recursive: true });
