@@ -134,12 +134,12 @@ export function ServerCard({
       className={`rounded-sm border border-border-tertiary bg-bg-tertiary ${!isOn ? 'opacity-80' : ''}`}
       data-link-anchor={serverAnchor(server.id)}
     >
-      <div className="flex items-start gap-1 p-2">
+      <div className="flex items-center gap-1 p-2">
         {dragHandle}
         <button
           type="button"
           onClick={onToggle}
-          className="mt-0.5 rounded-sm p-1 text-text-tertiary hover:bg-hover-bg cursor-pointer"
+          className="shrink-0 self-center rounded-sm p-1 text-text-tertiary hover:bg-hover-bg cursor-pointer"
         >
           <ChevronRight
             size={14}
@@ -147,7 +147,7 @@ export function ServerCard({
             data-open={expanded ? 'true' : 'false'}
           />
         </button>
-        <div className="flex shrink-0 items-center self-center">
+        <div className="flex shrink-0 items-center self-center mx-1.5">
           <Switch
             checked={isOn}
             disabled={mutating}
