@@ -10,6 +10,7 @@ import {
 	loadSettings,
 } from "../shared/config";
 import { logger } from "../shared/logger";
+import { parseCapabilitiesFile } from "../shared/capabilities";
 import { RegistryManager } from "../shared/registries/manager";
 import { seedDefaultRegistries } from "../shared/registries/seed";
 import { projectUiUrl } from "../shared/ui-urls";
@@ -87,7 +88,9 @@ import {
 	previewRegistryHandler,
 	refreshRegistryHandler,
 } from "./registries-routes";
-import { type EffectiveCapsCacheEntry } from "./resolve-effective-capabilities";
+import { detectCapabilitiesFile } from "../shared/paths";
+import { type EffectiveCapsCacheEntry, enrichCapabilitiesOAuthFromPlugins } from "./resolve-effective-capabilities";
+import { redactOAuth2ConfigForApi } from "./secret-redaction";
 import { SessionManager } from "./session-manager";
 import { SubprocessManager } from "./subprocess-manager";
 import {
@@ -1060,6 +1063,32 @@ class CapaServer {
 				);
 			}
 
+			const project = this.db.getProject(projectId);
+			if (project) {
+				try {
+					const file = await detectCapabilitiesFile(project.path);
+					if (file) {
+						const authored = await parseCapabilitiesFile(
+							file.path,
+							file.format,
+						);
+						await enrichCapabilitiesOAuthFromPlugins(
+							capabilities,
+							authored,
+							project.path,
+							projectId,
+							file.path,
+							this.db,
+							this.effectiveCapsCache,
+						);
+					}
+				} catch (error: unknown) {
+					apiLogger.warn(
+						`OAuth plugin enrichment skipped for ${projectId}: ${error instanceof Error ? error.message : String(error)}`,
+					);
+				}
+			}
+
 			// Reconcile def.oauth2 with what each URL-based server actually requires.
 			const oauthSync = await syncAllServersOAuth2Requirements(
 				projectId,
@@ -1095,7 +1124,9 @@ class CapaServer {
 						displayName: s.displayName ?? s.id,
 						isConnected: isConnected,
 						expiresAt: expiresAt,
-						oauth2Config: s.def.oauth2,
+						oauth2Config: redactOAuth2ConfigForApi(
+							s.def.oauth2 as Record<string, unknown>,
+						),
 					};
 				});
 
