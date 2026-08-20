@@ -300,7 +300,9 @@ export class CommandToolExecutor {
 				});
 			});
 
-			proc.on("exit", (code) => {
+			// Use `close` (not `exit`) so stdout/stderr `data` handlers finish
+			// before we read buffers — `exit` can race and yield empty output.
+			proc.on("close", (code) => {
 				if (code === 0) {
 					const output = (stdout || stderr).replace(/\n$/, "");
 					this.logger.info(`          Exit code: 0`);

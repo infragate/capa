@@ -199,7 +199,7 @@ describe('CommandToolExecutor', () => {
         const proc = new EventEmitter() as any;
         proc.stdout = { on: (_: string, cb: (d: Buffer) => void) => cb(Buffer.from('hello\n')) };
         proc.stderr = { on: () => {} };
-        queueMicrotask(() => proc.emit('exit', 0));
+        queueMicrotask(() => proc.emit('close', 0));
         return proc;
       }) as typeof childProcess.spawn);
 

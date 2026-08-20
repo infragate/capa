@@ -151,7 +151,7 @@ export async function applyToolFormatter(
 			finish(input);
 		});
 
-		proc.on("exit", (code) => {
+		proc.on("close", (code) => {
 			clearTimeout(timer);
 			if (code === 0) {
 				finish(stdout.replace(/\n$/, ""));
