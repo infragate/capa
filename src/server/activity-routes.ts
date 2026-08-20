@@ -9,7 +9,11 @@ import {
 	type ToolCallKind,
 	type ToolCallStatus,
 } from "../types/database";
-import { type ProjectRouteDeps } from "./project-routes";
+import {
+	handleGetProjectActivity,
+	handleGetProjectActivityStats,
+	type ProjectRouteDeps,
+} from "./project-routes";
 import type { ToolCallTracer } from "./tool-call-tracer";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
@@ -236,4 +240,56 @@ export async function handleSyncActivityHooks(
 			},
 		);
 	}
+}
+
+export type ActivityRouteDeps = ProjectRouteDeps & {
+	toolCallTracer: ToolCallTracer;
+};
+
+/**
+ * Dispatcher for `/api/projects/:id/activity…` routes.
+ * Returns null if the path is not an activity route.
+ */
+export async function dispatchActivity(
+	deps: ActivityRouteDeps,
+	path: string,
+	method: string,
+	request: Request,
+): Promise<Response | null> {
+	const url = new URL(request.url);
+
+	const activityMatch = path.match(/^\/api\/projects\/([^/]+)\/activity$/);
+	if (activityMatch && method === "GET") {
+		return handleGetProjectActivity(
+			deps,
+			activityMatch[1],
+			url.searchParams.get("limit"),
+			url.searchParams.get("before"),
+			url.searchParams.get("beforeId"),
+			url.searchParams.get("sessionId"),
+			url.searchParams.get("conversationId"),
+			url.searchParams.get("generationId"),
+		);
+	}
+
+	const statsMatch = path.match(/^\/api\/projects\/([^/]+)\/activity\/stats$/);
+	if (statsMatch && method === "GET") {
+		return handleGetProjectActivityStats(deps, statsMatch[1]);
+	}
+
+	const hooksSyncMatch = path.match(
+		/^\/api\/projects\/([^/]+)\/activity\/hooks\/sync$/,
+	);
+	if (hooksSyncMatch && method === "POST") {
+		return handleSyncActivityHooks(deps, hooksSyncMatch[1]);
+	}
+
+	const eventsMatch = path.match(
+		/^\/api\/projects\/([^/]+)\/activity\/events$/,
+	);
+	if (eventsMatch && method === "POST") {
+		return handlePostProjectActivityEvent(deps, eventsMatch[1], request);
+	}
+
+	return null;
 }

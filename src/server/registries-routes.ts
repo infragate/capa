@@ -1,5 +1,6 @@
 import type { CapaDatabase } from "../db/database";
 import { createAuthenticatedFetch } from "../shared/authenticated-fetch";
+import { logger } from "../shared/logger";
 import {
 	deriveSlug,
 	executeStagedRegistry,
@@ -10,7 +11,7 @@ import {
 } from "../shared/registries/installer";
 import type { RegistryManager } from "../shared/registries/manager";
 import type { RegistrySourceType } from "../types/database";
-import type { RegistryManifest } from "../types/registry";
+import type { RegistryCapability, RegistryManifest } from "../types/registry";
 import { clientErrorMessage } from "./http-error";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
@@ -90,7 +91,6 @@ async function stageAndInstallRegistry(
 	return record;
 }
 
-
 export async function listRegistriesHandler(
 	db: CapaDatabase,
 	manager: RegistryManager,
@@ -139,7 +139,10 @@ export async function createRegistryHandler(
 	try {
 		installSlug = body.slug?.trim() || deriveSlug(source, type);
 	} catch (err: any) {
-		return jsonError(`Cannot derive slug: ${clientErrorMessage(err, "invalid source")}`, 400);
+		return jsonError(
+			`Cannot derive slug: ${clientErrorMessage(err, "invalid source")}`,
+			400,
+		);
 	}
 	if (!isValidSlug(installSlug)) {
 		return jsonError(
@@ -335,4 +338,143 @@ export async function previewRegistryHandler(
 	} catch (err: any) {
 		return jsonError(clientErrorMessage(err), 400);
 	}
+}
+
+export interface RegistriesRouteDeps {
+	db: CapaDatabase;
+	registryManager: RegistryManager;
+}
+
+const apiLogger = () => logger.child("CapaServer").child("API");
+
+export async function searchRegistryHandler(
+	manager: RegistryManager,
+	registryId: string,
+	url: URL,
+): Promise<Response> {
+	const log = apiLogger();
+	log.info(`Registry search: ${registryId}`);
+	try {
+		const capability = (url.searchParams.get("capability") ??
+			"skills") as RegistryCapability;
+		const query = url.searchParams.get("q") ?? undefined;
+		const limit = url.searchParams.has("limit")
+			? Number(url.searchParams.get("limit"))
+			: undefined;
+		const cursor = url.searchParams.get("cursor") ?? undefined;
+
+		const result = await manager.search(registryId, {
+			capability,
+			query,
+			limit,
+			cursor,
+		});
+		return jsonOk(result);
+	} catch (error: any) {
+		log.failure(`Registry search error: ${error.message}`);
+		const status = error.message.includes("not found") ? 404 : 502;
+		return new Response(
+			JSON.stringify({ error: error.message, registry: registryId }),
+			{ status, headers: JSON_HEADERS },
+		);
+	}
+}
+
+export async function viewRegistryHandler(
+	manager: RegistryManager,
+	registryId: string,
+	itemId: string,
+	url: URL,
+): Promise<Response> {
+	const log = apiLogger();
+	log.info(`Registry view: ${registryId} / ${itemId}`);
+	try {
+		const capability = (url.searchParams.get("capability") ??
+			"skills") as RegistryCapability;
+		const detail = await manager.view(registryId, {
+			capability,
+			id: itemId,
+		});
+		return jsonOk(detail);
+	} catch (error: any) {
+		log.failure(`Registry view error: ${error.message}`);
+		const status = error.message.includes("not found") ? 404 : 502;
+		return new Response(
+			JSON.stringify({ error: error.message, registry: registryId }),
+			{ status, headers: JSON_HEADERS },
+		);
+	}
+}
+
+/**
+ * Dispatcher for `/api/registries…` routes.
+ * Returns null if the path is not a registries route.
+ */
+export async function dispatchRegistries(
+	deps: RegistriesRouteDeps,
+	path: string,
+	method: string,
+	request: Request,
+): Promise<Response | null> {
+	const url = new URL(request.url);
+
+	if (path === "/api/registries" && method === "GET") {
+		return listRegistriesHandler(deps.db, deps.registryManager);
+	}
+
+	if (path === "/api/registries" && method === "POST") {
+		return createRegistryHandler(deps.db, deps.registryManager, request);
+	}
+
+	if (path === "/api/registries/preview" && method === "GET") {
+		return previewRegistryHandler(deps.db, url);
+	}
+
+	const searchMatch = path.match(/^\/api\/registries\/([^/]+)\/search$/);
+	if (searchMatch && method === "GET") {
+		return searchRegistryHandler(
+			deps.registryManager,
+			decodeURIComponent(searchMatch[1]),
+			url,
+		);
+	}
+
+	// view uses a wildcard tail so item IDs containing slashes work
+	const viewMatch = path.match(/^\/api\/registries\/([^/]+)\/view\/(.+)$/);
+	if (viewMatch && method === "GET") {
+		return viewRegistryHandler(
+			deps.registryManager,
+			decodeURIComponent(viewMatch[1]),
+			decodeURIComponent(viewMatch[2]),
+			url,
+		);
+	}
+
+	const refreshMatch = path.match(/^\/api\/registries\/([^/]+)\/refresh$/);
+	if (refreshMatch && method === "POST") {
+		return refreshRegistryHandler(
+			deps.db,
+			deps.registryManager,
+			decodeURIComponent(refreshMatch[1]),
+		);
+	}
+
+	const itemMatch = path.match(/^\/api\/registries\/([^/]+)$/);
+	if (itemMatch && method === "DELETE") {
+		return deleteRegistryHandler(
+			deps.db,
+			deps.registryManager,
+			decodeURIComponent(itemMatch[1]),
+		);
+	}
+	if (itemMatch && method === "PATCH") {
+		return patchRegistryHandler(
+			deps.db,
+			deps.registryManager,
+			decodeURIComponent(itemMatch[1]),
+			request,
+		);
+	}
+
+	return null;
 }

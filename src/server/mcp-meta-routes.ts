@@ -3,12 +3,16 @@ import { parseCapabilitiesFile } from "../shared/capabilities";
 import { detectCapabilitiesFile } from "../shared/paths";
 import { trustStdioServers } from "../shared/stdio-allowlist";
 import { resolveVariablesInObject } from "../shared/variable-resolver";
-import type { Capabilities, MCPServer, MCPServerDefinition } from "../types/capabilities";
+import type {
+	Capabilities,
+	MCPServer,
+	MCPServerDefinition,
+} from "../types/capabilities";
+import { clientErrorMessage } from "./http-error";
 import type { CapaMCPServer, ShellToolInfo } from "./mcp-handler";
 import type { McpServerStateManager } from "./mcp-server-state";
 import type { SessionManager } from "./session-manager";
 import { resolveSkillContentById } from "./skill-content";
-import { clientErrorMessage } from "./http-error";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
@@ -157,7 +161,10 @@ export async function handleSetServerEnabled(
 			} catch (error: unknown) {
 				// Keep the server enabled — tokens may still be valid and connect
 				// can succeed later without forcing another OAuth round-trip.
-				const detail = clientErrorMessage(error, "Failed to connect MCP server");
+				const detail = clientErrorMessage(
+					error,
+					"Failed to connect MCP server",
+				);
 				const needsAuth = /authentication|oauth2|reconnect/i.test(detail);
 				return new Response(
 					JSON.stringify({
@@ -341,4 +348,65 @@ export async function handleGetShellToolSchema(
 			headers: JSON_HEADERS,
 		});
 	}
+}
+
+/**
+ * Dispatcher for MCP meta API routes (server tools, skills content, shell tools).
+ * Returns null if the path is not handled here.
+ */
+export async function dispatchMcpMeta(
+	deps: McpMetaRouteDeps,
+	path: string,
+	method: string,
+	request: Request,
+): Promise<Response | null> {
+	const url = new URL(request.url);
+
+	const serverToolsMatch = path.match(
+		/^\/api\/projects\/([^/]+)\/servers\/([^/]+)\/tools$/,
+	);
+	if (serverToolsMatch && method === "GET") {
+		return handleGetServerTools(deps, serverToolsMatch[1], serverToolsMatch[2]);
+	}
+
+	const serverEnabledMatch = path.match(
+		/^\/api\/projects\/([^/]+)\/servers\/([^/]+)\/enabled$/,
+	);
+	if (serverEnabledMatch && method === "POST") {
+		return handleSetServerEnabled(
+			deps,
+			serverEnabledMatch[1],
+			serverEnabledMatch[2],
+			request,
+		);
+	}
+
+	const skillContentMatch = path.match(
+		/^\/api\/projects\/([^/]+)\/skills\/([^/]+)\/content$/,
+	);
+	if (skillContentMatch && method === "GET") {
+		return handleGetSkillContent(
+			deps,
+			skillContentMatch[1],
+			decodeURIComponent(skillContentMatch[2]),
+		);
+	}
+
+	const shellToolsMatch = path.match(/^\/api\/projects\/([^/]+)\/shell-tools$/);
+	if (shellToolsMatch && method === "GET") {
+		return handleGetShellTools(deps, shellToolsMatch[1]);
+	}
+
+	const shellToolSchemaMatch = path.match(
+		/^\/api\/projects\/([^/]+)\/shell-tool-schema$/,
+	);
+	if (shellToolSchemaMatch && method === "GET") {
+		return handleGetShellToolSchema(
+			deps,
+			shellToolSchemaMatch[1],
+			url.searchParams.get("tool") || "",
+		);
+	}
+
+	return null;
 }

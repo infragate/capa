@@ -83,3 +83,43 @@ export async function handleDeleteVariable(
 		headers: JSON_HEADERS,
 	});
 }
+
+/**
+ * Dispatcher for `/api/projects/:id/variables…` routes.
+ * Returns null if the path is not a variables route.
+ */
+export async function dispatchVariables(
+	deps: VariablesRouteDeps,
+	path: string,
+	method: string,
+	request: Request,
+): Promise<Response | null> {
+	const varsMatch = path.match(/^\/api\/projects\/([^/]+)\/variables$/);
+	if (varsMatch && method === "GET") {
+		return handleGetVariables(deps, varsMatch[1]);
+	}
+	if (varsMatch && method === "POST") {
+		return handleSetVariables(deps, varsMatch[1], request);
+	}
+
+	const varItemMatch = path.match(
+		/^\/api\/projects\/([^/]+)\/variables\/([^/]+)$/,
+	);
+	if (varItemMatch && method === "PUT") {
+		return handlePutVariable(
+			deps,
+			varItemMatch[1],
+			decodeURIComponent(varItemMatch[2]),
+			request,
+		);
+	}
+	if (varItemMatch && method === "DELETE") {
+		return handleDeleteVariable(
+			deps,
+			varItemMatch[1],
+			decodeURIComponent(varItemMatch[2]),
+		);
+	}
+
+	return null;
+}

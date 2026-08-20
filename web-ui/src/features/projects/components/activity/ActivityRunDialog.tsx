@@ -1,17 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import * as Dialog from '@radix-ui/react-dialog';
-import { ArrowDown, Loader2, Maximize2, Minimize2, Pause, Search, X } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import type { ToolCallRecord } from '../../../../types/api';
 import { cn } from '../../../../lib/utils';
 import {
   type ActivityRun,
-  formatDuration,
-  formatRelative,
   resolveActivityRunFromCalls,
   sumRunTokenUsage,
 } from './groupActivityRuns';
-import { ActivitySpanRow } from './ActivitySpanRow';
 import { ActivityRunFileTree } from './ActivityRunFileTree';
 import { ActivityRunSkillsPanel } from './ActivityRunSkillsPanel';
 import { ActivityRunSplitPane } from './ActivityRunSplitPane';
@@ -25,11 +22,18 @@ import {
   displayPathKeyFromSpan,
   spanIdsForDisplayPathKey,
 } from './buildRunFileTree';
-import { sourceLabelText, TokenUsageLabel } from './ActivityShared';
 import { filterActivityCalls, filterRunsBySearch } from './filterActivityCalls';
 import { ActivityProcessDiagram } from './ActivityProcessDiagram';
-import { ActivityRunViewTabs, type ActivityRunRightView } from './ActivityRunViewTabs';
+import type { ActivityRunRightView } from './ActivityRunViewTabs';
 import { useProjectActivityGeneration } from '../../activityHooks';
+import {
+  aggregateDurationMs,
+  runsEvents,
+  runTimelineBounds,
+} from './activityRunDialogHelpers';
+import { ActivityRunDialogHeader } from './ActivityRunDialogHeader';
+import { ActivityRunDialogSearch } from './ActivityRunDialogSearch';
+import { ActivityRunDialogTimeline } from './ActivityRunDialogTimeline';
 
 interface ActivityRunDialogProps {
   run: ActivityRun | null;
@@ -47,59 +51,6 @@ interface ActivityRunDialogProps {
   loading?: boolean;
   error?: string | null;
   emptyLabel?: string;
-}
-
-function runEvents(run: ActivityRun): ToolCallRecord[] {
-  return [...(run.prompt ? [run.prompt] : []), ...run.spans];
-}
-
-function runsEvents(runs: ActivityRun[]): ToolCallRecord[] {
-  return runs.flatMap(runEvents);
-}
-
-function aggregateDurationMs(runs: ActivityRun[]): number | null {
-  const events = runsEvents(runs);
-  if (events.length === 0) return null;
-  const now = Date.now();
-  let start = events[0]!.started_at;
-  let end = start;
-  for (const e of events) {
-    start = Math.min(start, e.started_at);
-    const spanEnd =
-      e.duration_ms != null
-        ? e.started_at + e.duration_ms
-        : e.status === 'running'
-          ? Math.max(e.started_at, now)
-          : e.started_at;
-    end = Math.max(end, spanEnd);
-  }
-  if (events.some((e) => e.status === 'running')) end = Math.max(end, now);
-  return Math.max(end - start, 0);
-}
-
-function runIsLive(run: ActivityRun): boolean {
-  return runEvents(run).some((e) => e.status === 'running');
-}
-
-/** Absolute [start, end] of the run timeline for Gantt positioning. */
-function runTimelineBounds(run: ActivityRun, events: ToolCallRecord[]): {
-  start: number;
-  end: number;
-} {
-  const start = run.started_at;
-  let end = start + (run.duration_ms ?? 0);
-  const now = Date.now();
-  for (const e of events) {
-    const spanEnd =
-      e.duration_ms != null
-        ? e.started_at + e.duration_ms
-        : e.status === 'running'
-          ? Math.max(e.started_at, now)
-          : e.started_at;
-    end = Math.max(end, spanEnd);
-  }
-  if (runIsLive(run)) end = Math.max(end, now);
-  return { start, end: Math.max(end, start + 1) };
 }
 
 export function ActivityRunDialog({
@@ -383,6 +334,16 @@ export function ActivityRunDialog({
     }
   }
 
+  function onFollowLatest() {
+    setFollowLatest(true);
+    requestAnimationFrame(() => {
+      bottomRef.current?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'end',
+      });
+    });
+  }
+
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
@@ -410,131 +371,33 @@ export function ActivityRunDialog({
             </p>
           ) : (
             <>
-              <div className="flex shrink-0 items-start justify-between gap-3 border-b border-border-secondary px-5 py-4">
-                <div className="min-w-0 flex-1">
-                  <Dialog.Title className="truncate text-base font-medium text-text-primary">
-                    {displayTitle}
-                  </Dialog.Title>
-                  <Dialog.Description className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-text-tertiary">
-                    <span>{sourceLabelText(displaySource, t)}</span>
-                    <span className="tabular-nums">{formatRelative(displayStartedAt)}</span>
-                    {multiMode ? (
-                      <span className="tabular-nums">
-                        {activeRuns.length}{' '}
-                        {activeRuns.length === 1
-                          ? t('activity.generation')
-                          : t('activity.generations')}
-                      </span>
-                    ) : null}
-                    <span className="tabular-nums">
-                      {events.length}{' '}
-                      {events.length === 1 ? t('activity.span') : t('activity.spans')}
-                    </span>
-                    <span className="tabular-nums">{formatDuration(displayDuration)}</span>
-                    {tokenTotals.hasAny ? (
-                      <TokenUsageLabel totals={tokenTotals} t={t} />
-                    ) : null}
-                    {errors > 0 ? (
-                      <span className="font-medium text-error-text">
-                        {errors} {t('activity.errors')}
-                      </span>
-                    ) : (
-                      <span className="text-status-connected-dot">{t('activity.runOk')}</span>
-                    )}
-                    {(live || running) && (
-                      <span className="inline-flex items-center gap-1.5">
-                        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent-primary" />
-                        {t('activity.live')}
-                      </span>
-                    )}
-                  </Dialog.Description>
-                </div>
-                <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-                  <ActivityRunViewTabs
-                    value={rightView}
-                    onChange={onRightViewChange}
-                    tracesLabel={t('activity.processAnalysis.tabTraces')}
-                    processLabel={t('activity.processAnalysis.tabProcess')}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setFollowLatest(true);
-                      requestAnimationFrame(() => {
-                        bottomRef.current?.scrollIntoView({
-                          behavior: 'smooth',
-                          block: 'end',
-                        });
-                      });
-                    }}
-                    className={cn(
-                      'inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[11px] font-medium cursor-pointer',
-                      followLatest
-                        ? 'bg-accent-primary/15 text-accent-primary'
-                        : 'bg-bg-tertiary text-text-secondary hover:bg-hover-bg',
-                    )}
-                    title={
-                      followLatest
-                        ? t('activity.followingLatest')
-                        : t('activity.followLatest')
-                    }
-                  >
-                    {followLatest ? <ArrowDown size={12} /> : <Pause size={12} />}
-                    {followLatest
-                      ? t('activity.followingLatest')
-                      : t('activity.followLatest')}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setFullscreen((prev) => !prev)}
-                    className="rounded-md p-1.5 text-text-tertiary hover:bg-hover-bg cursor-pointer"
-                    title={
-                      fullscreen ? t('activity.exitFullscreen') : t('activity.enterFullscreen')
-                    }
-                    aria-label={
-                      fullscreen ? t('activity.exitFullscreen') : t('activity.enterFullscreen')
-                    }
-                  >
-                    {fullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-                  </button>
-                  <Dialog.Close asChild>
-                    <button
-                      type="button"
-                      className="rounded-md p-1.5 text-text-tertiary hover:bg-hover-bg cursor-pointer"
-                      aria-label={t('activity.closeRun')}
-                    >
-                      <X size={16} />
-                    </button>
-                  </Dialog.Close>
-                </div>
-              </div>
+              <ActivityRunDialogHeader
+                displayTitle={displayTitle}
+                displaySource={displaySource}
+                displayStartedAt={displayStartedAt}
+                displayDuration={displayDuration}
+                multiMode={multiMode}
+                activeRunCount={activeRuns.length}
+                eventCount={events.length}
+                tokenTotals={tokenTotals}
+                errors={errors}
+                live={live}
+                running={running}
+                rightView={rightView}
+                onRightViewChange={onRightViewChange}
+                followLatest={followLatest}
+                onFollowLatest={onFollowLatest}
+                fullscreen={fullscreen}
+                onToggleFullscreen={() => setFullscreen((prev) => !prev)}
+              />
 
-              <div className="shrink-0 border-b border-border-secondary px-5 py-2.5">
-                <div className="relative">
-                  <Search
-                    size={14}
-                    className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-text-tertiary"
-                    aria-hidden
-                  />
-                  <input
-                    type="search"
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    placeholder={t('activity.runSearchPlaceholder')}
-                    className="w-full rounded-md border border-border-secondary bg-bg-secondary py-2 pl-8 pr-3 text-xs text-text-primary placeholder:text-text-tertiary focus:border-accent-primary/50 focus:outline-none"
-                  />
-                </div>
-                {searchActive ? (
-                  <p className="mt-1.5 text-[11px] text-text-tertiary">
-                    {displayEvents.length === 0
-                      ? t('activity.runSearchNoResults')
-                      : t('activity.searchMatchCount', {
-                          matched: displayEvents.length,
-                          total: events.length,
-                        })}
-                  </p>
-                ) : null}
-              </div>
+              <ActivityRunDialogSearch
+                search={search}
+                onSearchChange={setSearch}
+                searchActive={searchActive}
+                matchedCount={displayEvents.length}
+                totalCount={events.length}
+              />
 
               <ActivityRunSplitPane
                 defaultLeftWidth={320}
@@ -568,41 +431,18 @@ export function ActivityRunDialog({
                       fitToken={processFitToken}
                     />
                   ) : (
-                  <div
-                    ref={scrollRef}
-                    onScroll={onScroll}
-                    className="min-h-0 h-full overflow-y-auto"
-                  >
-                    <div className="sticky top-0 z-[1] flex items-center gap-2.5 border-b border-border-secondary bg-bg-secondary/95 px-3 py-1.5 text-[10px] font-medium uppercase tracking-[0.07em] text-text-tertiary backdrop-blur-sm">
-                      <span className="w-4 shrink-0" />
-                      <span className="min-w-0 flex-1">{t('activity.colName')}</span>
-                      <span className="hidden md:inline w-32 shrink-0 text-center">
-                        {t('activity.colTimeline')}
-                      </span>
-                      <span className="w-12 shrink-0 text-right">{t('activity.colLatency')}</span>
-                      <span className="w-[4.75rem] shrink-0 text-right">{t('activity.colTime')}</span>
-                    </div>
-                    {displayEvents.length === 0 && searchActive ? (
-                      <p className="px-4 py-8 text-center text-sm text-text-tertiary">
-                        {t('activity.runSearchNoResults')}
-                      </p>
-                    ) : (
-                      displayEvents.map((ev) => (
-                        <ActivitySpanRow
-                          key={ev.id}
-                          call={ev}
-                          runStart={timeline.start}
-                          runEnd={timeline.end}
-                          nestedPayload
-                          fresh={freshIds.has(ev.id)}
-                          fileLinked={fileLinkedSpanIds.has(ev.id)}
-                          onInspect={() => setFollowLatest(false)}
-                          onExpandedChange={onSpanExpandedChange}
-                        />
-                      ))
-                    )}
-                    <div ref={bottomRef} className="h-2" aria-hidden />
-                  </div>
+                    <ActivityRunDialogTimeline
+                      scrollRef={scrollRef}
+                      bottomRef={bottomRef}
+                      onScroll={onScroll}
+                      displayEvents={displayEvents}
+                      searchActive={searchActive}
+                      timeline={timeline}
+                      freshIds={freshIds}
+                      fileLinkedSpanIds={fileLinkedSpanIds}
+                      onInspect={() => setFollowLatest(false)}
+                      onExpandedChange={onSpanExpandedChange}
+                    />
                   )
                 }
               />

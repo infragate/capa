@@ -26,12 +26,21 @@ import { VERSION } from "../version";
 import { MCPProxy } from "./mcp-proxy";
 import type { McpServerStateManager } from "./mcp-server-state";
 import {
-	applyDefaultsToSchema,
+	getAllShellTools as getAllShellToolsImpl,
+	getShellToolSchema as getShellToolSchemaImpl,
+} from "./mcp-shell-tools";
+import {
 	buildCallToolErrorPayload,
 	buildSetupToolsPayload,
 	buildToolSignature,
 	mergeDefaults,
 } from "./mcp-tool-defaults";
+import { convertToolToMCP as convertToolToMCPImpl } from "./mcp-tool-schema";
+import {
+	type ToolValidationResult,
+	type ValidationProgressEvent,
+	validateTools as validateToolsImpl,
+} from "./mcp-validate-tools";
 import type { SessionInfo } from "./session-manager";
 import { SessionManager } from "./session-manager";
 import {
@@ -44,6 +53,7 @@ import {
 import { CommandToolExecutor } from "./tool-executor";
 import { buildToolCallText, extractCapaShellMeta } from "./tool-formatter";
 
+export type { ShellToolInfo } from "./mcp-shell-tools";
 export type {
 	CallToolErrorPayload,
 	SetupToolsPayload,
@@ -55,6 +65,10 @@ export {
 	buildToolSignature,
 	mergeDefaults,
 } from "./mcp-tool-defaults";
+export type {
+	ToolValidationResult,
+	ValidationProgressEvent,
+} from "./mcp-validate-tools";
 
 /** Meta-tools exposed only when `toolExposure` is `on-demand`. */
 const ON_DEMAND_META_TOOLS: MCPTool[] = [
@@ -114,51 +128,6 @@ function toolTextError(message: string): {
 		content: [{ type: "text", text: JSON.stringify({ error: message }) }],
 	};
 }
-
-export interface ShellToolInfo {
-	id: string;
-	type: "command" | "mcp";
-	/** For MCP tools: the server ID (without '@') */
-	serverId?: string;
-	/** For MCP tools: the server-level description from the capabilities file */
-	serverDescription?: string;
-	/** For command tools: optional group name for nesting in capa sh */
-	group?: string;
-	description: string;
-	inputSchema: any;
-	/** Default argument values from the tool definition (MCP tools only) */
-	defaults?: Record<string, any>;
-}
-
-export interface ToolValidationResult {
-	toolId: string;
-	success: boolean;
-	error?: string;
-	serverId?: string;
-	remoteTool?: string;
-	pendingAuth?: boolean; // True if validation was skipped due to pending OAuth2 authentication
-}
-
-/**
- * Progress events emitted by `validateTools` while it works through servers
- * in parallel. Consumers (e.g. the install CLI) use these to render live
- * counters while waiting for the full batch to resolve.
- */
-export type ValidationProgressEvent =
-	| {
-			type: "validation_init";
-			totalTools: number;
-			totalServers: number;
-			commandTools: number;
-	  }
-	| {
-			type: "server_done";
-			serverId: string;
-			validated: number;
-			total: number;
-			success: number;
-			failed: number;
-	  };
 
 export class CapaMCPServer {
 	private server: Server;
@@ -786,11 +755,7 @@ export class CapaMCPServer {
 					`Tool not found: ${toolName}. Make sure you've called setup_tools to activate the required skills.`,
 					{ includeSchema: false },
 				);
-				this.finishTraceError(
-					traceId,
-					`Tool not found: ${toolName}`,
-					result,
-				);
+				this.finishTraceError(traceId, `Tool not found: ${toolName}`, result);
 				return result;
 			}
 
@@ -949,56 +914,13 @@ export class CapaMCPServer {
 	 * per-tool via {@link getShellToolSchema} only when the user runs the tool or asks
 	 * for its `--help`. That keeps one slow/down server from stalling the whole shell.
 	 */
-	async getAllShellTools(capabilities: Capabilities): Promise<ShellToolInfo[]> {
-		const result: ShellToolInfo[] = [];
-		for (const tool of capabilities.tools) {
-			if (tool.type === "mcp") {
-				const mcpDef = tool.def;
-				const serverId = mcpDef.server.replace("@", "");
-				const info: ShellToolInfo = {
-					id: getQualifiedToolName(tool),
-					type: "mcp",
-					description: tool.description || "",
-					// Resolved on demand — see getShellToolSchema.
-					inputSchema: undefined,
-					serverId,
-				};
-				const serverDef = capabilities.servers.find((s) => s.id === serverId);
-				if (serverDef?.description) {
-					info.serverDescription = serverDef.description;
-				}
-				if (mcpDef.defaults) {
-					info.defaults = mcpDef.defaults;
-				}
-				result.push(info);
-			} else {
-				// Command tool — schema is built locally and is cheap, so include it.
-				const mcpTool = await this.convertToolToMCP(tool, capabilities);
-				const info: ShellToolInfo = {
-					id: getQualifiedToolName(tool),
-					type: "command",
-					description: mcpTool.description || "",
-					inputSchema: mcpTool.inputSchema,
-				};
-				if (tool.group) {
-					info.group = tool.group;
-				}
-				const def = tool.def;
-				if (def.run.args) {
-					const cmdDefaults: Record<string, any> = {};
-					for (const arg of def.run.args) {
-						if (arg.default !== undefined) {
-							cmdDefaults[arg.name] = arg.default;
-						}
-					}
-					if (Object.keys(cmdDefaults).length > 0) {
-						info.defaults = cmdDefaults;
-					}
-				}
-				result.push(info);
-			}
-		}
-		return result;
+	async getAllShellTools(capabilities: Capabilities) {
+		return getAllShellToolsImpl(
+			capabilities,
+			this.toolSchemaCache,
+			this.mcpProxy,
+			this.logger,
+		);
 	}
 
 	/**
@@ -1010,59 +932,14 @@ export class CapaMCPServer {
 	 * unreachable, times out, or doesn't expose the tool — so the shell can surface
 	 * the failure for that one tool without affecting the rest of the session.
 	 */
-	async getShellToolSchema(
-		toolId: string,
-		capabilities: Capabilities,
-	): Promise<{ description: string; inputSchema: any }> {
-		const tool = capabilities.tools.find(
-			(t) => getQualifiedToolName(t) === toolId,
+	async getShellToolSchema(toolId: string, capabilities: Capabilities) {
+		return getShellToolSchemaImpl(
+			toolId,
+			capabilities,
+			this.toolSchemaCache,
+			this.mcpProxy,
+			this.logger,
 		);
-		if (!tool) {
-			throw new Error(`Tool not found: ${toolId}`);
-		}
-
-		if (tool.type === "command") {
-			const mcpTool = await this.convertToolToMCP(tool, capabilities);
-			return {
-				description: mcpTool.description || "",
-				inputSchema: mcpTool.inputSchema,
-			};
-		}
-
-		const mcpDef = tool.def;
-		const serverId = mcpDef.server.replace("@", "");
-		const serverDef = capabilities.servers.find((s) => s.id === serverId);
-		if (!serverDef) {
-			throw new Error(`Server not found: ${serverId}`);
-		}
-
-		const remoteTools = await this.mcpProxy.listTools(serverId, serverDef.def, {
-			throwOnError: true,
-		});
-		const remoteTool = remoteTools.find((t: any) => t.name === mcpDef.tool);
-		if (!remoteTool) {
-			const available = remoteTools.map((t: any) => t.name).join(", ");
-			throw new Error(
-				`Tool "${mcpDef.tool}" not found on server "${serverId}". Available tools: ${available || "(none)"}`,
-			);
-		}
-
-		const inputSchema = remoteTool.inputSchema
-			? JSON.parse(JSON.stringify(remoteTool.inputSchema))
-			: { type: "object" as const, properties: {} };
-		if (mcpDef.defaults) {
-			applyDefaultsToSchema(inputSchema, mcpDef.defaults);
-		}
-
-		const description = remoteTool.description || `MCP tool: ${toolId}`;
-		// Warm the shared cache so a subsequent tools/call doesn't re-fetch.
-		this.toolSchemaCache.set(toolId, {
-			name: toolId,
-			description,
-			inputSchema,
-		});
-
-		return { description, inputSchema };
 	}
 
 	/**
@@ -1083,243 +960,20 @@ export class CapaMCPServer {
 		capabilities: Capabilities,
 		onProgress?: (event: ValidationProgressEvent) => void,
 	): Promise<ToolValidationResult[]> {
-		const results: ToolValidationResult[] = [];
-		const totalTools = capabilities.tools.length;
-
-		// Command tools have no remote dependency; resolve them immediately.
-		const cmdTools = capabilities.tools.filter((t) => t.type === "command");
-		for (const tool of cmdTools) {
-			results.push({ toolId: getQualifiedToolName(tool), success: true });
-		}
-
-		// Group MCP tools by server so we make one listTools call per server.
-		const mcpTools = capabilities.tools.filter(
-			(t): t is Extract<Tool, { type: "mcp" }> => t.type === "mcp",
-		);
-		const byServer = new Map<string, typeof mcpTools>();
-		for (const tool of mcpTools) {
-			const serverId = tool.def.server.replace("@", "");
-			const bucket = byServer.get(serverId);
-			if (bucket) {
-				bucket.push(tool);
-			} else {
-				byServer.set(serverId, [tool]);
-			}
-		}
-
-		onProgress?.({
-			type: "validation_init",
-			totalTools,
-			totalServers: byServer.size,
-			commandTools: cmdTools.length,
-		});
-
-		// Track running validated count for progress events. Each server's
-		// batch lands atomically so the increments stay coherent under
-		// Promise.all (single-threaded event loop, no real race).
-		let validated = cmdTools.length;
-
-		await Promise.all(
-			[...byServer.entries()].map(async ([serverId, tools]) => {
-				const serverDef = capabilities.servers.find((s) => s.id === serverId);
-				const batch: ToolValidationResult[] = [];
-
-				if (!serverDef) {
-					for (const tool of tools) {
-						batch.push({
-							toolId: getQualifiedToolName(tool),
-							success: false,
-							error: `Server not found: ${serverId}`,
-							serverId,
-						});
-					}
-				} else {
-					try {
-						const remoteTools = await this.mcpProxy.listTools(
-							serverId,
-							serverDef.def,
-							{ bypassEnabledCheck: true },
-						);
-						const remoteByName = new Map<string, any>(
-							remoteTools.map((t: any) => [t.name, t]),
-						);
-						const availableNames = remoteTools
-							.map((t: any) => t.name)
-							.join(", ");
-
-						for (const tool of tools) {
-							const mcpDef = tool.def;
-							const qualifiedName = getQualifiedToolName(tool);
-							if (remoteByName.has(mcpDef.tool)) {
-								batch.push({
-									toolId: qualifiedName,
-									success: true,
-									serverId,
-									remoteTool: mcpDef.tool,
-								});
-							} else {
-								batch.push({
-									toolId: qualifiedName,
-									success: false,
-									error: `Tool "${mcpDef.tool}" not found on server "${serverId}". Available tools: ${availableNames || "(none)"}`,
-									serverId,
-									remoteTool: mcpDef.tool,
-								});
-							}
-						}
-					} catch (error: any) {
-						for (const tool of tools) {
-							const mcpDef = tool.def;
-							batch.push({
-								toolId: getQualifiedToolName(tool),
-								success: false,
-								error: `Failed to connect to server "${serverId}": ${error.message}`,
-								serverId,
-								remoteTool: mcpDef.tool,
-							});
-						}
-					}
-				}
-
-				results.push(...batch);
-				validated += batch.length;
-				const success = batch.filter((r) => r.success).length;
-				onProgress?.({
-					type: "server_done",
-					serverId,
-					validated,
-					total: totalTools,
-					success,
-					failed: batch.length - success,
-				});
-			}),
-		);
-
-		return results;
+		return validateToolsImpl(capabilities, this.mcpProxy, onProgress);
 	}
 
 	private async convertToolToMCP(
 		tool: Tool,
 		capabilities: Capabilities,
 	): Promise<MCPTool> {
-		const qualifiedName = getQualifiedToolName(tool);
-
-		// Check cache first
-		if (this.toolSchemaCache.has(qualifiedName)) {
-			return this.toolSchemaCache.get(qualifiedName)!;
-		}
-
-		if (tool.type === "command") {
-			const def = tool.def;
-			const properties: any = {};
-			const required: string[] = [];
-
-			if (def.run.args) {
-				for (const arg of def.run.args) {
-					const prop: any = {
-						type: arg.type,
-						description: arg.description,
-					};
-					if (arg.default !== undefined) {
-						prop.default = arg.default;
-					}
-					properties[arg.name] = prop;
-					if (arg.required !== false && arg.default === undefined) {
-						required.push(arg.name);
-					}
-				}
-			}
-
-			const mcpTool: MCPTool = {
-				name: qualifiedName,
-				description: tool.description || `Command tool: ${tool.id}`,
-				inputSchema: {
-					type: "object" as const,
-					properties,
-					required,
-				},
-			};
-
-			this.toolSchemaCache.set(qualifiedName, mcpTool);
-			return mcpTool;
-		} else {
-			// MCP tool - fetch the actual schema from the MCP server
-			const mcpDef = tool.def;
-			const serverId = mcpDef.server.replace("@", "");
-			const serverDef = capabilities.servers.find((s) => s.id === serverId);
-
-			if (!serverDef) {
-				this.logger.failure(
-					`Server not found for tool ${tool.id}: ${serverId}`,
-				);
-				const mcpTool: MCPTool = {
-					name: qualifiedName,
-					description: `MCP tool: ${qualifiedName} (server not found)`,
-					inputSchema: {
-						type: "object" as const,
-						properties: {},
-					},
-				};
-				this.toolSchemaCache.set(qualifiedName, mcpTool);
-				return mcpTool;
-			}
-
-			try {
-				const remoteTools = await this.mcpProxy.listTools(
-					serverId,
-					serverDef.def,
-				);
-				const remoteTool = remoteTools.find((t: any) => t.name === mcpDef.tool);
-
-				if (remoteTool) {
-					this.logger.debug(
-						`Fetched schema for ${qualifiedName} from ${serverId}`,
-					);
-					const inputSchema = remoteTool.inputSchema
-						? JSON.parse(JSON.stringify(remoteTool.inputSchema))
-						: { type: "object" as const, properties: {} };
-					if (mcpDef.defaults) {
-						applyDefaultsToSchema(inputSchema, mcpDef.defaults);
-					}
-					const mcpTool: MCPTool = {
-						name: qualifiedName,
-						description: remoteTool.description || `MCP tool: ${qualifiedName}`,
-						inputSchema,
-					};
-					this.toolSchemaCache.set(qualifiedName, mcpTool);
-					return mcpTool;
-				} else {
-					this.logger.warn(
-						`Tool ${mcpDef.tool} not found on server ${serverId}`,
-					);
-					const mcpTool: MCPTool = {
-						name: qualifiedName,
-						description: `MCP tool: ${qualifiedName} (not found on remote server)`,
-						inputSchema: {
-							type: "object" as const,
-							properties: {},
-						},
-					};
-					this.toolSchemaCache.set(qualifiedName, mcpTool);
-					return mcpTool;
-				}
-			} catch (error: any) {
-				this.logger.failure(
-					`Failed to fetch schema for ${qualifiedName}:`,
-					error.message,
-				);
-				const mcpTool: MCPTool = {
-					name: qualifiedName,
-					description: `MCP tool: ${qualifiedName}`,
-					inputSchema: {
-						type: "object" as const,
-						properties: {},
-					},
-				};
-				this.toolSchemaCache.set(qualifiedName, mcpTool);
-				return mcpTool;
-			}
-		}
+		return convertToolToMCPImpl(
+			tool,
+			capabilities,
+			this.toolSchemaCache,
+			this.mcpProxy,
+			this.logger,
+		);
 	}
 
 	/**

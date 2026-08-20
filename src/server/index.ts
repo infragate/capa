@@ -13,11 +13,9 @@ import { RegistryManager } from "../shared/registries/manager";
 import { seedDefaultRegistries } from "../shared/registries/seed";
 import { isUnderWrapWorkspacesDir } from "../shared/workspaces/paths";
 import type { Capabilities } from "../types/capabilities";
-import type { RegistryCapability } from "../types/registry";
 import { VERSION } from "../version";
+import { type ActivityRouteDeps, dispatchActivity } from "./activity-routes";
 import { authorizeApiRequest, injectHtmlAuthToken } from "./api-guards";
-import { htmlSecurityHeaders } from "./html-security-headers";
-import { withAllowedHost } from "./host-allowlist";
 import {
 	getSpaAuthToken,
 	initAuth,
@@ -27,105 +25,50 @@ import {
 import { handleCapabilitiesMutation } from "./capabilities-routes";
 import { CapabilitiesFileWatcher } from "./capabilities-watcher";
 import {
-	type ConfigureRouteDeps,
 	applyProjectCapabilitiesOnly,
-	handleProjectConfigure,
+	type ConfigureRouteDeps,
+	dispatchConfigure,
 	runProjectConfigure,
 } from "./configure-routes";
 import { isAllowedOrigin } from "./cors-origin";
 import { GitIntegrationManager } from "./git-integration-manager";
 import {
+	dispatchGitIntegrations,
 	type GitIntegrationsRouteDeps,
-	handleDisconnectIntegration,
-	handleGetIntegrations,
-	handleGitHubEnterprisePAT,
-	handleGitHubOAuthCallback,
-	handleGitHubOAuthStart,
-	handleGitLabOAuthCallback,
-	handleGitLabOAuthStart,
-	handleGitLabSelfManagedPAT,
-	handleGitTokenRefresh,
 } from "./git-integrations-routes";
+import { withAllowedHost } from "./host-allowlist";
+import { htmlSecurityHeaders } from "./html-security-headers";
 import { CapaMCPServer } from "./mcp-handler";
-import {
-	handleGetServerTools,
-	handleGetShellToolSchema,
-	handleGetShellTools,
-	handleGetSkillContent,
-	handleSetServerEnabled,
-	type McpMetaRouteDeps,
-} from "./mcp-meta-routes";
+import { handleMcpHttp, type McpHttpRouteDeps } from "./mcp-http-routes";
+import { dispatchMcpMeta, type McpMetaRouteDeps } from "./mcp-meta-routes";
 import { McpServerStateManager } from "./mcp-server-state";
 import { OAuth2Manager } from "./oauth-manager";
 import {
 	closeAllOAuthCallbackServers,
-	handleGetOAuth2Servers,
-	handleOAuth2Callback,
-	handleOAuth2Disconnect,
-	handleOAuth2Start,
+	dispatchOAuth,
 	type OAuthRouteDeps,
 } from "./oauth-routes";
 import {
-	handleDeleteProject,
-	handleGetProject,
-	handleGetProjectActivity,
-	handleGetProjectActivityStats,
-	handleGetProjects,
-	handleProjectEvents,
-	handleProjectFsList,
-	handleProjectFsUpload,
+	dispatchProjects,
 	notifyProjectChanged,
 	notifyToolCall,
 	type ProjectRouteDeps,
 	reloadProjectCapabilitiesFromDisk,
 } from "./project-routes";
 import {
-	handlePostProjectActivityEvent,
-	handleSyncActivityHooks,
-} from "./activity-routes";
-import {
-	createRegistryHandler,
-	deleteRegistryHandler,
-	listRegistriesHandler,
-	patchRegistryHandler,
-	previewRegistryHandler,
-	refreshRegistryHandler,
+	dispatchRegistries,
+	type RegistriesRouteDeps,
 } from "./registries-routes";
 import { type EffectiveCapsCacheEntry } from "./resolve-effective-capabilities";
 import { SessionManager } from "./session-manager";
 import { SubprocessManager } from "./subprocess-manager";
 import {
-	CAPA_CLIENT_HEADER,
-	CAPA_SHELL_CLIENT,
-	runWithMcpRequestClient,
-	ToolCallTracer,
-} from "./tool-call-tracer";
-import {
-	handleForceTokenRefresh,
-	handleTokenRefreshStatus,
+	dispatchTokenRefresh,
 	type TokenRefreshRouteDeps,
 } from "./token-refresh-routes";
 import { TokenRefreshScheduler } from "./token-refresh-scheduler";
-import {
-	handleDeleteVariable,
-	handleGetVariables,
-	handlePutVariable,
-	handleSetVariables,
-	type VariablesRouteDeps,
-} from "./variables-routes";
-
-function mcpHandlerHttpStatus(error: unknown): number {
-	if (error instanceof SyntaxError) {
-		return 400;
-	}
-	const status =
-		(error as { status?: number; statusCode?: number })?.status ??
-		(error as { status?: number; statusCode?: number })?.statusCode;
-	if (typeof status === "number" && status >= 400 && status < 500) {
-		return status;
-	}
-	return 500;
-}
+import { ToolCallTracer } from "./tool-call-tracer";
+import { dispatchVariables, type VariablesRouteDeps } from "./variables-routes";
 
 class CapaServer {
 	private db!: CapaDatabase;
@@ -230,6 +173,32 @@ class CapaServer {
 			serverPort: this.settings.server.port,
 			uiOrigin: () => this.uiOrigin(),
 			effectiveCapsCache: this.effectiveCapsCache,
+		};
+	}
+
+	private activityRouteDeps(): ActivityRouteDeps {
+		return {
+			...this.projectRouteDeps(),
+			toolCallTracer: this.toolCallTracer,
+		};
+	}
+
+	private registriesRouteDeps(): RegistriesRouteDeps {
+		return {
+			db: this.db,
+			registryManager: this.registryManager,
+		};
+	}
+
+	private mcpHttpRouteDeps(): McpHttpRouteDeps {
+		return {
+			mcpServers: this.mcpServers,
+			db: this.db,
+			sessionManager: this.sessionManager,
+			toolCallTracer: this.toolCallTracer,
+			mcpServerStateManager: this.mcpServerStateManager,
+			serverHost: this.settings.server.host,
+			serverPort: this.settings.server.port,
 		};
 	}
 
@@ -492,7 +461,12 @@ class CapaServer {
 			if (!auth.ok) {
 				return this.authFailureResponse(request, auth.reason, auth.status);
 			}
-			return this.handleMCP(request, projectId, agentId);
+			return handleMcpHttp(
+				this.mcpHttpRouteDeps(),
+				request,
+				projectId,
+				agentId,
+			);
 		}
 
 		// Main MCP endpoints: /{projectId}/mcp
@@ -504,7 +478,7 @@ class CapaServer {
 			if (!auth.ok) {
 				return this.authFailureResponse(request, auth.reason, auth.status);
 			}
-			return this.handleMCP(request, projectId);
+			return handleMcpHttp(this.mcpHttpRouteDeps(), request, projectId);
 		}
 
 		this.logger.debug("404 Not Found");
@@ -525,120 +499,42 @@ class CapaServer {
 		request: Request,
 		bunServer?: { timeout?: (req: Request, seconds: number) => void },
 	): Promise<Response> {
-		const url = new URL(request.url);
-		const path = url.pathname;
+		const path = new URL(request.url).pathname;
+		const method = request.method;
 
-		// Get all projects
-		if (path === "/api/projects" && request.method === "GET") {
-			return this.handleGetProjects();
-		}
-
-		// Get project details
-		const projectGetMatch = path.match(/^\/api\/projects\/([^/]+)$/);
-		if (projectGetMatch && request.method === "GET") {
-			const projectId = projectGetMatch[1];
-			return this.handleGetProject(projectId);
-		}
-
-		// Delete / clean project (keeps capabilities file)
-		if (projectGetMatch && request.method === "DELETE") {
-			const projectId = projectGetMatch[1];
-			return this.handleDeleteProject(projectId);
-		}
-
-		// Live capabilities file change stream (SSE)
-		const projectEventsMatch = path.match(/^\/api\/projects\/([^/]+)\/events$/);
-		if (projectEventsMatch && request.method === "GET") {
-			// Bun closes quiet streams after ~10s unless idle timeout is disabled.
-			bunServer?.timeout?.(request, 0);
-			return this.handleProjectEvents(projectEventsMatch[1]);
-		}
-
-		// Recent tool-call activity for the project page feed
-		const activityMatch = path.match(/^\/api\/projects\/([^/]+)\/activity$/);
-		if (activityMatch && request.method === "GET") {
-			return handleGetProjectActivity(
-				this.projectRouteDeps(),
-				activityMatch[1],
-				url.searchParams.get("limit"),
-				url.searchParams.get("before"),
-				url.searchParams.get("beforeId"),
-				url.searchParams.get("sessionId"),
-				url.searchParams.get("conversationId"),
-				url.searchParams.get("generationId"),
-			);
-		}
-
-		const activityStatsMatch = path.match(
-			/^\/api\/projects\/([^/]+)\/activity\/stats$/,
+		const projects = await dispatchProjects(
+			this.projectRouteDeps(),
+			path,
+			method,
+			request,
+			bunServer,
 		);
-		if (activityStatsMatch && request.method === "GET") {
-			return handleGetProjectActivityStats(
-				this.projectRouteDeps(),
-				activityStatsMatch[1],
-			);
-		}
+		if (projects) return projects;
 
-		const activityHooksSyncMatch = path.match(
-			/^\/api\/projects\/([^/]+)\/activity\/hooks\/sync$/,
+		const activity = await dispatchActivity(
+			this.activityRouteDeps(),
+			path,
+			method,
+			request,
 		);
-		if (activityHooksSyncMatch && request.method === "POST") {
-			return handleSyncActivityHooks(
-				this.projectRouteDeps(),
-				activityHooksSyncMatch[1],
-			);
-		}
+		if (activity) return activity;
 
-		const activityEventsMatch = path.match(
-			/^\/api\/projects\/([^/]+)\/activity\/events$/,
+		const configure = await dispatchConfigure(
+			this.configureRouteDeps(),
+			path,
+			method,
+			request,
 		);
-		if (activityEventsMatch && request.method === "POST") {
-			return handlePostProjectActivityEvent(
-				{ ...this.projectRouteDeps(), toolCallTracer: this.toolCallTracer },
-				activityEventsMatch[1],
-				request,
-			);
-		}
+		if (configure) return configure;
 
-		// Configure project
-		const configMatch = path.match(/^\/api\/projects\/([^/]+)\/configure$/);
-		if (configMatch && request.method === "POST") {
-			const projectId = configMatch[1];
-			return this.handleProjectConfigure(projectId, request);
-		}
-
-		// Get required variables
-		const varsGetMatch = path.match(/^\/api\/projects\/([^/]+)\/variables$/);
-		if (varsGetMatch && request.method === "GET") {
-			const projectId = varsGetMatch[1];
-			return this.handleGetVariables(projectId);
-		}
-
-		// Set variables (bulk)
-		if (varsGetMatch && request.method === "POST") {
-			const projectId = varsGetMatch[1];
-			return this.handleSetVariables(projectId, request);
-		}
-
-		// Put / delete a single variable in the catalog
-		const varItemMatch = path.match(
-			/^\/api\/projects\/([^/]+)\/variables\/([^/]+)$/,
+		const variables = await dispatchVariables(
+			this.variablesRouteDeps(),
+			path,
+			method,
+			request,
 		);
-		if (varItemMatch && request.method === "PUT") {
-			return this.handlePutVariable(
-				varItemMatch[1],
-				decodeURIComponent(varItemMatch[2]),
-				request,
-			);
-		}
-		if (varItemMatch && request.method === "DELETE") {
-			return this.handleDeleteVariable(
-				varItemMatch[1],
-				decodeURIComponent(varItemMatch[2]),
-			);
-		}
+		if (variables) return variables;
 
-		// Capabilities file mutations (write YAML + configure)
 		const capsProjectMatch = path.match(
 			/^\/api\/projects\/([^/]+)\/capabilities(?:\/|$)/,
 		);
@@ -656,277 +552,52 @@ class CapaServer {
 				},
 				projectId,
 				path,
-				request.method,
+				method,
 				request,
 			);
 			if (mutation) return mutation;
 		}
 
-		// Project filesystem browse (for local path pickers)
-		const fsListMatch = path.match(/^\/api\/projects\/([^/]+)\/fs$/);
-		if (fsListMatch && request.method === "GET") {
-			return this.handleProjectFsList(fsListMatch[1], request);
-		}
-		if (fsListMatch && request.method === "POST") {
-			return this.handleProjectFsUpload(fsListMatch[1], request);
-		}
-
-		// Get OAuth2 servers
-		const oauth2ServersMatch = path.match(
-			/^\/api\/projects\/([^/]+)\/oauth-servers$/,
+		const oauth = await dispatchOAuth(
+			this.oauthRouteDeps(),
+			path,
+			method,
+			request,
 		);
-		if (oauth2ServersMatch && request.method === "GET") {
-			const projectId = oauth2ServersMatch[1];
-			return this.handleGetOAuth2Servers(projectId);
-		}
+		if (oauth) return oauth;
 
-		// Start OAuth2 flow
-		const oauth2StartMatch = path.match(
-			/^\/api\/projects\/([^/]+)\/oauth\/start$/,
+		const mcpMeta = await dispatchMcpMeta(
+			this.mcpMetaRouteDeps(),
+			path,
+			method,
+			request,
 		);
-		if (oauth2StartMatch && request.method === "POST") {
-			const projectId = oauth2StartMatch[1];
-			return this.handleOAuth2Start(projectId, request);
-		}
+		if (mcpMeta) return mcpMeta;
 
-		// OAuth2 callback
-		const oauth2CallbackMatch = path.match(
-			/^\/api\/projects\/([^/]+)\/oauth\/callback$/,
+		const tokenRefresh = await dispatchTokenRefresh(
+			this.tokenRefreshRouteDeps(),
+			path,
+			method,
 		);
-		if (oauth2CallbackMatch && request.method === "GET") {
-			const projectId = oauth2CallbackMatch[1];
-			return this.handleOAuth2Callback(projectId, request);
-		}
+		if (tokenRefresh) return tokenRefresh;
 
-		// List tools for a specific server
-		const serverToolsMatch = path.match(
-			/^\/api\/projects\/([^/]+)\/servers\/([^/]+)\/tools$/,
+		const git = await dispatchGitIntegrations(
+			this.gitIntegrationsRouteDeps(),
+			path,
+			method,
+			request,
 		);
-		if (serverToolsMatch && request.method === "GET") {
-			const projectId = serverToolsMatch[1];
-			const serverId = serverToolsMatch[2];
-			return this.handleGetServerTools(projectId, serverId);
-		}
+		if (git) return git;
 
-		const serverEnabledMatch = path.match(
-			/^\/api\/projects\/([^/]+)\/servers\/([^/]+)\/enabled$/,
+		const registries = await dispatchRegistries(
+			this.registriesRouteDeps(),
+			path,
+			method,
+			request,
 		);
-		if (serverEnabledMatch && request.method === "POST") {
-			const projectId = serverEnabledMatch[1];
-			const serverId = serverEnabledMatch[2];
-			return this.handleSetServerEnabled(projectId, serverId, request);
-		}
-
-		// Skill SKILL.md content for the project-detail UI
-		const skillContentMatch = path.match(
-			/^\/api\/projects\/([^/]+)\/skills\/([^/]+)\/content$/,
-		);
-		if (skillContentMatch && request.method === "GET") {
-			const projectId = skillContentMatch[1];
-			const skillId = decodeURIComponent(skillContentMatch[2]);
-			return this.handleGetSkillContent(projectId, skillId);
-		}
-
-		// Shell tools endpoint — tool metadata for the capa shell, regardless of exposure mode
-		const shellToolsMatch = path.match(
-			/^\/api\/projects\/([^/]+)\/shell-tools$/,
-		);
-		if (shellToolsMatch && request.method === "GET") {
-			const projectId = shellToolsMatch[1];
-			return this.handleGetShellTools(projectId);
-		}
-
-		// On-demand schema for a single shell tool (?tool=<qualified-id>)
-		const shellToolSchemaMatch = path.match(
-			/^\/api\/projects\/([^/]+)\/shell-tool-schema$/,
-		);
-		if (shellToolSchemaMatch && request.method === "GET") {
-			const projectId = shellToolSchemaMatch[1];
-			const toolId = url.searchParams.get("tool") || "";
-			return this.handleGetShellToolSchema(projectId, toolId);
-		}
-
-		// Disconnect OAuth2
-		const oauth2DisconnectMatch = path.match(
-			/^\/api\/projects\/([^/]+)\/oauth\/([^/]+)$/,
-		);
-		if (oauth2DisconnectMatch && request.method === "DELETE") {
-			const projectId = oauth2DisconnectMatch[1];
-			const serverId = oauth2DisconnectMatch[2];
-			return this.handleOAuth2Disconnect(projectId, serverId);
-		}
-
-		// Token refresh scheduler status
-		if (path === "/api/token-refresh/status" && request.method === "GET") {
-			return this.handleTokenRefreshStatus();
-		}
-
-		// Force token refresh check
-		if (path === "/api/token-refresh/check" && request.method === "POST") {
-			return this.handleForceTokenRefresh();
-		}
-
-		// Git integrations endpoints
-		if (path === "/api/integrations" && request.method === "GET") {
-			return this.handleGetIntegrations();
-		}
-
-		// GitHub OAuth flow
-		const githubOAuthStartMatch = path.match(
-			/^\/api\/integrations\/github\/oauth\/start$/,
-		);
-		if (githubOAuthStartMatch && request.method === "POST") {
-			return this.handleGitHubOAuthStart(request);
-		}
-
-		const githubOAuthCallbackMatch = path.match(
-			/^\/api\/integrations\/github\/oauth\/callback$/,
-		);
-		if (
-			githubOAuthCallbackMatch &&
-			(request.method === "POST" || request.method === "GET")
-		) {
-			return this.handleGitHubOAuthCallback(request);
-		}
-
-		// GitLab OAuth flow
-		const gitlabOAuthStartMatch = path.match(
-			/^\/api\/integrations\/gitlab\/oauth\/start$/,
-		);
-		if (gitlabOAuthStartMatch && request.method === "POST") {
-			return this.handleGitLabOAuthStart(request);
-		}
-
-		const gitlabOAuthCallbackMatch = path.match(
-			/^\/api\/integrations\/gitlab\/oauth\/callback$/,
-		);
-		if (
-			gitlabOAuthCallbackMatch &&
-			(request.method === "POST" || request.method === "GET")
-		) {
-			return this.handleGitLabOAuthCallback(request);
-		}
-
-		// Git integration token refresh
-		const gitTokenRefreshMatch = path.match(
-			/^\/api\/integrations\/(github|gitlab)\/refresh$/,
-		);
-		if (gitTokenRefreshMatch) {
-			if (request.method === "GET") {
-				return new Response(
-					JSON.stringify({ error: "Method not allowed. Use POST." }),
-					{ status: 405, headers: { "Content-Type": "application/json" } },
-				);
-			}
-			if (request.method === "POST") {
-				const platform = gitTokenRefreshMatch[1] as "github" | "gitlab";
-				return this.handleGitTokenRefresh(platform);
-			}
-		}
-
-		// GitHub Enterprise PAT
-		if (
-			path === "/api/integrations/github-enterprise" &&
-			request.method === "POST"
-		) {
-			return this.handleGitHubEnterprisePAT(request);
-		}
-
-		// GitLab Self-Managed PAT
-		if (
-			path === "/api/integrations/gitlab-self-managed" &&
-			request.method === "POST"
-		) {
-			return this.handleGitLabSelfManagedPAT(request);
-		}
-
-		// Disconnect integration
-		const disconnectMatch = path.match(
-			/^\/api\/integrations\/([^/]+)(?:\/([^/]+))?$/,
-		);
-		if (disconnectMatch && request.method === "DELETE") {
-			const platform = disconnectMatch[1];
-			const host = disconnectMatch[2];
-			return this.handleDisconnectIntegration(platform, host);
-		}
-
-		// --- Registry endpoints ---
-
-		if (path === "/api/registries" && request.method === "GET") {
-			return this.handleGetRegistries();
-		}
-
-		if (path === "/api/registries" && request.method === "POST") {
-			return this.handleCreateRegistry(request);
-		}
-
-		if (path === "/api/registries/preview" && request.method === "GET") {
-			return this.handlePreviewRegistry(url);
-		}
-
-		const registrySearchMatch = path.match(
-			/^\/api\/registries\/([^/]+)\/search$/,
-		);
-		if (registrySearchMatch && request.method === "GET") {
-			const registryId = decodeURIComponent(registrySearchMatch[1]);
-			return this.handleRegistrySearch(registryId, url);
-		}
-
-		// view uses a wildcard tail so item IDs containing slashes work (e.g. "owner/repo/slug")
-		const registryViewMatch = path.match(
-			/^\/api\/registries\/([^/]+)\/view\/(.+)$/,
-		);
-		if (registryViewMatch && request.method === "GET") {
-			const registryId = decodeURIComponent(registryViewMatch[1]);
-			const itemId = decodeURIComponent(registryViewMatch[2]);
-			return this.handleRegistryView(registryId, itemId, url);
-		}
-
-		const registryRefreshMatch = path.match(
-			/^\/api\/registries\/([^/]+)\/refresh$/,
-		);
-		if (registryRefreshMatch && request.method === "POST") {
-			const slug = decodeURIComponent(registryRefreshMatch[1]);
-			return this.handleRefreshRegistry(slug);
-		}
-
-		const registryItemMatch = path.match(/^\/api\/registries\/([^/]+)$/);
-		if (registryItemMatch && request.method === "DELETE") {
-			const slug = decodeURIComponent(registryItemMatch[1]);
-			return this.handleDeleteRegistry(slug);
-		}
-		if (registryItemMatch && request.method === "PATCH") {
-			const slug = decodeURIComponent(registryItemMatch[1]);
-			return this.handlePatchRegistry(slug, request);
-		}
+		if (registries) return registries;
 
 		return new Response("Not Found", { status: 404 });
-	}
-
-	private handleGetProjects(): Promise<Response> {
-		return handleGetProjects(this.projectRouteDeps());
-	}
-
-	private handleDeleteProject(projectId: string): Promise<Response> {
-		return handleDeleteProject(this.projectRouteDeps(), projectId);
-	}
-
-	private handleGetProject(projectId: string): Promise<Response> {
-		return handleGetProject(this.projectRouteDeps(), projectId);
-	}
-
-	private handleProjectFsList(
-		projectId: string,
-		request: Request,
-	): Promise<Response> {
-		return handleProjectFsList(this.projectRouteDeps(), projectId, request);
-	}
-
-	private handleProjectFsUpload(
-		projectId: string,
-		request: Request,
-	): Promise<Response> {
-		return handleProjectFsUpload(this.projectRouteDeps(), projectId, request);
 	}
 
 	private getOrCreateMCPServer(
@@ -953,55 +624,6 @@ class CapaServer {
 		return mcpServer;
 	}
 
-	private handleGetServerTools(
-		projectId: string,
-		serverId: string,
-	): Promise<Response> {
-		return handleGetServerTools(this.mcpMetaRouteDeps(), projectId, serverId);
-	}
-
-	private handleSetServerEnabled(
-		projectId: string,
-		serverId: string,
-		request: Request,
-	): Promise<Response> {
-		return handleSetServerEnabled(
-			this.mcpMetaRouteDeps(),
-			projectId,
-			serverId,
-			request,
-		);
-	}
-
-	private handleGetSkillContent(
-		projectId: string,
-		skillId: string,
-	): Promise<Response> {
-		return handleGetSkillContent(this.mcpMetaRouteDeps(), projectId, skillId);
-	}
-
-	private handleGetShellTools(projectId: string): Promise<Response> {
-		return handleGetShellTools(this.mcpMetaRouteDeps(), projectId);
-	}
-
-	private handleGetShellToolSchema(
-		projectId: string,
-		toolId: string,
-	): Promise<Response> {
-		return handleGetShellToolSchema(this.mcpMetaRouteDeps(), projectId, toolId);
-	}
-
-	private handleProjectConfigure(
-		projectId: string,
-		request: Request,
-	): Promise<Response> {
-		return handleProjectConfigure(
-			this.configureRouteDeps(),
-			projectId,
-			request,
-		);
-	}
-
 	private _runProjectConfigure(
 		projectId: string,
 		capabilities: Capabilities,
@@ -1026,339 +648,8 @@ class CapaServer {
 		);
 	}
 
-	private handleGetVariables(projectId: string): Promise<Response> {
-		return handleGetVariables(this.variablesRouteDeps(), projectId);
-	}
-
-	private handlePutVariable(
-		projectId: string,
-		name: string,
-		request: Request,
-	): Promise<Response> {
-		return handlePutVariable(
-			this.variablesRouteDeps(),
-			projectId,
-			name,
-			request,
-		);
-	}
-
-	private handleDeleteVariable(
-		projectId: string,
-		name: string,
-	): Promise<Response> {
-		return handleDeleteVariable(this.variablesRouteDeps(), projectId, name);
-	}
-
-	private handleSetVariables(
-		projectId: string,
-		request: Request,
-	): Promise<Response> {
-		return handleSetVariables(this.variablesRouteDeps(), projectId, request);
-	}
-
-	private handleGetOAuth2Servers(projectId: string): Promise<Response> {
-		return handleGetOAuth2Servers(this.oauthRouteDeps(), projectId);
-	}
-
 	private uiOrigin(): string {
 		return `http://${this.settings.server.host}:${this.settings.server.port}`;
-	}
-
-	private handleOAuth2Start(
-		projectId: string,
-		request: Request,
-	): Promise<Response> {
-		return handleOAuth2Start(this.oauthRouteDeps(), projectId, request);
-	}
-
-	private handleOAuth2Callback(
-		projectId: string,
-		request: Request,
-	): Promise<Response> {
-		return handleOAuth2Callback(this.oauthRouteDeps(), projectId, request);
-	}
-
-	private handleOAuth2Disconnect(
-		projectId: string,
-		serverId: string,
-	): Promise<Response> {
-		return handleOAuth2Disconnect(this.oauthRouteDeps(), projectId, serverId);
-	}
-
-	private handleTokenRefreshStatus(): Promise<Response> {
-		return handleTokenRefreshStatus(this.tokenRefreshRouteDeps());
-	}
-
-	private handleForceTokenRefresh(): Promise<Response> {
-		return handleForceTokenRefresh(this.tokenRefreshRouteDeps());
-	}
-
-	// Git Integration handlers (delegated to git-integrations-routes.ts)
-
-	private handleGetIntegrations(): Promise<Response> {
-		return handleGetIntegrations(this.gitIntegrationsRouteDeps());
-	}
-
-	private handleGitHubOAuthStart(request: Request): Promise<Response> {
-		return handleGitHubOAuthStart(this.gitIntegrationsRouteDeps(), request);
-	}
-
-	private handleGitHubOAuthCallback(request: Request): Promise<Response> {
-		return handleGitHubOAuthCallback(this.gitIntegrationsRouteDeps(), request);
-	}
-
-	private handleGitLabOAuthStart(request: Request): Promise<Response> {
-		return handleGitLabOAuthStart(this.gitIntegrationsRouteDeps(), request);
-	}
-
-	private handleGitLabOAuthCallback(request: Request): Promise<Response> {
-		return handleGitLabOAuthCallback(this.gitIntegrationsRouteDeps(), request);
-	}
-
-	private handleGitTokenRefresh(
-		platform: "github" | "gitlab",
-	): Promise<Response> {
-		return handleGitTokenRefresh(this.gitIntegrationsRouteDeps(), platform);
-	}
-
-	private handleGitHubEnterprisePAT(request: Request): Promise<Response> {
-		return handleGitHubEnterprisePAT(this.gitIntegrationsRouteDeps(), request);
-	}
-
-	private handleGitLabSelfManagedPAT(request: Request): Promise<Response> {
-		return handleGitLabSelfManagedPAT(this.gitIntegrationsRouteDeps(), request);
-	}
-
-	private handleDisconnectIntegration(
-		platform: string,
-		host?: string,
-	): Promise<Response> {
-		return handleDisconnectIntegration(
-			this.gitIntegrationsRouteDeps(),
-			platform,
-			host,
-		);
-	}
-
-	// --- Registry handlers ---
-
-	private async handleGetRegistries(): Promise<Response> {
-		this.logger.child("API").info("List registries");
-		return listRegistriesHandler(this.db, this.registryManager);
-	}
-
-	private async handleCreateRegistry(request: Request): Promise<Response> {
-		this.logger.child("API").info("Install registry");
-		return createRegistryHandler(this.db, this.registryManager, request);
-	}
-
-	private async handleDeleteRegistry(slug: string): Promise<Response> {
-		this.logger.child("API").info(`Delete registry: ${slug}`);
-		return deleteRegistryHandler(this.db, this.registryManager, slug);
-	}
-
-	private async handlePatchRegistry(
-		slug: string,
-		request: Request,
-	): Promise<Response> {
-		this.logger.child("API").info(`Patch registry: ${slug}`);
-		return patchRegistryHandler(this.db, this.registryManager, slug, request);
-	}
-
-	private async handleRefreshRegistry(slug: string): Promise<Response> {
-		this.logger.child("API").info(`Refresh registry: ${slug}`);
-		return refreshRegistryHandler(this.db, this.registryManager, slug);
-	}
-
-	private async handlePreviewRegistry(url: URL): Promise<Response> {
-		this.logger.child("API").info("Preview registry");
-		return previewRegistryHandler(this.db, url);
-	}
-
-	private async handleRegistrySearch(
-		registryId: string,
-		url: URL,
-	): Promise<Response> {
-		const apiLogger = this.logger.child("API");
-		apiLogger.info(`Registry search: ${registryId}`);
-		try {
-			const capability = (url.searchParams.get("capability") ??
-				"skills") as RegistryCapability;
-			const query = url.searchParams.get("q") ?? undefined;
-			const limit = url.searchParams.has("limit")
-				? Number(url.searchParams.get("limit"))
-				: undefined;
-			const cursor = url.searchParams.get("cursor") ?? undefined;
-
-			const result = await this.registryManager.search(registryId, {
-				capability,
-				query,
-				limit,
-				cursor,
-			});
-			return new Response(JSON.stringify(result), {
-				headers: { "Content-Type": "application/json" },
-			});
-		} catch (error: any) {
-			apiLogger.failure(`Registry search error: ${error.message}`);
-			const status = error.message.includes("not found") ? 404 : 502;
-			return new Response(
-				JSON.stringify({ error: error.message, registry: registryId }),
-				{ status, headers: { "Content-Type": "application/json" } },
-			);
-		}
-	}
-
-	private async handleRegistryView(
-		registryId: string,
-		itemId: string,
-		url: URL,
-	): Promise<Response> {
-		const apiLogger = this.logger.child("API");
-		apiLogger.info(`Registry view: ${registryId} / ${itemId}`);
-		try {
-			const capability = (url.searchParams.get("capability") ??
-				"skills") as RegistryCapability;
-			const detail = await this.registryManager.view(registryId, {
-				capability,
-				id: itemId,
-			});
-			return new Response(JSON.stringify(detail), {
-				headers: { "Content-Type": "application/json" },
-			});
-		} catch (error: any) {
-			apiLogger.failure(`Registry view error: ${error.message}`);
-			const status = error.message.includes("not found") ? 404 : 502;
-			return new Response(
-				JSON.stringify({ error: error.message, registry: registryId }),
-				{ status, headers: { "Content-Type": "application/json" } },
-			);
-		}
-	}
-
-	private async handleMCP(
-		request: Request,
-		projectId: string,
-		agentId?: string,
-	): Promise<Response> {
-		const mcpLogger = this.logger.child("MCP");
-		const cacheKey = agentId ? `${projectId}:${agentId}` : projectId;
-
-		// Get or create MCP server for this project (or project+sub-agent)
-		let mcpServer = this.mcpServers.get(cacheKey);
-
-		if (!mcpServer) {
-			const label = agentId
-				? `project: ${projectId}, sub-agent: ${agentId}`
-				: `project: ${projectId}`;
-			mcpLogger.info(`Creating new MCP server for ${label}`);
-			// Get project from database
-			const project = this.db.getProject(projectId);
-			if (!project) {
-				mcpLogger.warn("Project not found");
-				return new Response("Project not found", { status: 404 });
-			}
-
-			mcpServer = new CapaMCPServer(
-				this.db,
-				this.sessionManager,
-				projectId,
-				project.path,
-				agentId,
-				this.toolCallTracer,
-				this.mcpServerStateManager,
-			);
-
-			this.mcpServers.set(cacheKey, mcpServer);
-			mcpLogger.success("MCP server created");
-		}
-
-		const requestOrigin = request.headers.get("Origin");
-		const originCheck = isAllowedOrigin(
-			requestOrigin,
-			this.settings.server.host,
-			this.settings.server.port,
-		);
-		const corsHeaders: Record<string, string> = {
-			"Access-Control-Allow-Methods": "POST, GET, OPTIONS",
-			"Access-Control-Allow-Headers": `Content-Type, ${CAPA_CLIENT_HEADER}`,
-		};
-		if (originCheck.origin) {
-			corsHeaders["Access-Control-Allow-Origin"] = originCheck.origin;
-		}
-
-		// Handle MCP protocol via HTTP (simplified without SSE)
-		if (request.method === "POST") {
-			if (requestOrigin && !originCheck.allowed) {
-				return new Response(
-					`Origin ${requestOrigin} not allowed. Set CAPA_ALLOWED_ORIGINS env var to include this origin.`,
-					{ status: 403 },
-				);
-			}
-
-			try {
-				const message = await request.json();
-				mcpLogger.debug(
-					`${message.method || "notification"} (id: ${message.id || "none"})`,
-				);
-
-				const headerClient = request.headers.get(CAPA_CLIENT_HEADER)?.trim();
-				const requestClient =
-					headerClient === CAPA_SHELL_CLIENT ? CAPA_SHELL_CLIENT : null;
-
-				// Handle JSON-RPC message (capa sh sets X-Capa-Client so traces
-				// stay "shell" without sticky-polluting IDE client identity).
-				const result = await runWithMcpRequestClient(requestClient, () =>
-					mcpServer.handleMessage(message),
-				);
-
-				// Return simple JSON response (not SSE)
-				return new Response(JSON.stringify(result), {
-					status: 200,
-					headers: {
-						"Content-Type": "application/json",
-						...corsHeaders,
-					},
-				});
-			} catch (error: any) {
-				mcpLogger.failure(`Error: ${error.message}`);
-				return new Response(
-					JSON.stringify({
-						jsonrpc: "2.0",
-						error: {
-							code: -32603,
-							message: error.message || "Internal error",
-						},
-						id: null,
-					}),
-					{
-						status: mcpHandlerHttpStatus(error),
-						headers: {
-							"Content-Type": "application/json",
-							...corsHeaders,
-						},
-					},
-				);
-			}
-		}
-
-		// Handle OPTIONS for CORS
-		if (request.method === "OPTIONS") {
-			if (requestOrigin && !originCheck.allowed) {
-				return new Response(
-					`Origin ${requestOrigin} not allowed. Set CAPA_ALLOWED_ORIGINS env var to include this origin.`,
-					{ status: 403 },
-				);
-			}
-
-			return new Response(null, {
-				status: 204,
-				headers: corsHeaders,
-			});
-		}
-
-		return new Response("Method not allowed", { status: 405 });
 	}
 
 	private reloadProjectCapabilitiesFromDisk(projectId: string): Promise<void> {
@@ -1370,10 +661,6 @@ class CapaServer {
 
 	private notifyProjectChanged(projectId: string): void {
 		notifyProjectChanged(this.projectEventClients, projectId);
-	}
-
-	private handleProjectEvents(projectId: string): Response {
-		return handleProjectEvents(this.projectRouteDeps(), projectId);
 	}
 
 	private writePidFile() {

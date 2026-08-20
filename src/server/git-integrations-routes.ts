@@ -1,5 +1,8 @@
 import type { GitIntegrationManager } from "./git-integration-manager";
-import { gitOAuthCallbackNeedsBridge, oauthBridgeResponse } from "./oauth-bridge";
+import {
+	gitOAuthCallbackNeedsBridge,
+	oauthBridgeResponse,
+} from "./oauth-bridge";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
@@ -60,7 +63,9 @@ async function completeGitOAuthCallback(
 
 	if (!result.success) {
 		return new Response(
-			JSON.stringify({ error: result.error || "Invalid or expired OAuth state" }),
+			JSON.stringify({
+				error: result.error || "Invalid or expired OAuth state",
+			}),
 			{ status: 400, headers: JSON_HEADERS },
 		);
 	}
@@ -79,11 +84,14 @@ export async function handleGitHubOAuthStart(
 	try {
 		const localCallbackUri = `http://${deps.serverHost}:${deps.serverPort}/api/integrations/github/oauth/callback`;
 
-		const { url: authUrl, flowId, state } =
-			await deps.gitIntegrationManager.generateAuthorizationUrl(
-				"github",
-				localCallbackUri,
-			);
+		const {
+			url: authUrl,
+			flowId,
+			state,
+		} = await deps.gitIntegrationManager.generateAuthorizationUrl(
+			"github",
+			localCallbackUri,
+		);
 
 		return new Response(
 			JSON.stringify({ authorizationUrl: authUrl, flowId, state }),
@@ -171,11 +179,14 @@ export async function handleGitLabOAuthStart(
 	try {
 		const localCallbackUri = `http://${deps.serverHost}:${deps.serverPort}/api/integrations/gitlab/oauth/callback`;
 
-		const { url: authUrl, flowId, state } =
-			await deps.gitIntegrationManager.generateAuthorizationUrl(
-				"gitlab",
-				localCallbackUri,
-			);
+		const {
+			url: authUrl,
+			flowId,
+			state,
+		} = await deps.gitIntegrationManager.generateAuthorizationUrl(
+			"gitlab",
+			localCallbackUri,
+		);
 
 		return new Response(
 			JSON.stringify({ authorizationUrl: authUrl, flowId, state }),
@@ -364,4 +375,80 @@ export async function handleDisconnectIntegration(
 			headers: JSON_HEADERS,
 		});
 	}
+}
+
+/**
+ * Dispatcher for `/api/integrations…` routes.
+ * Returns null if the path is not an integrations route.
+ */
+export async function dispatchGitIntegrations(
+	deps: GitIntegrationsRouteDeps,
+	path: string,
+	method: string,
+	request: Request,
+): Promise<Response | null> {
+	if (path === "/api/integrations" && method === "GET") {
+		return handleGetIntegrations(deps);
+	}
+
+	if (path === "/api/integrations/github/oauth/start" && method === "POST") {
+		return handleGitHubOAuthStart(deps, request);
+	}
+
+	if (
+		path === "/api/integrations/github/oauth/callback" &&
+		(method === "POST" || method === "GET")
+	) {
+		return handleGitHubOAuthCallback(deps, request);
+	}
+
+	if (path === "/api/integrations/gitlab/oauth/start" && method === "POST") {
+		return handleGitLabOAuthStart(deps, request);
+	}
+
+	if (
+		path === "/api/integrations/gitlab/oauth/callback" &&
+		(method === "POST" || method === "GET")
+	) {
+		return handleGitLabOAuthCallback(deps, request);
+	}
+
+	const tokenRefreshMatch = path.match(
+		/^\/api\/integrations\/(github|gitlab)\/refresh$/,
+	);
+	if (tokenRefreshMatch) {
+		if (method === "GET") {
+			return new Response(
+				JSON.stringify({ error: "Method not allowed. Use POST." }),
+				{ status: 405, headers: JSON_HEADERS },
+			);
+		}
+		if (method === "POST") {
+			return handleGitTokenRefresh(
+				deps,
+				tokenRefreshMatch[1] as "github" | "gitlab",
+			);
+		}
+	}
+
+	if (path === "/api/integrations/github-enterprise" && method === "POST") {
+		return handleGitHubEnterprisePAT(deps, request);
+	}
+
+	if (path === "/api/integrations/gitlab-self-managed" && method === "POST") {
+		return handleGitLabSelfManagedPAT(deps, request);
+	}
+
+	const disconnectMatch = path.match(
+		/^\/api\/integrations\/([^/]+)(?:\/([^/]+))?$/,
+	);
+	if (disconnectMatch && method === "DELETE") {
+		return handleDisconnectIntegration(
+			deps,
+			disconnectMatch[1],
+			disconnectMatch[2],
+		);
+	}
+
+	return null;
 }
