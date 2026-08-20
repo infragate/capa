@@ -10,6 +10,7 @@ import type { CapabilitiesFileWatcher } from "./capabilities-watcher";
 import type { ConfigureRouteDeps } from "./configure-routes";
 import { runProjectConfigure } from "./configure-routes";
 import { clientErrorMessage } from "./http-error";
+import { matchRoute } from "./match-route";
 import type { CapaMCPServer } from "./mcp-handler";
 import type { McpServerStateManager } from "./mcp-server-state";
 import { OAuth2Manager } from "./oauth-manager";
@@ -649,27 +650,27 @@ export async function dispatchProjects(
 		return handleGetProjects(deps);
 	}
 
-	const projectMatch = path.match(/^\/api\/projects\/([^/]+)$/);
-	if (projectMatch && method === "GET") {
-		return handleGetProject(deps, projectMatch[1]);
+	const project = matchRoute(path, "/api/projects/:projectId");
+	if (project && method === "GET") {
+		return handleGetProject(deps, project.projectId);
 	}
-	if (projectMatch && method === "DELETE") {
-		return handleDeleteProject(deps, projectMatch[1]);
+	if (project && method === "DELETE") {
+		return handleDeleteProject(deps, project.projectId);
 	}
 
-	const eventsMatch = path.match(/^\/api\/projects\/([^/]+)\/events$/);
-	if (eventsMatch && method === "GET") {
+	const events = matchRoute(path, "/api/projects/:projectId/events");
+	if (events && method === "GET") {
 		// Bun closes quiet streams after ~10s unless idle timeout is disabled.
 		bunServer?.timeout?.(request, 0);
-		return handleProjectEvents(deps, eventsMatch[1]);
+		return handleProjectEvents(deps, events.projectId);
 	}
 
-	const fsMatch = path.match(/^\/api\/projects\/([^/]+)\/fs$/);
-	if (fsMatch && method === "GET") {
-		return handleProjectFsList(deps, fsMatch[1], request);
+	const fs = matchRoute(path, "/api/projects/:projectId/fs");
+	if (fs && method === "GET") {
+		return handleProjectFsList(deps, fs.projectId, request);
 	}
-	if (fsMatch && method === "POST") {
-		return handleProjectFsUpload(deps, fsMatch[1], request);
+	if (fs && method === "POST") {
+		return handleProjectFsUpload(deps, fs.projectId, request);
 	}
 
 	return null;

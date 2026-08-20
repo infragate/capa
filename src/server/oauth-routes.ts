@@ -6,6 +6,7 @@ import { detectCapabilitiesFile } from "../shared/paths";
 import { projectUiUrl } from "../shared/ui-urls";
 import type { MCPServer } from "../types/capabilities";
 import type { OAuth2Config } from "../types/oauth";
+import { matchRoute } from "./match-route";
 import type { OAuth2Manager } from "./oauth-manager";
 import { syncAllServersOAuth2Requirements } from "./oauth-server-sync";
 import {
@@ -528,28 +529,31 @@ export async function dispatchOAuth(
 	method: string,
 	request: Request,
 ): Promise<Response | null> {
-	const serversMatch = path.match(/^\/api\/projects\/([^/]+)\/oauth-servers$/);
-	if (serversMatch && method === "GET") {
-		return handleGetOAuth2Servers(deps, serversMatch[1]);
+	const servers = matchRoute(path, "/api/projects/:projectId/oauth-servers");
+	if (servers && method === "GET") {
+		return handleGetOAuth2Servers(deps, servers.projectId);
 	}
 
-	const startMatch = path.match(/^\/api\/projects\/([^/]+)\/oauth\/start$/);
-	if (startMatch && method === "POST") {
-		return handleOAuth2Start(deps, startMatch[1], request);
+	const start = matchRoute(path, "/api/projects/:projectId/oauth/start");
+	if (start && method === "POST") {
+		return handleOAuth2Start(deps, start.projectId, request);
 	}
 
-	const callbackMatch = path.match(
-		/^\/api\/projects\/([^/]+)\/oauth\/callback$/,
+	const callback = matchRoute(path, "/api/projects/:projectId/oauth/callback");
+	if (callback && method === "GET") {
+		return handleOAuth2Callback(deps, callback.projectId, request);
+	}
+
+	const disconnect = matchRoute(
+		path,
+		"/api/projects/:projectId/oauth/:serverId",
 	);
-	if (callbackMatch && method === "GET") {
-		return handleOAuth2Callback(deps, callbackMatch[1], request);
-	}
-
-	const disconnectMatch = path.match(
-		/^\/api\/projects\/([^/]+)\/oauth\/([^/]+)$/,
-	);
-	if (disconnectMatch && method === "DELETE") {
-		return handleOAuth2Disconnect(deps, disconnectMatch[1], disconnectMatch[2]);
+	if (disconnect && method === "DELETE") {
+		return handleOAuth2Disconnect(
+			deps,
+			disconnect.projectId,
+			disconnect.serverId,
+		);
 	}
 
 	return null;

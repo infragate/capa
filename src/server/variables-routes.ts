@@ -1,6 +1,7 @@
 import type { CapaDatabase } from "../db/database";
 import type { Capabilities } from "../types/capabilities";
 import { buildVariablesResponse } from "./capabilities-routes";
+import { matchRoute } from "./match-route";
 import type { SessionManager } from "./session-manager";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
@@ -94,31 +95,20 @@ export async function dispatchVariables(
 	method: string,
 	request: Request,
 ): Promise<Response | null> {
-	const varsMatch = path.match(/^\/api\/projects\/([^/]+)\/variables$/);
-	if (varsMatch && method === "GET") {
-		return handleGetVariables(deps, varsMatch[1]);
+	const vars = matchRoute(path, "/api/projects/:projectId/variables");
+	if (vars && method === "GET") {
+		return handleGetVariables(deps, vars.projectId);
 	}
-	if (varsMatch && method === "POST") {
-		return handleSetVariables(deps, varsMatch[1], request);
+	if (vars && method === "POST") {
+		return handleSetVariables(deps, vars.projectId, request);
 	}
 
-	const varItemMatch = path.match(
-		/^\/api\/projects\/([^/]+)\/variables\/([^/]+)$/,
-	);
-	if (varItemMatch && method === "PUT") {
-		return handlePutVariable(
-			deps,
-			varItemMatch[1],
-			decodeURIComponent(varItemMatch[2]),
-			request,
-		);
+	const varItem = matchRoute(path, "/api/projects/:projectId/variables/:name");
+	if (varItem && method === "PUT") {
+		return handlePutVariable(deps, varItem.projectId, varItem.name, request);
 	}
-	if (varItemMatch && method === "DELETE") {
-		return handleDeleteVariable(
-			deps,
-			varItemMatch[1],
-			decodeURIComponent(varItemMatch[2]),
-		);
+	if (varItem && method === "DELETE") {
+		return handleDeleteVariable(deps, varItem.projectId, varItem.name);
 	}
 
 	return null;

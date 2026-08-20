@@ -1,10 +1,10 @@
 import type { Database } from "bun:sqlite";
 import type { ToolCallRecord } from "../types/database";
 import type { ToolCallListOptions, ToolCallListResult } from "./tool-calls";
-
-/** Keep in sync with TOOL_CALLS_PAGE_SIZE_* in tool-calls.ts */
-const PAGE_SIZE_DEFAULT = 50;
-const PAGE_SIZE_MAX = 100;
+import {
+	TOOL_CALLS_PAGE_SIZE_DEFAULT,
+	TOOL_CALLS_PAGE_SIZE_MAX,
+} from "./tool-calls-constants";
 
 type ActivityPageUnit = {
 	unitKey: string;
@@ -330,7 +330,10 @@ export function listRecentToolCalls(
 ): ToolCallListResult {
 	const traceBudget = Math.max(
 		1,
-		Math.min(options.limit ?? PAGE_SIZE_DEFAULT, PAGE_SIZE_MAX),
+		Math.min(
+			options.limit ?? TOOL_CALLS_PAGE_SIZE_DEFAULT,
+			TOOL_CALLS_PAGE_SIZE_MAX,
+		),
 	);
 	const beforeStartedAt = options.beforeStartedAt ?? options.before ?? null;
 	const beforeId = options.beforeId ?? null;

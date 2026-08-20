@@ -9,6 +9,7 @@ import type {
 	MCPServerDefinition,
 } from "../types/capabilities";
 import { clientErrorMessage } from "./http-error";
+import { matchRoute } from "./match-route";
 import type { CapaMCPServer, ShellToolInfo } from "./mcp-handler";
 import type { McpServerStateManager } from "./mcp-server-state";
 import type { SessionManager } from "./session-manager";
@@ -362,48 +363,56 @@ export async function dispatchMcpMeta(
 ): Promise<Response | null> {
 	const url = new URL(request.url);
 
-	const serverToolsMatch = path.match(
-		/^\/api\/projects\/([^/]+)\/servers\/([^/]+)\/tools$/,
+	const serverTools = matchRoute(
+		path,
+		"/api/projects/:projectId/servers/:serverId/tools",
 	);
-	if (serverToolsMatch && method === "GET") {
-		return handleGetServerTools(deps, serverToolsMatch[1], serverToolsMatch[2]);
+	if (serverTools && method === "GET") {
+		return handleGetServerTools(
+			deps,
+			serverTools.projectId,
+			serverTools.serverId,
+		);
 	}
 
-	const serverEnabledMatch = path.match(
-		/^\/api\/projects\/([^/]+)\/servers\/([^/]+)\/enabled$/,
+	const serverEnabled = matchRoute(
+		path,
+		"/api/projects/:projectId/servers/:serverId/enabled",
 	);
-	if (serverEnabledMatch && method === "POST") {
+	if (serverEnabled && method === "POST") {
 		return handleSetServerEnabled(
 			deps,
-			serverEnabledMatch[1],
-			serverEnabledMatch[2],
+			serverEnabled.projectId,
+			serverEnabled.serverId,
 			request,
 		);
 	}
 
-	const skillContentMatch = path.match(
-		/^\/api\/projects\/([^/]+)\/skills\/([^/]+)\/content$/,
+	const skillContent = matchRoute(
+		path,
+		"/api/projects/:projectId/skills/:skillId/content",
 	);
-	if (skillContentMatch && method === "GET") {
+	if (skillContent && method === "GET") {
 		return handleGetSkillContent(
 			deps,
-			skillContentMatch[1],
-			decodeURIComponent(skillContentMatch[2]),
+			skillContent.projectId,
+			skillContent.skillId,
 		);
 	}
 
-	const shellToolsMatch = path.match(/^\/api\/projects\/([^/]+)\/shell-tools$/);
-	if (shellToolsMatch && method === "GET") {
-		return handleGetShellTools(deps, shellToolsMatch[1]);
+	const shellTools = matchRoute(path, "/api/projects/:projectId/shell-tools");
+	if (shellTools && method === "GET") {
+		return handleGetShellTools(deps, shellTools.projectId);
 	}
 
-	const shellToolSchemaMatch = path.match(
-		/^\/api\/projects\/([^/]+)\/shell-tool-schema$/,
+	const shellToolSchema = matchRoute(
+		path,
+		"/api/projects/:projectId/shell-tool-schema",
 	);
-	if (shellToolSchemaMatch && method === "GET") {
+	if (shellToolSchema && method === "GET") {
 		return handleGetShellToolSchema(
 			deps,
-			shellToolSchemaMatch[1],
+			shellToolSchema.projectId,
 			url.searchParams.get("tool") || "",
 		);
 	}

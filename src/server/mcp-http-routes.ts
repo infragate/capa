@@ -1,5 +1,5 @@
 import type { CapaDatabase } from "../db/database";
-import { logger } from "../shared/logger";
+import type { logger } from "../shared/logger";
 import { isAllowedOrigin } from "./cors-origin";
 import { CapaMCPServer } from "./mcp-handler";
 import type { McpServerStateManager } from "./mcp-server-state";
@@ -19,6 +19,7 @@ export interface McpHttpRouteDeps {
 	mcpServerStateManager: McpServerStateManager;
 	serverHost: string;
 	serverPort: number;
+	logger: typeof logger;
 }
 
 export function mcpHandlerHttpStatus(error: unknown): number {
@@ -44,7 +45,7 @@ export async function handleMcpHttp(
 	projectId: string,
 	agentId?: string,
 ): Promise<Response> {
-	const mcpLogger = logger.child("MCP");
+	const mcpLogger = deps.logger.child("MCP");
 	const cacheKey = agentId ? `${projectId}:${agentId}` : projectId;
 
 	let mcpServer = deps.mcpServers.get(cacheKey);

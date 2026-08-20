@@ -9,6 +9,7 @@ import {
 	type ToolCallKind,
 	type ToolCallStatus,
 } from "../types/database";
+import { matchRoute } from "./match-route";
 import {
 	handleGetProjectActivity,
 	handleGetProjectActivityStats,
@@ -258,11 +259,11 @@ export async function dispatchActivity(
 ): Promise<Response | null> {
 	const url = new URL(request.url);
 
-	const activityMatch = path.match(/^\/api\/projects\/([^/]+)\/activity$/);
-	if (activityMatch && method === "GET") {
+	const activity = matchRoute(path, "/api/projects/:projectId/activity");
+	if (activity && method === "GET") {
 		return handleGetProjectActivity(
 			deps,
-			activityMatch[1],
+			activity.projectId,
 			url.searchParams.get("limit"),
 			url.searchParams.get("before"),
 			url.searchParams.get("beforeId"),
@@ -272,23 +273,22 @@ export async function dispatchActivity(
 		);
 	}
 
-	const statsMatch = path.match(/^\/api\/projects\/([^/]+)\/activity\/stats$/);
-	if (statsMatch && method === "GET") {
-		return handleGetProjectActivityStats(deps, statsMatch[1]);
+	const stats = matchRoute(path, "/api/projects/:projectId/activity/stats");
+	if (stats && method === "GET") {
+		return handleGetProjectActivityStats(deps, stats.projectId);
 	}
 
-	const hooksSyncMatch = path.match(
-		/^\/api\/projects\/([^/]+)\/activity\/hooks\/sync$/,
+	const hooksSync = matchRoute(
+		path,
+		"/api/projects/:projectId/activity/hooks/sync",
 	);
-	if (hooksSyncMatch && method === "POST") {
-		return handleSyncActivityHooks(deps, hooksSyncMatch[1]);
+	if (hooksSync && method === "POST") {
+		return handleSyncActivityHooks(deps, hooksSync.projectId);
 	}
 
-	const eventsMatch = path.match(
-		/^\/api\/projects\/([^/]+)\/activity\/events$/,
-	);
-	if (eventsMatch && method === "POST") {
-		return handlePostProjectActivityEvent(deps, eventsMatch[1], request);
+	const events = matchRoute(path, "/api/projects/:projectId/activity/events");
+	if (events && method === "POST") {
+		return handlePostProjectActivityEvent(deps, events.projectId, request);
 	}
 
 	return null;

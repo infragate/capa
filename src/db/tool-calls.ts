@@ -5,10 +5,17 @@ import {
 } from "../shared/activity-run-boundary";
 import type { ToolCallRecord, ToolCallStats } from "../types/database";
 import { listRecentToolCalls } from "./tool-calls-activity-page";
+import {
+	TOOL_CALLS_PAGE_SIZE_DEFAULT,
+	TOOL_CALLS_PAGE_SIZE_MAX,
+	TOOL_CALLS_PER_PROJECT_CAP,
+} from "./tool-calls-constants";
 
-export const TOOL_CALLS_PER_PROJECT_CAP = 10_000;
-export const TOOL_CALLS_PAGE_SIZE_DEFAULT = 50;
-export const TOOL_CALLS_PAGE_SIZE_MAX = 100;
+export {
+	TOOL_CALLS_PAGE_SIZE_DEFAULT,
+	TOOL_CALLS_PAGE_SIZE_MAX,
+	TOOL_CALLS_PER_PROJECT_CAP,
+} from "./tool-calls-constants";
 
 export type ToolCallInsert = Omit<
 	ToolCallRecord,

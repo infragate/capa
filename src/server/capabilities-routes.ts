@@ -18,9 +18,13 @@ import {
 	handlePatchOptions,
 	handlePutAgents,
 } from "./capabilities-special-routes";
+import { matchRoute } from "./match-route";
 
 export type { CapabilitiesRouteDeps, ConfigureAfterWrite };
 export { isArrayCapabilitySection };
+
+const CAP_SECTION =
+	":section(skills|servers|tools|plugins|subagents|rules|hooks)";
 
 /**
  * Route dispatcher for `/api/projects/:id/capabilities…` mutations.
@@ -59,43 +63,36 @@ export async function handleCapabilitiesMutation(
 	}
 
 	// POST /capabilities/:section
-	const postMatch = rest.match(
-		/^\/(skills|servers|tools|plugins|subagents|rules|hooks)$/,
-	);
-	if (postMatch && method === "POST") {
+	const post = matchRoute(rest, `/${CAP_SECTION}`);
+	if (post && method === "POST") {
 		return handleAppend(
 			deps,
 			projectId,
-			postMatch[1] as ArrayCapabilitySection,
+			post.section as ArrayCapabilitySection,
 			request,
 		);
 	}
 
 	// PUT /capabilities/:section/order
-	const orderMatch = rest.match(
-		/^\/(skills|servers|tools|plugins|subagents|rules|hooks)\/order$/,
-	);
-	if (orderMatch && method === "PUT") {
+	const order = matchRoute(rest, `/${CAP_SECTION}/order`);
+	if (order && method === "PUT") {
 		return handleReorder(
 			deps,
 			projectId,
-			orderMatch[1] as ArrayCapabilitySection,
+			order.section as ArrayCapabilitySection,
 			request,
 		);
 	}
 
 	// PATCH|DELETE /capabilities/:section/:entryId
-	const entryMatch = rest.match(
-		/^\/(skills|servers|tools|plugins|subagents|rules|hooks)\/([^/]+)$/,
-	);
-	if (entryMatch) {
-		const section = entryMatch[1] as ArrayCapabilitySection;
-		const entryIdParam = decodeURIComponent(entryMatch[2]);
+	const entry = matchRoute(rest, `/${CAP_SECTION}/:entryId`);
+	if (entry) {
+		const section = entry.section as ArrayCapabilitySection;
 		if (method === "PATCH") {
-			return handleUpdate(deps, projectId, section, entryIdParam, request);
+			return handleUpdate(deps, projectId, section, entry.entryId, request);
 		}
 		if (method === "DELETE") {
-			return handleDelete(deps, projectId, section, entryIdParam, request);
+			return handleDelete(deps, projectId, section, entry.entryId, request);
 		}
 	}
 

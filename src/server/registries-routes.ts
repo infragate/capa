@@ -1,6 +1,6 @@
 import type { CapaDatabase } from "../db/database";
 import { createAuthenticatedFetch } from "../shared/authenticated-fetch";
-import { logger } from "../shared/logger";
+import type { logger } from "../shared/logger";
 import {
 	deriveSlug,
 	executeStagedRegistry,
@@ -13,6 +13,7 @@ import type { RegistryManager } from "../shared/registries/manager";
 import type { RegistrySourceType } from "../types/database";
 import type { RegistryCapability, RegistryManifest } from "../types/registry";
 import { clientErrorMessage } from "./http-error";
+import { matchRoute } from "./match-route";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
@@ -343,16 +344,15 @@ export async function previewRegistryHandler(
 export interface RegistriesRouteDeps {
 	db: CapaDatabase;
 	registryManager: RegistryManager;
+	logger: typeof logger;
 }
 
-const apiLogger = () => logger.child("CapaServer").child("API");
-
 export async function searchRegistryHandler(
-	manager: RegistryManager,
+	deps: RegistriesRouteDeps,
 	registryId: string,
 	url: URL,
 ): Promise<Response> {
-	const log = apiLogger();
+	const log = deps.logger.child("API");
 	log.info(`Registry search: ${registryId}`);
 	try {
 		const capability = (url.searchParams.get("capability") ??
@@ -363,7 +363,7 @@ export async function searchRegistryHandler(
 			: undefined;
 		const cursor = url.searchParams.get("cursor") ?? undefined;
 
-		const result = await manager.search(registryId, {
+		const result = await deps.registryManager.search(registryId, {
 			capability,
 			query,
 			limit,
@@ -381,17 +381,17 @@ export async function searchRegistryHandler(
 }
 
 export async function viewRegistryHandler(
-	manager: RegistryManager,
+	deps: RegistriesRouteDeps,
 	registryId: string,
 	itemId: string,
 	url: URL,
 ): Promise<Response> {
-	const log = apiLogger();
+	const log = deps.logger.child("API");
 	log.info(`Registry view: ${registryId} / ${itemId}`);
 	try {
 		const capability = (url.searchParams.get("capability") ??
 			"skills") as RegistryCapability;
-		const detail = await manager.view(registryId, {
+		const detail = await deps.registryManager.view(registryId, {
 			capability,
 			id: itemId,
 		});
@@ -430,48 +430,31 @@ export async function dispatchRegistries(
 		return previewRegistryHandler(deps.db, url);
 	}
 
-	const searchMatch = path.match(/^\/api\/registries\/([^/]+)\/search$/);
-	if (searchMatch && method === "GET") {
-		return searchRegistryHandler(
-			deps.registryManager,
-			decodeURIComponent(searchMatch[1]),
-			url,
-		);
+	const search = matchRoute(path, "/api/registries/:slug/search");
+	if (search && method === "GET") {
+		return searchRegistryHandler(deps, search.slug, url);
 	}
 
 	// view uses a wildcard tail so item IDs containing slashes work
-	const viewMatch = path.match(/^\/api\/registries\/([^/]+)\/view\/(.+)$/);
-	if (viewMatch && method === "GET") {
-		return viewRegistryHandler(
-			deps.registryManager,
-			decodeURIComponent(viewMatch[1]),
-			decodeURIComponent(viewMatch[2]),
-			url,
-		);
+	const view = matchRoute(path, "/api/registries/:slug/view/:item+");
+	if (view && method === "GET") {
+		return viewRegistryHandler(deps, view.slug, view.item, url);
 	}
 
-	const refreshMatch = path.match(/^\/api\/registries\/([^/]+)\/refresh$/);
-	if (refreshMatch && method === "POST") {
-		return refreshRegistryHandler(
-			deps.db,
-			deps.registryManager,
-			decodeURIComponent(refreshMatch[1]),
-		);
+	const refresh = matchRoute(path, "/api/registries/:slug/refresh");
+	if (refresh && method === "POST") {
+		return refreshRegistryHandler(deps.db, deps.registryManager, refresh.slug);
 	}
 
-	const itemMatch = path.match(/^\/api\/registries\/([^/]+)$/);
-	if (itemMatch && method === "DELETE") {
-		return deleteRegistryHandler(
-			deps.db,
-			deps.registryManager,
-			decodeURIComponent(itemMatch[1]),
-		);
+	const item = matchRoute(path, "/api/registries/:slug");
+	if (item && method === "DELETE") {
+		return deleteRegistryHandler(deps.db, deps.registryManager, item.slug);
 	}
-	if (itemMatch && method === "PATCH") {
+	if (item && method === "PATCH") {
 		return patchRegistryHandler(
 			deps.db,
 			deps.registryManager,
-			decodeURIComponent(itemMatch[1]),
+			item.slug,
 			request,
 		);
 	}

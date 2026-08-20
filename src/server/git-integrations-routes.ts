@@ -1,4 +1,5 @@
 import type { GitIntegrationManager } from "./git-integration-manager";
+import { matchRoute } from "./match-route";
 import {
 	gitOAuthCallbackNeedsBridge,
 	oauthBridgeResponse,
@@ -413,10 +414,11 @@ export async function dispatchGitIntegrations(
 		return handleGitLabOAuthCallback(deps, request);
 	}
 
-	const tokenRefreshMatch = path.match(
-		/^\/api\/integrations\/(github|gitlab)\/refresh$/,
+	const tokenRefresh = matchRoute(
+		path,
+		"/api/integrations/:platform(github|gitlab)/refresh",
 	);
-	if (tokenRefreshMatch) {
+	if (tokenRefresh) {
 		if (method === "GET") {
 			return new Response(
 				JSON.stringify({ error: "Method not allowed. Use POST." }),
@@ -426,7 +428,7 @@ export async function dispatchGitIntegrations(
 		if (method === "POST") {
 			return handleGitTokenRefresh(
 				deps,
-				tokenRefreshMatch[1] as "github" | "gitlab",
+				tokenRefresh.platform as "github" | "gitlab",
 			);
 		}
 	}
@@ -439,15 +441,18 @@ export async function dispatchGitIntegrations(
 		return handleGitLabSelfManagedPAT(deps, request);
 	}
 
-	const disconnectMatch = path.match(
-		/^\/api\/integrations\/([^/]+)(?:\/([^/]+))?$/,
-	);
-	if (disconnectMatch && method === "DELETE") {
+	const disconnectHost = matchRoute(path, "/api/integrations/:platform/:host");
+	if (disconnectHost && method === "DELETE") {
 		return handleDisconnectIntegration(
 			deps,
-			disconnectMatch[1],
-			disconnectMatch[2],
+			disconnectHost.platform,
+			disconnectHost.host,
 		);
+	}
+
+	const disconnect = matchRoute(path, "/api/integrations/:platform");
+	if (disconnect && method === "DELETE") {
+		return handleDisconnectIntegration(deps, disconnect.platform);
 	}
 
 	return null;

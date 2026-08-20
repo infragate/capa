@@ -14,6 +14,7 @@ import {
 import type { Capabilities } from "../types/capabilities";
 import type { OAuth2Config } from "../types/oauth";
 import type { CapabilitiesFileWatcher } from "./capabilities-watcher";
+import { matchRoute } from "./match-route";
 import type { CapaMCPServer, ValidationProgressEvent } from "./mcp-handler";
 import type { McpServerStateManager } from "./mcp-server-state";
 import { OAuth2Manager } from "./oauth-manager";
@@ -488,9 +489,9 @@ export async function dispatchConfigure(
 	method: string,
 	request: Request,
 ): Promise<Response | null> {
-	const configMatch = path.match(/^\/api\/projects\/([^/]+)\/configure$/);
-	if (configMatch && method === "POST") {
-		return handleProjectConfigure(deps, configMatch[1], request);
+	const config = matchRoute(path, "/api/projects/:projectId/configure");
+	if (config && method === "POST") {
+		return handleProjectConfigure(deps, config.projectId, request);
 	}
 	return null;
 }

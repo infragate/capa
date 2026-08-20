@@ -38,6 +38,7 @@ import {
 } from "./git-integrations-routes";
 import { withAllowedHost } from "./host-allowlist";
 import { htmlSecurityHeaders } from "./html-security-headers";
+import { matchRoute } from "./match-route";
 import { CapaMCPServer } from "./mcp-handler";
 import { handleMcpHttp, type McpHttpRouteDeps } from "./mcp-http-routes";
 import { dispatchMcpMeta, type McpMetaRouteDeps } from "./mcp-meta-routes";
@@ -187,6 +188,7 @@ class CapaServer {
 		return {
 			db: this.db,
 			registryManager: this.registryManager,
+			logger: this.logger,
 		};
 	}
 
@@ -199,6 +201,7 @@ class CapaServer {
 			mcpServerStateManager: this.mcpServerStateManager,
 			serverHost: this.settings.server.host,
 			serverPort: this.settings.server.port,
+			logger: this.logger,
 		};
 	}
 
@@ -450,10 +453,9 @@ class CapaServer {
 		}
 
 		// Sub-agent MCP endpoints: /{projectId}/agents/{agentId}/mcp
-		const agentMcpMatch = path.match(/^\/([^/]+)\/agents\/([^/]+)\/mcp$/);
-		if (agentMcpMatch) {
-			const projectId = agentMcpMatch[1];
-			const agentId = agentMcpMatch[2];
+		const agentMcp = matchRoute(path, "/:projectId/agents/:agentId/mcp");
+		if (agentMcp) {
+			const { projectId, agentId } = agentMcp;
 			this.logger.debug(
 				`MCP endpoint for project: ${projectId}, sub-agent: ${agentId}`,
 			);
@@ -470,9 +472,9 @@ class CapaServer {
 		}
 
 		// Main MCP endpoints: /{projectId}/mcp
-		const mcpMatch = path.match(/^\/([^/]+)\/mcp$/);
-		if (mcpMatch) {
-			const projectId = mcpMatch[1];
+		const mcp = matchRoute(path, "/:projectId/mcp");
+		if (mcp) {
+			const { projectId } = mcp;
 			this.logger.debug(`MCP endpoint for project: ${projectId}`);
 			const auth = requireMcpAuth(request, this.settings.server.host);
 			if (!auth.ok) {
@@ -535,18 +537,16 @@ class CapaServer {
 		);
 		if (variables) return variables;
 
-		const capsProjectMatch = path.match(
-			/^\/api\/projects\/([^/]+)\/capabilities(?:\/|$)/,
-		);
-		if (capsProjectMatch) {
-			const projectId = capsProjectMatch[1];
+		const caps = matchRoute(path, "/api/projects/:projectId/capabilities*");
+		if (caps) {
+			const projectId = caps.projectId;
 			const mutation = await handleCapabilitiesMutation(
 				{
 					db: this.db,
 					registryManager: this.registryManager,
-					configure: (id, caps) => this._runProjectConfigure(id, caps),
-					refreshCapabilities: (id, caps) =>
-						this._refreshProjectCapabilities(id, caps),
+					configure: (id, capsBody) => this._runProjectConfigure(id, capsBody),
+					refreshCapabilities: (id, capsBody) =>
+						this._refreshProjectCapabilities(id, capsBody),
 					markSelfWrite: (id) => this.capsWatcher.markSelfWrite(id),
 					notifyChanged: (id) => this.notifyProjectChanged(id),
 				},
