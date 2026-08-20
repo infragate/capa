@@ -27,6 +27,9 @@ export function stdioLaunchFingerprint(def: MCPServerDefinition): string {
 		cwd: def.cwd ?? null,
 		env: sortedEnv(secretValueMapForFingerprint(def.env)),
 	});
+	// Launch-config fingerprint for the local stdio allowlist — not password
+	// storage or verification. Fast SHA-256 is appropriate here.
+	// codeql[js/insufficient-password-hash]
 	return createHash("sha256").update(payload).digest("hex");
 }
 
