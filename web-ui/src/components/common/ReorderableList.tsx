@@ -197,9 +197,11 @@ export function ReorderableList<T>({
         const isDragging = draggingId === id;
         const isOver = overId === id && draggingId !== null && draggingId !== id;
 
-        const handle = locked ? null : (
+        // Always render a handle so row actions (e.g. toggles) stay aligned;
+        // locked / disabled rows get a grayed-out non-draggable grip.
+        const handle = (
           <ReorderHandle
-            disabled={disabled}
+            disabled={disabled || locked}
             label={handleLabel}
             onArm={() => armRow(id)}
           />

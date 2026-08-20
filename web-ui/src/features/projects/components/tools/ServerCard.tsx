@@ -147,6 +147,15 @@ export function ServerCard({
             data-open={expanded ? 'true' : 'false'}
           />
         </button>
+        <div className="flex shrink-0 items-center self-center">
+          <Switch
+            checked={isOn}
+            disabled={mutating}
+            loading={setServerEnabled.isPending}
+            onCheckedChange={() => void handleToggleEnabled()}
+            aria-label={isOn ? t('actions.turnOff') : t('actions.turnOn')}
+          />
+        </div>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <span
@@ -180,13 +189,6 @@ export function ServerCard({
           ) : null}
         </div>
         <div className="flex shrink-0 items-center gap-1 self-center">
-          <Switch
-            checked={isOn}
-            disabled={mutating}
-            loading={setServerEnabled.isPending}
-            onCheckedChange={() => void handleToggleEnabled()}
-            aria-label={isOn ? t('actions.turnOff') : t('actions.turnOn')}
-          />
           {server.requiresOAuth && !server.isConnected && (
             <button
               type="button"
