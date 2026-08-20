@@ -3,18 +3,19 @@ import { parseCapabilitiesFile } from "../shared/capabilities";
 import { detectCapabilitiesFile } from "../shared/paths";
 import { trustStdioServers } from "../shared/stdio-allowlist";
 import { resolveVariablesInObject } from "../shared/variable-resolver";
-import type { Capabilities, MCPServerDefinition } from "../types/capabilities";
+import type { Capabilities, MCPServer, MCPServerDefinition } from "../types/capabilities";
 import type { CapaMCPServer, ShellToolInfo } from "./mcp-handler";
 import type { McpServerStateManager } from "./mcp-server-state";
 import type { SessionManager } from "./session-manager";
 import { resolveSkillContentById } from "./skill-content";
+import { clientErrorMessage } from "./http-error";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
 /** Record stdio launch approval using resolved cmd/args/env (matches connect-time checks). */
 function trustResolvedStdioServer(
 	projectId: string,
-	server: { id: string; type: string; def: MCPServerDefinition },
+	server: MCPServer,
 	db: CapaDatabase,
 ): void {
 	if (!server.def?.cmd) return;
@@ -153,13 +154,18 @@ export async function handleSetServerEnabled(
 					connect: true,
 					timeoutMs: 15_000,
 				});
-			} catch (error: any) {
+			} catch (error: unknown) {
 				deps.mcpServerState.setEnabled(projectId, serverId, false);
-				const detail = error?.message ?? String(error);
-				return new Response(JSON.stringify({ error: detail, enabled: false }), {
+				return new Response(
+					JSON.stringify({
+						error: clientErrorMessage(error, "Failed to connect MCP server"),
+						enabled: false,
+					}),
+					{
 					status: 502,
 					headers: JSON_HEADERS,
-				});
+				},
+				);
 			}
 		} else {
 			deps.mcpServerState.setEnabled(projectId, serverId, false);
@@ -173,11 +179,14 @@ export async function handleSetServerEnabled(
 			JSON.stringify({ serverId, enabled: body.enabled, connected }),
 			{ headers: JSON_HEADERS },
 		);
-	} catch (error: any) {
-		return new Response(JSON.stringify({ error: error.message }), {
-			status: 500,
-			headers: JSON_HEADERS,
-		});
+	} catch (error: unknown) {
+		return new Response(
+			JSON.stringify({ error: clientErrorMessage(error, "Request failed") }),
+			{
+				status: 500,
+				headers: JSON_HEADERS,
+			},
+		);
 	}
 }
 

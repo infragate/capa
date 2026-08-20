@@ -37,7 +37,7 @@ describe('handleSetServerEnabled stdio allowlist', () => {
   const projectId = 'proj-stdio';
   const serverId = 'my-stdio';
   const capabilities: Capabilities = {
-    providers: {},
+    providers: [],
     options: {},
     skills: [],
     tools: [],
