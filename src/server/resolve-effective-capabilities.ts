@@ -222,11 +222,8 @@ export function preserveDiscoveredOAuth2(
 		// URL changes invalidate previously discovered OAuth metadata.
 		if (prev?.def?.url !== server.def?.url) continue;
 
-		const prevAuth =
-			prevOAuth.authorizationEndpoint ||
-			(prevOAuth as { authorizationUrl?: string }).authorizationUrl;
-		const prevToken =
-			prevOAuth.tokenEndpoint || (prevOAuth as { tokenUrl?: string }).tokenUrl;
+		const prevAuth = prevOAuth.authorizationEndpoint;
+		const prevToken = prevOAuth.tokenEndpoint;
 		if (
 			!prevAuth &&
 			!prevToken &&
@@ -236,18 +233,11 @@ export function preserveDiscoveredOAuth2(
 			continue;
 		}
 
-		const nextOAuth = { ...(server.def.oauth2 ?? {}) } as Record<
-			string,
-			unknown
-		>;
-		const nextAuth =
-			nextOAuth.authorizationEndpoint || nextOAuth.authorizationUrl;
-		const nextToken = nextOAuth.tokenEndpoint || nextOAuth.tokenUrl;
-
-		if (!nextAuth && prevAuth) {
+		const nextOAuth = { ...(server.def.oauth2 ?? {}) };
+		if (!nextOAuth.authorizationEndpoint && prevAuth) {
 			nextOAuth.authorizationEndpoint = prevAuth;
 		}
-		if (!nextToken && prevToken) {
+		if (!nextOAuth.tokenEndpoint && prevToken) {
 			nextOAuth.tokenEndpoint = prevToken;
 		}
 		if (!nextOAuth.resourceServer && prevOAuth.resourceServer) {

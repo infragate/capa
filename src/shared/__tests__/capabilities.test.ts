@@ -128,6 +128,41 @@ describe('capabilities', () => {
       const result = normalizeCapabilities(capabilities);
       expect(result).toEqual(capabilities);
     });
+    it('normalizes legacy oauth2 aliases on servers at load', () => {
+      const result = normalizeCapabilities({
+        skills: [],
+        servers: [
+          {
+            id: 'slack',
+            type: 'mcp',
+            def: {
+              url: 'https://mcp.slack.com/mcp',
+              oauth2: {
+                client_id: 'legacy-app',
+                callback_port: 3118,
+                authorizationUrl: 'https://auth.example/authorize',
+                tokenUrl: 'https://auth.example/token',
+              },
+            },
+          },
+        ],
+        tools: [],
+      });
+      expect(result.servers[0].def.oauth2).toEqual({
+        clientId: 'legacy-app',
+        callbackPort: 3118,
+        authorizationEndpoint: 'https://auth.example/authorize',
+        tokenEndpoint: 'https://auth.example/token',
+      });
+    });
+
+    it('rejects MCP servers missing both url and cmd', () => {
+      expect(() =>
+        normalizeCapabilities({
+          servers: [{ id: 'bad', type: 'mcp', def: {} }],
+        }),
+      ).toThrow(/url or cmd/);
+    });
   });
 
   describe('createDefaultCapabilities', () => {

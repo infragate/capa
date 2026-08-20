@@ -1,5 +1,5 @@
 import type { Task } from '../../ui';
-import { pruneOrphanHooks } from '../../utils/hooks-installer';
+import { pruneOrphanHooks } from '../../utils/hooks';
 import { validateHooks } from '../../../shared/hooks-validate';
 import {
   buildSystemActivityHooks,

@@ -8,7 +8,7 @@ import { capaIdErrorMessage, sanitizeCapaIdInput } from '../../../lib/ids';
 import { ReorderableList } from '../../../components/common/ReorderableList';
 import { SourceBadge } from '../../../components/common/ServerBadge';
 import { sourceTypeBadgeClasses } from './sourceTypeColors';
-import { renderMarkdown } from './registry-browse/markdown';
+import { renderMarkdown } from '../../../lib/markdown';
 import { LocalPathPicker } from './LocalPathPicker';
 import { useAppendCapability, useDeleteCapability, useReorderCapability, useUpdateCapability } from '../hooks';
 import { authoredReorderKeys, isPluginSourced } from '../lib/reorderKeys';

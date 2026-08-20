@@ -3,21 +3,11 @@ import { useQueries } from '@tanstack/react-query';
 import * as Dialog from '@radix-ui/react-dialog';
 import { X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { marked } from 'marked';
-import DOMPurify from 'dompurify';
 import type { AuthoredPlugin, ResolvedPlugin } from '../../../types/api';
 import { Spinner } from '../../../components/common/Spinner';
+import { renderMarkdown } from '../../../lib/markdown';
 import { useRegistries } from '../../registries/hooks';
 import { registriesApi } from '../../registries/api';
-
-function stripFrontmatter(md: string): string {
-  return md.replace(/^---\s*\n[\s\S]*?\n---\s*\n?/, '');
-}
-
-function renderMarkdown(md: string): string {
-  const raw = marked.parse(stripFrontmatter(md), { async: false, gfm: true, breaks: true }) as string;
-  return DOMPurify.sanitize(raw);
-}
 
 function listSection(title: string, items: string[] | undefined): string[] {
   if (!items?.length) return [];

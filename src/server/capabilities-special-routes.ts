@@ -125,7 +125,7 @@ export async function handleFromRegistry(
 				loaded.path,
 				loaded.format,
 				"skills",
-				newSkill as unknown as Record<string, unknown>,
+				newSkill,
 			);
 		} else {
 			if (findById(loaded.caps, "plugins", itemName)) {
@@ -136,7 +136,7 @@ export async function handleFromRegistry(
 				loaded.path,
 				loaded.format,
 				"plugins",
-				newPlugin as unknown as Record<string, unknown>,
+				newPlugin,
 			);
 		}
 

@@ -29,7 +29,7 @@ import { sourceLabelText, TokenUsageLabel } from './ActivityShared';
 import { filterActivityCalls, filterRunsBySearch } from './filterActivityCalls';
 import { ActivityProcessDiagram } from './ActivityProcessDiagram';
 import { ActivityRunViewTabs, type ActivityRunRightView } from './ActivityRunViewTabs';
-import { useProjectActivityGeneration } from '../../hooks';
+import { useProjectActivityGeneration } from '../../activityHooks';
 
 interface ActivityRunDialogProps {
   run: ActivityRun | null;

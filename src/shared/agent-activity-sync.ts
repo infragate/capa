@@ -14,7 +14,7 @@ import { validateHooks } from "./hooks-validate";
 import {
 	installHooks,
 	pruneOrphanHooks,
-} from "../cli/utils/hooks-installer";
+} from "../cli/utils/hooks";
 
 export interface SyncSystemActivityHooksResult {
 	enabled: boolean;

@@ -1,8 +1,10 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { existsSync, writeFileSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { getProvider, getAllProviders } from '../../shared/providers';
 import { readTomlFile, writeTomlFile, setNestedKey, deleteNestedKey } from '../../shared/toml-io';
 import { getMcpConfigPath, buildMcpEntry } from '../../shared/providers/handlers';
+import { isPlainObject } from '../../shared/plugin-manifest/types-helpers';
+import { readTextOrNull } from '../../shared/fs-utils';
 import type { McpIntegration } from '../../types/providers';
 import { taskLog } from '../ui';
 
@@ -16,30 +18,12 @@ interface McpServerEntry {
 
 type McpJsonConfig = Record<string, unknown>;
 
-function isPlainObject(x: unknown): x is Record<string, unknown> {
-  return x !== null && typeof x === 'object' && !Array.isArray(x);
-}
-
 function parseJsonConfig(raw: string): McpJsonConfig | null {
   try {
     const parsed: unknown = JSON.parse(raw);
     return isPlainObject(parsed) ? parsed : {};
   } catch {
     return null;
-  }
-}
-
-/**
- * Read a file's contents, returning null when the file doesn't exist. Avoids
- * the existsSync+readFileSync TOCTOU race that CodeQL flags as
- * js/file-system-race.
- */
-function tryReadFile(path: string): string | null {
-  try {
-    return readFileSync(path, 'utf-8');
-  } catch (err: any) {
-    if (err?.code === 'ENOENT') return null;
-    throw err;
   }
 }
 
@@ -98,7 +82,7 @@ export async function registerMCPServer(
 
       if (mcp.format === 'json') {
         let config: McpJsonConfig = {};
-        const existing = tryReadFile(configPath);
+        const existing = readTextOrNull(configPath);
         if (existing !== null) {
           const parsed = parseJsonConfig(existing);
           if (parsed === null) {
@@ -152,7 +136,7 @@ export async function registerSubAgentMCPServer(
 
       if (mcp.format === 'json') {
         let config: McpJsonConfig = {};
-        const existing = tryReadFile(configPath);
+        const existing = readTextOrNull(configPath);
         if (existing !== null) {
           config = parseJsonConfig(existing) ?? {};
         }
@@ -192,7 +176,7 @@ export async function unregisterSubAgentMCPServer(
       const serverKey = `capa-${agentId}`;
 
       if (mcp.format === 'json') {
-        const existing = tryReadFile(configPath);
+        const existing = readTextOrNull(configPath);
         if (existing === null) continue;
         const config = parseJsonConfig(existing);
         if (config === null) continue;
@@ -222,7 +206,7 @@ export async function purgeCursorSubAgentMCPEntries(projectPath: string): Promis
     if (!provider.purgeStaleSubAgentMcp || !provider.mcp) continue;
 
     const configPath = join(projectPath, provider.mcp.configPath);
-    const existing = tryReadFile(configPath);
+    const existing = readTextOrNull(configPath);
     if (existing === null) continue;
 
     const config = parseJsonConfig(existing);
@@ -265,7 +249,7 @@ export async function unregisterMCPServer(
       const configPath = getMcpConfigPath(provider, projectPath);
 
       if (mcp.format === 'json') {
-        const existing = tryReadFile(configPath);
+        const existing = readTextOrNull(configPath);
         if (existing === null) {
           taskLog(`  - No ${provider.displayName} config found (already removed)`);
           continue;
@@ -283,7 +267,7 @@ export async function unregisterMCPServer(
         delete (servers as Record<string, McpServerEntry>)[mcp.serverKey];
         writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
       } else if (mcp.format === 'toml') {
-        const tomlRaw = tryReadFile(configPath);
+        const tomlRaw = readTextOrNull(configPath);
         if (tomlRaw === null) {
           taskLog(`  - No ${provider.displayName} config found (already removed)`);
           continue;

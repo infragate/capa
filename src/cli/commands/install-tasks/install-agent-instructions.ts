@@ -1,6 +1,6 @@
 import type { Task } from '../../ui';
 import { createAuthenticatedFetch, AuthenticatedFetch } from '../../../shared/authenticated-fetch';
-import { installAgentsFile } from '../../utils/agents-file';
+import { installAgentsFile } from '../../utils/agents-file/index';
 import type { CachePlatform } from '../../../shared/cache';
 import type { InstallCtx } from './context';
 import { getRepoSnapshot } from './helpers/repo-snapshot';

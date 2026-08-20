@@ -7,7 +7,7 @@ import {
   detectRepoCoordsFromRawUrl,
   getTargetFilenames,
   installAgentsFile,
-} from '../agents-file';
+} from '../agents-file/index';
 import { parseRepoString } from '../../../shared/repo-string';
 
 describe('detectRepoCoordsFromRawUrl', () => {

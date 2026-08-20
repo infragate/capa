@@ -2,10 +2,9 @@ import { useState, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import * as Tabs from '@radix-ui/react-tabs';
 import { Copy, Check, ExternalLink } from 'lucide-react';
-import { marked } from 'marked';
-import DOMPurify from 'dompurify';
 import { Spinner } from '../../../components/common/Spinner';
 import { FileTree } from '../../../components/common/FileTree';
+import { renderMarkdown } from '../../../lib/markdown';
 import { useRegistryView } from '../hooks';
 
 interface ItemDetailProps {
@@ -36,10 +35,6 @@ function yamlDump(obj: Record<string, unknown>): string {
     }
   }
   return lines.join('\n');
-}
-
-function stripFrontmatter(md: string): string {
-  return md.replace(/^---\s*\n[\s\S]*?\n---\s*\n?/, '');
 }
 
 function escapeHtml(s: string): string {
@@ -76,11 +71,6 @@ function highlightYaml(yaml: string): string {
     }
     return `${indent}<span class="yl-key">${key}</span><span class="yl-colon">${colon}</span>${valHtml}`;
   });
-}
-
-function renderMarkdown(md: string): string {
-  const raw = marked.parse(stripFrontmatter(md), { async: false, gfm: true, breaks: true }) as string;
-  return DOMPurify.sanitize(raw);
 }
 
 /* ---- Main component ---- */

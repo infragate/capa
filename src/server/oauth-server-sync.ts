@@ -9,28 +9,15 @@ function readEmbeddedClientId(
 	oauth: CapabilitiesOAuth2Config | undefined,
 ): string | undefined {
 	if (!oauth) return undefined;
-	return (
-		oauth.client_id ??
-		oauth.clientId ??
-		(oauth as { CLIENT_ID?: string }).CLIENT_ID ??
-		oauth.oauth?.clientId ??
-		(oauth.oauth as { client_id?: string } | undefined)?.client_id
-	);
+	return oauth.clientId;
 }
 
 function readEmbeddedCallbackPort(
 	oauth: CapabilitiesOAuth2Config | undefined,
 ): number | undefined {
 	if (!oauth) return undefined;
-	const raw =
-		oauth.callback_port ??
-		oauth.callbackPort ??
-		(oauth as { CALLBACK_PORT?: number | string }).CALLBACK_PORT;
+	const raw = oauth.callbackPort;
 	if (typeof raw === "number" && raw > 0) return raw;
-	if (typeof raw === "string") {
-		const parsed = Number(raw);
-		if (Number.isFinite(parsed) && parsed > 0) return parsed;
-	}
 	return undefined;
 }
 
@@ -44,12 +31,12 @@ export function mergeEmbeddedOAuthFields(
 
 	const clientId = readEmbeddedClientId(embedded);
 	if (clientId && !readEmbeddedClientId(merged)) {
-		merged.client_id = clientId;
+		merged.clientId = clientId;
 	}
 
 	const callbackPort = readEmbeddedCallbackPort(embedded);
 	if (callbackPort != null && readEmbeddedCallbackPort(merged) == null) {
-		merged.callback_port = callbackPort;
+		merged.callbackPort = callbackPort;
 	}
 
 	return merged;
@@ -77,17 +64,17 @@ export function serverHasExplicitAuthHeader(server: MCPServer): boolean {
 	);
 }
 
-/** Merge auto-detected OAuth endpoints with plugin-embedded client_id / callback_port. */
+/** Merge auto-detected OAuth endpoints with plugin-embedded clientId / callbackPort. */
 export function mergeDetectedOAuth2(
 	existingOAuth: CapabilitiesOAuth2Config | undefined,
 	oauth2Config: OAuth2Config,
 ): OAuth2Config {
 	const merged: OAuth2Config = { ...(existingOAuth ?? {}), ...oauth2Config };
 	const embeddedClientId = readEmbeddedClientId(existingOAuth);
-	if (embeddedClientId) merged.client_id = embeddedClientId;
+	if (embeddedClientId) merged.clientId = embeddedClientId;
 
 	const embeddedCallbackPort = readEmbeddedCallbackPort(existingOAuth);
-	if (embeddedCallbackPort != null) merged.callback_port = embeddedCallbackPort;
+	if (embeddedCallbackPort != null) merged.callbackPort = embeddedCallbackPort;
 	return merged;
 }
 

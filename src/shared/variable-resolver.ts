@@ -1,4 +1,5 @@
 import type { CapaDatabase } from "../db/database";
+import { isPlainObject } from "./plugin-manifest/types-helpers";
 
 /**
  * Resolve variable expressions in a string.
@@ -35,10 +36,6 @@ export function extractVariables(input: string): string[] {
 	}
 
 	return variables;
-}
-
-function isPlainObject(x: unknown): x is Record<string, unknown> {
-	return x !== null && typeof x === "object" && !Array.isArray(x);
 }
 
 /**

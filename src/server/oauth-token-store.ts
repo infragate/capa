@@ -14,9 +14,7 @@ function resolveStoredClientId(
 ): string {
 	return (
 		db.getVariable(projectId, `oauth2_client_id_${serverId}`) ||
-		oauth2Config.client_id ||
 		oauth2Config.clientId ||
-		oauth2Config.oauth?.clientId ||
 		"capa"
 	);
 }

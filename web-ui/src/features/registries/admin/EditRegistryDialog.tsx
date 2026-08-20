@@ -1,11 +1,15 @@
 import { useEffect, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { useTranslation } from 'react-i18next';
-import { X, Eye, AlertTriangle, Info, Loader2 } from 'lucide-react';
-import { ApiError } from '../../../lib/api';
+import { X, Info } from 'lucide-react';
+import { errMessage } from '../../../lib/errors';
 import { useEditRegistry, usePreviewRegistry } from '../hooks';
 import type { RegistryAdminRecord, RegistrySourceType } from '../api';
-import { CodeBlock } from '../../../components/common/CodeBlock';
+import { RegistryDialogFooter } from './RegistryDialogFooter';
+import {
+  RegistryPreviewPanel,
+  type RegistryPreviewData,
+} from './RegistryPreviewPanel';
 
 interface EditRegistryDialogProps {
   open: boolean;
@@ -21,10 +25,6 @@ const TYPE_OPTIONS: RegistrySourceType[] = [
   'claude-marketplace',
 ];
 
-function isErrorWithMessage(err: unknown): err is { message: string } {
-  return !!err && typeof (err as any).message === 'string';
-}
-
 export function EditRegistryDialog({
   open,
   onOpenChange,
@@ -35,7 +35,7 @@ export function EditRegistryDialog({
   const [type, setType] = useState<RegistrySourceType>('github');
   const [source, setSource] = useState('');
   const [trusted, setTrusted] = useState(false);
-  const [preview, setPreview] = useState<{ content: string; ref: string | null } | null>(null);
+  const [preview, setPreview] = useState<RegistryPreviewData | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const previewMutation = usePreviewRegistry();
@@ -77,13 +77,7 @@ export function EditRegistryDialog({
       const res = await previewMutation.mutateAsync({ type, source: trimmedSource });
       setPreview({ content: res.content, ref: res.resolvedRef });
     } catch (err) {
-      setError(
-        err instanceof ApiError
-          ? err.message
-          : isErrorWithMessage(err)
-            ? err.message
-            : 'Preview failed',
-      );
+      setError(errMessage(err, 'Preview failed'));
     }
   }
 
@@ -113,13 +107,7 @@ export function EditRegistryDialog({
       onSaved(res.registry.slug);
       onOpenChange(false);
     } catch (err) {
-      setError(
-        err instanceof ApiError
-          ? err.message
-          : isErrorWithMessage(err)
-            ? err.message
-            : 'Save failed',
-      );
+      setError(errMessage(err, 'Save failed'));
     }
   }
 
@@ -207,59 +195,14 @@ export function EditRegistryDialog({
                 </div>
               )}
 
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={handlePreview}
-                  disabled={busy || !trimmedSource}
-                  className="inline-flex items-center gap-2 rounded-sm border border-border-primary bg-bg-tertiary px-3 py-1.5 text-sm text-text-primary transition-colors hover:bg-hover-bg disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {previewMutation.isPending ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Eye className="h-4 w-4" />
-                  )}
-                  <span>{t('addDialog.preview.button')}</span>
-                </button>
-                {preview?.ref && (
-                  <span className="font-mono text-xs text-text-secondary">
-                    {t('addDialog.preview.resolvedRef', { ref: preview.ref.slice(0, 7) })}
-                  </span>
-                )}
-              </div>
-
-              <div className="rounded-sm border border-border-primary bg-bg-primary">
-                <div className="border-b border-border-secondary px-3 py-2 text-xs font-medium text-text-secondary">
-                  {t(
-                    isMarketplace
-                      ? 'addDialog.preview.titleMarketplace'
-                      : 'addDialog.preview.title',
-                  )}
-                </div>
-                <div className="max-h-72 overflow-auto">
-                  {preview ? (
-                    <CodeBlock
-                      code={preview.content}
-                      language={isMarketplace ? 'json' : 'typescript'}
-                    />
-                  ) : (
-                    <div className="flex items-center gap-2 px-3 py-6 text-xs text-text-tertiary">
-                      {isMarketplace ? (
-                        <Info className="h-3.5 w-3.5" />
-                      ) : (
-                        <AlertTriangle className="h-3.5 w-3.5" />
-                      )}
-                      <span>
-                        {t(
-                          isMarketplace
-                            ? 'addDialog.preview.emptyHintMarketplace'
-                            : 'addDialog.preview.emptyHint',
-                        )}
-                      </span>
-                    </div>
-                  )}
-                </div>
-              </div>
+              <RegistryPreviewPanel
+                isMarketplace={isMarketplace}
+                preview={preview}
+                busy={busy}
+                previewPending={previewMutation.isPending}
+                canPreview={!!trimmedSource}
+                onPreview={handlePreview}
+              />
 
               {error && (
                 <div className="rounded-sm border border-error-border bg-error-bg px-3 py-2 text-xs text-error-text">
@@ -269,55 +212,44 @@ export function EditRegistryDialog({
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border-secondary px-6 py-4">
-            {isMarketplace ? (
-              <span className="text-xs text-text-secondary">
-                {preview && changed
-                  ? t('addDialog.marketplaceReady')
-                  : t('addDialog.marketplaceHint')}
-              </span>
-            ) : (
-              <label
-                className={
-                  changed && preview
-                    ? 'flex items-center gap-2 text-sm text-text-primary'
-                    : 'flex items-center gap-2 text-sm text-text-tertiary'
-                }
-                title={
-                  !changed
-                    ? t('editDialog.noChanges')
-                    : !preview
-                      ? t('addDialog.errors.previewBeforeAdd')
-                      : undefined
-                }
-              >
-                <input
-                  type="checkbox"
-                  checked={trusted}
-                  onChange={(e) => setTrusted(e.target.checked)}
-                  disabled={!preview || !changed}
-                />
-                <span>{t('addDialog.trust')}</span>
-              </label>
-            )}
-            <div className="flex items-center gap-2">
-              <Dialog.Close
-                type="button"
-                className="rounded-sm border border-border-secondary bg-bg-tertiary px-3 py-1.5 text-sm text-text-secondary transition-colors hover:bg-hover-bg"
-              >
-                {t('addDialog.cancel')}
-              </Dialog.Close>
-              <button
-                type="button"
-                onClick={handleSave}
-                disabled={!canSave}
-                className="inline-flex items-center gap-2 rounded-sm border border-accent-primary bg-accent-primary px-3 py-1.5 text-sm font-medium text-bg-secondary transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {editMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
-                <span>{t('editDialog.submit')}</span>
-              </button>
-            </div>
-          </div>
+          <RegistryDialogFooter
+            left={
+              isMarketplace ? (
+                <span className="text-xs text-text-secondary">
+                  {preview && changed
+                    ? t('addDialog.marketplaceReady')
+                    : t('addDialog.marketplaceHint')}
+                </span>
+              ) : (
+                <label
+                  className={
+                    changed && preview
+                      ? 'flex items-center gap-2 text-sm text-text-primary'
+                      : 'flex items-center gap-2 text-sm text-text-tertiary'
+                  }
+                  title={
+                    !changed
+                      ? t('editDialog.noChanges')
+                      : !preview
+                        ? t('addDialog.errors.previewBeforeAdd')
+                        : undefined
+                  }
+                >
+                  <input
+                    type="checkbox"
+                    checked={trusted}
+                    onChange={(e) => setTrusted(e.target.checked)}
+                    disabled={!preview || !changed}
+                  />
+                  <span>{t('addDialog.trust')}</span>
+                </label>
+              )
+            }
+            onSubmit={handleSave}
+            submitDisabled={!canSave}
+            submitPending={editMutation.isPending}
+            submitLabel={t('editDialog.submit')}
+          />
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>

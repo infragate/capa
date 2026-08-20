@@ -1,5 +1,7 @@
 // Plugin types: capabilities reference, unified manifest, source attribution
 
+import type { OAuth2Config } from './capabilities';
+
 /**
  * @see ProviderIntegration.pluginProviderId — registry id may differ from this manifest id
  * (e.g. registry id `claude-code` maps to manifest id `claude`).
@@ -187,8 +189,8 @@ export interface NormalizedPluginMCPServerDef {
   /** Remote: HTTP MCP server URL */
   url?: string;
   headers?: Record<string, string>;
-  /** OAuth config (Claude uses "oauth", capa uses oauth2) */
-  oauth2?: unknown;
+  /** OAuth config (Claude uses "oauth", capa uses oauth2) — camelCase after normalize */
+  oauth2?: OAuth2Config;
 }
 
 /**

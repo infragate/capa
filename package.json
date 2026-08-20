@@ -15,7 +15,9 @@
     "preserver": "bun run build:web",
     "server": "bun run src/server/index.ts",
     "test": "bun test",
-    "test:coverage": "bun test --coverage"
+    "test:coverage": "bun test --coverage",
+    "smells": "qlty smells",
+    "smells:all": "qlty smells --all"
   },
   "dependencies": {
     "@clack/prompts": "^1.4.0",

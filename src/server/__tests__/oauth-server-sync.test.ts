@@ -19,7 +19,7 @@ const DETECTED_OAUTH: OAuth2Config = {
 function mcpServer(
 	id: string,
 	url: string,
-	oauth2?: OAuth2Config,
+	oauth2?: Capabilities["servers"][number]["def"]["oauth2"],
 ): MCPServer {
 	return {
 		id,
@@ -71,7 +71,7 @@ describe("preserveDiscoveredOAuth2", () => {
 		);
 	});
 
-	it("keeps plugin-embedded client_id when copying discovered endpoints", () => {
+	it("keeps plugin-embedded clientId when copying discovered endpoints", () => {
 		const previous: Capabilities = {
 			providers: [],
 			skills: [],
@@ -86,15 +86,15 @@ describe("preserveDiscoveredOAuth2", () => {
 			tools: [],
 			servers: [
 				mcpServer("slack", "https://mcp.example/mcp", {
-					client_id: "plugin-app-id",
-					callback_port: 3118,
-				} as OAuth2Config),
+					clientId: "plugin-app-id",
+					callbackPort: 3118,
+				}),
 			],
 		};
 
 		const result = preserveDiscoveredOAuth2(fresh, previous);
-		expect(result.servers[0].def.oauth2?.client_id).toBe("plugin-app-id");
-		expect(result.servers[0].def.oauth2?.callback_port).toBe(3118);
+		expect(result.servers[0].def.oauth2?.clientId).toBe("plugin-app-id");
+		expect(result.servers[0].def.oauth2?.callbackPort).toBe(3118);
 		expect(result.servers[0].def.oauth2?.authorizationEndpoint).toBe(
 			"https://auth.example/authorize",
 		);
@@ -102,13 +102,13 @@ describe("preserveDiscoveredOAuth2", () => {
 });
 
 describe("mergeDetectedOAuth2", () => {
-	it("keeps plugin-embedded client_id and callback_port", () => {
+	it("keeps plugin-embedded clientId and callbackPort", () => {
 		const merged = mergeDetectedOAuth2(
-			{ client_id: "embedded-app", callback_port: 3111 },
+			{ clientId: "embedded-app", callbackPort: 3111 },
 			DETECTED_OAUTH,
 		);
-		expect(merged.client_id).toBe("embedded-app");
-		expect(merged.callback_port).toBe(3111);
+		expect(merged.clientId).toBe("embedded-app");
+		expect(merged.callbackPort).toBe(3111);
 		expect(merged.authorizationEndpoint).toBe("https://auth.example/authorize");
 	});
 });
@@ -118,17 +118,17 @@ describe("mergeEmbeddedOAuthFields", () => {
 		const merged = mergeEmbeddedOAuthFields(
 			{ authorizationEndpoint: "https://auth.example/authorize" },
 			{
-				client_id: "plugin-app-id",
+				clientId: "plugin-app-id",
 				clientSecret: "top-secret",
-			} as OAuth2Config,
+			},
 		);
-		expect(merged?.client_id).toBe("plugin-app-id");
+		expect(merged?.clientId).toBe("plugin-app-id");
 		expect(merged?.clientSecret).toBeUndefined();
 	});
 });
 
 describe("mergePluginEmbeddedOAuth", () => {
-	it("restores plugin client_id onto session capabilities missing embedded fields", () => {
+	it("restores plugin clientId onto session capabilities missing embedded fields", () => {
 		const session: Capabilities = {
 			providers: [],
 			skills: [],
@@ -143,15 +143,15 @@ describe("mergePluginEmbeddedOAuth", () => {
 			tools: [],
 			servers: [
 				mcpServer("slack", "https://mcp.example/mcp", {
-					client_id: "plugin-app-id",
-					callback_port: 3118,
-				} as OAuth2Config),
+					clientId: "plugin-app-id",
+					callbackPort: 3118,
+				}),
 			],
 		};
 
 		mergePluginEmbeddedOAuth(session, plugins);
-		expect(session.servers[0].def.oauth2?.client_id).toBe("plugin-app-id");
-		expect(session.servers[0].def.oauth2?.callback_port).toBe(3118);
+		expect(session.servers[0].def.oauth2?.clientId).toBe("plugin-app-id");
+		expect(session.servers[0].def.oauth2?.callbackPort).toBe(3118);
 		expect(session.servers[0].def.oauth2?.authorizationEndpoint).toBe(
 			"https://auth.example/authorize",
 		);

@@ -10,7 +10,7 @@ import {
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { CapaDatabase } from '../../../db/database';
-import { installHooks, pruneOrphanHooks, cleanHooks } from '../hooks-installer';
+import { installHooks, pruneOrphanHooks, cleanHooks } from '../hooks';
 import { emptyLockfile, LockfileBuilder } from '../../../shared/lockfile';
 import type { Hook } from '../../../types/hooks';
 import type { AuthenticatedFetch } from '../../../shared/authenticated-fetch';
