@@ -4,6 +4,7 @@ import type { OAuth2Config } from "../../types/oauth";
 import type { OAuth2Manager } from "../oauth-manager";
 import {
 	mergeDetectedOAuth2,
+	mergePluginEmbeddedOAuth,
 	syncServerOAuth2Requirement,
 } from "../oauth-server-sync";
 import { preserveDiscoveredOAuth2 } from "../resolve-effective-capabilities";
@@ -68,6 +69,35 @@ describe("preserveDiscoveredOAuth2", () => {
 			"https://auth.example/authorize",
 		);
 	});
+
+	it("keeps plugin-embedded client_id when copying discovered endpoints", () => {
+		const previous: Capabilities = {
+			providers: [],
+			skills: [],
+			tools: [],
+			servers: [
+				mcpServer("slack", "https://mcp.example/mcp", DETECTED_OAUTH),
+			],
+		};
+		const fresh: Capabilities = {
+			providers: [],
+			skills: [],
+			tools: [],
+			servers: [
+				mcpServer("slack", "https://mcp.example/mcp", {
+					client_id: "plugin-app-id",
+					callback_port: 3118,
+				} as OAuth2Config),
+			],
+		};
+
+		const result = preserveDiscoveredOAuth2(fresh, previous);
+		expect(result.servers[0].def.oauth2?.client_id).toBe("plugin-app-id");
+		expect(result.servers[0].def.oauth2?.callback_port).toBe(3118);
+		expect(result.servers[0].def.oauth2?.authorizationEndpoint).toBe(
+			"https://auth.example/authorize",
+		);
+	});
 });
 
 describe("mergeDetectedOAuth2", () => {
@@ -79,6 +109,37 @@ describe("mergeDetectedOAuth2", () => {
 		expect(merged.client_id).toBe("embedded-app");
 		expect(merged.callback_port).toBe(3111);
 		expect(merged.authorizationEndpoint).toBe("https://auth.example/authorize");
+	});
+});
+
+describe("mergePluginEmbeddedOAuth", () => {
+	it("restores plugin client_id onto session capabilities missing embedded fields", () => {
+		const session: Capabilities = {
+			providers: [],
+			skills: [],
+			tools: [],
+			servers: [
+				mcpServer("slack", "https://mcp.example/mcp", DETECTED_OAUTH),
+			],
+		};
+		const plugins: Capabilities = {
+			providers: [],
+			skills: [],
+			tools: [],
+			servers: [
+				mcpServer("slack", "https://mcp.example/mcp", {
+					client_id: "plugin-app-id",
+					callback_port: 3118,
+				} as OAuth2Config),
+			],
+		};
+
+		mergePluginEmbeddedOAuth(session, plugins);
+		expect(session.servers[0].def.oauth2?.client_id).toBe("plugin-app-id");
+		expect(session.servers[0].def.oauth2?.callback_port).toBe(3118);
+		expect(session.servers[0].def.oauth2?.authorizationEndpoint).toBe(
+			"https://auth.example/authorize",
+		);
 	});
 });
 

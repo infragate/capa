@@ -26,7 +26,6 @@ import {
 } from "./resolve-effective-capabilities";
 import type { SessionManager } from "./session-manager";
 import type { McpServerStateManager } from "./mcp-server-state";
-import { syncAllServersOAuth2Requirements } from "./oauth-server-sync";
 import {
 	resolveSkillDescription,
 	resolveSkillSourceUrl,
@@ -111,18 +110,6 @@ export async function handleGetProject(
 				);
 				deps.sessionManager.setProjectCapabilities(projectId, capabilities);
 				void deps.capsWatcher.watchProject(projectId, project.path);
-
-				// capabilities.yaml may still declare oauth2 after the live URL stopped
-				// requiring it; reconcile before returning requiresOAuth to the UI.
-				const oauthSync = await syncAllServersOAuth2Requirements(
-					projectId,
-					capabilities,
-					deps.oauth2Manager,
-					{ onlyWithExistingOAuth: true },
-				);
-				if (oauthSync.changed) {
-					deps.sessionManager.setProjectCapabilities(projectId, capabilities);
-				}
 			}
 		} catch {
 			// ignore unreadable capabilities file; keep cached capabilities if any

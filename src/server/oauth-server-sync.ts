@@ -5,6 +5,76 @@ import type {
 import type { OAuth2Config } from "../types/oauth";
 import type { OAuth2Manager } from "./oauth-manager";
 
+function readEmbeddedClientId(
+	oauth: CapabilitiesOAuth2Config | undefined,
+): string | undefined {
+	if (!oauth) return undefined;
+	return (
+		oauth.client_id ??
+		oauth.clientId ??
+		(oauth as { CLIENT_ID?: string }).CLIENT_ID ??
+		oauth.oauth?.clientId ??
+		(oauth.oauth as { client_id?: string } | undefined)?.client_id
+	);
+}
+
+function readEmbeddedCallbackPort(
+	oauth: CapabilitiesOAuth2Config | undefined,
+): number | undefined {
+	if (!oauth) return undefined;
+	const raw =
+		oauth.callback_port ??
+		oauth.callbackPort ??
+		(oauth as { CALLBACK_PORT?: number | string }).CALLBACK_PORT;
+	if (typeof raw === "number" && raw > 0) return raw;
+	if (typeof raw === "string") {
+		const parsed = Number(raw);
+		if (Number.isFinite(parsed) && parsed > 0) return parsed;
+	}
+	return undefined;
+}
+
+/** Copy plugin-embedded OAuth credentials onto an existing block without dropping discovery fields. */
+export function mergeEmbeddedOAuthFields(
+	target: CapabilitiesOAuth2Config | undefined,
+	embedded: CapabilitiesOAuth2Config | undefined,
+): CapabilitiesOAuth2Config | undefined {
+	if (!target && !embedded) return undefined;
+	const merged: CapabilitiesOAuth2Config = { ...(target ?? {}) };
+
+	const clientId = readEmbeddedClientId(embedded);
+	if (clientId && !readEmbeddedClientId(merged)) {
+		merged.client_id = clientId;
+	}
+
+	const callbackPort = readEmbeddedCallbackPort(embedded);
+	if (callbackPort != null && readEmbeddedCallbackPort(merged) == null) {
+		merged.callback_port = callbackPort;
+	}
+
+	const clientSecret =
+		embedded?.clientSecret ??
+		(embedded as { client_secret?: string } | undefined)?.client_secret;
+	if (clientSecret && !merged.clientSecret) {
+		merged.clientSecret = clientSecret;
+	}
+
+	return merged;
+}
+
+/** Restore plugin oauth2 credentials on session capabilities before OAuth sync/persist. */
+export function mergePluginEmbeddedOAuth(
+	capabilities: { servers: MCPServer[] },
+	pluginCapabilities: { servers: MCPServer[] },
+): void {
+	const pluginById = new Map(pluginCapabilities.servers.map((s) => [s.id, s]));
+	for (const server of capabilities.servers) {
+		const pluginOAuth = pluginById.get(server.id)?.def.oauth2;
+		if (!pluginOAuth) continue;
+		server.def.oauth2 = mergeEmbeddedOAuthFields(server.def.oauth2, pluginOAuth);
+	}
+}
+
 export function serverHasExplicitAuthHeader(server: MCPServer): boolean {
 	return !!(
 		server.def.headers &&
@@ -20,24 +90,11 @@ export function mergeDetectedOAuth2(
 	oauth2Config: OAuth2Config,
 ): OAuth2Config {
 	const merged: OAuth2Config = { ...(existingOAuth ?? {}), ...oauth2Config };
-	const embeddedClientId =
-		existingOAuth?.client_id ??
-		existingOAuth?.clientId ??
-		(existingOAuth as { CLIENT_ID?: string })?.CLIENT_ID ??
-		existingOAuth?.oauth?.clientId ??
-		(existingOAuth?.oauth as { client_id?: string } | undefined)?.client_id;
+	const embeddedClientId = readEmbeddedClientId(existingOAuth);
 	if (embeddedClientId) merged.client_id = embeddedClientId;
 
-	const embeddedCallbackPort =
-		existingOAuth?.callback_port ??
-		existingOAuth?.callbackPort ??
-		(existingOAuth as { CALLBACK_PORT?: number | string })?.CALLBACK_PORT;
-	if (typeof embeddedCallbackPort === "number" && embeddedCallbackPort > 0) {
-		merged.callback_port = embeddedCallbackPort;
-	} else if (typeof embeddedCallbackPort === "string") {
-		const parsed = Number(embeddedCallbackPort);
-		if (Number.isFinite(parsed) && parsed > 0) merged.callback_port = parsed;
-	}
+	const embeddedCallbackPort = readEmbeddedCallbackPort(existingOAuth);
+	if (embeddedCallbackPort != null) merged.callback_port = embeddedCallbackPort;
 	return merged;
 }
 

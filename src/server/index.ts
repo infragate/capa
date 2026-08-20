@@ -87,7 +87,8 @@ import {
 	previewRegistryHandler,
 	refreshRegistryHandler,
 } from "./registries-routes";
-import { type EffectiveCapsCacheEntry } from "./resolve-effective-capabilities";
+import { detectCapabilitiesFile } from "../shared/paths";
+import { type EffectiveCapsCacheEntry, enrichCapabilitiesOAuthFromPlugins } from "./resolve-effective-capabilities";
 import { SessionManager } from "./session-manager";
 import { SubprocessManager } from "./subprocess-manager";
 import {
@@ -1058,6 +1059,21 @@ class CapaServer {
 					JSON.stringify({ error: "Project not configured" }),
 					{ status: 404, headers: { "Content-Type": "application/json" } },
 				);
+			}
+
+			const project = this.db.getProject(projectId);
+			if (project) {
+				const file = await detectCapabilitiesFile(project.path);
+				if (file) {
+					await enrichCapabilitiesOAuthFromPlugins(
+						capabilities,
+						project.path,
+						projectId,
+						file.path,
+						this.db,
+						this.effectiveCapsCache,
+					);
+				}
 			}
 
 			// Reconcile def.oauth2 with what each URL-based server actually requires.
