@@ -1710,6 +1710,7 @@ class CapaServer {
 				project.path,
 				agentId,
 				this.toolCallTracer,
+				this.mcpServerStateManager,
 			);
 
 			this.mcpServers.set(cacheKey, mcpServer);

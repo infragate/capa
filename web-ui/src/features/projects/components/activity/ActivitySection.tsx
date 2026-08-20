@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Activity as ActivityIcon, Search } from 'lucide-react';
 import { Spinner } from '../../../../components/common/Spinner';
@@ -35,6 +35,11 @@ export function ActivitySection({ projectId }: ActivitySectionProps) {
     [calls, search],
   );
   const searchActive = search.trim().length > 0;
+
+  useEffect(() => {
+    if (!searchActive || !hasMore || loadingMore) return;
+    void loadMore();
+  }, [searchActive, hasMore, loadingMore, loadMore]);
 
   return (
     <div
@@ -73,10 +78,12 @@ export function ActivitySection({ projectId }: ActivitySectionProps) {
         </div>
         {searchActive ? (
           <p className="mt-2 text-[11px] text-text-tertiary">
-            {t('activity.searchMatchCount', {
-              matched: filteredCalls.length,
-              total: calls.length,
-            })}
+            {hasMore || loadingMore
+              ? t('activity.searchLoadingHistory')
+              : t('activity.searchMatchCount', {
+                  matched: filteredCalls.length,
+                  total: calls.length,
+                })}
           </p>
         ) : null}
       </div>
@@ -92,7 +99,7 @@ export function ActivitySection({ projectId }: ActivitySectionProps) {
       ) : (
         <ActivityFeed
           calls={filteredCalls}
-          hasMore={hasMore && !searchActive}
+          hasMore={hasMore}
           loadingMore={loadingMore}
           onLoadMore={() => void loadMore()}
           live={live}

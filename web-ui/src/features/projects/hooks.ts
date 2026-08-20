@@ -101,6 +101,7 @@ export function useProjectCapabilitiesLiveSync(projectId: string | null) {
 }
 
 const ACTIVITY_PAGE_SIZE = 50;
+const ACTIVITY_SESSION_PAGE_SIZE = 100;
 const ACTIVITY_RETENTION = 10_000;
 /** Coalesce busy-agent stats invalidations. */
 const STATS_INVALIDATE_MS = 2_000;
@@ -266,10 +267,26 @@ export function useProjectActivitySession(
 ) {
   return useQuery({
     queryKey: ['activity-session', projectId, sessionId],
-    queryFn: () =>
-      projectsApi.getActivity(projectId!, { limit: 500, sessionId: sessionId! }),
+    queryFn: async () => {
+      const all: ToolCallRecord[] = [];
+      let before: number | undefined;
+      let beforeId: string | undefined;
+      for (;;) {
+        const page = await projectsApi.getActivity(projectId!, {
+          limit: ACTIVITY_SESSION_PAGE_SIZE,
+          sessionId: sessionId!,
+          before,
+          beforeId,
+        });
+        all.push(...page.calls);
+        if (!page.hasMore || page.calls.length === 0) break;
+        const oldest = page.calls[page.calls.length - 1]!;
+        before = oldest.started_at;
+        beforeId = oldest.id;
+      }
+      return all;
+    },
     enabled: !!projectId && !!sessionId,
-    select: (data) => data.calls,
     staleTime: 30_000,
   });
 }

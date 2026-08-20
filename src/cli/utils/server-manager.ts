@@ -83,22 +83,33 @@ function isProcessRunning(pid: number): boolean {
   }
 }
 
+export interface EnsureServerOptions {
+  /** Suppress lifecycle messages on stdout; version mismatch still logs to stderr. */
+  quiet?: boolean;
+  /** When false, stop/restart only the server — not active capa wrap sessions. */
+  stopWrapSessions?: boolean;
+}
+
 /**
  * Start the capa server
  */
-export async function startServer(background: boolean = true): Promise<void> {
+export async function startServer(
+  background: boolean = true,
+  options?: { quiet?: boolean },
+): Promise<void> {
+  const quiet = options?.quiet ?? isQuiet();
   const status = await getServerStatus();
-  
+
   if (status.running) {
-    if (!isQuiet()) {
+    if (!quiet) {
       console.log(`Server already running (PID: ${status.pid})`);
     }
     return;
   }
 
-  if (!isQuiet()) {
+  if (!quiet) {
     console.log('Starting capa server...');
-  } 
+  }
   // Get the path to the current executable
   const exePath = process.execPath;
   
@@ -118,7 +129,7 @@ export async function startServer(background: boolean = true): Promise<void> {
     
     const newStatus = await getServerStatus();
     if (newStatus.running) {
-      if (!isQuiet()) {
+      if (!quiet) {
         console.log(`✓ Server started at ${newStatus.url}`);
       }
     } else {
@@ -138,10 +149,13 @@ export async function startServer(background: boolean = true): Promise<void> {
 }
 
 /**
- * Stop the capa server and any active `capa wrap` sessions.
+ * Stop the capa server and optionally any active `capa wrap` sessions.
  */
-export async function stopServer(): Promise<void> {
-  const wrapCount = await stopAllWrapSessions();
+export async function stopServer(options?: {
+  stopWrapSessions?: boolean;
+}): Promise<void> {
+  const stopWrapSessions = options?.stopWrapSessions !== false;
+  const wrapCount = stopWrapSessions ? await stopAllWrapSessions() : 0;
   if (wrapCount > 0) {
     console.log(`✓ Stopped ${wrapCount} wrap session(s)`);
   }
@@ -190,29 +204,42 @@ export async function stopServer(): Promise<void> {
 /**
  * Restart the capa server
  */
-export async function restartServer(): Promise<void> {
-  await stopServer();
+export async function restartServer(options?: {
+  stopWrapSessions?: boolean;
+  quiet?: boolean;
+}): Promise<void> {
+  await stopServer(options);
   await new Promise(resolve => setTimeout(resolve, 500));
-  await startServer();
+  await startServer(true, { quiet: options?.quiet ?? isQuiet() });
 }
 
 /**
  * Ensure server is running and version matches
  */
-export async function ensureServer(currentVersion: string): Promise<ServerStatus> {
+export async function ensureServer(
+  currentVersion: string,
+  options?: EnsureServerOptions,
+): Promise<ServerStatus> {
+  const quiet = options?.quiet ?? isQuiet();
+  const stopWrapSessions = options?.stopWrapSessions ?? true;
   const status = await getServerStatus();
-  
+
   if (!status.running) {
-    await startServer();
+    await startServer(true, { quiet });
     return await getServerStatus();
   }
-  
+
   // Check version match
   if (status.version && status.version !== currentVersion) {
-    console.log(`Server version mismatch (${status.version} vs ${currentVersion}), restarting...`);
-    await restartServer();
+    const message = `Server version mismatch (${status.version} vs ${currentVersion}), restarting...`;
+    if (quiet) {
+      console.error(message);
+    } else {
+      console.log(message);
+    }
+    await restartServer({ stopWrapSessions, quiet });
     return await getServerStatus();
   }
-  
+
   return status;
 }

@@ -184,7 +184,7 @@ export async function shellCommand(args: string[]): Promise<void> {
     process.exit(1);
   }
 
-  const status = await ensureServer(VERSION);
+  const status = await ensureServer(VERSION, { quiet: true, stopWrapSessions: false });
   if (!status.running || !status.url) {
     console.error('Capa server is not running and could not be started.');
     process.exit(1);

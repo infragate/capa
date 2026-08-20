@@ -12,6 +12,7 @@ import {
 } from './groupActivityRuns';
 import { ActivitySpanRow } from './ActivitySpanRow';
 import { ActivityRunFileTree } from './ActivityRunFileTree';
+import { ActivityRunCommandsList } from './ActivityRunCommandsList';
 import { ActivityRunSkillsPanel } from './ActivityRunSkillsPanel';
 import { ActivityRunSplitPane } from './ActivityRunSplitPane';
 import { ActivityConversationTimeline } from './ActivityConversationTimeline';
@@ -276,6 +277,17 @@ export function ActivityRunDialog({
     });
   }
 
+  function onCommandSelect(spanId: string) {
+    setPickedFilePathKey(null);
+    setExpandedSpanIds(new Set([spanId]));
+    setFollowLatest(false);
+    requestAnimationFrame(() => {
+      document
+        .getElementById(`activity-span-${spanId}`)
+        ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    });
+  }
+
   function clearFreshTimers() {
     for (const timer of freshTimersRef.current.values()) {
       window.clearTimeout(timer);
@@ -528,21 +540,31 @@ export function ActivityRunDialog({
                 minLeftWidth={240}
                 maxLeftWidth={520}
                 left={
-                  <div className="flex min-h-0 h-full flex-col">
-                    <div className="min-h-0 flex-1 overflow-hidden">
-                      <ActivityRunFileTree
+                  <div className="flex min-h-0 h-full">
+                    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+                      <div className="min-h-0 flex-1 overflow-hidden">
+                        <ActivityRunFileTree
+                          events={displayEvents}
+                          runId={fileTreeRunId}
+                          projectPath={projectPath}
+                          selectedPathKeys={selectedPathKeys}
+                          scrollPathKey={scrollTreePathKey}
+                          onFileSelect={onFileSelect}
+                        />
+                      </div>
+                      <ActivityRunSkillsPanel
                         events={displayEvents}
-                        runId={fileTreeRunId}
                         projectPath={projectPath}
-                        selectedPathKeys={selectedPathKeys}
-                        scrollPathKey={scrollTreePathKey}
-                        onFileSelect={onFileSelect}
                       />
                     </div>
-                    <ActivityRunSkillsPanel
-                      events={displayEvents}
-                      projectPath={projectPath}
-                    />
+                    <div className="hidden min-h-0 w-[min(280px,38%)] shrink-0 lg:flex">
+                      <ActivityRunCommandsList
+                        events={displayEvents}
+                        runId={fileTreeRunId}
+                        selectedSpanIds={expandedSpanIds}
+                        onCommandSelect={onCommandSelect}
+                      />
+                    </div>
                   </div>
                 }
                 right={

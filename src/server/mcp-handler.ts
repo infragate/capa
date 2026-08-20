@@ -135,7 +135,7 @@ export class CapaMCPServer {
 		this.tracer = tracer ?? null;
 		this.mcpProxy = new MCPProxy(db, projectId, projectPath, {
 			isServerEnabled: (serverId) =>
-				mcpServerState?.isEnabled(projectId, serverId) ?? false,
+				mcpServerState?.isEnabled(projectId, serverId) ?? true,
 		});
 
 		this.server = new Server(

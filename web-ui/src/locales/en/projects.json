@@ -347,6 +347,7 @@
     "runSearchPlaceholder": "Search traces…",
     "runSearchNoResults": "No traces match your search.",
     "searchMatchCount": "{{matched}} of {{total}} events match",
+    "searchLoadingHistory": "Loading older activity to search full history…",
     "session": "Session",
     "viewConversation": "All turns",
     "allTurns": "All turns",

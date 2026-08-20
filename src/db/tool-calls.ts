@@ -86,6 +86,24 @@ type ActivityPageUnit = {
 	traceCount: number;
 };
 
+function compareActivityUnitsDesc(
+	a: ActivityPageUnit,
+	b: ActivityPageUnit,
+): number {
+	if (b.maxStarted !== a.maxStarted) return b.maxStarted - a.maxStarted;
+	return b.unitKey.localeCompare(a.unitKey);
+}
+
+function isActivityUnitBeforeCursor(
+	unit: ActivityPageUnit,
+	cursor: { maxStarted: number; unitKey: string },
+): boolean {
+	if (unit.maxStarted !== cursor.maxStarted) {
+		return unit.maxStarted < cursor.maxStarted;
+	}
+	return unit.unitKey.localeCompare(cursor.unitKey) < 0;
+}
+
 export class ToolCallsRepo {
 	constructor(private db: Database) {}
 
@@ -363,14 +381,49 @@ export class ToolCallsRepo {
 		const conversationId = options.conversationId?.trim() || null;
 
 		if (sessionId) {
-			const fetched = this.db
-				.query(
-					`SELECT * FROM tool_calls
+			let fetched: ToolCallRecord[];
+			if (beforeStartedAt != null && beforeId) {
+				fetched = this.db
+					.query(
+						`SELECT * FROM tool_calls
+           WHERE project_id = ? AND session_id = ?
+             AND (started_at < ? OR (started_at = ? AND id < ?))
+           ORDER BY started_at DESC, id DESC
+           LIMIT ?`,
+					)
+					.all(
+						projectId,
+						sessionId,
+						beforeStartedAt,
+						beforeStartedAt,
+						beforeId,
+						traceBudget + 1,
+					) as ToolCallRecord[];
+			} else if (beforeStartedAt != null) {
+				fetched = this.db
+					.query(
+						`SELECT * FROM tool_calls
+           WHERE project_id = ? AND session_id = ?
+             AND started_at < ?
+           ORDER BY started_at DESC, id DESC
+           LIMIT ?`,
+					)
+					.all(
+						projectId,
+						sessionId,
+						beforeStartedAt,
+						traceBudget + 1,
+					) as ToolCallRecord[];
+			} else {
+				fetched = this.db
+					.query(
+						`SELECT * FROM tool_calls
            WHERE project_id = ? AND session_id = ?
            ORDER BY started_at DESC, id DESC
            LIMIT ?`,
-				)
-				.all(projectId, sessionId, traceBudget + 1) as ToolCallRecord[];
+					)
+					.all(projectId, sessionId, traceBudget + 1) as ToolCallRecord[];
+			}
 
 			const overflow = fetched.length > traceBudget;
 			if (overflow) fetched.pop();
@@ -424,7 +477,9 @@ export class ToolCallsRepo {
 						beforeStartedAt,
 						beforeId,
 					)
-				: null;
+				: beforeStartedAt != null
+					? { maxStarted: beforeStartedAt, unitKey: "" }
+					: null;
 
 		const units = this.listActivityPageUnits(projectId, cursor);
 		const selected = this.selectUnitsByTraceBudget(units, traceBudget);
@@ -482,18 +537,10 @@ export class ToolCallsRepo {
 			})),
 		];
 
-		units.sort((a, b) => {
-			if (b.maxStarted !== a.maxStarted) return b.maxStarted - a.maxStarted;
-			return b.unitKey.localeCompare(a.unitKey);
-		});
+		units.sort(compareActivityUnitsDesc);
 
 		if (cursor) {
-			units = units.filter(
-				(unit) =>
-					unit.maxStarted < cursor.maxStarted ||
-					(unit.maxStarted === cursor.maxStarted &&
-						unit.unitKey < cursor.unitKey),
-			);
+			units = units.filter((unit) => isActivityUnitBeforeCursor(unit, cursor));
 		}
 
 		return units;

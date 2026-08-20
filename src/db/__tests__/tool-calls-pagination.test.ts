@@ -143,4 +143,52 @@ describe('ToolCallsRepo conversation pagination', () => {
     expect(page.calls).toHaveLength(12);
     expect(page.hasMore).toBe(false);
   });
+
+  it('paginates session traces with before/beforeId cursor', () => {
+    for (let i = 0; i < 120; i++) {
+      db.insertToolCall({
+        ...baseRow(`sess-${i}`, 5000 - i, null),
+        session_id: 'sess-a',
+      });
+    }
+
+    const page1 = db.listToolCalls('proj', { sessionId: 'sess-a', limit: 50 });
+    expect(page1.calls).toHaveLength(50);
+    expect(page1.hasMore).toBe(true);
+
+    const oldest = page1.calls[page1.calls.length - 1]!;
+    const page2 = db.listToolCalls('proj', {
+      sessionId: 'sess-a',
+      limit: 50,
+      beforeStartedAt: oldest.started_at,
+      beforeId: oldest.id,
+    });
+    expect(page2.calls).toHaveLength(50);
+    expect(page2.hasMore).toBe(true);
+    expect(page2.calls.every((c) => c.session_id === 'sess-a')).toBe(true);
+    expect(
+      page2.calls.every((c) => c.started_at < oldest.started_at),
+    ).toBe(true);
+  });
+
+  it('honors legacy before cursor without beforeId', () => {
+    for (let i = 0; i < 5; i++) {
+      db.insertToolCall(baseRow(`c1-${i}`, 3000 + i, 'conv-1'));
+    }
+    for (let i = 0; i < 5; i++) {
+      db.insertToolCall(baseRow(`c2-${i}`, 2000 + i, 'conv-2'));
+    }
+    for (let i = 0; i < 5; i++) {
+      db.insertToolCall(baseRow(`c3-${i}`, 1000 + i, 'conv-3'));
+    }
+
+    const page1 = db.listToolCalls('proj', { limit: 10 });
+    const oldest = page1.calls[page1.calls.length - 1]!;
+    const page2 = db.listToolCalls('proj', {
+      limit: 10,
+      beforeStartedAt: oldest.started_at,
+    });
+    expect(page2.calls.every((c) => c.conversation_id === 'conv-3')).toBe(true);
+    expect(page2.calls).toHaveLength(5);
+  });
 });
