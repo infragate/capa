@@ -222,6 +222,31 @@ describe('ToolCallsRepo conversation pagination', () => {
     expect(page.calls.map((c) => c.id).sort()).toEqual(['a-prompt', 'a-tool']);
   });
 
+  it('does not leak tool-only rows from another chat that shares a generation_id', () => {
+    const sharedGen = 'gen-shared';
+    db.insertToolCall({
+      ...baseRow('b-prompt-other', 300, 'conv-b'),
+      kind: 'prompt',
+      tool_name: 'older chat b',
+      generation_id: 'gen-other',
+    });
+    db.insertToolCall({
+      ...baseRow('b-tool-shared', 200, 'conv-b'),
+      kind: 'agent_tool',
+      tool_name: 'Read',
+      generation_id: sharedGen,
+    });
+    db.insertToolCall({
+      ...baseRow('a-prompt', 100, 'conv-a'),
+      kind: 'prompt',
+      tool_name: 'chat a',
+      generation_id: sharedGen,
+    });
+
+    const page = db.listToolCalls('proj', { conversationId: 'conv-a' });
+    expect(page.calls.map((c) => c.id)).toEqual(['a-prompt']);
+  });
+
   it('paginates session traces with before/beforeId cursor', () => {
     for (let i = 0; i < 120; i++) {
       db.insertToolCall({

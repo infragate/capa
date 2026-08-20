@@ -525,7 +525,20 @@ export class ToolCallsRepo {
 
 			for (const row of genRows) {
 				const cid = row.conversation_id?.trim();
-				if (cid) allowedConversationIds.add(cid);
+				if (!cid || cid === chatId || allowedConversationIds.has(cid)) continue;
+
+				// Do not pull tool rows stored under another chat conversation id
+				// that owns prompts elsewhere, even when generation_id collides.
+				const ownsPromptElsewhere = this.db
+					.query(
+						`SELECT 1 FROM tool_calls
+             WHERE project_id = ? AND conversation_id = ? AND kind = 'prompt'
+             LIMIT 1`,
+					)
+					.get(projectId, cid);
+				if (ownsPromptElsewhere) continue;
+
+				allowedConversationIds.add(cid);
 			}
 		}
 

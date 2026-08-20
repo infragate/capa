@@ -164,4 +164,27 @@ describe("reconcileCursorActivityConversationIds", () => {
 			chatId,
 		]);
 	});
+
+	it('does not rewrite rows from another source when generation_id collides', () => {
+		const generationId = "gen-collision";
+		const rows = [
+			{
+				source: "cursor",
+				kind: "prompt",
+				conversation_id: "chat-a",
+				generation_id: generationId,
+				attributes_json: null,
+			},
+			{
+				source: "claude-code",
+				kind: "shell",
+				conversation_id: "sess-b",
+				generation_id: generationId,
+				attributes_json: null,
+			},
+		];
+
+		const out = reconcileCursorActivityConversationIds(rows);
+		expect(out[1]!.conversation_id).toBe("sess-b");
+	});
 });

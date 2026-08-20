@@ -48,7 +48,7 @@ export async function exportSvgAsPng(
 ): Promise<void> {
   const parser = new DOMParser();
   const doc = parser.parseFromString(svgMarkup, 'image/svg+xml');
-  const svgEl = doc.documentElement;
+  const svgEl = doc.documentElement as unknown as SVGSVGElement;
   const vb = svgEl.viewBox.baseVal;
   const width = Math.ceil(vb.width > 0 ? vb.width : Number(svgEl.getAttribute('width')) || 800);
   const height = Math.ceil(vb.height > 0 ? vb.height : Number(svgEl.getAttribute('height')) || 600);

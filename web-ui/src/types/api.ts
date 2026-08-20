@@ -328,6 +328,7 @@ export interface SetServerEnabledResponse {
   enabled: boolean;
   connected: boolean;
   error?: string;
+  needsAuth?: boolean;
 }
 
 export interface Integration {

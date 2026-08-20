@@ -105,7 +105,13 @@ export function ServerCard({
   async function handleToggleEnabled() {
     setToggleError(null);
     try {
-      await setServerEnabled.mutateAsync({ serverId: server.id, enabled: !isOn });
+      const result = await setServerEnabled.mutateAsync({
+        serverId: server.id,
+        enabled: !isOn,
+      });
+      if (result.enabled && !result.connected && result.error) {
+        setToggleError(result.error);
+      }
     } catch (err) {
       setToggleError((err as Error).message || t('actions.serverToggleFailed'));
     }

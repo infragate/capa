@@ -556,7 +556,7 @@ export function useSetServerEnabled(projectId: string) {
       const result = await projectsApi.setServerEnabled(projectId, serverId, enabled);
       patchProjectServerEnabled(qc, projectId, serverId, result.enabled);
 
-      if (result.enabled) {
+      if (result.enabled && result.connected) {
         const project = qc.getQueryData<ProjectDetail>(['project', projectId]);
         const server = project?.capabilities?.servers.find((s) => s.id === serverId);
         if (server && shouldFetchServerTools(server)) {
@@ -565,7 +565,7 @@ export function useSetServerEnabled(projectId: string) {
             queryFn: () => projectsApi.getServerTools(projectId, serverId),
           });
         }
-      } else {
+      } else if (!result.enabled) {
         qc.removeQueries({ queryKey: ['server-tools', projectId, serverId] });
       }
 

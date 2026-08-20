@@ -6,7 +6,7 @@ import {
   sortEventsChronological,
   sortRunsChronological,
 } from './conversationTimeline';
-import type { ToolCallRecord } from '../../../../types/api';
+import type { ToolCallKind, ToolCallRecord } from '../../../../types/api';
 
 function run(
   id: string,
@@ -37,7 +37,7 @@ function span(
   started_at: number,
   duration_ms: number,
   status: ToolCallRecord['status'] = 'ok',
-  kind = 'agent_tool',
+  kind: ToolCallKind = 'agent_tool',
 ): ToolCallRecord {
   return {
     id,

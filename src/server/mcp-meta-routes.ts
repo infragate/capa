@@ -161,9 +161,10 @@ export async function handleSetServerEnabled(
 				const needsAuth = /authentication|oauth2|reconnect/i.test(detail);
 				return new Response(
 					JSON.stringify({
-						warning: detail,
+						serverId,
 						enabled: true,
 						connected: false,
+						error: detail,
 						needsAuth,
 					}),
 					{ headers: JSON_HEADERS },
