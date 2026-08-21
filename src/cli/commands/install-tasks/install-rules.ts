@@ -16,6 +16,7 @@ import {
 } from '../../../shared/skill-security';
 import type { InstallCtx } from './context';
 import { getRepoSnapshot } from './helpers/repo-snapshot';
+import { materialInstallProviders } from './helpers/install-providers';
 import { finishInstallBatch, recordInstallFailure } from './install-error-policy';
 
 /** Dependencies needed to resolve a rule's body content. */
@@ -84,7 +85,7 @@ export function installRulesTask(): Task<InstallCtx> {
       const repoFetchAuth = createAuthenticatedFetch(ctx.db);
       const snapshotResolver: RepoSnapshotResolver = (platform, repoPath, auth, opts) =>
         getRepoSnapshot(platform, repoPath, auth, opts);
-      const providers = ctx.capabilitiesToUse.providers ?? ctx.resolvedProviders;
+      const providers = materialInstallProviders(ctx);
       ctx.ruleBodies = new Map();
 
       const totalRules = currentRules.length;

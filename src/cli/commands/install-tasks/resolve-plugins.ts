@@ -14,7 +14,6 @@ import { raiseInstallError } from './install-error-policy';
 export function resolvePluginsTask(): Task<InstallCtx> {
   return {
     title: 'Resolving plugins',
-    enabled: (ctx) => !!(ctx.capabilities.plugins && ctx.capabilities.plugins.length > 0),
     task: async (ctx) => {
       const authFetch = createAuthenticatedFetch(ctx.db);
       try {

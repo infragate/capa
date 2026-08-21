@@ -1,15 +1,14 @@
 import type { Task } from '../../ui';
 import { pruneRules } from '../../utils/rules-installer';
 import type { InstallCtx } from './context';
+import { materialInstallProviders } from './helpers/install-providers';
 
 export function pruneOrphanRulesTask(): Task<InstallCtx> {
   return {
     title: 'Pruning orphan rules',
-    enabled: (ctx) =>
-      !ctx.isWrapInstall &&
-      (ctx.capabilitiesToUse.providers ?? ctx.resolvedProviders).length > 0,
+    enabled: (ctx) => materialInstallProviders(ctx).length > 0,
     task: async (ctx) => {
-      const providers = ctx.capabilitiesToUse.providers ?? ctx.resolvedProviders;
+      const providers = materialInstallProviders(ctx);
       const currentRules = ctx.capabilitiesToUse.rules ?? [];
       try {
         const previouslyManaged = ctx.db.getManagedFiles(ctx.projectId);

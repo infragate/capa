@@ -399,6 +399,50 @@ export async function pruneWorkspaces(): Promise<number> {
   return removed;
 }
 
+export interface WrapWorkspaceEntry {
+  cachePath: string;
+  workspacePath: string;
+  providerId: string;
+}
+
+/**
+ * Active wrap shadow workspaces whose marker points at `realProjectPath`.
+ */
+export async function listWrapWorkspacesForProject(
+  realProjectPath: string,
+): Promise<WrapWorkspaceEntry[]> {
+  await ensureCapaDir();
+  const dir = getWorkspacesDir();
+  if (!existsSync(dir)) return [];
+
+  const real = resolve(realProjectPath);
+  const entries: WrapWorkspaceEntry[] = [];
+
+  for (const name of readdirSync(dir)) {
+    const cachePath = join(dir, name);
+    try {
+      if (!statSync(cachePath).isDirectory()) continue;
+      const markerPath = join(cachePath, WORKSPACE_MARKER);
+      if (!existsSync(markerPath)) continue;
+      const data = (await Bun.file(markerPath).json()) as WorkspaceMarker;
+      if (!data?.realProjectPath || !data.providerId) continue;
+      if (!pathsEqual(data.realProjectPath, real)) continue;
+      const workName = data.workingDir ?? workingDirName(data.realProjectPath);
+      const workspacePath = join(cachePath, workName);
+      if (!existsSync(workspacePath)) continue;
+      entries.push({
+        cachePath,
+        workspacePath,
+        providerId: data.providerId,
+      });
+    } catch {
+      // skip invalid cache dirs
+    }
+  }
+
+  return entries;
+}
+
 /**
  * Remove wrap cache dirs whose marker realProjectPath matches `realProjectPath`.
  */

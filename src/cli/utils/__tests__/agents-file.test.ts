@@ -8,6 +8,7 @@ import {
   getTargetFilenames,
   installAgentsFile,
 } from '../agents-file/index';
+import { sanitizeAgentSourceContent } from '../agents-file/snippets';
 import { parseRepoString } from '../../../shared/repo-string';
 
 describe('detectRepoCoordsFromRawUrl', () => {
@@ -356,17 +357,26 @@ describe('installAgentsFile + cleanAgentsFile end-to-end', () => {
     expect(existsSync(agentsPath)).toBe(false);
   });
 
-  it('preserves user content outside markers while still removing the __base__ block on clean', async () => {
+  it('preserves user content outside markers when the file is already capa-managed', async () => {
     const basePath = join(projectDir, 'base.md');
     writeFileSync(basePath, 'Base content.\n', 'utf8');
 
     const capabilitiesPath = join(projectDir, 'capabilities.yaml');
     writeFileSync(capabilitiesPath, '# placeholder\n', 'utf8');
 
-    // Simulate a user who hand-edited their AGENTS.md before configuring
-    // `agents.base`. The pre-existing content must survive install and clean.
     const agentsPath = join(projectDir, 'AGENTS.md');
-    writeFileSync(agentsPath, '# My project\n\nHand-written notes.\n', 'utf8');
+    writeFileSync(
+      agentsPath,
+      `# My project
+
+Hand-written notes.
+
+<!-- capa:start:__base__ -->
+Old base.
+<!-- capa:end:__base__ -->
+`,
+      'utf8',
+    );
 
     await installAgentsFile(
       projectDir,
@@ -380,6 +390,7 @@ describe('installAgentsFile + cleanAgentsFile end-to-end', () => {
     expect(afterInstall).toContain('Hand-written notes.');
     expect(afterInstall).toContain('<!-- capa:start:__base__ -->');
     expect(afterInstall).toContain('Base content.');
+    expect(afterInstall).not.toContain('Old base.');
 
     cleanAgentsFile(projectDir, ['codex']);
 
@@ -421,6 +432,242 @@ describe('installAgentsFile + cleanAgentsFile end-to-end', () => {
     // Exactly one __base__ block — the upsert must not duplicate it.
     const starts = written.match(/<!-- capa:start:__base__ -->/g) ?? [];
     expect(starts).toHaveLength(1);
+  });
+
+  it('full re-render is idempotent across repeated installs', async () => {
+    const capabilitiesPath = join(projectDir, 'capabilities.yaml');
+    writeFileSync(capabilitiesPath, '# placeholder\n', 'utf8');
+
+    const config = {
+      additional: [
+        { id: 'alpha', type: 'inline' as const, content: 'Alpha instructions.' },
+        { id: 'beta', type: 'inline' as const, content: 'Beta instructions.' },
+      ],
+    };
+
+    for (let i = 0; i < 4; i++) {
+      await installAgentsFile(projectDir, config, ['codex'], undefined, capabilitiesPath);
+    }
+
+    const written = readFileSync(join(projectDir, 'AGENTS.md'), 'utf8');
+    expect((written.match(/<!-- capa:start:alpha -->/g) ?? []).length).toBe(1);
+    expect((written.match(/<!-- capa:start:beta -->/g) ?? []).length).toBe(1);
+    expect((written.match(/<!-- capa:end:__base__ -->/g) ?? []).length).toBe(0);
+  });
+
+  it('re-render preserves rule marker blocks in the same instructions file', async () => {
+    const agentsPath = join(projectDir, 'AGENTS.md');
+    writeFileSync(
+      agentsPath,
+      `<!-- capa:start:rule:keep-me -->
+Rule body
+<!-- capa:end:rule:keep-me -->
+`,
+      'utf8',
+    );
+
+    const capabilitiesPath = join(projectDir, 'capabilities.yaml');
+    writeFileSync(capabilitiesPath, '# placeholder\n', 'utf8');
+
+    await installAgentsFile(
+      projectDir,
+      {
+        additional: [{ id: 'team', type: 'inline', content: 'Team notes.' }],
+      },
+      ['codex'],
+      undefined,
+      capabilitiesPath,
+    );
+
+    const written = readFileSync(agentsPath, 'utf8');
+    expect(written).toContain('<!-- capa:start:rule:keep-me -->');
+    expect(written).toContain('Rule body');
+    expect(written).toContain('<!-- capa:start:team -->');
+    expect(written).toContain('Team notes.');
+  });
+
+  it('strips capa markers from agent source files before wrapping', () => {
+    const source = `<!-- capa:end:__base__ -->
+<!-- capa:end:__base__ -->
+
+# Team guide
+Keep this text.
+
+<!-- capa:start:old-snippet -->
+Legacy body
+<!-- capa:end:old-snippet -->
+<!-- capa:end:__base__ -->
+`;
+    expect(sanitizeAgentSourceContent(source)).toBe(
+      '# Team guide\nKeep this text.\n\nLegacy body',
+    );
+  });
+
+  it('ignores capa markers in a local base file when installing agents', async () => {
+    const basePath = join(projectDir, 'base.md');
+    writeFileSync(
+      basePath,
+      `<!-- capa:end:__base__ -->
+<!-- capa:end:__base__ -->
+
+# Project defaults
+Use bun for scripts.
+`,
+      'utf8',
+    );
+
+    const capabilitiesPath = join(projectDir, 'capabilities.yaml');
+    writeFileSync(capabilitiesPath, '# placeholder\n', 'utf8');
+
+    await installAgentsFile(
+      projectDir,
+      { base: { type: 'local', path: './base.md' } },
+      ['codex'],
+      undefined,
+      capabilitiesPath,
+    );
+
+    const written = readFileSync(join(projectDir, 'AGENTS.md'), 'utf8');
+    expect((written.match(/<!-- capa:end:__base__ -->/g) ?? []).length).toBe(1);
+    expect(written).toContain('# Project defaults');
+    expect(written).toContain('Use bun for scripts.');
+    expect(written).not.toMatch(/\n<!-- capa:end:__base__ -->\n<!-- capa:end:__base__ -->/);
+  });
+
+  it('ignores capa markers in inline snippet content', async () => {
+    const capabilitiesPath = join(projectDir, 'capabilities.yaml');
+    writeFileSync(capabilitiesPath, '# placeholder\n', 'utf8');
+
+    await installAgentsFile(
+      projectDir,
+      {
+        additional: [
+          {
+            id: 'team',
+            type: 'inline',
+            content: `<!-- capa:end:__base__ -->
+<!-- capa:start:stale -->
+Old notes
+<!-- capa:end:stale -->
+Ship small diffs.`,
+          },
+        ],
+      },
+      ['codex'],
+      undefined,
+      capabilitiesPath,
+    );
+
+    const written = readFileSync(join(projectDir, 'AGENTS.md'), 'utf8');
+    expect((written.match(/<!-- capa:start:team -->/g) ?? []).length).toBe(1);
+    expect(written).toContain('Old notes');
+    expect(written).toContain('Ship small diffs.');
+    expect(written).not.toContain('<!-- capa:end:__base__ -->');
+    expect(written).not.toContain('<!-- capa:start:stale -->');
+  });
+
+  it('recovers from orphan capa markers after repeated snippet add/remove syncs', async () => {
+    const basePath = join(projectDir, 'base.md');
+    writeFileSync(basePath, 'Base content.\n', 'utf8');
+
+    const capabilitiesPath = join(projectDir, 'capabilities.yaml');
+    writeFileSync(capabilitiesPath, '# placeholder\n', 'utf8');
+
+    const agentsPath = join(projectDir, 'AGENTS.md');
+    writeFileSync(
+      agentsPath,
+      `<!-- capa:end:__base__ -->
+<!-- capa:end:__base__ -->
+
+<!-- capa:start:example222 -->
+1323123123
+<!-- capa:end:example222 -->
+`,
+      'utf8',
+    );
+
+    const config = {
+      base: { type: 'local' as const, path: './base.md' },
+      additional: [{ id: 'example222', type: 'inline' as const, content: '1323123123' }],
+    };
+
+    for (let i = 0; i < 3; i++) {
+      await installAgentsFile(projectDir, config, ['codex'], undefined, capabilitiesPath);
+    }
+
+    const written = readFileSync(agentsPath, 'utf8');
+    expect((written.match(/<!-- capa:start:__base__ -->/g) ?? []).length).toBe(1);
+    expect((written.match(/<!-- capa:end:__base__ -->/g) ?? []).length).toBe(1);
+    expect((written.match(/<!-- capa:start:example222 -->/g) ?? []).length).toBe(1);
+    expect(written).toContain('Base content.');
+    expect(written).toContain('1323123123');
+  });
+
+  it('rejects agents.base when it resolves to the same file as AGENTS.md', async () => {
+    const agentsPath = join(projectDir, 'AGENTS.md');
+    writeFileSync(agentsPath, '# Hand-written AGENTS.md\n', 'utf8');
+
+    const workflowDir = join(projectDir, '.workflows');
+    mkdirSync(workflowDir, { recursive: true });
+    const workflowPath = join(workflowDir, 'WORKFLOW.md');
+    // Symlink the base source to the managed instructions file — feedback loop.
+    try {
+      const { symlinkSync } = await import('fs');
+      symlinkSync(join('..', 'AGENTS.md'), workflowPath);
+    } catch {
+      // Bun test on some platforms may need relative path differently
+      const { symlinkSync } = await import('fs');
+      symlinkSync(agentsPath, workflowPath);
+    }
+
+    const capabilitiesPath = join(projectDir, 'capabilities.yaml');
+    writeFileSync(capabilitiesPath, '# placeholder\n', 'utf8');
+
+    await expect(
+      installAgentsFile(
+        projectDir,
+        { base: { type: 'local', path: './.workflows/WORKFLOW.md' } },
+        ['codex'],
+        undefined,
+        capabilitiesPath,
+      ),
+    ).rejects.toThrow(/same file as AGENTS\.md/);
+  });
+
+  it('does not overwrite a user-owned AGENTS.md when agents are configured', async () => {
+    const agentsPath = join(projectDir, 'AGENTS.md');
+    const original = '# My project\n\nHand-written notes.\n';
+    writeFileSync(agentsPath, original, 'utf8');
+
+    const capabilitiesPath = join(projectDir, 'capabilities.yaml');
+    writeFileSync(capabilitiesPath, '# placeholder\n', 'utf8');
+
+    await installAgentsFile(
+      projectDir,
+      {
+        additional: [{ id: 'team', type: 'inline', content: 'Team notes.' }],
+      },
+      ['codex'],
+      undefined,
+      capabilitiesPath,
+    );
+
+    expect(readFileSync(agentsPath, 'utf8')).toBe(original);
+  });
+
+  it('does not touch a user-owned AGENTS.md when no agents are configured', async () => {
+    const agentsPath = join(projectDir, 'AGENTS.md');
+    const original = '# My project\n\nHand-written notes.\n';
+    writeFileSync(agentsPath, original, 'utf8');
+    const mtimeBefore = readFileSync(agentsPath).length;
+
+    const capabilitiesPath = join(projectDir, 'capabilities.yaml');
+    writeFileSync(capabilitiesPath, '# placeholder\n', 'utf8');
+
+    await installAgentsFile(projectDir, { additional: [] }, ['codex'], undefined, capabilitiesPath);
+
+    expect(readFileSync(agentsPath, 'utf8')).toBe(original);
+    expect(readFileSync(agentsPath, 'utf8').length).toBe(mtimeBefore);
   });
 
   it('resolves local additional snippets relative to the capabilities file', async () => {

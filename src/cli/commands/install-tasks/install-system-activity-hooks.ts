@@ -1,6 +1,10 @@
 import type { Task } from "../../ui";
 import { syncSystemActivityHooks } from "../../../shared/agent-activity-sync";
 import type { InstallCtx } from "./context";
+import {
+	materialInstallProviders,
+	wrapHookPruneOptions,
+} from "./helpers/install-providers";
 
 /**
  * Inject or prune capa-owned agent-activity hooks based on
@@ -9,11 +13,9 @@ import type { InstallCtx } from "./context";
 export function installSystemActivityHooksTask(): Task<InstallCtx> {
 	return {
 		title: "Syncing agent activity hooks",
-		enabled: (ctx) =>
-			(ctx.capabilitiesToUse.providers ?? ctx.resolvedProviders).length > 0,
+		enabled: (ctx) => materialInstallProviders(ctx).length > 0,
 		task: async (ctx, task) => {
-			const providers =
-				ctx.capabilitiesToUse.providers ?? ctx.resolvedProviders;
+			const providers = materialInstallProviders(ctx);
 			try {
 				const result = await syncSystemActivityHooks({
 					projectPath: ctx.projectPath,
@@ -22,7 +24,7 @@ export function installSystemActivityHooksTask(): Task<InstallCtx> {
 					capabilities: ctx.capabilitiesToUse,
 					providers,
 					db: ctx.db,
-					skipPrune: ctx.isWrapInstall,
+					pruneOptions: wrapHookPruneOptions(ctx),
 				});
 				for (const w of result.warnings) ctx.warnings.push(w);
 				if (!result.enabled) {

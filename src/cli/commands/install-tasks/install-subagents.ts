@@ -13,6 +13,7 @@ import { installSubAgentInstructions, removeSubAgentInstructions } from '../../u
 import { parseSkillMd } from '../../../shared/skill-md';
 import type { Capabilities } from '../../../types/capabilities';
 import type { InstallCtx } from './context';
+import { materialInstallProviders } from './helpers/install-providers';
 
 /**
  * Strip a single pair of matching surrounding quotes (either `"` or `'`).
@@ -38,7 +39,7 @@ function stripSurroundingQuotes(value: string): string {
  * the renderer falls back to printing the bare skill id. A malformed SKILL.md
  * in one provider's dir does NOT block us from trying another provider's copy.
  */
-function buildSkillDescriptions(
+export function buildSkillDescriptions(
   projectPath: string,
   capabilities: Capabilities,
   providers: string[]
@@ -91,7 +92,7 @@ export function installSubagentsTask(): Task<InstallCtx> {
       return removedSubAgentIds.length > 0 || currentSubagents.length > 0;
     },
     task: async (ctx, task) => {
-      const providers = ctx.capabilitiesToUse.providers ?? ctx.resolvedProviders;
+      const providers = materialInstallProviders(ctx);
       const toolExposure = ctx.capabilitiesToUse.options?.toolExposure;
       const skipMcpWrites = toolExposure === 'none';
       const installedAgents = ctx.db.getSubAgents(ctx.projectId);

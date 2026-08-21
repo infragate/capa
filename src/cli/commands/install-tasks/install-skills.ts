@@ -2,6 +2,7 @@ import type { Task } from '../../ui';
 import type { InstallCtx } from './context';
 import { checkGitInstalled, gitOAuthHelpText } from './helpers/git';
 import { installOneSkill } from './helpers/install-one-skill';
+import { materialInstallProviders } from './helpers/install-providers';
 import { indentLines } from './helpers/text';
 import { finishInstallBatch, raiseInstallError, recordInstallFailure } from './install-error-policy';
 
@@ -9,8 +10,9 @@ export function installSkillsTask(): Task<InstallCtx> {
   return {
     title: 'Installing skills',
     task: async (ctx, task) => {
-      const providers = ctx.capabilitiesToUse.providers ?? ctx.resolvedProviders;
-      const needsGit = ctx.capabilities.skills.some(
+      const providers = materialInstallProviders(ctx);
+      const skills = ctx.capabilitiesToUse.skills ?? [];
+      const needsGit = skills.some(
         (skill) => skill.type === 'github' || skill.type === 'gitlab',
       );
       if (needsGit) {
@@ -25,11 +27,11 @@ export function installSkillsTask(): Task<InstallCtx> {
           return;
         }
       }
-      const totalSkills = ctx.capabilities.skills.length;
+      const totalSkills = skills.length;
       const failedBefore = ctx.failed;
 
       for (let i = 0; i < totalSkills; i++) {
-        const skill = ctx.capabilities.skills[i];
+        const skill = skills[i];
         task.output = `[${i + 1}/${totalSkills}] ${skill.id}`;
 
         let outcome;

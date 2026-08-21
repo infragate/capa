@@ -106,6 +106,7 @@ class CapaServer {
 			syncProjectMcpClients: (projectId, servers, previousServers) =>
 				this.syncProjectMcpClients(projectId, servers, previousServers),
 			mcpServerState: this.mcpServerStateManager,
+			notifyProjectChanged: (projectId) => this.notifyProjectChanged(projectId),
 		};
 	}
 
