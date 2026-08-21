@@ -1,6 +1,6 @@
 import { intro as clackIntro, outro as clackOutro, log as clackLog } from '@clack/prompts'
 import { c, icon } from './colors'
-import { isInteractive, isJson, isQuiet, isVerbose } from './flags'
+import { isHeadless, isInteractive, isJson, isQuiet, isVerbose } from './flags'
 
 export function header(title: string): void {
   if (isJson() || isQuiet()) return
@@ -61,7 +61,8 @@ export function taskLog(message: string): void {
     return
   }
   if (isQuiet()) return
-  const ownedBySpinner = isInteractive() && !isVerbose() && !process.env.CI
+  const ownedBySpinner =
+    isInteractive() && !isVerbose() && !isHeadless() && !process.env.CI
   if (ownedBySpinner) return
   console.log(message)
 }

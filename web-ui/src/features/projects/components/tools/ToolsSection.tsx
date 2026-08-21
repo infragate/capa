@@ -27,6 +27,10 @@ import { ConfiguredToolsPanel } from './ConfiguredToolsPanel';
 import { ServerDialog } from './ServerDialog';
 import { CommandToolDialog } from './CommandToolDialog';
 
+function serverToolsFetchEnabled(server: Server): boolean {
+  return !!server.enabled && !(server.requiresOAuth && !server.isConnected);
+}
+
 interface ToolsSectionProps {
   projectId: string;
   skills: Skill[];
@@ -128,7 +132,7 @@ export function ToolsSection({
       queryFn: () => projectsApi.getServerTools(projectId, server.id),
       staleTime: 60_000,
       retry: false,
-      enabled: !(server.requiresOAuth && !server.isConnected),
+      enabled: serverToolsFetchEnabled(server),
     })),
   });
 
@@ -225,12 +229,20 @@ export function ToolsSection({
 
   const existingToolIds = useMemo(() => new Set(tools.map((t) => t.id)), [tools]);
 
+  // Only block the bar on the very first load (no cached tool lists yet).
+  // Server toggles refetch one server at a time — keep showing last stats.
   const tokenSavingsLoading =
-    servers.length > 0 && serverToolQueries.some((q) => q.isLoading || q.isPending);
+    servers.length > 0 &&
+    Object.keys(serverToolsMap).length === 0 &&
+    serverToolQueries.some((q, i) => {
+      const server = servers[i];
+      if (!server || !serverToolsFetchEnabled(server)) return false;
+      return q.isLoading;
+    });
   const tokenSavings = useMemo(() => {
-    if (servers.length === 0 || tokenSavingsLoading) return null;
+    if (servers.length === 0) return null;
     return computeTokenSavings(tools as EnrichedTool[], serverToolsMap, servers.length);
-  }, [tools, servers, serverToolsMap, serverToolsDataKey, tokenSavingsLoading]);
+  }, [tools, servers, serverToolsMap, serverToolsDataKey]);
 
   return (
     <div

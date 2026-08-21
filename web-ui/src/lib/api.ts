@@ -8,8 +8,24 @@ export class ApiError extends Error {
   }
 }
 
+declare global {
+  interface Window {
+    __CAPA_AUTH_TOKEN__?: string;
+  }
+}
+
+export function apiAuthHeaders(extra?: HeadersInit): Headers {
+  const headers = new Headers(extra);
+  const token = typeof window !== 'undefined' ? window.__CAPA_AUTH_TOKEN__ : undefined;
+  if (token && !headers.has('Authorization')) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+  return headers;
+}
+
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(url, options);
+  const headers = apiAuthHeaders(options?.headers);
+  const res = await fetch(url, { ...options, headers });
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText);
     // Surface server-supplied { error: "..." } messages when present.
@@ -35,23 +51,27 @@ export const api = {
   post: <T>(url: string, body?: unknown) =>
     request<T>(url, {
       method: 'POST',
-      headers: body ? { 'Content-Type': 'application/json' } : undefined,
-      body: body ? JSON.stringify(body) : undefined,
+      headers: { 'Content-Type': 'application/json' },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
     }),
 
   put: <T>(url: string, body?: unknown) =>
     request<T>(url, {
       method: 'PUT',
-      headers: body ? { 'Content-Type': 'application/json' } : undefined,
-      body: body ? JSON.stringify(body) : undefined,
+      headers: { 'Content-Type': 'application/json' },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
     }),
 
   patch: <T>(url: string, body?: unknown) =>
     request<T>(url, {
       method: 'PATCH',
-      headers: body ? { 'Content-Type': 'application/json' } : undefined,
-      body: body ? JSON.stringify(body) : undefined,
+      headers: { 'Content-Type': 'application/json' },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
     }),
 
-  delete: <T>(url: string) => request<T>(url, { method: 'DELETE' }),
+  delete: <T>(url: string) =>
+    request<T>(url, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+    }),
 };

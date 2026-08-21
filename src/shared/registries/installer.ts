@@ -1,3 +1,4 @@
+import { createHash } from "crypto";
 import {
 	copyFileSync,
 	existsSync,
@@ -9,6 +10,7 @@ import {
 	writeFileSync,
 } from "fs";
 import { basename, join } from "path";
+import { pathToFileURL } from "url";
 import type { RegistrySourceType } from "../../types/database";
 import type { RegistryAdapter, RegistryManifest } from "../../types/registry";
 import type { AuthenticatedFetch } from "../authenticated-fetch";
@@ -17,14 +19,26 @@ import { getManagedRegistriesDir } from "../config";
 import { getGitProvider } from "../git-providers/registry";
 import { assertSafeRepoPath } from "../repo-file";
 import { parseRepoString } from "../repo-string";
+import { assertPublicHttpsUrl } from "../safe-remote-url";
 import {
-	createClaudeMarketplaceAdapter,
+	assertBundledAdapterPin,
+	bundledAdapterPin,
+	bundledSlugFromSource,
+	isBundledRegistryInstall,
+	readBundledAdapterSource,
+	type BundledAdapterSlug,
+} from "./bundled";
+import {
 	fetchClaudeMarketplace,
+	getInstalledMarketplacePath,
+	loadClaudeMarketplaceAdapter,
 	MARKETPLACE_JSON_FILENAME,
 	MARKETPLACE_META_FILENAME,
 	parseClaudeMarketplaceSource,
 	marketplaceNameToSlug,
 } from "./claude-marketplace";
+
+export { getInstalledMarketplacePath };
 
 const ADAPTER_EXTENSIONS = [".ts", ".js", ".mjs"] as const;
 const ADAPTER_BASENAMES = ADAPTER_EXTENSIONS.map((ext) => `adapter${ext}`);
@@ -76,21 +90,53 @@ export interface RegistryInstallResult {
 	resolvedRef: string | null;
 	adapterPath: string;
 	manifest: RegistryManifest;
+	contentSha256: string;
 	/** Preferred slug from marketplace.json `name` (claude-marketplace only). */
 	preferredSlug?: string;
 }
 
+export interface RegistryStageResult {
+	resolvedRef: string | null;
+	adapterPath: string;
+	contentSha256: string;
+	content: string;
+	preferredSlug?: string;
+}
+
+export function hashAdapterContent(content: string): string {
+	return createHash("sha256").update(content, "utf8").digest("hex");
+}
+
+export function assertAdapterHash(filePath: string, expectedSha256: string): void {
+	const actual = hashAdapterContent(readFileSync(filePath, "utf-8"));
+	if (actual !== expectedSha256) {
+		throw new Error(
+			`Adapter hash mismatch for ${filePath}: expected ${expectedSha256}, got ${actual}`,
+		);
+	}
+}
+
+export function writeStagedAdapter(
+	slug: string,
+	content: string,
+	ext: string,
+): { adapterPath: string; contentSha256: string } {
+	if (!ext.startsWith(".")) ext = `.${ext}`;
+	const dir = join(getManagedRegistriesDir(), slug);
+	mkdirSync(dir, { recursive: true });
+	const adapterPath = join(dir, `adapter${ext}`);
+	writeFileSync(adapterPath, content, "utf-8");
+	return { adapterPath, contentSha256: hashAdapterContent(content) };
+}
+
 /**
- * Fetches the adapter (or Claude marketplace catalog) from the configured
- * source, materializes it under `<managed dir>/<slug>/`, and validates it.
- * Throws with a short, actionable message on any failure and cleans up the
- * partial managed dir.
+ * Fetch + write adapter bytes. Does not `import()` adapter TypeScript.
  */
-export async function installRegistry(
+export async function stageRegistry(
 	input: RegistryInstallInput,
 	authFetch: AuthenticatedFetch,
 	opts: { noCache?: boolean } = {},
-): Promise<RegistryInstallResult> {
+): Promise<RegistryStageResult> {
 	if (!isValidSlug(input.slug)) {
 		throw new Error(
 			`Invalid slug "${input.slug}". Allowed: lowercase letters, digits, and dashes; ` +
@@ -106,12 +152,17 @@ export async function installRegistry(
 		}
 		mkdirSync(targetDir, { recursive: true });
 
+		if (isBundledRegistryInstall(input)) {
+			return stageBundledAdapter(input.slug, targetDir);
+		}
+
 		if (input.type === "claude-marketplace") {
-			return await installClaudeMarketplace(input, authFetch, targetDir, opts);
+			return await stageClaudeMarketplace(input, authFetch, targetDir, opts);
 		}
 
 		let adapterPath: string;
 		let resolvedRef: string | null = null;
+		let content: string;
 
 		if (input.type === "github" || input.type === "gitlab") {
 			const { adapterFile, resolvedSha } = await fetchAdapterFromRepo(
@@ -122,19 +173,22 @@ export async function installRegistry(
 			);
 			const ext = adapterFile.slice(adapterFile.lastIndexOf("."));
 			adapterPath = join(targetDir, `adapter${ext}`);
-			copyFileSync(adapterFile, adapterPath);
+			content = readFileSync(adapterFile, "utf-8");
+			writeFileSync(adapterPath, content, "utf-8");
 			resolvedRef = resolvedSha;
 		} else {
-			const { content, ext } = await fetchAdapterFromUrl(
-				input.source,
-				authFetch,
-			);
-			adapterPath = join(targetDir, `adapter${ext}`);
+			const fetched = await fetchAdapterFromUrl(input.source, authFetch);
+			content = fetched.content;
+			adapterPath = join(targetDir, `adapter${fetched.ext}`);
 			writeFileSync(adapterPath, content, "utf-8");
 		}
 
-		const adapter = await loadAdapterFile(adapterPath);
-		return { resolvedRef, adapterPath, manifest: adapter.manifest };
+		return {
+			resolvedRef,
+			adapterPath,
+			contentSha256: hashAdapterContent(content),
+			content,
+		};
 	} catch (err) {
 		try {
 			rmSync(targetDir, { recursive: true, force: true });
@@ -143,28 +197,107 @@ export async function installRegistry(
 	}
 }
 
-async function installClaudeMarketplace(
+/**
+ * `import()` a previously staged adapter (or build a Claude marketplace adapter
+ * from cached JSON). Verifies `expectedSha256` when provided.
+ */
+export async function executeStagedRegistry(
+	slug: string,
+	expectedSha256?: string | null,
+): Promise<RegistryInstallResult> {
+	const marketplacePath = getInstalledMarketplacePath(slug);
+	if (marketplacePath) {
+		if (expectedSha256) {
+			assertAdapterHash(marketplacePath, expectedSha256);
+		}
+		const adapter = loadClaudeMarketplaceAdapter(slug);
+		if (!isValidAdapter(adapter)) {
+			throw new Error(
+				`Adapter at ${marketplacePath} does not export a valid RegistryAdapter ` +
+					`(needs default export with { manifest, search, view }).`,
+			);
+		}
+		return {
+			resolvedRef: null,
+			adapterPath: marketplacePath,
+			manifest: adapter.manifest,
+			contentSha256:
+				expectedSha256 ??
+				hashAdapterContent(readFileSync(marketplacePath, "utf-8")),
+		};
+	}
+
+	const adapterPath = getInstalledAdapterPath(slug);
+	if (!adapterPath) {
+		throw new Error(
+			`No materialized adapter file for slug "${slug}"; run \`capa registry refresh ${slug}\`.`,
+		);
+	}
+	if (expectedSha256) {
+		assertAdapterHash(adapterPath, expectedSha256);
+	}
+	const adapter = await loadAdapterFile(adapterPath);
+	return {
+		resolvedRef: null,
+		adapterPath,
+		manifest: adapter.manifest,
+		contentSha256:
+			expectedSha256 ?? hashAdapterContent(readFileSync(adapterPath, "utf-8")),
+	};
+}
+
+/**
+ * Stage then execute. Used by CLI `--yes` and first-start seed.
+ */
+export async function installRegistry(
+	input: RegistryInstallInput,
+	authFetch: AuthenticatedFetch,
+	opts: { noCache?: boolean } = {},
+): Promise<RegistryInstallResult> {
+	const staged = await stageRegistry(input, authFetch, opts);
+	const executed = await executeStagedRegistry(input.slug, staged.contentSha256);
+	return {
+		...executed,
+		resolvedRef: staged.resolvedRef,
+		preferredSlug: staged.preferredSlug,
+		contentSha256: staged.contentSha256,
+	};
+}
+
+function stageBundledAdapter(
+	slug: BundledAdapterSlug,
+	targetDir: string,
+): RegistryStageResult {
+	const content = readBundledAdapterSource(slug);
+	assertBundledAdapterPin(slug, content);
+	const pin = bundledAdapterPin(slug);
+	const adapterPath = join(targetDir, "adapter.ts");
+	writeFileSync(adapterPath, content, "utf-8");
+	return {
+		resolvedRef: `bundled:${pin.slice(0, 16)}`,
+		adapterPath,
+		contentSha256: pin,
+		content,
+	};
+}
+
+async function stageClaudeMarketplace(
 	input: RegistryInstallInput,
 	authFetch: AuthenticatedFetch,
 	targetDir: string,
 	opts: { noCache?: boolean },
-): Promise<RegistryInstallResult> {
+): Promise<RegistryStageResult> {
 	const result = await fetchClaudeMarketplace(input.source, authFetch, opts);
 	const jsonPath = join(targetDir, MARKETPLACE_JSON_FILENAME);
 	const metaPath = join(targetDir, MARKETPLACE_META_FILENAME);
-	writeFileSync(jsonPath, JSON.stringify(result.catalog.raw, null, 2), "utf-8");
+	const content = JSON.stringify(result.catalog.raw, null, 2);
+	writeFileSync(jsonPath, content, "utf-8");
 	writeFileSync(metaPath, JSON.stringify(result.meta, null, 2), "utf-8");
-
-	const adapter = createClaudeMarketplaceAdapter({
-		slug: input.slug,
-		catalog: result.catalog,
-		origin: result.origin,
-	});
-
 	return {
 		resolvedRef: result.resolvedRef,
 		adapterPath: jsonPath,
-		manifest: adapter.manifest,
+		contentSha256: hashAdapterContent(content),
+		content,
 		preferredSlug: result.preferredSlug,
 	};
 }
@@ -183,6 +316,15 @@ export async function fetchAdapterSource(
 	preferredSlug?: string;
 	pluginCount?: number;
 }> {
+	const bundledSlug = bundledSlugFromSource(input.source);
+	if (bundledSlug) {
+		const content = readBundledAdapterSource(bundledSlug);
+		assertBundledAdapterPin(bundledSlug, content);
+		return {
+			content,
+			resolvedRef: `bundled:${bundledAdapterPin(bundledSlug).slice(0, 16)}`,
+		};
+	}
 	if (input.type === "claude-marketplace") {
 		const result = await fetchClaudeMarketplace(input.source, authFetch, opts);
 		return {
@@ -355,13 +497,6 @@ async function fetchAdapterFromUrl(
 	} catch {
 		throw new Error(`Invalid URL "${url}".`);
 	}
-	const isLocalhost = u.hostname === "localhost" || u.hostname === "127.0.0.1";
-	if (u.protocol !== "https:" && !isLocalhost) {
-		throw new Error(
-			`URL must use HTTPS (got ${u.protocol}//${u.hostname}). Insecure adapter sources are not allowed.`,
-		);
-	}
-
 	const base = basename(u.pathname);
 	const dot = base.lastIndexOf(".");
 	const ext = dot > 0 ? base.slice(dot) : "";
@@ -370,6 +505,8 @@ async function fetchAdapterFromUrl(
 			`URL must point to an adapter file with .ts, .js, or .mjs extension; got "${base || url}".`,
 		);
 	}
+
+	await assertPublicHttpsUrl(url);
 
 	let response: Response;
 	try {
@@ -445,7 +582,7 @@ async function snapshotForRegistry(
 
 async function loadAdapterFile(filePath: string): Promise<RegistryAdapter> {
 	const mtime = statSync(filePath).mtimeMs;
-	const moduleUrl = `file://${filePath.replace(/\\/g, "/")}?t=${mtime}`;
+	const moduleUrl = `${pathToFileURL(filePath).href}?t=${mtime}`;
 	let module;
 	try {
 		module = await import(moduleUrl);
@@ -454,7 +591,15 @@ async function loadAdapterFile(filePath: string): Promise<RegistryAdapter> {
 			`Adapter at ${filePath} failed to import: ${err?.message ?? err}`,
 		);
 	}
-	const adapter: unknown = module.default ?? module;
+	let adapter: unknown = module.default ?? module;
+	if (
+		!isValidAdapter(adapter) &&
+		adapter &&
+		typeof adapter === "object" &&
+		"default" in adapter
+	) {
+		adapter = (adapter as { default: unknown }).default;
+	}
 	if (!isValidAdapter(adapter)) {
 		throw new Error(
 			`Adapter at ${filePath} does not export a valid RegistryAdapter ` +

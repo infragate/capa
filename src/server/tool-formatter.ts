@@ -1,5 +1,6 @@
 import { spawn } from "child_process";
 import { logger } from "../shared/logger";
+import { tokenizeCommandTemplate } from "./tool-executor";
 import type {
 	Tool,
 	ToolFormatterDefinition,
@@ -103,9 +104,13 @@ export async function applyToolFormatter(
 	formatter: ToolFormatterDefinition,
 ): Promise<string> {
 	const timeout = formatter.timeout ?? DEFAULT_FORMATTER_TIMEOUT_MS;
-	const isWindows = process.platform === "win32";
-	const shell = isWindows ? "cmd.exe" : "/bin/sh";
-	const shellFlag = isWindows ? "/C" : "-c";
+	let argv: string[];
+	try {
+		argv = tokenizeCommandTemplate(formatter.cmd);
+	} catch {
+		return input;
+	}
+	if (argv.length === 0) return input;
 
 	return new Promise((resolve) => {
 		let settled = false;
@@ -115,9 +120,10 @@ export async function applyToolFormatter(
 			resolve(value);
 		};
 
-		const proc = spawn(shell, [shellFlag, formatter.cmd], {
+		const proc = spawn(argv[0], argv.slice(1), {
 			stdio: ["pipe", "pipe", "pipe"],
 			windowsHide: true,
+			shell: false,
 		});
 
 		let stdout = "";
@@ -145,7 +151,7 @@ export async function applyToolFormatter(
 			finish(input);
 		});
 
-		proc.on("exit", (code) => {
+		proc.on("close", (code) => {
 			clearTimeout(timer);
 			if (code === 0) {
 				finish(stdout.replace(/\n$/, ""));

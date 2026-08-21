@@ -7,6 +7,7 @@ import { LockfileBuilder, loadLockfile } from "../shared/lockfile";
 import { logger } from "../shared/logger";
 import { validateProvider } from "../shared/providers/resolve";
 import type { Capabilities } from "../types/capabilities";
+import { mergeEmbeddedOAuthFields, mergePluginEmbeddedOAuth } from "./oauth-server-sync";
 
 const log = logger.child("plugin-resolve");
 
@@ -154,7 +155,7 @@ export async function loadEffectiveCapabilities(
 		cached.mtimeMs === mtimeMs &&
 		cached.pluginsKey === pluginsKey
 	) {
-		return cached.caps;
+		return structuredClone(cached.caps);
 	}
 
 	const { caps, warnings } = await resolveEffectiveCapabilities(
@@ -173,7 +174,32 @@ export async function loadEffectiveCapabilities(
 		pluginsKey,
 		caps,
 	});
-	return caps;
+	return structuredClone(caps);
+}
+
+/**
+ * Re-apply plugin-embedded OAuth credentials before probing/persisting so
+ * discovery merges never drop client_id / callback_port from plugin manifests.
+ */
+export async function enrichCapabilitiesOAuthFromPlugins(
+	capabilities: Capabilities,
+	authored: Capabilities,
+	projectPath: string,
+	projectId: string,
+	capabilitiesFilePath: string,
+	db: CapaDatabase,
+	cache?: Map<string, EffectiveCapsCacheEntry>,
+): Promise<void> {
+	if ((authored.plugins?.length ?? 0) === 0) return;
+	const fromPlugins = await loadEffectiveCapabilities(
+		authored,
+		projectPath,
+		projectId,
+		capabilitiesFilePath,
+		db,
+		cache,
+	);
+	mergePluginEmbeddedOAuth(capabilities, fromPlugins);
 }
 
 /**
@@ -193,11 +219,11 @@ export function preserveDiscoveredOAuth2(
 		const prevOAuth = prev?.def?.oauth2;
 		if (!prevOAuth) continue;
 
-		const prevAuth =
-			prevOAuth.authorizationEndpoint ||
-			(prevOAuth as { authorizationUrl?: string }).authorizationUrl;
-		const prevToken =
-			prevOAuth.tokenEndpoint || (prevOAuth as { tokenUrl?: string }).tokenUrl;
+		// URL changes invalidate previously discovered OAuth metadata.
+		if (prev?.def?.url !== server.def?.url) continue;
+
+		const prevAuth = prevOAuth.authorizationEndpoint;
+		const prevToken = prevOAuth.tokenEndpoint;
 		if (
 			!prevAuth &&
 			!prevToken &&
@@ -207,18 +233,11 @@ export function preserveDiscoveredOAuth2(
 			continue;
 		}
 
-		const nextOAuth = { ...(server.def.oauth2 ?? {}) } as Record<
-			string,
-			unknown
-		>;
-		const nextAuth =
-			nextOAuth.authorizationEndpoint || nextOAuth.authorizationUrl;
-		const nextToken = nextOAuth.tokenEndpoint || nextOAuth.tokenUrl;
-
-		if (!nextAuth && prevAuth) {
+		const nextOAuth = { ...(server.def.oauth2 ?? {}) };
+		if (!nextOAuth.authorizationEndpoint && prevAuth) {
 			nextOAuth.authorizationEndpoint = prevAuth;
 		}
-		if (!nextToken && prevToken) {
+		if (!nextOAuth.tokenEndpoint && prevToken) {
 			nextOAuth.tokenEndpoint = prevToken;
 		}
 		if (!nextOAuth.resourceServer && prevOAuth.resourceServer) {
@@ -231,7 +250,10 @@ export function preserveDiscoveredOAuth2(
 			nextOAuth.scope = prevOAuth.scope;
 		}
 
-		server.def.oauth2 = nextOAuth as typeof server.def.oauth2;
+		server.def.oauth2 = mergeEmbeddedOAuthFields(
+			nextOAuth as typeof server.def.oauth2,
+			prevOAuth,
+		);
 	}
 
 	return fresh;

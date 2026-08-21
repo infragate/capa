@@ -24,25 +24,18 @@ import {
 export const CURSOR_CLI_CALLBACK_PORT = 8787;
 
 /**
- * For each MCP server with embedded oauth2 + client_id but no callback_port,
+ * For each MCP server with embedded oauth2 clientId but no callbackPort,
  * inject the Cursor CLI's loopback port. Done in-place on the parsed map.
+ * Runs after normalizeOAuth2Block, so only camelCase fields are present.
  */
 function applyCursorCliLoopback(
 	mcpServers: ReturnType<typeof parseMcpServers>,
 ): void {
 	for (const def of Object.values(mcpServers)) {
-		if (!def.oauth2 || typeof def.oauth2 !== "object") continue;
-		const o = def.oauth2 as Record<string, unknown>;
-		const hasClientId =
-			typeof o.client_id === "string" ||
-			typeof o.clientId === "string" ||
-			typeof o.CLIENT_ID === "string";
-		const hasCallbackPort =
-			(typeof o.callback_port === "number" && o.callback_port > 0) ||
-			(typeof o.callbackPort === "number" && (o.callbackPort as number) > 0) ||
-			(typeof o.CALLBACK_PORT === "number" && (o.CALLBACK_PORT as number) > 0);
-		if (hasClientId && !hasCallbackPort) {
-			o.callback_port = CURSOR_CLI_CALLBACK_PORT;
+		if (!def.oauth2) continue;
+		const o = def.oauth2;
+		if (o.clientId && !(typeof o.callbackPort === "number" && o.callbackPort > 0)) {
+			o.callbackPort = CURSOR_CLI_CALLBACK_PORT;
 		}
 	}
 }

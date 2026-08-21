@@ -15,6 +15,8 @@ import { buildInstallTasks } from './install-tasks';
 import type { InstallCtx, InstallOptions } from './install-tasks';
 import { refuseIfWrapWorkspace } from '../utils/wrap/marker';
 import { isUnderWrapWorkspacesDir } from '../../shared/workspaces/paths';
+import { confirmInstallExecution } from './install-confirm';
+import { getInstallErrorMode } from './install-tasks/install-error-policy';
 
 export type { InstallOptions, GetRepoSnapshotFn } from './install-tasks';
 
@@ -22,6 +24,27 @@ function failExit(message: string, exitProcess: boolean): never {
   console.error(`✗ ${message}`);
   if (exitProcess) process.exit(1);
   throw new Error(message);
+}
+
+/**
+ * Providers sent to POST /configure for a wrap (shadow) install.
+ * Prefer identity authored/stored providers so wrap-with-claude does not
+ * reconfigure a cursor identity session — but when the identity project has
+ * no providers yet, fall back to the wrap provider so plugin MCP servers
+ * still expand for this configure (without persisting that preference).
+ */
+export function resolveWrapConfigureProviders(opts: {
+  authoredProviders: string[];
+  storedProviders: string[];
+  resolvedProviders: string[];
+}): string[] {
+  if (opts.authoredProviders.length > 0) {
+    return opts.authoredProviders.map((p) => validateProvider(p));
+  }
+  if (opts.storedProviders.length > 0) {
+    return opts.storedProviders;
+  }
+  return opts.resolvedProviders;
 }
 
 export async function installCommand(
@@ -40,6 +63,7 @@ export async function installCommand(
   let skipCredentialOpen = false;
   let passthrough = false;
   let persistProviders = true;
+  let dryRun = false;
   if (typeof envFileOrOptions === 'object' && envFileOrOptions !== null) {
     envFile = envFileOrOptions.envFile;
     flagProvider = envFileOrOptions.provider;
@@ -54,6 +78,7 @@ export async function installCommand(
     skipCredentialOpen = !!envFileOrOptions.skipCredentialOpen;
     passthrough = !!envFileOrOptions.passthrough;
     if (envFileOrOptions.persistProviders === false) persistProviders = false;
+    dryRun = !!envFileOrOptions.dryRun;
   } else {
     envFile = envFileOrOptions;
   }
@@ -66,6 +91,7 @@ export async function installCommand(
       noCache,
       projectPath,
       exitProcess,
+      dryRun,
     });
     return;
   }
@@ -83,6 +109,7 @@ export async function installCommand(
       skipPrerequisites,
       skipCredentialOpen,
       persistProviders,
+      dryRun,
       // Only refuse wrap cwd when the caller did not pass an explicit projectPath
       // (wrap itself always passes one).
       refuseWrapCwd:
@@ -106,6 +133,7 @@ async function installCommandBody(opts: {
   skipCredentialOpen: boolean;
   persistProviders: boolean;
   refuseWrapCwd: boolean;
+  dryRun: boolean;
 }): Promise<void> {
   const {
     envFile,
@@ -116,6 +144,7 @@ async function installCommandBody(opts: {
     skipCredentialOpen,
     persistProviders,
     refuseWrapCwd,
+    dryRun,
   } = opts;
   const projectPath = opts.projectPath;
   const identityPath = opts.identityPath;
@@ -148,6 +177,19 @@ async function installCommandBody(opts: {
 
   const reqCmds = capabilities.options?.requiresCommands;
   const projectId = generateProjectId(idPath);
+
+  try {
+    const decision = await confirmInstallExecution({
+      projectId,
+      capabilities,
+      dryRun,
+    });
+    if (decision === 'dry-run') return;
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    failExit(message, exitProcess);
+  }
+
   const serverStatus = await ensureServer(VERSION);
 
   if (!serverStatus.running || !serverStatus.url) {
@@ -186,18 +228,20 @@ async function installCommandBody(opts: {
     // Shadow wrap: local file writes use `resolvedProviders` (e.g. claude-code),
     // but POST /configure must keep the identity project's authored providers
     // so the real repo / live session stay on cursor (or whatever the file says).
+    // When the identity project has no providers yet, fall back to the wrap
+    // provider so plugin MCP servers still expand for this configure — without
+    // persisting that preference (persistProviders is false for wrap).
     isWrapInstall =
       !!identityPath &&
       (process.platform === 'win32'
         ? resolve(identityPath).toLowerCase() !== resolve(projectPath).toLowerCase()
         : resolve(identityPath) !== resolve(projectPath));
     if (isWrapInstall) {
-      if (authoredProviders.length > 0) {
-        configureProviders = authoredProviders.map((p) => validateProvider(p));
-      } else {
-        const stored = db.getProjectProviders(projectId);
-        configureProviders = stored.length > 0 ? stored : [];
-      }
+      configureProviders = resolveWrapConfigureProviders({
+        authoredProviders,
+        storedProviders: db.getProjectProviders(projectId),
+        resolvedProviders,
+      });
     } else {
       configureProviders = resolvedProviders;
     }
@@ -209,6 +253,8 @@ async function installCommandBody(opts: {
     } catch {}
     failExit(message, exitProcess);
   }
+
+  const installErrorMode = getInstallErrorMode(capabilities);
 
   // Hoisted so the catch block can surface ctx.errors accumulated before the throw.
   const initialCtx: InstallCtx = {
@@ -234,12 +280,13 @@ async function installCommandBody(opts: {
     skipped: 0,
     warnings: [],
     errors: [],
+    installErrorMode,
   };
 
   try {
     const ctx = await runTasks(
       buildInstallTasks(reqCmds, { skipPrerequisites, skipCredentialOpen }),
-      { exitOnError: true },
+      { exitOnError: installErrorMode === 'stop' },
       initialCtx,
     );
 
@@ -260,9 +307,9 @@ async function installCommandBody(opts: {
       skipped: ctx.skipped,
       elapsedMs: Date.now() - startedAt,
     });
-    // Exit non-zero on accumulated per-task failures (continue-on-error mode).
-    if (initialCtx.failed > 0) {
-      failExit(`Install completed with ${initialCtx.failed} failure(s).`, exitProcess);
+    // Exit non-zero on accumulated failures only when configured to stop.
+    if (installErrorMode === 'stop' && ctx.failed > 0) {
+      failExit(`Install completed with ${ctx.failed} failure(s).`, exitProcess);
     }
   } catch (err: unknown) {
     for (const e of initialCtx.errors) error(e);
@@ -274,13 +321,19 @@ async function installCommandBody(opts: {
       elapsedMs: Date.now() - startedAt,
     });
     if (err instanceof Error) {
+      if (installErrorMode === 'warn') {
+        warn(err.message);
+        return;
+      }
       if (exitProcess) {
         console.error(`✗ ${err.message}`);
         process.exit(1);
       }
       throw err;
     }
-    throw err;
+    if (installErrorMode === 'stop') {
+      throw err;
+    }
   } finally {
     try {
       db.close();

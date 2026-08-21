@@ -150,4 +150,50 @@ describe('RegistryLoader', () => {
     expect(failures).toHaveLength(1);
     expect(failures![0].error).toMatch(/Duplicate registry id/);
   });
+
+  it('refuses import when contentSha256 does not match the file', async () => {
+    writeAdapter('tampered', VALID_ADAPTER);
+    db.upsertRegistry({
+      slug: 'tampered',
+      type: 'github',
+      source: 'a/b@tampered',
+      status: 'installed',
+      contentSha256: '0'.repeat(64),
+    });
+
+    const { adapters, failures } = await new RegistryLoader(db).loadAll();
+    expect(adapters.size).toBe(0);
+    expect(failures).toHaveLength(1);
+    expect(failures![0].error).toMatch(/hash mismatch/i);
+  });
+
+  it('loads when contentSha256 matches the file', async () => {
+    const { createHash } = await import('crypto');
+    writeAdapter('pinned', VALID_ADAPTER);
+    const digest = createHash('sha256').update(VALID_ADAPTER, 'utf8').digest('hex');
+    db.upsertRegistry({
+      slug: 'pinned',
+      type: 'github',
+      source: 'a/b@pinned',
+      status: 'installed',
+      contentSha256: digest,
+    });
+
+    const { adapters, failures } = await new RegistryLoader(db).loadAll();
+    expect(adapters.size).toBe(1);
+    expect(failures).toBeUndefined();
+  });
+
+  it('still loads legacy rows with no contentSha256 (F8 unpinned path)', async () => {
+    writeAdapter('legacy', VALID_ADAPTER);
+    db.upsertRegistry({
+      slug: 'legacy',
+      type: 'github',
+      source: 'a/b@legacy',
+      status: 'installed',
+    });
+
+    const { adapters } = await new RegistryLoader(db).loadAll();
+    expect(adapters.size).toBe(1);
+  });
 });

@@ -6,6 +6,13 @@ import type { InstallHooksOptions } from './install';
 import { fetchRepoFile, fetchTextFile } from '../../../shared/repo-file';
 import { sha256 } from './json-io';
 
+export class HookBodyIntegrityError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'HookBodyIntegrityError';
+  }
+}
+
 export interface ResolvedHookBody {
   /**
    * Resolved body text. For command-type `local` sources this is left empty
@@ -96,6 +103,19 @@ export async function resolveHookBody(hook: Hook, opts: InstallHooksOptions): Pr
         return { text: readFileSync(fullPath, 'utf-8'), needsMaterialisation: false };
       }
       return { text: '', needsMaterialisation: false, localPath: fullPath };
+    }
+  }
+
+  if (lockEntry && opts.lockBuilder) {
+    const previous = opts.lockBuilder.findHook(
+      hook.id,
+      lockEntry.requestedVersion,
+      lockEntry.requestedRef,
+    );
+    if (previous?.bodySha256 && previous.bodySha256 !== lockEntry.bodySha256) {
+      throw new HookBodyIntegrityError(
+        `Hook "${hook.id}": content changed upstream`,
+      );
     }
   }
 

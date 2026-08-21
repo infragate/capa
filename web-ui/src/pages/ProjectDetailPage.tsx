@@ -56,7 +56,9 @@ export function ProjectDetailPage() {
   const showNoConfig = !isLoading && !caps && !error;
 
   const missingVarCount = variables?.required
-    ? variables.required.filter((v) => !variables.values?.[v]).length
+    ? variables.required.filter(
+        (v) => !variables.secrets?.find((s) => s.name === v)?.isSet,
+      ).length
     : 0;
   const pendingOAuthCount = oauth2Servers
     ? oauth2Servers.filter((s) => !s.isConnected).length
@@ -118,7 +120,7 @@ export function ProjectDetailPage() {
                   onClick={() => scrollTo('capabilities-section')}
                   className="inline-flex shrink-0 items-center gap-1.5 rounded-sm border border-[hsl(40_80%_50%/0.3)] bg-[hsl(40_80%_50%/0.12)] px-3 py-1.5 text-xs font-medium text-[hsl(40_80%_45%)] transition-colors hover:bg-[hsl(40_80%_50%/0.2)] cursor-pointer"
                 >
-                  {t('projects:banner.connect')}
+                  {t('projects:banner.authenticate')}
                   <ArrowDown size={12} />
                 </button>
               </div>

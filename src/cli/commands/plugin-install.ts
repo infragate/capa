@@ -20,6 +20,7 @@ import { getProjectPluginsDir } from '../../shared/plugin-paths';
 import { getProvider } from '../../shared/providers';
 import { getGitProvider } from '../../shared/git-providers/registry';
 import { assertSafeRepoPath } from '../../shared/repo-file';
+import { assertCapaOwnedInstallPath } from '../../shared/install-path-guard';
 import {
   describeUnsafeCapabilityId,
   isSafeCapabilityId,
@@ -40,6 +41,15 @@ import type { GetSnapshotResult, CachePlatform } from '../../shared/cache';
 import type { LockfileBuilder } from '../../shared/lockfile';
 import type { LockPluginEntry } from '../../types/lockfile';
 import { copySkillTree } from '../../shared/skill-copy';
+
+/** Join a plugin subpath under a snapshot, rejecting `..` / absolute escapes. */
+export function resolvePluginManifestRoot(
+  snapshotDir: string,
+  subpath?: string | null,
+): string {
+  if (!subpath) return snapshotDir;
+  return assertSafeRepoPath(snapshotDir, subpath);
+}
 
 /** Map plugin provider id to capa provider id for hook scoping. */
 function pluginProviderToCapaId(provider: 'claude' | 'cursor'): string {
@@ -220,6 +230,7 @@ export async function resolvePlugins(
         continue;
       }
       try {
+        assertCapaOwnedInstallPath(projectPath, destSkillDir);
         if (existsSync(destSkillDir)) {
           if (!trackManaged) {
             warnings.push(
@@ -339,13 +350,14 @@ export async function resolvePlugins(
           `    Tip: use \`subpath: <path>\` to pin an exact location, or @ to match either the directory name or the manifest's "name" field.`
         );
       }
-      manifestRoot = located.entry.subpath
-        ? join(snapshot.snapshotDir, located.entry.subpath)
-        : snapshot.snapshotDir;
+      manifestRoot = resolvePluginManifestRoot(
+        snapshot.snapshotDir,
+        located.entry.subpath,
+      );
       resolvedSubpath = located.entry.subpath;
       manifest = located.manifest;
     } else {
-      manifestRoot = subpath ? join(snapshot.snapshotDir, subpath) : snapshot.snapshotDir;
+      manifestRoot = resolvePluginManifestRoot(snapshot.snapshotDir, subpath);
       if (subpath && !existsSync(manifestRoot)) {
         throw new Error(`Plugin subpath not found: "${subpath}" in ${repoPath}`);
       }
@@ -361,9 +373,10 @@ export async function resolvePlugins(
           providers,
         );
         if (located) {
-          manifestRoot = located.entry.subpath
-            ? join(snapshot.snapshotDir, located.entry.subpath)
-            : snapshot.snapshotDir;
+          manifestRoot = resolvePluginManifestRoot(
+            snapshot.snapshotDir,
+            located.entry.subpath,
+          );
           resolvedSubpath = located.entry.subpath;
           manifest = located.manifest;
         }

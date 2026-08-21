@@ -60,6 +60,34 @@ describe('buildServerEntry', () => {
       buildServerEntry({ id: 'x', cmd: 'npx', url: 'https://x' }),
     ).toThrow(/exactly one/);
   });
+
+  it('builds env from literals and external sources', () => {
+    const entry = buildServerEntry({
+      id: 'brave',
+      cmd: 'npx',
+      env: ['NODE_ENV=production'],
+      envFromEnv: ['BRAVE_API_KEY=BRAVE_API_KEY'],
+      envFromCommand: ['OTHER=op read op://Vault/Item/credential'],
+      envFromFile: ['TOKEN=./secrets/token'],
+    });
+    expect(entry.def.env).toEqual({
+      NODE_ENV: 'production',
+      BRAVE_API_KEY: { fromEnv: 'BRAVE_API_KEY' },
+      OTHER: { fromCommand: 'op read op://Vault/Item/credential' },
+      TOKEN: { fromFile: './secrets/token' },
+    });
+  });
+
+  it('builds headers from external sources', () => {
+    const entry = buildServerEntry({
+      id: 'remote',
+      url: 'https://mcp.example.com',
+      headerFromEnv: ['Authorization=MCP_BEARER'],
+    });
+    expect(entry.def.headers).toEqual({
+      Authorization: { fromEnv: 'MCP_BEARER' },
+    });
+  });
 });
 
 describe('buildToolEntry', () => {

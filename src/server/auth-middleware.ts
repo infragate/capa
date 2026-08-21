@@ -31,7 +31,7 @@ function resolveToken(): string | null {
 		if (err?.code !== "ENOENT") throw err;
 	}
 
-	if (bindHost && !isLoopbackHost(bindHost)) {
+	if (bindHost) {
 		const token = randomBytes(32).toString("hex");
 		const capaDir = getCapaDir();
 		mkdirSync(capaDir, { recursive: true });
@@ -68,6 +68,12 @@ export function getAuthToken(): string | null {
 	return resolveToken();
 }
 
+/** SPA/HTML bootstrap token. Omitted when bound off-loopback so GET / cannot leak it. */
+export function getSpaAuthToken(): string | null {
+	if (!bindHost || !isLoopbackHost(bindHost)) return null;
+	return resolveToken();
+}
+
 function tokensMatch(provided: string, expected: string): boolean {
 	const providedBuf = Buffer.from(provided);
 	const expectedBuf = Buffer.from(expected);
@@ -95,14 +101,20 @@ function extractProvidedToken(req: Request): string | null {
 	return null;
 }
 
-export function requireAuth(
+export function requireMcpAuth(
 	req: Request,
 	host: string,
 ): { ok: true } | { ok: false; reason: string; status: number } {
 	if (isLoopbackHost(host)) {
 		return { ok: true };
 	}
+	return requireAuth(req, host);
+}
 
+export function requireAuth(
+	req: Request,
+	_host?: string,
+): { ok: true } | { ok: false; reason: string; status: number } {
 	if (req.method === "OPTIONS") {
 		return { ok: true };
 	}

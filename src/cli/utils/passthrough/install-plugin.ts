@@ -6,10 +6,10 @@ import { resolvePlugins } from '../../commands/plugin-install';
 import { getProvider } from '../../../shared/providers';
 import { upsertNativeMcpServer } from './native-mcp';
 import { runNativePluginInstall, type NativePluginInstall } from './native-plugin-install';
-import { expandEnvInRecord, emptyCapabilities } from './env';
+import { expandSecretRecord, emptyCapabilities } from './env';
 import { installRules } from '../rules-installer';
-import { installHooks } from '../hooks-installer';
-import { installSubAgentInstructions } from '../agents-file';
+import { installHooks } from '../hooks';
+import { installSubAgentInstructions } from '../agents-file/index';
 import type { CapaDatabase } from '../../../db/database';
 import type { Plugin } from '../../../types/capabilities';
 
@@ -88,8 +88,8 @@ export async function passthroughInstallPlugin(opts: {
     if (server.type !== 'mcp') continue;
     const def = {
       ...server.def,
-      env: expandEnvInRecord(server.def.env),
-      headers: expandEnvInRecord(server.def.headers),
+      env: await expandSecretRecord(server.def.env, projectPath),
+      headers: await expandSecretRecord(server.def.headers, projectPath),
     };
     const mcpResult = await upsertNativeMcpServer(projectPath, server.id, def, unpackProviders);
     warnings.push(...mcpResult.warnings);

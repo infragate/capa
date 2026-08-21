@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect } from 'react';
 import { projectsApi } from './api';
 import { subscribeProjectEvents } from './project-events';
 import type {
@@ -8,7 +8,6 @@ import type {
   Server,
   Skill,
   Tool,
-  ToolCallRecord,
 } from '../../types/api';
 import { configuredToolReorderKey } from './components/tools/anchors';
 import { reorderByKey, serverReorderKey, skillReorderKey } from './lib/reorderKeys';
@@ -50,6 +49,30 @@ function reorderSkillsByKey(skills: Skill[], keys: string[]): Skill[] {
 
 function reorderServersByKey(servers: Server[], keys: string[]): Server[] {
   return reorderByKey(servers, keys, serverReorderKey);
+}
+
+function shouldFetchServerTools(server: Server): boolean {
+  return !!server.enabled && !(server.requiresOAuth && !server.isConnected);
+}
+
+function patchProjectServerEnabled(
+  qc: ReturnType<typeof useQueryClient>,
+  projectId: string,
+  serverId: string,
+  enabled: boolean,
+): void {
+  qc.setQueryData<ProjectDetail>(['project', projectId], (old) => {
+    if (!old?.capabilities?.servers) return old;
+    return {
+      ...old,
+      capabilities: {
+        ...old.capabilities,
+        servers: old.capabilities.servers.map((s) =>
+          s.id === serverId ? { ...s, enabled } : s,
+        ),
+      },
+    };
+  });
 }
 
 export function useProjects() {
@@ -100,166 +123,6 @@ export function useProjectCapabilitiesLiveSync(projectId: string | null) {
   }, [projectId, qc]);
 }
 
-const ACTIVITY_PAGE_SIZE = 50;
-const ACTIVITY_RETENTION = 1000;
-/** Coalesce busy-agent stats invalidations. */
-const STATS_INVALIDATE_MS = 2_000;
-
-function mergeToolCall(prev: ToolCallRecord[], next: ToolCallRecord): ToolCallRecord[] {
-  const idx = prev.findIndex((c) => c.id === next.id);
-  if (idx === -1) {
-    return [next, ...prev].slice(0, ACTIVITY_RETENTION);
-  }
-  const copy = prev.slice();
-  copy[idx] = next;
-  return copy;
-}
-
-function mergeHistorySeed(
-  prev: ToolCallRecord[],
-  pageCalls: ToolCallRecord[],
-): ToolCallRecord[] {
-  if (prev.length === 0) return pageCalls;
-  const byId = new Map<string, ToolCallRecord>();
-  // Prefer live/updated rows already in state; seed fills gaps from page 1.
-  for (const c of pageCalls) byId.set(c.id, c);
-  for (const c of prev) byId.set(c.id, c);
-  return [...byId.values()]
-    .sort((a, b) => {
-      if (b.started_at !== a.started_at) return b.started_at - a.started_at;
-      return b.id.localeCompare(a.id);
-    })
-    .slice(0, ACTIVITY_RETENTION);
-}
-
-/**
- * Recent tool-call activity + live SSE updates for the project page feed.
- * Retains at most 1000 traces server-side; UI pages with Load more.
- */
-export function useProjectActivity(projectId: string | null) {
-  const qc = useQueryClient();
-  const [calls, setCalls] = useState<ToolCallRecord[]>([]);
-  const [hasMore, setHasMore] = useState(false);
-  const [total, setTotal] = useState(0);
-  const [live, setLive] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const seededForData = useRef<unknown>(null);
-  const statsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const history = useQuery({
-    queryKey: ['activity', projectId],
-    queryFn: () => projectsApi.getActivity(projectId!, { limit: ACTIVITY_PAGE_SIZE }),
-    enabled: !!projectId,
-  });
-
-  const stats = useQuery({
-    queryKey: ['activity-stats', projectId],
-    queryFn: () => projectsApi.getActivityStats(projectId!),
-    enabled: !!projectId,
-    refetchInterval: 15_000,
-  });
-
-  useEffect(() => {
-    seededForData.current = null;
-    setCalls([]);
-    setHasMore(false);
-    setTotal(0);
-  }, [projectId]);
-
-  useEffect(() => {
-    if (!history.data) return;
-    // Seed page-1 once per fetch result; never wipe live/loadMore merges on refetch.
-    if (seededForData.current === history.data) return;
-    seededForData.current = history.data;
-    const page = history.data;
-    setCalls((prev) => {
-      const wasPaginated = prev.length > ACTIVITY_PAGE_SIZE;
-      const merged = mergeHistorySeed(prev, page.calls);
-      if (!wasPaginated) {
-        setHasMore(page.hasMore);
-      }
-      setTotal(page.total);
-      return merged;
-    });
-  }, [history.data]);
-
-  useEffect(() => {
-    if (!projectId) return;
-
-    const scheduleStatsInvalidate = () => {
-      if (statsTimer.current) return;
-      statsTimer.current = setTimeout(() => {
-        statsTimer.current = null;
-        void qc.invalidateQueries({ queryKey: ['activity-stats', projectId] });
-      }, STATS_INVALIDATE_MS);
-    };
-
-    const onToolCall = (ev: MessageEvent) => {
-      try {
-        const record = JSON.parse(String(ev.data)) as ToolCallRecord;
-        setCalls((prev) => mergeToolCall(prev, record));
-        scheduleStatsInvalidate();
-      } catch {
-        // ignore malformed events
-      }
-    };
-
-    const unsub = subscribeProjectEvents(projectId, {
-      onOpen: () => {
-        setLive(true);
-        // Recover rows missed while disconnected without wiping loadMore.
-        void qc.invalidateQueries({ queryKey: ['activity', projectId] });
-      },
-      onError: () => setLive(false),
-      onToolCall,
-    });
-
-    return () => {
-      unsub();
-      setLive(false);
-      if (statsTimer.current) {
-        clearTimeout(statsTimer.current);
-        statsTimer.current = null;
-      }
-    };
-  }, [projectId, qc]);
-
-  const loadMore = useCallback(async () => {
-    if (!projectId || loadingMore || !hasMore || calls.length === 0) return;
-    const oldest = calls[calls.length - 1];
-    if (!oldest) return;
-    setLoadingMore(true);
-    try {
-      const page = await projectsApi.getActivity(projectId, {
-        limit: ACTIVITY_PAGE_SIZE,
-        before: oldest.started_at,
-        beforeId: oldest.id,
-      });
-      setCalls((prev) => {
-        const seen = new Set(prev.map((c) => c.id));
-        const appended = page.calls.filter((c) => !seen.has(c.id));
-        return [...prev, ...appended].slice(0, ACTIVITY_RETENTION);
-      });
-      setHasMore(page.hasMore);
-      setTotal(page.total);
-    } finally {
-      setLoadingMore(false);
-    }
-  }, [projectId, loadingMore, hasMore, calls]);
-
-  return {
-    calls,
-    stats: stats.data ?? null,
-    isLoading: history.isLoading,
-    error: history.error,
-    live,
-    hasMore,
-    total,
-    loadingMore,
-    loadMore,
-  };
-}
-
 export function useVariables(projectId: string | null) {
   return useQuery({
     queryKey: ['variables', projectId],
@@ -302,13 +165,21 @@ export function useDeleteVariable(projectId: string) {
 }
 
 export function useOAuth2Servers(projectId: string | null) {
-  return useQuery({
+  const qc = useQueryClient();
+  const query = useQuery({
     queryKey: ['oauth2-servers', projectId],
     queryFn: () => projectsApi.getOAuth2Servers(projectId!),
     enabled: !!projectId,
     retry: false,
     select: (data) => data.servers,
   });
+
+  useEffect(() => {
+    if (!projectId || !query.isSuccess) return;
+    void qc.invalidateQueries({ queryKey: ['project', projectId] });
+  }, [projectId, qc, query.isSuccess, query.dataUpdatedAt]);
+
+  return query;
 }
 
 export function useDisconnectOAuth(projectId: string) {
@@ -323,17 +194,46 @@ export function useDisconnectOAuth(projectId: string) {
   });
 }
 
+export function useSetServerEnabled(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ serverId, enabled }: { serverId: string; enabled: boolean }) => {
+      const result = await projectsApi.setServerEnabled(projectId, serverId, enabled);
+      patchProjectServerEnabled(qc, projectId, serverId, result.enabled);
+
+      if (result.enabled && result.connected) {
+        const project = qc.getQueryData<ProjectDetail>(['project', projectId]);
+        const server = project?.capabilities?.servers.find((s) => s.id === serverId);
+        if (server && shouldFetchServerTools(server)) {
+          await qc.fetchQuery({
+            queryKey: ['server-tools', projectId, serverId],
+            queryFn: () => projectsApi.getServerTools(projectId, serverId),
+          });
+        }
+      } else if (!result.enabled) {
+        qc.removeQueries({ queryKey: ['server-tools', projectId, serverId] });
+      }
+
+      return result;
+    },
+  });
+}
+
 export function useStartOAuth(projectId: string) {
   return useMutation({
     mutationFn: (serverId: string) => projectsApi.startOAuth(projectId, serverId),
   });
 }
 
-export function useServerTools(projectId: string | null, serverId: string | null) {
+export function useServerTools(
+  projectId: string | null,
+  serverId: string | null,
+  opts?: { enabled?: boolean },
+) {
   return useQuery({
     queryKey: ['server-tools', projectId, serverId],
     queryFn: () => projectsApi.getServerTools(projectId!, serverId!),
-    enabled: !!projectId && !!serverId,
+    enabled: (opts?.enabled ?? true) && !!projectId && !!serverId,
     select: (data) => data.tools,
     staleTime: 60_000,
     retry: false,

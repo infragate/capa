@@ -6,6 +6,10 @@ import { getAllProviders, getProvider } from '../../shared/providers';
 import { buildRuleFrontmatter } from '../../shared/providers/handlers';
 import { assertSafeRepoPath } from '../../shared/repo-file';
 import {
+  assertCapaOwnedInstallPath,
+  isCapaOwnedInstallPath,
+} from '../../shared/install-path-guard';
+import {
   describeUnsafeCapabilityId,
   isSafeCapabilityId,
 } from '../../shared/safe-id';
@@ -235,6 +239,7 @@ export function installRules(
 
     if (provider.rules) {
       const rulesDir = join(projectPath, provider.rules.dir);
+      assertCapaOwnedInstallPath(projectPath, rulesDir);
       mkdirSync(rulesDir, { recursive: true });
 
       for (const rule of applicableRules) {
@@ -277,6 +282,7 @@ export function installRules(
           rulesDir,
           `${rule.id}${provider.rules.extension}`,
         );
+        assertCapaOwnedInstallPath(projectPath, filePath);
         writeFileSync(filePath, fileContent, 'utf-8');
         if (!options.quiet) {
           taskLog(`  ✓ ${provider.rules.dir}/${rule.id}${provider.rules.extension} written (${provider.displayName})`);
@@ -430,6 +436,7 @@ export function cleanRules(projectPath: string, providers: string[], ruleIds?: s
     if (provider.rules) {
       const rulesDir = join(projectPath, provider.rules.dir);
       if (!existsSync(rulesDir)) continue;
+      if (!isCapaOwnedInstallPath(projectPath, rulesDir)) continue;
 
       const managedNames = new Set(
         (ruleIds ?? [])

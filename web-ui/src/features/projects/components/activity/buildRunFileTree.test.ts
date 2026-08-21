@@ -1,11 +1,18 @@
 import { describe, expect, it } from 'bun:test';
+import {
+  buildFilePathTree,
+  treeNodeIsDirectory,
+  treeNodeIsFileLeaf,
+} from '../../../../components/common/FileTree';
 import type { ToolCallRecord } from '../../../../types/api';
 import {
   buildRunFileTree,
   collectRunFileChanges,
+  collectRunSkillFolders,
   commonPathPrefix,
   buildDisplayPathKeyByEventId,
   runFilesForFileTree,
+  skillFolderFromSkillMdPath,
   spanIdsForDisplayPathKey,
   spanIdsForDisplayPathKeyFromEvents,
 } from './buildRunFileTree';
@@ -199,7 +206,22 @@ describe('spanIdsForDisplayPathKey', () => {
     }).sort()).toEqual(['read-1', 'write-1']);
   });
 
-  it('marks Grep search roots as directories in the file tree payload', () => {
+  it('marks explicit directory Grep scopes as folder leaves', () => {
+    const real = '/proj';
+    const events = [
+      call({
+        id: 'grep-1',
+        kind: 'agent_tool',
+        tool_name: 'Grep',
+        args_json: JSON.stringify({ path: `${real}/src/` }),
+      }),
+    ];
+    const entries = collectRunFileChanges(events, { realProjectPath: real });
+    const { directoryPathKeys } = runFilesForFileTree(entries, { realProjectPath: real });
+    expect(directoryPathKeys).toEqual(['src']);
+  });
+
+  it('nests Grep directory scopes structurally when files were read underneath', () => {
     const real = '/proj';
     const events = [
       call({
@@ -216,13 +238,126 @@ describe('spanIdsForDisplayPathKey', () => {
       }),
     ];
     const entries = collectRunFileChanges(events, { realProjectPath: real });
-    const { directoryPathKeys } = runFilesForFileTree(entries, { realProjectPath: real });
-    expect(directoryPathKeys).toContain('src');
+    const tree = runFilesForFileTree(entries, { realProjectPath: real });
+    expect(tree.directoryPathKeys).toEqual([]);
+    const root = buildFilePathTree(tree.files, tree.directoryPathKeys);
+    expect(treeNodeIsDirectory(root, 'src')).toBe(true);
+    expect(treeNodeIsFileLeaf(root, 'src/foo.ts')).toBe(true);
+  });
+
+  it('keeps file paths as files when Grep and Read touch the same path', () => {
+    const real = 'c:/Users/Tony Zaitoun/Documents/Projects/capa';
+    const api = `${real}/web-ui/src/types/api.ts`;
+    const events = [
+      call({
+        id: 'read-1',
+        kind: 'agent_tool',
+        tool_name: 'Read',
+        args_json: JSON.stringify({ path: api }),
+      }),
+      call({
+        id: 'grep-1',
+        kind: 'agent_tool',
+        tool_name: 'Grep',
+        args_json: JSON.stringify({ path: api }),
+      }),
+    ];
+    const entries = collectRunFileChanges(events, { realProjectPath: real });
+    const tree = runFilesForFileTree(entries, { realProjectPath: real });
+    expect(tree.directoryPathKeys).toEqual([]);
+    const root = buildFilePathTree(tree.files, tree.directoryPathKeys);
+    expect(treeNodeIsFileLeaf(root, 'web-ui/src/types/api.ts')).toBe(true);
+  });
+
+  it('does not treat Grep-only file paths as folder leaves', () => {
+    const real = 'c:/Users/Tony Zaitoun/Documents/Projects/capa';
+    const api = `${real}/web-ui/src/types/api.ts`;
+    const events = [
+      call({
+        id: 'grep-1',
+        kind: 'agent_tool',
+        tool_name: 'Grep',
+        args_json: JSON.stringify({ path: api }),
+      }),
+    ];
+    const entries = collectRunFileChanges(events, { realProjectPath: real });
+    const tree = runFilesForFileTree(entries, { realProjectPath: real });
+    expect(tree.directoryPathKeys).toEqual([]);
+    const root = buildFilePathTree(tree.files, tree.directoryPathKeys);
+    expect(treeNodeIsFileLeaf(root, 'web-ui/src/types/api.ts')).toBe(true);
+  });
+
+  it('strips Windows project-root Grep paths without duplicating drive letters', () => {
+    const real = 'C:/Users/Tony Zaitoun/Documents/Projects/meta';
+    const events = [
+      call({
+        id: 'grep-1',
+        kind: 'agent_tool',
+        tool_name: 'Grep',
+        args_json: JSON.stringify({ path: real }),
+      }),
+      call({
+        id: 'read-1',
+        kind: 'agent_tool',
+        tool_name: 'Read',
+        args_json: JSON.stringify({
+          path: `${real}/.cursor/skills/slack-cli/SKILL.md`,
+        }),
+      }),
+      call({
+        id: 'read-2',
+        kind: 'agent_tool',
+        tool_name: 'Read',
+        args_json: JSON.stringify({ path: `${real}/capabilities.yaml` }),
+      }),
+    ];
+    const entries = collectRunFileChanges(events, { realProjectPath: real });
+    const { files, directoryPathKeys } = runFilesForFileTree(entries, {
+      realProjectPath: real,
+    });
+    expect(files.sort()).toEqual([
+      '.cursor/skills/slack-cli/SKILL.md',
+      'capabilities.yaml',
+    ]);
+    expect(directoryPathKeys).toEqual([]);
+    expect(files.some((f) => f.startsWith('C:'))).toBe(false);
   });
 });
 
 describe('commonPathPrefix', () => {
   it('returns shared directory prefix', () => {
     expect(commonPathPrefix(['/a/b/c.ts', '/a/b/d.ts'])).toBe('/a/b/');
+  });
+});
+
+describe('collectRunSkillFolders', () => {
+  it('derives parent folder from SKILL.md paths', () => {
+    expect(skillFolderFromSkillMdPath('.cursor/skills/debug/SKILL.md')).toBe('debug');
+    expect(skillFolderFromSkillMdPath('debug/SKILL.md')).toBe('debug');
+    expect(skillFolderFromSkillMdPath('/proj/foo.ts')).toBeNull();
+  });
+
+  it('collects unique skill folders from file activity', () => {
+    const events = [
+      call({
+        id: '1',
+        kind: 'agent_tool',
+        tool_name: 'Read',
+        args_json: JSON.stringify({ path: '.cursor/skills/debug/SKILL.md' }),
+      }),
+      call({
+        id: '2',
+        kind: 'agent_tool',
+        tool_name: 'Read',
+        args_json: JSON.stringify({ path: '.cursor/skills/standup/SKILL.md' }),
+      }),
+      call({
+        id: '3',
+        kind: 'agent_tool',
+        tool_name: 'Read',
+        args_json: JSON.stringify({ path: '.cursor/skills/debug/SKILL.md' }),
+      }),
+    ];
+    expect(collectRunSkillFolders(events)).toEqual(['debug', 'standup']);
   });
 });

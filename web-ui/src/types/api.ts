@@ -74,7 +74,7 @@ export interface EnrichedTool extends Tool {
 
 export interface ServerOAuth2Config {
   clientId: string | null;
-  clientSecret: string | null;
+  clientSecret?: string | null;
   authorizationUrl: string | null;
   tokenUrl: string | null;
   scopes: string[] | null;
@@ -82,14 +82,20 @@ export interface ServerOAuth2Config {
   pkce: boolean;
 }
 
+export type SecretValue =
+  | string
+  | { fromEnv: string }
+  | { fromCommand: string }
+  | { fromFile: string };
+
 export interface Server {
   id: string;
   type: string;
   url: string | null;
   cmd: string | null;
   args: string[] | null;
-  env?: Record<string, string> | null;
-  headers?: Record<string, string> | null;
+  env?: Record<string, SecretValue> | null;
+  headers?: Record<string, SecretValue> | null;
   cwd?: string | null;
   tlsSkipVerify?: boolean;
   oauth2?: ServerOAuth2Config | null;
@@ -97,6 +103,8 @@ export interface Server {
   displayName: string | null;
   requiresOAuth: boolean;
   isConnected: boolean | null;
+  /** Whether the user has turned this MCP server on in the UI. */
+  enabled: boolean;
   description?: string | null;
 }
 
@@ -191,6 +199,8 @@ export interface CapabilitiesOptions {
   agentActivity: boolean;
   security: SecurityOptions | null;
   requiresCommands: RequiredCommand[];
+  /** Default warn when omitted. */
+  onInstallError: 'warn' | 'stop' | null;
 }
 
 export interface AgentSnippetDef {
@@ -255,10 +265,17 @@ export interface ProjectDetail {
   capabilities: ProjectCapabilities | null;
 }
 
+export interface VariableSecret {
+  name: string;
+  isSet: boolean;
+  hint: string;
+}
+
 export interface VariablesResponse {
   required: string[];
   catalog: string[];
-  values: Record<string, string>;
+  secrets: VariableSecret[];
+  values?: Record<string, string>;
 }
 
 export interface CapabilitiesMutationResponse {
@@ -308,6 +325,16 @@ export interface ToolPropertySchema {
 
 export interface ServerToolsResponse {
   tools: ToolSchema[];
+  enabled?: boolean;
+  connected?: boolean;
+}
+
+export interface SetServerEnabledResponse {
+  serverId: string;
+  enabled: boolean;
+  connected: boolean;
+  error?: string;
+  needsAuth?: boolean;
 }
 
 export interface Integration {

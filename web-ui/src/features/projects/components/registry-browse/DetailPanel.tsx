@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import type { RegistryItemDetail } from '../../../registries/api';
 import { Spinner } from '../../../../components/common/Spinner';
 import { FileTree } from '../../../../components/common/FileTree';
-import { renderMarkdown } from './markdown';
+import { renderMarkdown } from '../../../../lib/markdown';
 import type { ResultRow } from './types';
 
 interface DetailPanelProps {

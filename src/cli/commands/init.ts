@@ -13,9 +13,11 @@ import {
 } from '../../shared/capabilities';
 import type { Capabilities, CapabilitiesFormat } from '../../types/capabilities';
 import { ensureCapaDir, loadSettings, getDatabasePath } from '../../shared/config';
+import { trustStdioServers } from '../../shared/stdio-allowlist';
 import { CapaDatabase } from '../../db/database';
 import { isUnderWrapWorkspacesDir } from '../../shared/workspaces/paths';
 import { ensureServer } from '../utils/server-manager';
+import { localApiHeaders } from '../utils/local-api';
 import { refuseIfWrapWorkspace } from '../utils/wrap/marker';
 import { VERSION } from '../../version';
 
@@ -58,14 +60,15 @@ async function registerProject(
     }
 
     try {
+      trustStdioServers(projectId, capabilities.servers ?? []);
       const response = await fetch(
         `${serverUrl}/api/projects/${encodeURIComponent(projectId)}/configure`,
         {
           method: 'POST',
-          headers: {
+          headers: localApiHeaders({
             'Content-Type': 'application/json',
             Accept: 'application/json',
-          },
+          }),
           body: JSON.stringify(capabilities),
           signal: AbortSignal.timeout(120000),
         },

@@ -4,6 +4,7 @@ import type { loadSettings } from '../../../shared/config';
 import type { LockfileBuilder } from '../../../shared/lockfile';
 import type { GetSnapshotResult, CachePlatform } from '../../../shared/cache';
 import type { AuthenticatedFetch } from '../../../shared/authenticated-fetch';
+import type { InstallErrorMode } from './install-error-policy';
 
 export type SkillInstallOutcome = 'installed' | 'skipped' | 'failed';
 
@@ -29,8 +30,9 @@ export interface InstallCtx {
   configureProviders: string[];
   /**
    * True when writing into a wrap shadow workspace under a different identity
-   * path. Wrap installs only materialize the wrap provider into the shadow;
-   * they never run orphan prune/cleanup against the shared project identity.
+   * path. Wrap installs materialize only the wrap provider under the shadow;
+   * prune/cleanup is scoped to that provider and shadow paths so shared
+   * identity state on the real project is never touched.
    */
   isWrapInstall: boolean;
   lockBuilder: LockfileBuilder;
@@ -43,6 +45,8 @@ export interface InstallCtx {
   skipped: number;
   warnings: string[];
   errors: string[];
+  /** warn (default): continue on operational errors; stop: exit non-zero. */
+  installErrorMode: InstallErrorMode;
 }
 
 export interface InstallOptions {
@@ -91,6 +95,11 @@ export interface InstallOptions {
    * Default true.
    */
   persistProviders?: boolean;
+  /**
+   * Print the executable surface (stdio MCP, hooks, formatters, plugins)
+   * and exit without starting the server, writing hooks, or mutating the lock.
+   */
+  dryRun?: boolean;
 }
 
 export type GetRepoSnapshotFn = (

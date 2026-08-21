@@ -1,17 +1,19 @@
 import { existsSync } from 'fs';
 import { rm } from 'fs/promises';
-import { resolve } from 'path';
+import { join, resolve } from 'path';
+import { isCapaOwnedInstallPath } from '../../shared/install-path-guard';
+import { isUnderWrapWorkspacesDir } from '../../shared/workspaces/paths';
 import { detectCapabilitiesFile } from '../../shared/paths';
 import { parseCapabilitiesFile } from '../../shared/capabilities';
 import { getLockfilePath } from '../../shared/lockfile';
 import { resolveProvidersForClean } from '../../shared/providers/resolve';
-import { getAllProviders } from '../../shared/providers';
+import { getAllProviders, getProvider } from '../../shared/providers';
 import type { CapaDatabase } from '../../db/database';
 import type { Capabilities } from '../../types/capabilities';
 import { unregisterMCPServer, unregisterSubAgentMCPServer } from '../utils/mcp-client-manager';
-import { cleanAgentsFile, removeSubAgentInstructions } from '../utils/agents-file';
+import { cleanAgentsFile, removeSubAgentInstructions } from '../utils/agents-file/index';
 import { cleanRules } from '../utils/rules-installer';
-import { cleanHooks } from '../utils/hooks-installer';
+import { cleanHooks } from '../utils/hooks';
 import { stopWrapSessionsForProject } from '../utils/wrap/sessions';
 import { pruneWorkspacesForProject } from '../utils/wrap/workspace';
 
@@ -28,6 +30,7 @@ export interface CleanProjectResult {
   wrapSessionsStopped: number;
   workspacesPruned: number;
   managedFilesRemoved: number;
+  skillDirsRemoved: number;
 }
 
 /**
@@ -38,8 +41,73 @@ export interface CleanProjectResult {
 function providersForOnDiskCleanup(resolved: string[]): string[] {
   if (resolved.length > 0) return resolved;
   return getAllProviders()
-    .filter((p) => p.subagents || p.rules || p.instructions || p.mcp)
+    .filter((p) => p.subagents || p.rules || p.instructions || p.mcp || p.skillsDir)
     .map((p) => p.id);
+}
+
+/**
+ * Remove skill install directories declared in capabilities for each active
+ * provider (e.g. `.cursor/skills/<id>`). Mirrors sub-agent cleanup: covers
+ * orphaned dirs when install wrote files but never recorded managed_files.
+ */
+async function cleanSkillInstallDirs(
+  projectPath: string,
+  providers: string[],
+  skillIds: string[],
+  warnings: string[],
+): Promise<number> {
+  let removed = 0;
+  if (skillIds.length === 0 || providers.length === 0) return removed;
+
+  const skippedProviderRoots = new Set<string>();
+
+  for (const providerId of providers) {
+    const provider = getProvider(providerId);
+    if (!provider?.skillsDir) continue;
+
+    const skillsRoot = join(projectPath, provider.skillsDir);
+    if (!isCapaOwnedInstallPath(projectPath, skillsRoot)) {
+      if (!skippedProviderRoots.has(skillsRoot)) {
+        skippedProviderRoots.add(skillsRoot);
+        warnings.push(
+          `Skipped skill cleanup under ${provider.skillsDir}: not a capa-owned path ` +
+            `(often a symlink to project source — e.g. .cursor/skills → ../skills).`,
+        );
+      }
+      continue;
+    }
+
+    for (const skillId of skillIds) {
+      const skillDir = join(skillsRoot, skillId);
+      if (!existsSync(skillDir)) continue;
+      if (!isCapaOwnedInstallPath(projectPath, skillDir)) continue;
+      try {
+        await rm(skillDir, { recursive: true, force: true });
+        removed++;
+      } catch (err) {
+        warnings.push(
+          `Failed to remove skill directory ${skillDir}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+  }
+
+  return removed;
+}
+
+/** Managed artifacts recorded under the real project tree (not wrap shadow paths). */
+function managedFilesOnRealProject(
+  projectPath: string,
+  managedFiles: string[],
+): string[] {
+  const root = resolve(projectPath);
+  return managedFiles.filter((filePath) => {
+    const abs = resolve(filePath);
+    if (isUnderWrapWorkspacesDir(abs)) return false;
+    return abs === root || abs.startsWith(root + '/');
+  });
 }
 
 /**
@@ -79,6 +147,15 @@ export async function cleanProject(opts: CleanProjectOptions): Promise<CleanProj
   const providers = providersForOnDiskCleanup(resolvedProviders);
 
   const managedFiles = db.getManagedFiles(projectId);
+  const realManagedFiles = managedFilesOnRealProject(projectPath, managedFiles);
+  const wrapOnlyManagedArtifacts =
+    managedFiles.length > 0 && realManagedFiles.length === 0;
+
+  const skillIds = (capabilities?.skills ?? []).map((s) => s.id);
+  const skillDirsRemoved = wrapOnlyManagedArtifacts
+    ? 0
+    : await cleanSkillInstallDirs(projectPath, providers, skillIds, warnings);
+
   let managedFilesRemoved = 0;
   for (const filePath of managedFiles) {
     if (existsSync(filePath)) {
@@ -92,7 +169,7 @@ export async function cleanProject(opts: CleanProjectOptions): Promise<CleanProj
     db.removeManagedFile(projectId, filePath);
   }
 
-  if (providers.length > 0) {
+  if (providers.length > 0 && !wrapOnlyManagedArtifacts) {
     try {
       cleanAgentsFile(projectPath, providers);
     } catch (err) {
@@ -111,9 +188,11 @@ export async function cleanProject(opts: CleanProjectOptions): Promise<CleanProj
     }
   }
 
-  if (db.getManagedHooks(projectId).length > 0) {
+  if (!wrapOnlyManagedArtifacts && db.getManagedHooks(projectId).length > 0) {
     const { warnings: hookWarnings } = cleanHooks(projectPath, projectId, db);
     warnings.push(...hookWarnings);
+  } else if (wrapOnlyManagedArtifacts && db.getManagedHooks(projectId).length > 0) {
+    db.clearManagedHooks(projectId);
   }
 
   const lockfilePath = getLockfilePath(projectPath);
@@ -135,7 +214,7 @@ export async function cleanProject(opts: CleanProjectOptions): Promise<CleanProj
     ...(capabilities?.subagents ?? []).map((a) => a.id),
   ]);
 
-  if (providers.length > 0 && agentIds.size > 0) {
+  if (providers.length > 0 && agentIds.size > 0 && !wrapOnlyManagedArtifacts) {
     for (const agentId of agentIds) {
       try {
         await unregisterSubAgentMCPServer(projectPath, agentId, providers);
@@ -150,7 +229,7 @@ export async function cleanProject(opts: CleanProjectOptions): Promise<CleanProj
     }
   }
 
-  if (providers.length > 0) {
+  if (providers.length > 0 && !wrapOnlyManagedArtifacts) {
     try {
       await unregisterMCPServer(projectPath, projectId, providers);
     } catch (err) {
@@ -169,5 +248,6 @@ export async function cleanProject(opts: CleanProjectOptions): Promise<CleanProj
     wrapSessionsStopped,
     workspacesPruned,
     managedFilesRemoved,
+    skillDirsRemoved,
   };
 }

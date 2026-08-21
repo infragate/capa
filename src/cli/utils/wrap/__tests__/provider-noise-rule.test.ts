@@ -26,6 +26,8 @@ describe('provider-noise-rule', () => {
     expect(body).toContain('`.claude`');
     expect(body).toContain('`AGENTS.md`');
     expect(body).toContain('`CLAUDE.md`');
+    expect(body).toContain('Git works normally');
+    expect(body).toContain('capa install');
   });
 
   it('installs an always-apply cursor rule', () => {

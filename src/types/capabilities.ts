@@ -4,25 +4,24 @@ import type { Plugin, SourcePlugin, ResolvedPluginInfo } from './plugin';
 import type { Rule } from './rules';
 import type { Hook } from './hooks';
 
-/** OAuth2 settings on MCP server definitions (plugin manifest or auto-detected). */
+/**
+ * Canonical OAuth2 settings on MCP server definitions.
+ * Aliases (`client_id`, `CLIENT_ID`, `authorizationUrl`, nested `oauth`, …)
+ * are normalized once at plugin/capabilities ingest — do not re-read them downstream.
+ */
 export interface OAuth2Config {
   clientId?: string;
   clientSecret?: string;
-  authorizationUrl?: string;
-  tokenUrl?: string;
-  scopes?: string[];
-  redirectUri?: string;
-  pkce?: boolean;
-  /** Auto-detected / runtime fields */
+  callbackPort?: number;
   authorizationEndpoint?: string;
   tokenEndpoint?: string;
   resourceServer?: string;
   registrationEndpoint?: string;
+  /** Space-delimited scope string from discovery / WWW-Authenticate. */
   scope?: string;
-  client_id?: string;
-  callback_port?: number;
-  callbackPort?: number;
-  oauth?: { clientId?: string; [key: string]: unknown };
+  scopes?: string[];
+  redirectUri?: string;
+  pkce?: boolean;
 }
 
 export type CapabilitiesFormat = 'json' | 'yaml';
@@ -98,9 +97,16 @@ export interface CapabilitiesOptions {
   security?: SecurityOptions;
   /**
    * CLI commands that must be available before `capa install` proceeds.
-   * Installation stops immediately if any command is missing.
+   * Missing commands warn by default; use `onInstallError: stop` to abort.
    */
   requiresCommands?: RequiredCommand[];
+  /**
+   * How install handles operational errors (missing CLI, skill/rule fetch
+   * failures, plugin resolution, tool validation, etc.).
+   * - `warn` (default): log warnings, install everything that succeeds
+   * - `stop`: abort the install run (legacy behavior)
+   */
+  onInstallError?: 'warn' | 'stop';
 }
 
 /**
@@ -325,26 +331,39 @@ export interface MCPServer {
   description?: string;
 }
 
+/**
+ * Literal secret string (`${VarName}` allowed) or on-demand external source.
+ * External sources are resolved at connect time and never stored in capa's DB.
+ */
+export type SecretValue =
+  | string
+  | { fromEnv: string }
+  | { fromCommand: string }
+  | { fromFile: string };
+
+/**
+ * MCP server transport. Remote (`url`) and stdio (`cmd`) share optional fields
+ * that only apply to one side; Zod load refine requires at least one of url|cmd.
+ * Full remote|stdio split deferred — large call-site blast radius.
+ */
 export interface MCPServerDefinition {
   // For remote MCP servers
   url?: string;
-  headers?: Record<string, string>;
+  headers?: Record<string, SecretValue>;
   /** Skip TLS certificate verification (e.g. for self-signed certs on internal servers) */
   tlsSkipVerify?: boolean;
   // For local MCP servers (subprocess)
   cmd?: string;
   args?: string[];
-  env?: Record<string, string>;
+  env?: Record<string, SecretValue>;
   /** Working directory for subprocess (e.g. plugin root) */
   cwd?: string;
-  // OAuth2 config (auto-detected, not user-specified)
+  // OAuth2 config (auto-detected / plugin-embedded; normalized at ingest)
   oauth2?: OAuth2Config;
 }
 
-export interface Tool {
+type ToolCommon = {
   id: string;
-  type: 'mcp' | 'command';
-  def: ToolMCPDefinition | ToolCommandDefinition;
   sourcePlugin?: SourcePlugin;
   /** Human-readable description shown in capa sh */
   description?: string;
@@ -354,7 +373,11 @@ export interface Tool {
    * it is displayed at the top level directly.
    */
   group?: string;
-}
+};
+
+export type Tool =
+  | (ToolCommon & { type: 'mcp'; def: ToolMCPDefinition })
+  | (ToolCommon & { type: 'command'; def: ToolCommandDefinition });
 
 export interface ToolFormatterDefinition {
   /** Shell command that reads the serialized tool output on stdin and writes transformed output to stdout. */
@@ -382,6 +405,12 @@ export interface CommandSpec {
   args?: ArgumentDefinition[];
   dir?: string;
   env?: Record<string, string>;
+  /**
+   * Allow `{placeholders}` inside a template whose argv0 is a shell
+   * (`sh`, `bash`, `cmd.exe`, …). Off by default because caller values
+   * would then be re-parsed by that shell.
+   */
+  allowShellPlaceholders?: boolean;
 }
 
 export interface ArgumentDefinition {
@@ -400,8 +429,7 @@ export interface ArgumentDefinition {
  */
 export function getQualifiedToolName(tool: Tool): string {
   if (tool.type === 'mcp') {
-    const mcpDef = tool.def as ToolMCPDefinition;
-    const serverId = mcpDef.server.replace('@', '');
+    const serverId = tool.def.server.replace('@', '');
     return `${serverId}.${tool.id}`;
   }
   if (tool.group) {

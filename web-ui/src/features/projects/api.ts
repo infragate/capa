@@ -1,10 +1,11 @@
-import { api } from '../../lib/api';
+import { api, apiAuthHeaders } from '../../lib/api';
 import type {
   ProjectsResponse,
   ProjectDetail,
   VariablesResponse,
   OAuth2ServersResponse,
   ServerToolsResponse,
+  SetServerEnabledResponse,
   SkillContentResponse,
   OAuthStartResponse,
   ActionResponse,
@@ -61,16 +62,25 @@ export const projectsApi = {
       `/api/projects/${encodeURIComponent(projectId)}/servers/${encodeURIComponent(serverId)}/tools`,
     ),
 
+  setServerEnabled: (projectId: string, serverId: string, enabled: boolean) =>
+    api.post<SetServerEnabledResponse>(
+      `/api/projects/${encodeURIComponent(projectId)}/servers/${encodeURIComponent(serverId)}/enabled`,
+      { enabled },
+    ),
+
   getSkillContent: (projectId: string, skillId: string) =>
     api.get<SkillContentResponse>(
       `/api/projects/${encodeURIComponent(projectId)}/skills/${encodeURIComponent(skillId)}/content`,
     ),
 
-  getActivity: (projectId: string, opts?: { limit?: number; before?: number; beforeId?: string }) => {
+  getActivity: (projectId: string, opts?: { limit?: number; before?: number; beforeId?: string; sessionId?: string; conversationId?: string; generationId?: string }) => {
     const params = new URLSearchParams();
     params.set('limit', String(opts?.limit ?? 50));
     if (opts?.before != null) params.set('before', String(opts.before));
     if (opts?.beforeId) params.set('beforeId', opts.beforeId);
+    if (opts?.sessionId) params.set('sessionId', opts.sessionId);
+    if (opts?.conversationId) params.set('conversationId', opts.conversationId);
+    if (opts?.generationId) params.set('generationId', opts.generationId);
     return api.get<ActivityResponse>(
       `/api/projects/${encodeURIComponent(projectId)}/activity?${params}`,
     );
@@ -158,7 +168,7 @@ export const projectsApi = {
     if (opts?.subdir) form.append('subdir', opts.subdir);
     const res = await fetch(
       `/api/projects/${encodeURIComponent(projectId)}/fs`,
-      { method: 'POST', body: form },
+      { method: 'POST', body: form, headers: apiAuthHeaders() },
     );
     if (!res.ok) {
       const text = await res.text().catch(() => res.statusText);

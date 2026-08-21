@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 import {
   _resetProjectEventsForTests,
+  _setSseReconnectDelaysForTests,
   subscribeProjectEvents,
 } from '../project-events';
 
@@ -38,6 +39,9 @@ describe('subscribeProjectEvents', () => {
     _resetProjectEventsForTests();
     FakeEventSource.instances = [];
     globalThis.EventSource = OriginalEventSource;
+    _setSseReconnectDelaysForTests([250, 1000, 3000, 5000]);
+    const g = globalThis as { window?: { __CAPA_AUTH_TOKEN__?: string } };
+    if (g.window) delete g.window.__CAPA_AUTH_TOKEN__;
   });
 
   it('notifies late subscribers when the shared socket is already open', async () => {
@@ -80,5 +84,29 @@ describe('subscribeProjectEvents', () => {
     unsub();
     await Promise.resolve();
     expect(called).toBe(false);
+  });
+
+  it('retries authenticated SSE after a dropped fetch', async () => {
+    _setSseReconnectDelaysForTests([15, 15, 15]);
+    const g = globalThis as { window?: { __CAPA_AUTH_TOKEN__?: string } };
+    g.window = { ...(g.window ?? {}), __CAPA_AUTH_TOKEN__: 'tok' };
+    let fetches = 0;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      fetches += 1;
+      if (fetches === 1) {
+        return new Response(null, { status: 500 });
+      }
+      return new Response('event: ping\ndata: ok\n\n', {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+      });
+    }) as unknown as typeof fetch;
+
+    const unsub = subscribeProjectEvents('proj-auth', {});
+    await Bun.sleep(30);
+    unsub();
+    globalThis.fetch = originalFetch;
+    expect(fetches).toBeGreaterThanOrEqual(2);
   });
 });

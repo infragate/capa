@@ -1,9 +1,18 @@
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach, spyOn } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { MCPProxy, mcpServerLaunchFingerprint } from '../mcp-proxy';
-import { shouldSkipTlsVerify } from '../../shared/tls-skip-verify';
 import type { CapaDatabase } from '../../db/database';
+import * as config from '../../shared/config';
+import { trustStdioServers } from '../../shared/stdio-allowlist';
+import { shouldSkipTlsVerify } from '../../shared/tls-skip-verify';
 import type { MCPServerDefinition } from '../../types/capabilities';
+import { MCPProxy, mcpServerLaunchFingerprint } from '../mcp-proxy';
+
+function trustStdio(projectId: string, def: MCPServerDefinition): void {
+  trustStdioServers(projectId, [{ id: 'stdio', type: 'mcp', def }]);
+}
 
 function makeMockDb(): CapaDatabase {
   return {
@@ -37,22 +46,33 @@ describe('mcp-proxy', () => {
   });
 
   it('routes stdio servers (cmd) vs http servers (url) via getOrCreateClient', async () => {
-    const proxy = new MCPProxy(makeMockDb(), 'proj-1', '/tmp/project');
-    const routes: Array<'stdio' | 'http'> = [];
+    const capaDir = mkdtempSync(join(tmpdir(), 'capa-mcp-proxy-route-'));
+    const dirSpy = spyOn(config, 'getCapaDir').mockReturnValue(capaDir);
+    try {
+      const projectId = 'proj-route';
+      const stdioDef: MCPServerDefinition = { cmd: 'node', args: ['server.js'] };
+      trustStdio(projectId, stdioDef);
 
-    (proxy as any).getOrCreateClient = async (
-      _serverId: string,
-      serverDefinition: MCPServerDefinition,
-    ) => {
-      if (serverDefinition.cmd) routes.push('stdio');
-      else if (serverDefinition.url) routes.push('http');
-      return null;
-    };
+      const proxy = new MCPProxy(makeMockDb(), projectId, '/tmp/project');
+      const routes: Array<'stdio' | 'http'> = [];
 
-    await proxy.listTools('stdio-server', { cmd: 'node', args: ['server.js'] });
-    await proxy.listTools('http-server', { url: 'https://mcp.example.com' });
+      (proxy as any).getOrCreateClient = async (
+        _serverId: string,
+        serverDefinition: MCPServerDefinition,
+      ) => {
+        if (serverDefinition.cmd) routes.push('stdio');
+        else if (serverDefinition.url) routes.push('http');
+        return null;
+      };
 
-    expect(routes).toEqual(['stdio', 'http']);
+      await proxy.listTools('stdio-server', stdioDef);
+      await proxy.listTools('http-server', { url: 'https://mcp.example.com' });
+
+      expect(routes).toEqual(['stdio', 'http']);
+    } finally {
+      dirSpy.mockRestore();
+      rmSync(capaDir, { recursive: true, force: true });
+    }
   });
 
   it('strips @ prefix from server id before connecting', async () => {
@@ -169,8 +189,12 @@ describe('mcp-proxy', () => {
     function makeOauthServerDef(): MCPServerDefinition {
       return {
         url: 'https://mcp.example.com',
-        oauth2: { clientId: 'x', authorizationUrl: 'a', tokenUrl: 't' },
-      } as MCPServerDefinition;
+        oauth2: {
+          clientId: 'x',
+          authorizationEndpoint: 'a',
+          tokenEndpoint: 't',
+        },
+      };
     }
 
     function makeProxyWithDisconnectedOauth(): MCPProxy {
@@ -207,6 +231,19 @@ describe('mcp-proxy', () => {
   });
 
   describe('stdio crash fail-fast', () => {
+    let capaDir: string;
+    let dirSpy: ReturnType<typeof spyOn>;
+
+    beforeEach(() => {
+      capaDir = mkdtempSync(join(tmpdir(), 'capa-stdio-trust-'));
+      dirSpy = spyOn(config, 'getCapaDir').mockReturnValue(capaDir);
+    });
+
+    afterEach(() => {
+      dirSpy.mockRestore();
+      rmSync(capaDir, { recursive: true, force: true });
+    });
+
     it('executeTool fails within 2s when the child exits mid tools/call', async () => {
       const proxy = new MCPProxy(makeMockDb(), 'proj-crash', process.cwd());
       const fixturePath = fileURLToPath(
@@ -216,6 +253,7 @@ describe('mcp-proxy', () => {
         cmd: process.execPath,
         args: [fixturePath],
       };
+      trustStdio('proj-crash', serverDef);
 
       const started = Date.now();
       const result = await proxy.executeTool(
@@ -245,6 +283,7 @@ describe('mcp-proxy', () => {
         cmd: process.execPath,
         args: [fixturePath],
       };
+      trustStdio('proj-hang-panic', serverDef);
 
       const started = Date.now();
       const result = await proxy.executeTool(
@@ -267,6 +306,18 @@ describe('mcp-proxy', () => {
     const fixturePath = fileURLToPath(
       new URL('./fixtures/version-echo-mcp.ts', import.meta.url),
     );
+    let capaDir: string;
+    let dirSpy: ReturnType<typeof spyOn>;
+
+    beforeEach(() => {
+      capaDir = mkdtempSync(join(tmpdir(), 'capa-stdio-trust-'));
+      dirSpy = spyOn(config, 'getCapaDir').mockReturnValue(capaDir);
+    });
+
+    afterEach(() => {
+      dirSpy.mockRestore();
+      rmSync(capaDir, { recursive: true, force: true });
+    });
 
     function versionDef(token: string): MCPServerDefinition {
       return {
@@ -287,6 +338,7 @@ describe('mcp-proxy', () => {
     it('reuses the cached client when the launch fingerprint is unchanged', async () => {
       const proxy = new MCPProxy(makeMockDb(), 'proj-fp', process.cwd());
       const def = versionDef('1.0.14');
+      trustStdio('proj-fp', def);
       const first = await proxy.executeTool(
         'echo.echo_version',
         { server: 'echo', tool: 'echo_version' },
@@ -311,6 +363,8 @@ describe('mcp-proxy', () => {
 
     it('respawns when args change without closeAll', async () => {
       const proxy = new MCPProxy(makeMockDb(), 'proj-swap', process.cwd());
+      trustStdio('proj-swap', versionDef('1.0.14'));
+      trustStdio('proj-swap', versionDef('1.0.15'));
       const v14 = await proxy.executeTool(
         'echo.echo_version',
         { server: 'echo', tool: 'echo_version' },
@@ -335,6 +389,8 @@ describe('mcp-proxy', () => {
 
     it('syncCachedServers closes clients whose def fingerprint changed', async () => {
       const proxy = new MCPProxy(makeMockDb(), 'proj-sync', process.cwd());
+      trustStdio('proj-sync', versionDef('1.0.14'));
+      trustStdio('proj-sync', versionDef('1.0.15'));
       await proxy.executeTool(
         'echo.echo_version',
         { server: 'echo', tool: 'echo_version' },
@@ -363,6 +419,7 @@ describe('mcp-proxy', () => {
     it('syncCachedServers keeps warm clients when def is unchanged', async () => {
       const proxy = new MCPProxy(makeMockDb(), 'proj-warm', process.cwd());
       const def = versionDef('1.0.15');
+      trustStdio('proj-warm', def);
       await proxy.executeTool(
         'echo.echo_version',
         { server: 'echo', tool: 'echo_version' },

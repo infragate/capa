@@ -15,16 +15,10 @@ import {
 import { RegistriesTable } from './RegistriesTable';
 import { AddRegistryDialog } from './AddRegistryDialog';
 import { EditRegistryDialog } from './EditRegistryDialog';
-import { ApiError } from '../../../lib/api';
+import { errMessage } from '../../../lib/errors';
 import type { RegistryAdminRecord } from '../api';
 
 type Feedback = { type: 'success' | 'error'; message: string };
-
-function errMessage(err: unknown, fallback: string): string {
-  if (err instanceof ApiError) return err.message;
-  if (err && typeof (err as any).message === 'string') return (err as any).message;
-  return fallback;
-}
 
 export function RegistrySettingsPage() {
   const { t } = useTranslation('registries');
@@ -39,6 +33,7 @@ export function RegistrySettingsPage() {
 
   const handleAdded = useCallback(
     (slug: string) => {
+      setDialogOpen(false);
       setFeedback({ type: 'success', message: t('settings.feedback.added', { slug }) });
     },
     [t],

@@ -1,5 +1,5 @@
 import { spinner } from '@clack/prompts'
-import { isInteractive, isJson, isQuiet, isVerbose } from './flags'
+import { isHeadless, isInteractive, isJson, isQuiet, isVerbose } from './flags'
 
 export interface TaskWrapper {
   title: string
@@ -45,7 +45,12 @@ export async function runTasks<Ctx = Record<string, unknown>>(
   const exitOnError = options.exitOnError ?? true
 
   const useSpinner =
-    isInteractive() && !isJson() && !isQuiet() && !isVerbose() && !process.env.CI
+    isInteractive() &&
+    !isJson() &&
+    !isQuiet() &&
+    !isVerbose() &&
+    !isHeadless() &&
+    !process.env.CI
 
   if (!useSpinner) {
     return runLinear(tasks, ctx, exitOnError)

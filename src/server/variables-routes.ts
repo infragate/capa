@@ -1,6 +1,7 @@
 import type { CapaDatabase } from "../db/database";
 import type { Capabilities } from "../types/capabilities";
 import { buildVariablesResponse } from "./capabilities-routes";
+import { matchRoute } from "./match-route";
 import type { SessionManager } from "./session-manager";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
@@ -82,4 +83,33 @@ export async function handleDeleteVariable(
 	return new Response(JSON.stringify({ success: true }), {
 		headers: JSON_HEADERS,
 	});
+}
+
+/**
+ * Dispatcher for `/api/projects/:id/variables…` routes.
+ * Returns null if the path is not a variables route.
+ */
+export async function dispatchVariables(
+	deps: VariablesRouteDeps,
+	path: string,
+	method: string,
+	request: Request,
+): Promise<Response | null> {
+	const vars = matchRoute(path, "/api/projects/:projectId/variables");
+	if (vars && method === "GET") {
+		return handleGetVariables(deps, vars.projectId);
+	}
+	if (vars && method === "POST") {
+		return handleSetVariables(deps, vars.projectId, request);
+	}
+
+	const varItem = matchRoute(path, "/api/projects/:projectId/variables/:name");
+	if (varItem && method === "PUT") {
+		return handlePutVariable(deps, varItem.projectId, varItem.name, request);
+	}
+	if (varItem && method === "DELETE") {
+		return handleDeleteVariable(deps, varItem.projectId, varItem.name);
+	}
+
+	return null;
 }

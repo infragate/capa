@@ -1,12 +1,19 @@
 import { describe, it, expect, beforeEach, afterEach, spyOn } from 'bun:test';
+import { createHash } from 'crypto';
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import * as config from '../../config';
+import * as safeRemoteUrl from '../../safe-remote-url';
 import { CapaDatabase } from '../../../db/database';
 import { AuthenticatedFetch } from '../../authenticated-fetch';
 import {
   installRegistry,
+  stageRegistry,
+  executeStagedRegistry,
+  writeStagedAdapter,
+  hashAdapterContent,
+  assertAdapterHash,
   fetchAdapterSource,
   deriveSlug,
   isValidSlug,
@@ -53,10 +60,15 @@ describe('installer — slug helpers', () => {
   });
 });
 
-describe('installer — url installs', () => {
+function evilAdapter(markerPath: string): string {
+  return `import { writeFileSync } from 'fs';
+writeFileSync(${JSON.stringify(markerPath)}, 'pwned');
+${VALID_ADAPTER}`;
+}
+
+describe('installer — url policy', () => {
   let tempDir: string;
   let managedDir: string;
-  let dbDir: string;
   let db: CapaDatabase;
   let managedDirSpy: ReturnType<typeof spyOn>;
   let authFetch: AuthenticatedFetch;
@@ -64,10 +76,9 @@ describe('installer — url installs', () => {
   beforeEach(() => {
     tempDir = mkdtempSync(join(tmpdir(), 'capa-registry-installer-test-'));
     managedDir = join(tempDir, 'registries-managed');
-    dbDir = join(tempDir, 'db');
-    mkdirSync(dbDir, { recursive: true });
+    mkdirSync(join(tempDir, 'db'), { recursive: true });
     managedDirSpy = spyOn(config, 'getManagedRegistriesDir').mockReturnValue(managedDir);
-    db = new CapaDatabase(join(dbDir, 'test.db'));
+    db = new CapaDatabase(join(tempDir, 'db', 'test.db'));
     authFetch = new AuthenticatedFetch(db);
   });
 
@@ -81,136 +92,218 @@ describe('installer — url installs', () => {
     }
   });
 
-  it('installs an adapter from a localhost URL and validates its shape', async () => {
-    const sourceFile = join(tempDir, 'served-adapter.ts');
-    writeFileSync(sourceFile, VALID_ADAPTER);
-
-    const server = Bun.serve({
-      port: 0,
-      fetch(req) {
-        if (new URL(req.url).pathname.endsWith('/adapter.ts')) {
-          return new Response(readFileSync(sourceFile, 'utf-8'), {
-            headers: { 'content-type': 'application/typescript' },
-          });
-        }
-        return new Response('not found', { status: 404 });
-      },
-    });
-    try {
-      const url = `http://localhost:${server.port}/adapter.ts`;
-      const result = await installRegistry(
-        { slug: 'unit', type: 'url', source: url },
+  it('rejects localhost HTTP adapter URLs', async () => {
+    await expect(
+      installRegistry(
+        { slug: 'unit', type: 'url', source: 'http://localhost:9/adapter.ts' },
         authFetch,
-      );
-      expect(result.resolvedRef).toBeNull();
-      expect(result.adapterPath).toBe(join(managedDir, 'unit', 'adapter.ts'));
-      expect(result.manifest.id).toBe('unit');
-      expect(existsSync(result.adapterPath)).toBe(true);
-    } finally {
-      server.stop();
-    }
+      ),
+    ).rejects.toThrow(/https|not allowed/i);
   });
 
-  it('rejects non-HTTPS URLs except localhost', async () => {
+  it('rejects loopback, private, and link-local HTTPS hosts', async () => {
     await expect(
-      installRegistry({ slug: 'unit', type: 'url', source: 'http://example.com/adapter.ts' }, authFetch),
-    ).rejects.toThrow(/must use HTTPS/);
+      installRegistry(
+        { slug: 'unit', type: 'url', source: 'https://127.0.0.1/adapter.ts' },
+        authFetch,
+      ),
+    ).rejects.toThrow(/not allowed/i);
+    await expect(
+      installRegistry(
+        { slug: 'unit', type: 'url', source: 'https://10.1.2.3/adapter.ts' },
+        authFetch,
+      ),
+    ).rejects.toThrow(/not allowed/i);
+    await expect(
+      installRegistry(
+        { slug: 'unit', type: 'url', source: 'https://169.254.169.254/adapter.ts' },
+        authFetch,
+      ),
+    ).rejects.toThrow(/not allowed/i);
   });
 
-  it('rejects URLs whose filename is not .ts/.js/.mjs', async () => {
+  it('rejects plain HTTP even for public hosts', async () => {
     await expect(
-      installRegistry({ slug: 'unit', type: 'url', source: 'https://example.com/adapter.txt' }, authFetch),
+      installRegistry(
+        { slug: 'unit', type: 'url', source: 'http://example.com/adapter.ts' },
+        authFetch,
+      ),
+    ).rejects.toThrow(/https/i);
+  });
+
+  it('rejects URLs whose filename is not .ts/.js/.mjs without DNS', async () => {
+    await expect(
+      installRegistry(
+        { slug: 'unit', type: 'url', source: 'https://example.com/adapter.txt' },
+        authFetch,
+      ),
     ).rejects.toThrow(/\.ts, \.js, or \.mjs extension/);
   });
 
   it('rejects invalid slugs before any network access', async () => {
     await expect(
-      installRegistry({ slug: 'has space', type: 'url', source: 'https://example.com/a.ts' }, authFetch),
+      installRegistry(
+        { slug: 'has space', type: 'url', source: 'https://example.com/a.ts' },
+        authFetch,
+      ),
     ).rejects.toThrow(/Invalid slug/);
   });
 
-  it('cleans up the managed dir when fetch fails', async () => {
+  it('fetchAdapterSource also rejects localhost HTTP', async () => {
+    await expect(
+      fetchAdapterSource({ type: 'url', source: 'http://localhost:9/adapter.ts' }, authFetch),
+    ).rejects.toThrow(/https|not allowed/i);
+  });
+});
+
+describe('installer — pending vs execute', () => {
+  let tempDir: string;
+  let managedDir: string;
+  let db: CapaDatabase;
+  let managedDirSpy: ReturnType<typeof spyOn>;
+  let authFetch: AuthenticatedFetch;
+  let urlPolicySpy: ReturnType<typeof spyOn> | undefined;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), 'capa-registry-stage-test-'));
+    managedDir = join(tempDir, 'registries-managed');
+    mkdirSync(join(tempDir, 'db'), { recursive: true });
+    managedDirSpy = spyOn(config, 'getManagedRegistriesDir').mockReturnValue(managedDir);
+    db = new CapaDatabase(join(tempDir, 'db', 'test.db'));
+    authFetch = new AuthenticatedFetch(db);
+  });
+
+  afterEach(() => {
+    urlPolicySpy?.mockRestore();
+    urlPolicySpy = undefined;
+    managedDirSpy.mockRestore();
+    db.close();
+    try {
+      rmSync(tempDir, { recursive: true, force: true });
+    } catch (error: any) {
+      if (error?.code !== 'EBUSY') throw error;
+    }
+  });
+
+  function allowLocalUrlPolicy(): void {
+    urlPolicySpy = spyOn(safeRemoteUrl, 'assertPublicHttpsUrl').mockImplementation(
+      async (urlString: string) => new URL(urlString),
+    );
+  }
+
+  it('writeStagedAdapter writes bytes and a hash without importing', () => {
+    const marker = join(tempDir, 'pwned.txt');
+    const staged = writeStagedAdapter('evil', evilAdapter(marker), '.ts');
+    expect(existsSync(staged.adapterPath)).toBe(true);
+    expect(staged.contentSha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(existsSync(marker)).toBe(false);
+    expect(hashAdapterContent(readFileSync(staged.adapterPath, 'utf-8'))).toBe(
+      staged.contentSha256,
+    );
+  });
+
+  it('stageRegistry fetches and writes without importing top-level adapter code', async () => {
+    allowLocalUrlPolicy();
+    const marker = join(tempDir, 'pwned.txt');
     const server = Bun.serve({
       port: 0,
       fetch() {
-        return new Response('unavailable', { status: 503 });
+        return new Response(evilAdapter(marker), {
+          headers: { 'content-type': 'application/typescript' },
+        });
       },
     });
     try {
       const url = `http://127.0.0.1:${server.port}/adapter.ts`;
-      await expect(
-        installRegistry({ slug: 'unit', type: 'url', source: url }, authFetch),
-      ).rejects.toThrow(/Failed to fetch/);
-      expect(existsSync(join(managedDir, 'unit'))).toBe(false);
-    } finally {
-      server.stop();
-    }
-  });
-
-  it('rejects an adapter file whose default export has the wrong shape', async () => {
-    const sourceFile = join(tempDir, 'bad.ts');
-    writeFileSync(sourceFile, 'export default { not_an_adapter: true };');
-
-    const server = Bun.serve({
-      port: 0,
-      fetch() {
-        return new Response(readFileSync(sourceFile, 'utf-8'), {
-          headers: { 'content-type': 'application/typescript' },
-        });
-      },
-    });
-    try {
-      const url = `http://localhost:${server.port}/adapter.ts`;
-      await expect(
-        installRegistry({ slug: 'badshape', type: 'url', source: url }, authFetch),
-      ).rejects.toThrow(/does not export a valid RegistryAdapter/);
-      expect(existsSync(join(managedDir, 'badshape'))).toBe(false);
-    } finally {
-      server.stop();
-    }
-  });
-
-  it('fetchAdapterSource returns the raw text without persisting', async () => {
-    const server = Bun.serve({
-      port: 0,
-      fetch() {
-        return new Response(VALID_ADAPTER, {
-          headers: { 'content-type': 'application/typescript' },
-        });
-      },
-    });
-    try {
-      const url = `http://localhost:${server.port}/adapter.ts`;
-      const { content, resolvedRef } = await fetchAdapterSource(
-        { type: 'url', source: url },
+      const staged = await stageRegistry(
+        { slug: 'evil', type: 'url', source: url },
         authFetch,
       );
-      expect(content).toBe(VALID_ADAPTER);
-      expect(resolvedRef).toBeNull();
-      expect(existsSync(join(managedDir, 'preview-only'))).toBe(false);
+      expect(existsSync(staged.adapterPath)).toBe(true);
+      expect(staged.contentSha256).toHaveLength(64);
+      expect(existsSync(marker)).toBe(false);
     } finally {
       server.stop();
     }
   });
 
-  it('getInstalledAdapterPath / removeInstalledAdapter round-trip', async () => {
+  it('executeStagedRegistry imports the staged adapter (top-level side effects may run)', async () => {
+    const marker = join(tempDir, 'pwned.txt');
+    const staged = writeStagedAdapter('evil', evilAdapter(marker), '.ts');
+    expect(existsSync(marker)).toBe(false);
+    const result = await executeStagedRegistry('evil', staged.contentSha256);
+    expect(result.manifest.id).toBe('unit');
+    expect(existsSync(marker)).toBe(true);
+  });
+
+  it('executeStagedRegistry refuses a hash mismatch without importing', async () => {
+    const marker = join(tempDir, 'pwned.txt');
+    writeStagedAdapter('evil', evilAdapter(marker), '.ts');
+    await expect(
+      executeStagedRegistry('evil', '0'.repeat(64)),
+    ).rejects.toThrow(/hash mismatch/i);
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  it('assertAdapterHash throws on mismatch and passes on match', () => {
+    const staged = writeStagedAdapter('unit', VALID_ADAPTER, '.ts');
+    expect(() => assertAdapterHash(staged.adapterPath, staged.contentSha256)).not.toThrow();
+    expect(() => assertAdapterHash(staged.adapterPath, '0'.repeat(64))).toThrow(/hash mismatch/i);
+  });
+
+  it('hashAdapterContent is sha256 hex of the utf8 bytes', () => {
+    const expected = createHash('sha256').update(VALID_ADAPTER, 'utf8').digest('hex');
+    expect(hashAdapterContent(VALID_ADAPTER)).toBe(expected);
+  });
+
+  it.skipIf(process.platform === 'win32')('installRegistry still stages then executes (CLI / seed path)', async () => {
+    allowLocalUrlPolicy();
+    const marker = join(tempDir, 'pwned.txt');
     const server = Bun.serve({
       port: 0,
       fetch() {
-        return new Response(VALID_ADAPTER, {
+        return new Response(evilAdapter(marker), {
           headers: { 'content-type': 'application/typescript' },
         });
       },
     });
     try {
-      const url = `http://localhost:${server.port}/adapter.ts`;
-      await installRegistry({ slug: 'roundtrip', type: 'url', source: url }, authFetch);
-      const p = getInstalledAdapterPath('roundtrip');
-      expect(p).toBe(join(managedDir, 'roundtrip', 'adapter.ts'));
-      removeInstalledAdapter('roundtrip');
-      expect(getInstalledAdapterPath('roundtrip')).toBeNull();
+      const url = `http://127.0.0.1:${server.port}/adapter.ts`;
+      const result = await installRegistry(
+        { slug: 'cli', type: 'url', source: url },
+        authFetch,
+      );
+      expect(result.manifest.id).toBe('unit');
+      expect(result.contentSha256).toHaveLength(64);
+      expect(existsSync(marker)).toBe(true);
     } finally {
       server.stop();
     }
+  });
+
+  it.skipIf(process.platform === 'win32')('cleans up the managed dir when fetch fails after URL policy', async () => {
+    allowLocalUrlPolicy();
+    await expect(
+      stageRegistry(
+        { slug: 'gone', type: 'url', source: 'http://adapter.invalid/adapter.ts' },
+        authFetch,
+      ),
+    ).rejects.toThrow(/Failed to fetch/);
+    expect(existsSync(join(managedDir, 'gone'))).toBe(false);
+  });
+
+  it('rejects an adapter whose default export has the wrong shape on execute', async () => {
+    writeStagedAdapter('badshape', 'export default { not_an_adapter: true };', '.ts');
+    await expect(executeStagedRegistry('badshape')).rejects.toThrow(
+      /does not export a valid RegistryAdapter/,
+    );
+  });
+
+  it('getInstalledAdapterPath / removeInstalledAdapter round-trip without execute', () => {
+    writeStagedAdapter('roundtrip', VALID_ADAPTER, '.ts');
+    const p = getInstalledAdapterPath('roundtrip');
+    expect(p).toBe(join(managedDir, 'roundtrip', 'adapter.ts'));
+    removeInstalledAdapter('roundtrip');
+    expect(getInstalledAdapterPath('roundtrip')).toBeNull();
   });
 });

@@ -99,14 +99,17 @@ ENVIRONMENT VARIABLES:
     CAPA_PRINT_QUIET        Set to 1 for quiet output
 
 EXAMPLES:
-    # Install with defaults
+    # Recommended: download a tagged installer, verify SHA256, then run
+    curl -fsSL -O https://github.com/infragate/capa/releases/download/vX.Y.Z/install.sh
+    curl -fsSL -O https://github.com/infragate/capa/releases/download/vX.Y.Z/SHA256SUMS.txt
+    sha256sum -c SHA256SUMS.txt --ignore-missing
+    sh ./install.sh
+
+    # Existing installs: capa upgrade --yes  (downloads the tagged installer,
+    # verifies SHA256 against SHA256SUMS.txt, then runs the local file)
+
+    # Convenience only — does not verify the installer script itself:
     curl -LsSf https://capa.infragate.ai/install.sh | sh
-
-    # Install to custom directory
-    CAPA_INSTALL_DIR=~/bin curl -LsSf https://capa.infragate.ai/install.sh | sh
-
-    # Install without modifying PATH
-    CAPA_NO_MODIFY_PATH=1 curl -LsSf https://capa.infragate.ai/install.sh | sh
 EOF
 }
 
@@ -405,8 +408,12 @@ EOF
 # Main installation function
 install_capa() {
     # Fetch the latest version first
-    get_latest_version
-    APP_VERSION="$RETVAL"
+    if [ -n "${CAPA_VERSION:-}" ]; then
+        APP_VERSION="${CAPA_VERSION#v}"
+    else
+        get_latest_version
+        APP_VERSION="$RETVAL"
+    fi
     
     local _box_inner=39
     local _banner="  CAPA Installer v${APP_VERSION}"
@@ -508,6 +515,12 @@ install_capa() {
         err "checksum verification failed for ${_binary_name} (expected ${_expected_hash}, got ${_computed_hash})"
     fi
     success "Verified binary integrity"
+
+    if check_cmd gh; then
+        if gh attestation verify "$_temp_file" --repo "${GITHUB_REPO}" >/dev/null 2>&1; then
+            success "Verified build provenance"
+        fi
+    fi
 
     # Install binary
     info "Installing to ${_install_dir}/capa..."

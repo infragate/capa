@@ -1,6 +1,9 @@
+import { trustStdioServers } from '../../../shared/stdio-allowlist';
 import type { Task, TaskWrapper } from '../../ui';
+import { localApiHeaders } from '../../utils/local-api';
 import type { InstallCtx } from './context';
 import { getUnexposedToolIds } from './helpers/tool-warnings';
+import { raiseInstallError, shouldStopOnInstallError } from './install-error-policy';
 
 export function configureToolsTask(): Task<InstallCtx> {
   return {
@@ -33,18 +36,20 @@ export function configureToolsTask(): Task<InstallCtx> {
         task.output = `validating ${parts.join(' + ')}…`;
       }
 
+      trustStdioServers(ctx.projectId, ctx.capabilitiesToUse.servers ?? []);
+
       const response = await fetch(
         `${ctx.serverStatus.url}/api/projects/${ctx.projectId}/configure`,
         {
           method: 'POST',
-          headers: {
+          headers: localApiHeaders({
             'Content-Type': 'application/json',
             // Ask the server to stream NDJSON progress so we can render a
             // live "X of Y validated · last-server done" counter instead of
             // a static spinner. The server falls back to a single JSON
             // body if it doesn't support streaming.
             Accept: 'application/x-ndjson, application/json',
-          },
+          }),
           body: JSON.stringify({
             ...ctx.capabilitiesToUse,
             // Wrap installs write Claude/etc. only into the shadow workspace;
@@ -56,15 +61,22 @@ export function configureToolsTask(): Task<InstallCtx> {
 
       if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(`Failed to configure project: ${errorText}`);
+        raiseInstallError(ctx, `Failed to configure project: ${errorText}`);
+        return;
       }
 
       const contentType = (response.headers.get('content-type') ?? '').toLowerCase();
-      if (contentType.includes('application/x-ndjson') && response.body) {
-        ctx.configureResult = await consumeConfigureStream(response.body, task);
-      } else {
-        task.output = 'parsing validation results…';
-        ctx.configureResult = await response.json();
+      try {
+        if (contentType.includes('application/x-ndjson') && response.body) {
+          ctx.configureResult = await consumeConfigureStream(response.body, task);
+        } else {
+          task.output = 'parsing validation results…';
+          ctx.configureResult = await response.json();
+        }
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        raiseInstallError(ctx, message);
+        return;
       }
 
       const result = ctx.configureResult as {
@@ -102,8 +114,6 @@ export function configureToolsTask(): Task<InstallCtx> {
         task.output = breakdown.join(' · ');
 
         if (failed.length > 0) {
-          ctx.failed += failed.length;
-          task.title = `Configuring tools — ${failed.length} of ${result.toolValidation.length} tool(s) failed validation`;
           const lines: string[] = [];
           lines.push(
             `${failed.length} of ${result.toolValidation.length} tool(s) failed validation:`,
@@ -118,7 +128,13 @@ export function configureToolsTask(): Task<InstallCtx> {
           lines.push('  Tip: check that tool names match what the MCP server provides,');
           lines.push('  server IDs are correct (e.g. "@server-name"), and that the MCP');
           lines.push('  servers are reachable.');
-          ctx.errors.push(lines.join('\n'));
+          ctx.failed += failed.length;
+          if (shouldStopOnInstallError(ctx)) {
+            ctx.errors.push(lines.join('\n'));
+          } else {
+            ctx.warnings.push(lines.join('\n'));
+          }
+          task.title = `Configuring tools — ${failed.length} of ${result.toolValidation.length} tool(s) failed validation`;
         } else if (pendingAuth.length > 0 && pendingAuth.length < result.toolValidation.length) {
           task.title = `Configuring tools — ${successful.length} validated, ${pendingAuth.length} pending OAuth2`;
         } else if (pendingAuth.length === 0) {

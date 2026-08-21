@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { CapaDatabase } from "../../db/database";
+import { resetSecretCryptoForTests } from "../../shared/secret-crypto";
 import { ToolCallsRepo } from "../../db/tool-calls";
 import { initSchema } from "../../db/schema";
 import {
@@ -160,7 +161,7 @@ describe("ToolCallsRepo prune", () => {
 		expect(next.calls.map((c) => c.id)).toEqual(["page-3", "page-2"]);
 	});
 
-	it("expands a mid-run page back to the prompt opener", () => {
+	it("pages uncorrelated traces by row under the trace budget", () => {
 		const rows: Array<Pick<ToolCallRecord, "id" | "kind" | "tool_name" | "started_at">> = [
 			{ id: "p", kind: "prompt", tool_name: "hello", started_at: 100 },
 			{ id: "t1", kind: "tool", tool_name: "read", started_at: 110 },
@@ -190,11 +191,11 @@ describe("ToolCallsRepo prune", () => {
 		}
 
 		const page = repo.listRecent("proj-1", { limit: 2 });
-		expect(page.calls.map((c) => c.id)).toEqual(["s", "t3", "t2", "t1", "p"]);
-		expect(page.hasMore).toBe(false);
+		expect(page.calls.map((c) => c.id)).toEqual(["s", "t3"]);
+		expect(page.hasMore).toBe(true);
 	});
 
-	it("expands only the newest run and leaves older runs for the next page", () => {
+	it("pages the next uncorrelated traces on load more", () => {
 		const rows: Array<Pick<ToolCallRecord, "id" | "kind" | "tool_name" | "started_at">> = [
 			{ id: "a-p", kind: "prompt", tool_name: "first", started_at: 100 },
 			{ id: "a-t", kind: "tool", tool_name: "tool-a", started_at: 110 },
@@ -225,7 +226,7 @@ describe("ToolCallsRepo prune", () => {
 		}
 
 		const first = repo.listRecent("proj-1", { limit: 2 });
-		expect(first.calls.map((c) => c.id)).toEqual(["b-t2", "b-t1", "b-p"]);
+		expect(first.calls.map((c) => c.id)).toEqual(["b-t2", "b-t1"]);
 		expect(first.hasMore).toBe(true);
 
 		const oldest = first.calls[first.calls.length - 1]!;
@@ -234,8 +235,8 @@ describe("ToolCallsRepo prune", () => {
 			beforeStartedAt: oldest.started_at,
 			beforeId: oldest.id,
 		});
-		expect(next.calls.map((c) => c.id)).toEqual(["a-s", "a-t", "a-p"]);
-		expect(next.hasMore).toBe(false);
+		expect(next.calls.map((c) => c.id)).toEqual(["b-p", "a-s"]);
+		expect(next.hasMore).toBe(true);
 	});
 
 	it("does not skip same-ms ties at a page boundary", () => {
@@ -356,10 +357,17 @@ describe("ToolCallTracer", () => {
 	let dir: string;
 	let db: CapaDatabase;
 	const notified: Array<{ projectId: string; record: ToolCallRecord }> = [];
+	let prevHome: string | undefined;
+	let prevProfile: string | undefined;
 
 	beforeEach(() => {
 		notified.length = 0;
 		dir = mkdtempSync(join(tmpdir(), "capa-tracer-"));
+		prevHome = process.env.HOME;
+		prevProfile = process.env.USERPROFILE;
+		process.env.HOME = dir;
+		process.env.USERPROFILE = dir;
+		resetSecretCryptoForTests();
 		db = new CapaDatabase(join(dir, "test.db"));
 		db.upsertProject({ id: "proj-1", path: "/tmp/proj-1" });
 		db.setVariable("proj-1", "SECRET_TOKEN", "my-secret-token-value");
@@ -367,6 +375,11 @@ describe("ToolCallTracer", () => {
 
 	afterEach(() => {
 		db.close();
+		resetSecretCryptoForTests();
+		if (prevHome === undefined) delete process.env.HOME;
+		else process.env.HOME = prevHome;
+		if (prevProfile === undefined) delete process.env.USERPROFILE;
+		else process.env.USERPROFILE = prevProfile;
 		rmSync(dir, { recursive: true, force: true });
 	});
 

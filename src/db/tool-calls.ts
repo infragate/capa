@@ -4,10 +4,14 @@ import {
 	isActivityRunOpener,
 } from "../shared/activity-run-boundary";
 import type { ToolCallRecord, ToolCallStats } from "../types/database";
+import { listRecentToolCalls } from "./tool-calls-activity-page";
+import { TOOL_CALLS_PER_PROJECT_CAP } from "./tool-calls-constants";
 
-export const TOOL_CALLS_PER_PROJECT_CAP = 1000;
-export const TOOL_CALLS_PAGE_SIZE_DEFAULT = 50;
-export const TOOL_CALLS_PAGE_SIZE_MAX = 100;
+export {
+	TOOL_CALLS_PAGE_SIZE_DEFAULT,
+	TOOL_CALLS_PAGE_SIZE_MAX,
+	TOOL_CALLS_PER_PROJECT_CAP,
+} from "./tool-calls-constants";
 
 export type ToolCallInsert = Omit<
 	ToolCallRecord,
@@ -55,6 +59,12 @@ export type ToolCallListOptions = {
 	beforeId?: string | null;
 	/** @deprecated Prefer beforeStartedAt + beforeId. Kept for older clients. */
 	before?: number | null;
+	/** When set, return only rows for this agent session id. */
+	sessionId?: string | null;
+	/** When set, return all rows for this provider conversation id. */
+	conversationId?: string | null;
+	/** When set, return all rows for this provider generation id. */
+	generationId?: string | null;
 };
 
 export type ToolCallListResult = {
@@ -71,9 +81,6 @@ export type ActivityCorrelationLookup = {
 };
 
 export { isActivityRunCloser, isActivityRunOpener };
-
-/** Cap how far we walk older rows to complete a cut-off run. */
-const RUN_BOUNDARY_EXPAND_MAX = TOOL_CALLS_PER_PROJECT_CAP;
 
 export class ToolCallsRepo {
 	constructor(private db: Database) {}
@@ -192,206 +199,20 @@ export class ToolCallsRepo {
 		return row.n;
 	}
 
-	/** Rows strictly older than `(startedAt, id)` in newest-first order. */
-	private listBefore(
-		projectId: string,
-		startedAt: number,
-		id: string,
-		limit: number,
-	): ToolCallRecord[] {
-		return this.db
-			.query(
-				`SELECT * FROM tool_calls
-         WHERE project_id = ?
-           AND (started_at < ? OR (started_at = ? AND id < ?))
-         ORDER BY started_at DESC, id DESC
-         LIMIT ?`,
-			)
-			.all(projectId, startedAt, startedAt, id, limit) as ToolCallRecord[];
-	}
-
-	private hasRowBefore(
-		projectId: string,
-		startedAt: number,
-		id: string,
-	): boolean {
+	countForSession(projectId: string, sessionId: string): number {
 		const row = this.db
 			.query(
-				`SELECT 1 AS ok FROM tool_calls
-         WHERE project_id = ?
-           AND (started_at < ? OR (started_at = ? AND id < ?))
-         LIMIT 1`,
+				"SELECT COUNT(*) AS n FROM tool_calls WHERE project_id = ? AND session_id = ?",
 			)
-			.get(projectId, startedAt, startedAt, id) as { ok: number } | null;
-		return row != null;
-	}
-
-	/**
-	 * If the page's oldest row is mid-generation (or mid-heuristic-run), pull
-	 * older rows until the generation / run opener. Prefer provider generation
-	 * ids when present; fall back to prompt/stop heuristics.
-	 */
-	private expandOlderToRunBoundary(
-		projectId: string,
-		page: ToolCallRecord[],
-	): ToolCallRecord[] {
-		if (page.length === 0) return page;
-		const oldest = page[page.length - 1]!;
-
-		if (oldest.generation_id) {
-			return this.expandOlderMatching(
-				projectId,
-				page,
-				(row) => row.generation_id === oldest.generation_id,
-			);
-		}
-
-		if (isActivityRunOpener(oldest)) return page;
-
-		const expanded = [...page];
-		let walked = 0;
-		let foundBoundary = false;
-
-		while (walked < RUN_BOUNDARY_EXPAND_MAX) {
-			const tip = expanded[expanded.length - 1]!;
-			const batchSize = Math.min(50, RUN_BOUNDARY_EXPAND_MAX - walked);
-			const batch = this.listBefore(
-				projectId,
-				tip.started_at,
-				tip.id,
-				batchSize,
-			);
-			if (batch.length === 0) {
-				break;
-			}
-
-			for (const row of batch) {
-				walked += 1;
-				if (isActivityRunCloser(row)) {
-					foundBoundary = true;
-					break;
-				}
-				expanded.push(row);
-				if (isActivityRunOpener(row)) {
-					foundBoundary = true;
-					break;
-				}
-				if (walked >= RUN_BOUNDARY_EXPAND_MAX) break;
-			}
-
-			if (foundBoundary) break;
-			if (batch.length < batchSize) break;
-			if (walked >= RUN_BOUNDARY_EXPAND_MAX) break;
-		}
-
-		return foundBoundary ? expanded : page;
-	}
-
-	/** Pull older rows while `matches` stays true (e.g. same generation_id). */
-	private expandOlderMatching(
-		projectId: string,
-		page: ToolCallRecord[],
-		matches: (row: ToolCallRecord) => boolean,
-	): ToolCallRecord[] {
-		const expanded = [...page];
-		let walked = 0;
-
-		while (walked < RUN_BOUNDARY_EXPAND_MAX) {
-			const tip = expanded[expanded.length - 1]!;
-			const batchSize = Math.min(50, RUN_BOUNDARY_EXPAND_MAX - walked);
-			const batch = this.listBefore(
-				projectId,
-				tip.started_at,
-				tip.id,
-				batchSize,
-			);
-			if (batch.length === 0) break;
-
-			let hitMismatch = false;
-			for (const row of batch) {
-				walked += 1;
-				if (!matches(row)) {
-					hitMismatch = true;
-					break;
-				}
-				expanded.push(row);
-				if (walked >= RUN_BOUNDARY_EXPAND_MAX) break;
-			}
-
-			if (hitMismatch) break;
-			if (batch.length < batchSize) break;
-			if (walked >= RUN_BOUNDARY_EXPAND_MAX) break;
-		}
-
-		return expanded;
+			.get(projectId, sessionId) as { n: number };
+		return row.n;
 	}
 
 	listRecent(
 		projectId: string,
 		options: ToolCallListOptions = {},
 	): ToolCallListResult {
-		const limit = Math.max(
-			1,
-			Math.min(
-				options.limit ?? TOOL_CALLS_PAGE_SIZE_DEFAULT,
-				TOOL_CALLS_PAGE_SIZE_MAX,
-			),
-		);
-		const beforeStartedAt = options.beforeStartedAt ?? options.before ?? null;
-		const beforeId = options.beforeId ?? null;
-
-		const fetched = (
-			beforeStartedAt == null
-				? this.db
-						.query(
-							`SELECT * FROM tool_calls
-             WHERE project_id = ?
-             ORDER BY started_at DESC, id DESC
-             LIMIT ?`,
-						)
-						.all(projectId, limit + 1)
-				: beforeId
-					? this.db
-							.query(
-								`SELECT * FROM tool_calls
-             WHERE project_id = ?
-               AND (started_at < ? OR (started_at = ? AND id < ?))
-             ORDER BY started_at DESC, id DESC
-             LIMIT ?`,
-							)
-							.all(
-								projectId,
-								beforeStartedAt,
-								beforeStartedAt,
-								beforeId,
-								limit + 1,
-							)
-					: this.db
-							.query(
-								`SELECT * FROM tool_calls
-             WHERE project_id = ? AND started_at < ?
-             ORDER BY started_at DESC, id DESC
-             LIMIT ?`,
-							)
-							.all(projectId, beforeStartedAt, limit + 1)
-		) as ToolCallRecord[];
-
-		const overflow = fetched.length > limit;
-		if (overflow) fetched.pop();
-
-		const calls = this.expandOlderToRunBoundary(projectId, fetched);
-
-		let hasMore = false;
-		if (calls.length > 0) {
-			const oldest = calls[calls.length - 1]!;
-			hasMore = this.hasRowBefore(projectId, oldest.started_at, oldest.id);
-		}
-
-		return {
-			calls,
-			total: this.count(projectId),
-			hasMore,
-		};
+		return listRecentToolCalls(this.db, projectId, options);
 	}
 
 	/**

@@ -105,7 +105,7 @@ describe("reconcileCursorActivityConversationIds", () => {
 		expect(out[2]!.conversation_id).toBe("agent-session");
 	});
 
-	it("does not rewrite non-cursor sources", () => {
+	it("does not rewrite rows with no generation anchor", () => {
 		const rows = [
 			{
 				source: "claude-code",
@@ -118,5 +118,73 @@ describe("reconcileCursorActivityConversationIds", () => {
 		expect(reconcileCursorActivityConversationIds(rows)[0]!.conversation_id).toBe(
 			"sess-a",
 		);
+	});
+
+	it("rewrites sibling spans in the same generation (any source)", () => {
+		const chatId = "bfe7fd7c-8704-4570-819e-822c32e0355e";
+		const agentSessionId = "34e18a5e-0089-4d8c-b367-df67c590f9b4";
+		const generationId = "53c2f1e0-f1cd-4f67-86c0-785679f38ba9";
+
+		const rows = [
+			{
+				source: "cursor",
+				kind: "prompt",
+				conversation_id: chatId,
+				generation_id: generationId,
+				attributes_json: null,
+			},
+			{
+				source: "cursor",
+				kind: "shell",
+				conversation_id: agentSessionId,
+				generation_id: generationId,
+				attributes_json: null,
+			},
+			{
+				source: "Cursor",
+				kind: "call_tool",
+				conversation_id: agentSessionId,
+				generation_id: generationId,
+				attributes_json: null,
+			},
+			{
+				source: "shell",
+				kind: "tool",
+				conversation_id: agentSessionId,
+				generation_id: generationId,
+				attributes_json: null,
+			},
+		];
+
+		const out = reconcileCursorActivityConversationIds(rows);
+		expect(out.map((row) => row.conversation_id)).toEqual([
+			chatId,
+			chatId,
+			chatId,
+			chatId,
+		]);
+	});
+
+	it('does not rewrite rows from another source when generation_id collides', () => {
+		const generationId = "gen-collision";
+		const rows = [
+			{
+				source: "cursor",
+				kind: "prompt",
+				conversation_id: "chat-a",
+				generation_id: generationId,
+				attributes_json: null,
+			},
+			{
+				source: "claude-code",
+				kind: "shell",
+				conversation_id: "sess-b",
+				generation_id: generationId,
+				attributes_json: null,
+			},
+		];
+
+		const out = reconcileCursorActivityConversationIds(rows);
+		expect(out[1]!.conversation_id).toBe("sess-b");
 	});
 });

@@ -1,4 +1,4 @@
-import type { ArrayCapabilitySection } from "../shared/capabilities";
+import type { ArrayCapabilitySection, CapabilitySectionEntryMap } from "../shared/capabilities";
 import {
 	appendCapabilityEntry,
 	parseCapabilitiesFile,
@@ -17,6 +17,7 @@ import {
 	jsonError,
 	loadProjectFile,
 } from "./capabilities-route-helpers";
+import { mergeServerDef } from "./secret-redaction";
 import { clientErrorMessage } from "./http-error";
 
 export async function handleAppend(
@@ -48,7 +49,12 @@ export async function handleAppend(
 	}
 
 	try {
-		await appendCapabilityEntry(loaded.path, loaded.format, section, body);
+		await appendCapabilityEntry(
+			loaded.path,
+			loaded.format,
+			section,
+			body as CapabilitySectionEntryMap[typeof section],
+		);
 		return await afterWrite(deps, projectId, loaded.path, loaded.format);
 	} catch (err: any) {
 		return jsonError(clientErrorMessage(err), 400);
@@ -149,7 +155,7 @@ export async function handleUpdate(
 				};
 				if (asObj(body.def)) {
 					if (section === "servers") {
-						merged.def = asObj(body.def)!;
+						merged.def = mergeServerDef(asObj(e.def), asObj(body.def)!);
 					} else if (asObj(merged.def)) {
 						merged.def = { ...asObj(merged.def)!, ...asObj(body.def)! };
 					}

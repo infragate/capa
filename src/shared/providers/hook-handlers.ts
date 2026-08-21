@@ -6,7 +6,7 @@
  * config file. Pure functions — no I/O, so they can be unit-tested without
  * a temp project.
  *
- * The companion `installer/io` layer (see `cli/utils/hooks-installer.ts`)
+ * The companion `installer/io` layer (see `cli/utils/hooks/`)
  * applies these fragments to the on-disk config and records a `locator`
  * back so the next install/clean run can find and remove the same entry.
  */
@@ -17,6 +17,7 @@ import type {
 	HooksIntegration,
 	ProviderEventMapping,
 } from "../../types/providers";
+import { isPlainObject } from "../plugin-manifest/types-helpers";
 
 /**
  * The bag of inputs every shape serialiser needs.
@@ -380,8 +381,4 @@ function ensureArray(obj: Record<string, unknown>, key: string): unknown[] {
 	const next: unknown[] = [];
 	obj[key] = next;
 	return next;
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-	return value !== null && typeof value === "object" && !Array.isArray(value);
 }

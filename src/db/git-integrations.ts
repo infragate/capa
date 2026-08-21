@@ -3,17 +3,36 @@ import {
 	getGitProvider,
 	getGitProviderByHost,
 } from "../shared/git-providers/registry";
+import {
+	decryptSecret,
+	decryptSecretString,
+	encryptSecret,
+} from "../shared/secret-crypto";
 import type { GitIntegration } from "../types/database";
+
+function decryptGitRow(row: GitIntegration | null): GitIntegration | null {
+	if (!row) return null;
+	return {
+		...row,
+		access_token: decryptSecretString(row.access_token),
+		refresh_token:
+			row.refresh_token == null
+				? row.refresh_token
+				: decryptSecret(row.refresh_token),
+	};
+}
 
 export class GitIntegrationsRepo {
 	constructor(private db: Database) {}
 
 	get(platform: string, host: string | null = null): GitIntegration | null {
-		return this.db
-			.query(
-				"SELECT * FROM git_integrations WHERE platform = ? AND (host = ? OR (host IS NULL AND ? IS NULL))",
-			)
-			.get(platform, host, host) as GitIntegration | null;
+		return decryptGitRow(
+			this.db
+				.query(
+					"SELECT * FROM git_integrations WHERE platform = ? AND (host = ? OR (host IS NULL AND ? IS NULL))",
+				)
+				.get(platform, host, host) as GitIntegration | null,
+		);
 	}
 
 	set(
@@ -28,6 +47,10 @@ export class GitIntegrationsRepo {
 	): void {
 		const now = Date.now();
 		const host = tokenData.host || null;
+		const access = encryptSecret(tokenData.access_token);
+		const refresh = tokenData.refresh_token
+			? encryptSecret(tokenData.refresh_token)
+			: null;
 
 		// Check if an entry already exists
 		const existing = this.get(platform, host);
@@ -43,8 +66,8 @@ export class GitIntegrationsRepo {
           updated_at = ?
          WHERE platform = ? AND (host = ? OR (host IS NULL AND ? IS NULL))`,
 				[
-					tokenData.access_token,
-					tokenData.refresh_token || null,
+					access,
+					refresh,
 					tokenData.token_type || "Bearer",
 					tokenData.expires_at || null,
 					now,
@@ -61,8 +84,8 @@ export class GitIntegrationsRepo {
 				[
 					platform,
 					host,
-					tokenData.access_token,
-					tokenData.refresh_token || null,
+					access,
+					refresh,
 					tokenData.token_type || "Bearer",
 					tokenData.expires_at || null,
 					now,
@@ -80,9 +103,11 @@ export class GitIntegrationsRepo {
 	}
 
 	getAll(): GitIntegration[] {
-		return this.db
-			.query("SELECT * FROM git_integrations ORDER BY created_at DESC")
-			.all() as GitIntegration[];
+		return (
+			this.db
+				.query("SELECT * FROM git_integrations ORDER BY created_at DESC")
+				.all() as GitIntegration[]
+		).map((row) => decryptGitRow(row)!);
 	}
 
 	getOAuthToken(provider: string): GitIntegration | null {

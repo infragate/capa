@@ -7,9 +7,29 @@ import { SessionManager } from "../session-manager";
 import { ToolCallTracer } from "../tool-call-tracer";
 import { handlePostProjectActivityEvent } from "../activity-routes";
 import type { ProjectRouteDeps } from "../project-routes";
+import { McpServerStateManager } from "../mcp-server-state";
 import type { CapabilitiesFileWatcher } from "../capabilities-watcher";
 import type { OAuth2Manager } from "../oauth-manager";
 import type { ConfigureRouteDeps } from "../configure-routes";
+
+function removeTempDirWithRetry(dir: string, attempts = 8): void {
+	for (let i = 0; i < attempts; i++) {
+		try {
+			rmSync(dir, { recursive: true, force: true });
+			return;
+		} catch (error: unknown) {
+			const code =
+				error && typeof error === "object" && "code" in error
+					? String((error as { code: unknown }).code)
+					: "";
+			if (code !== "EBUSY" && code !== "EPERM" && code !== "ENOTEMPTY") {
+				throw error;
+			}
+			if (i === attempts - 1) return;
+			Bun.sleepSync(50 * (i + 1));
+		}
+	}
+}
 
 describe("handlePostProjectActivityEvent", () => {
 	let dir: string;
@@ -45,6 +65,7 @@ describe("handlePostProjectActivityEvent", () => {
 			effectiveCapsCache: new Map(),
 			projectEventClients: new Map(),
 			configureDeps: {} as ConfigureRouteDeps,
+			mcpServerState: new McpServerStateManager(),
 			toolCallTracer: tracer,
 		};
 	});
@@ -52,7 +73,7 @@ describe("handlePostProjectActivityEvent", () => {
 	afterEach(() => {
 		sessionManager.dispose();
 		db.close();
-		rmSync(dir, { recursive: true, force: true });
+		removeTempDirWithRetry(dir);
 	});
 
 	it("inserts an activity row when enabled", async () => {

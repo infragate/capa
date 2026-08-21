@@ -17,17 +17,45 @@ export function buildArgSlugs(inputSchema: any): Map<string, string> {
  * `capa sh db query --raw`). All occurrences are removed; remaining tokens are
  * dispatched as the command/args.
  */
-export function parseShellGlobalFlags(args: string[]): { rawMode: boolean; tokens: string[] } {
+export function parseShellGlobalFlags(args: string[]): {
+  rawMode: boolean;
+  execMode: boolean;
+  tokens: string[];
+} {
   let rawMode = false;
+  let execMode = false;
   const tokens: string[] = [];
-  for (const arg of args) {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
     if (arg === '--raw') {
       rawMode = true;
       continue;
     }
+    if (arg === '--exec') {
+      execMode = true;
+      continue;
+    }
+    if (arg === '--' && execMode) {
+      tokens.push(...args.slice(i + 1));
+      break;
+    }
     tokens.push(arg);
   }
-  return { rawMode, tokens };
+  return { rawMode, execMode, tokens };
+}
+
+/**
+ * Unknown `capa sh` tokens must not fall through to /bin/sh -c.
+ * `--exec` is an explicit, unrestricted argv spawn (not a joined shell string).
+ */
+export function classifyUnknownCommand(
+  tokens: string[],
+  execMode: boolean,
+): { kind: 'reject' } | { kind: 'exec'; argv: string[] } {
+  if (execMode && tokens.length > 0) {
+    return { kind: 'exec', argv: tokens };
+  }
+  return { kind: 'reject' };
 }
 
 export function parseInlineArgs(tokens: string[]): Record<string, string> {

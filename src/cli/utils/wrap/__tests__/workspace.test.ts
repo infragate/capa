@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from 'bun:test';
 import {
   existsSync,
   mkdtempSync,
@@ -11,15 +11,11 @@ import { join, basename } from 'path';
 import { tmpdir } from 'os';
 import { getWrappableProvider } from '../../../../shared/providers';
 import { WORKSPACE_MARKER } from '../../../../shared/workspaces/paths';
+import * as install from '../../../commands/install';
+import { prepareWorkspace, computeCapabilitiesFingerprint, workspaceDirName, workingDirName, listWrapWorkspacesForProject } from '../workspace';
+import { getWorkspacesDir } from '../../../../shared/workspaces/paths';
 
 const installMock = mock(async () => {});
-
-mock.module('../../../commands/install', () => ({
-  installCommand: installMock,
-}));
-
-const { prepareWorkspace, computeCapabilitiesFingerprint, workspaceDirName, workingDirName } =
-  await import('../workspace');
 
 function isolateHome(): { home: string; restore: () => void } {
   const home = mkdtempSync(join(tmpdir(), 'capa-ws-home-'));
@@ -42,10 +38,12 @@ function isolateHome(): { home: string; restore: () => void } {
 describe('prepareWorkspace', () => {
   let realDir: string;
   let homeCtx: { home: string; restore: () => void };
+  let installSpy: ReturnType<typeof spyOn>;
 
   beforeEach(() => {
     realDir = mkdtempSync(join(tmpdir(), 'capa-ws-real-'));
     homeCtx = isolateHome();
+    installSpy = spyOn(install, 'installCommand').mockImplementation(installMock);
     writeFileSync(
       join(realDir, 'capabilities.yaml'),
       'skills: []\nproviders:\n  - claude-code\n',
@@ -57,6 +55,7 @@ describe('prepareWorkspace', () => {
   });
 
   afterEach(() => {
+    installSpy.mockRestore();
     homeCtx.restore();
     rmSync(realDir, { recursive: true, force: true });
   });
@@ -114,6 +113,10 @@ describe('prepareWorkspace', () => {
     expect(first.cold).toBe(true);
     expect(first.installed).toBe(true);
     expect(installMock).toHaveBeenCalledTimes(1);
+
+    // Simulate provider materialization from a real install run.
+    mkdirSync(join(first.workspacePath, '.claude'), { recursive: true });
+    writeFileSync(join(first.workspacePath, 'CLAUDE.md'), '# claude');
 
     installMock.mockClear();
     const second = await prepareWorkspace(realDir, provider);
@@ -202,5 +205,37 @@ hooks: []
     );
     const b = await computeCapabilitiesFingerprint(realDir);
     expect(a).not.toBe(b);
+  });
+});
+
+describe('listWrapWorkspacesForProject', () => {
+  let realDir: string;
+  let homeCtx: { home: string; restore: () => void };
+
+  beforeEach(() => {
+    realDir = mkdtempSync(join(tmpdir(), 'capa-ws-list-real-'));
+    homeCtx = isolateHome();
+  });
+
+  afterEach(() => {
+    homeCtx.restore();
+    rmSync(realDir, { recursive: true, force: true });
+  });
+
+  it('ignores markers whose workingDir escapes the cache root', async () => {
+    const cachePath = join(getWorkspacesDir(), `escape-${Date.now()}`);
+    mkdirSync(cachePath, { recursive: true });
+    writeFileSync(
+      join(cachePath, WORKSPACE_MARKER),
+      JSON.stringify({
+        realProjectPath: realDir,
+        providerId: 'cursor',
+        workingDir: '..',
+      }),
+      'utf-8',
+    );
+
+    expect(await listWrapWorkspacesForProject(realDir)).toHaveLength(0);
+    rmSync(cachePath, { recursive: true, force: true });
   });
 });

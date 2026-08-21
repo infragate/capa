@@ -1,5 +1,5 @@
 import { useMemo, useState, useCallback, type FormEvent } from 'react';
-import { Eye, EyeOff, Plus, Trash2 } from 'lucide-react';
+import { Eye, EyeOff, Pencil, Plus, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useVariables, useSaveVariables, usePutVariable, useDeleteVariable } from '../hooks';
 import { Spinner } from '../../../components/common/Spinner';
@@ -36,7 +36,9 @@ export function VariablesForm({ projectId, returnUrl }: VariablesFormProps) {
       const variables: Record<string, string> = {};
       for (const [key, value] of formData.entries()) {
         if (key.startsWith('__')) continue;
-        variables[key] = value as string;
+        const text = String(value);
+        if (text.length === 0) continue;
+        variables[key] = text;
       }
 
       try {
@@ -94,7 +96,6 @@ export function VariablesForm({ projectId, returnUrl }: VariablesFormProps) {
               <VariableField
                 key={varName}
                 name={varName}
-                defaultValue={data?.values?.[varName] || ''}
                 referenced={requiredSet.has(varName)}
                 onDelete={() => {
                   if (confirm(t('projects:variables.confirmDelete', { name: varName }))) {
@@ -150,26 +151,28 @@ export function VariablesForm({ projectId, returnUrl }: VariablesFormProps) {
 
 function VariableField({
   name,
-  defaultValue,
   referenced,
   onDelete,
   deleting,
 }: {
   name: string;
-  defaultValue: string;
   referenced: boolean;
   onDelete: () => void;
   deleting: boolean;
 }) {
   const { t } = useTranslation('projects');
+  const [editing, setEditing] = useState(false);
   const [show, setShow] = useState(false);
+
+  const stopEditing = useCallback(() => {
+    setEditing(false);
+    setShow(false);
+  }, []);
 
   return (
     <div>
-      <div className="mb-1.5 flex items-center gap-2">
-        <label htmlFor={`var-${name}`} className="font-mono text-xs font-medium text-text-primary">
-          {name}
-        </label>
+      <div className="flex items-center gap-2">
+        <span className="font-mono text-xs font-medium text-text-primary">{name}</span>
         <span
           className={`rounded-sm px-1.5 py-0.5 text-[10px] ${
             referenced
@@ -179,33 +182,56 @@ function VariableField({
         >
           {referenced ? t('variables.referenced') : t('variables.unused')}
         </span>
-        <button
-          type="button"
-          onClick={onDelete}
-          disabled={deleting}
-          title={t('variables.delete')}
-          className="ml-auto rounded-sm p-1 text-text-tertiary hover:bg-error-bg hover:text-error-text cursor-pointer"
-        >
-          <Trash2 size={14} />
-        </button>
+        <div className="ml-auto flex items-center gap-1">
+          {!editing && (
+            <button
+              type="button"
+              onClick={() => setEditing(true)}
+              title={t('actions.edit')}
+              className="rounded-sm p-1 text-text-tertiary hover:bg-hover-bg hover:text-text-primary cursor-pointer"
+            >
+              <Pencil size={14} />
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onDelete}
+            disabled={deleting}
+            title={t('variables.delete')}
+            className="rounded-sm p-1 text-text-tertiary hover:bg-error-bg hover:text-error-text cursor-pointer"
+          >
+            <Trash2 size={14} />
+          </button>
+        </div>
       </div>
-      <div className="relative">
-        <input
-          id={`var-${name}`}
-          name={name}
-          type={show ? 'text' : 'password'}
-          defaultValue={defaultValue}
-          autoComplete="off"
-          className="w-full rounded-sm border border-border-tertiary bg-bg-tertiary px-3 py-2 pr-10 font-mono text-sm text-text-primary"
-        />
-        <button
-          type="button"
-          onClick={() => setShow((v) => !v)}
-          className="absolute right-2 top-1/2 -translate-y-1/2 text-text-tertiary hover:text-text-primary cursor-pointer"
-        >
-          {show ? <EyeOff size={14} /> : <Eye size={14} />}
-        </button>
-      </div>
+      {editing && (
+        <div className="mt-2 flex items-center gap-2">
+          <div className="relative min-w-0 flex-1">
+            <input
+              id={`var-${name}`}
+              name={name}
+              type={show ? 'text' : 'password'}
+              autoComplete="off"
+              autoFocus
+              className="w-full rounded-sm border border-border-tertiary bg-bg-tertiary px-3 py-2 pr-10 font-mono text-sm text-text-primary"
+            />
+            <button
+              type="button"
+              onClick={() => setShow((v) => !v)}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-text-tertiary hover:text-text-primary cursor-pointer"
+            >
+              {show ? <EyeOff size={14} /> : <Eye size={14} />}
+            </button>
+          </div>
+          <button
+            type="button"
+            onClick={stopEditing}
+            className="shrink-0 rounded-sm border border-border-tertiary px-2.5 py-2 text-xs text-text-secondary cursor-pointer hover:bg-hover-bg"
+          >
+            {t('actions.cancel')}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

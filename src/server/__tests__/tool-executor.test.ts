@@ -199,7 +199,7 @@ describe('CommandToolExecutor', () => {
         const proc = new EventEmitter() as any;
         proc.stdout = { on: (_: string, cb: (d: Buffer) => void) => cb(Buffer.from('hello\n')) };
         proc.stderr = { on: () => {} };
-        queueMicrotask(() => proc.emit('exit', 0));
+        queueMicrotask(() => proc.emit('close', 0));
         return proc;
       }) as typeof childProcess.spawn);
 
@@ -317,6 +317,32 @@ describe('CommandToolExecutor', () => {
       });
       expect(result.success).toBe(true);
       expect(result.result).toBe("it's a; test");
+    });
+  });
+
+  describe('shell argv0 plus placeholders', () => {
+    it('rejects a template whose program is sh and whose args contain {msg}', async () => {
+      const def: ToolCommandDefinition = {
+        run: {
+          cmd: 'sh -c "echo {msg}"',
+          args: [{ name: 'msg', type: 'string', required: true }],
+        },
+      };
+      const result = await executor.execute('shell-placeholder', def, { msg: 'hi' });
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/shell/i);
+    });
+
+    it('still runs echo {msg} when argv0 is not a shell', async () => {
+      const def: ToolCommandDefinition = {
+        run: {
+          cmd: 'echo {msg}',
+          args: [{ name: 'msg', type: 'string', required: true }],
+        },
+      };
+      const result = await executor.execute('echo-placeholder', def, { msg: 'ok' });
+      expect(result.success).toBe(true);
+      expect(result.result?.trim()).toBe('ok');
     });
   });
 });

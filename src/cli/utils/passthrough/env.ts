@@ -4,7 +4,12 @@ import { resolveProviders } from '../../../shared/providers/resolve';
 import { loadSettings, getDatabasePath } from '../../../shared/config';
 import { CapaDatabase } from '../../../db/database';
 import type { Capabilities } from '../../../types/capabilities';
+import {
+  resolveSecretValueRecord,
+  type SecretValue,
+} from '../../../shared/secret-value';
 
+/** Expand `${NAME}` placeholders from process.env (passthrough only). */
 export function expandEnvInRecord(
   record: Record<string, string> | undefined,
 ): Record<string, string> | undefined {
@@ -16,6 +21,18 @@ export function expandEnvInRecord(
     });
   }
   return out;
+}
+
+/**
+ * Resolve on-demand secret sources then expand `${OS_ENV}` for passthrough writes.
+ */
+export async function expandSecretRecord(
+  record: Record<string, SecretValue> | undefined,
+  projectPath: string,
+): Promise<Record<string, string> | undefined> {
+  if (!record) return undefined;
+  const resolved = await resolveSecretValueRecord(record, { projectPath });
+  return expandEnvInRecord(resolved);
 }
 
 export async function loadEnvFileOptional(envFile: string | boolean | undefined): Promise<void> {

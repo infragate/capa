@@ -19,3 +19,23 @@ export class MCPOAuthDisconnectedError extends Error {
 		this.name = "MCPOAuthDisconnectedError";
 	}
 }
+
+/** Thrown when a connect/list/execute is attempted on a server the user has not enabled. */
+export class MCPServerDisabledError extends Error {
+	constructor(public readonly serverId: string) {
+		super(
+			`MCP server "${serverId}" is off. Enable it in the project UI to use its tools.`,
+		);
+		this.name = "MCPServerDisabledError";
+	}
+}
+
+/** Thrown when a stdio MCP launch is not on the project allowlist. */
+export class MCPStdioUntrustedError extends Error {
+	constructor(public readonly serverId: string) {
+		super(
+			`Cannot start stdio MCP server "${serverId}": launch command is not approved for this project.`,
+		);
+		this.name = "MCPStdioUntrustedError";
+	}
+}

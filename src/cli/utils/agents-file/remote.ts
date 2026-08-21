@@ -29,6 +29,15 @@ export interface RepoFetchContext {
   authFetch?: AuthenticatedFetch;
   getRepoSnapshot?: RepoSnapshotResolver;
   noCache?: boolean;
+  /** Suppress CLI progress lines (server / quiet callers). */
+  quiet?: boolean;
+  /** When set, called instead of exiting the process on a blocked phrase. */
+  onBlockedPhrase?: (sourceLabel: string, phrase: string) => void;
+  /**
+   * Wrap shadow sync: always re-render managed instruction files.
+   * When false (default), skip existing files that have no capa agent markers.
+   */
+  forceMaterialize?: boolean;
 }
 
 /**

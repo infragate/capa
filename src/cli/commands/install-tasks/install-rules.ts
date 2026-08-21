@@ -16,6 +16,8 @@ import {
 } from '../../../shared/skill-security';
 import type { InstallCtx } from './context';
 import { getRepoSnapshot } from './helpers/repo-snapshot';
+import { materialInstallProviders } from './helpers/install-providers';
+import { finishInstallBatch, recordInstallFailure } from './install-error-policy';
 
 /** Dependencies needed to resolve a rule's body content. */
 export interface ResolveRuleBodyDeps {
@@ -83,43 +85,68 @@ export function installRulesTask(): Task<InstallCtx> {
       const repoFetchAuth = createAuthenticatedFetch(ctx.db);
       const snapshotResolver: RepoSnapshotResolver = (platform, repoPath, auth, opts) =>
         getRepoSnapshot(platform, repoPath, auth, opts);
-      const providers = ctx.capabilitiesToUse.providers ?? ctx.resolvedProviders;
+      const providers = materialInstallProviders(ctx);
       ctx.ruleBodies = new Map();
 
       const totalRules = currentRules.length;
+      const failedBefore = ctx.failed;
+      const installedRules: Rule[] = [];
+
       for (let i = 0; i < totalRules; i++) {
         const rule = currentRules[i];
         task.output = `[${i + 1}/${totalRules}] ${rule.id}`;
 
-        let body = await resolveRuleBody(rule, {
-          capabilitiesFilePath: ctx.capabilitiesFile.path,
-          authFetch: repoFetchAuth,
-          getRepoSnapshot: snapshotResolver,
-          noCache: ctx.noCache,
-        });
-        const security = ctx.capabilitiesToUse.options?.security;
-        if (isBlockedPhrasesEnabled(security)) {
-          const blockedPhrases = loadBlockedPhrases(security, ctx.capabilitiesFile.path);
-          const check = checkBlockedPhrases(body, blockedPhrases);
-          if (check.blocked) {
-            reportBlockedPhraseAndExit(rule.id, `rule:${rule.id}`, check.phrase!);
+        try {
+          let body = await resolveRuleBody(rule, {
+            capabilitiesFilePath: ctx.capabilitiesFile.path,
+            authFetch: repoFetchAuth,
+            getRepoSnapshot: snapshotResolver,
+            noCache: ctx.noCache,
+          });
+          const security = ctx.capabilitiesToUse.options?.security;
+          if (isBlockedPhrasesEnabled(security)) {
+            const blockedPhrases = loadBlockedPhrases(security, ctx.capabilitiesFile.path);
+            const check = checkBlockedPhrases(body, blockedPhrases);
+            if (check.blocked) {
+              reportBlockedPhraseAndExit(rule.id, `rule:${rule.id}`, check.phrase!);
+            }
           }
-        }
-        if (isCharacterSanitizationEnabled(security)) {
-          const allowedChars = getAllowedCharacters(security);
-          if (allowedChars !== null) {
-            body = sanitizeContent(body, allowedChars);
+          if (isCharacterSanitizationEnabled(security)) {
+            const allowedChars = getAllowedCharacters(security);
+            if (allowedChars !== null) {
+              body = sanitizeContent(body, allowedChars);
+            }
           }
+          ctx.ruleBodies.set(rule.id, body);
+          installedRules.push(rule);
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err);
+          recordInstallFailure(ctx, `Rule "${rule.id}" failed: ${message}`);
         }
-        ctx.ruleBodies.set(rule.id, body);
+      }
+
+      const failedInTask = ctx.failed - failedBefore;
+      finishInstallBatch(
+        ctx,
+        failedInTask,
+        `${failedInTask} of ${totalRules} rule(s) failed to install.`,
+      );
+      if (installedRules.length === 0) {
+        if (failedInTask > 0) {
+          task.title = `Installing rules — ${failedInTask} of ${totalRules} failed`;
+        }
+        return;
       }
 
       task.output = 'writing files…';
-      installRules(ctx.projectPath, currentRules, providers, ctx.ruleBodies, {
+      installRules(ctx.projectPath, installedRules, providers, ctx.ruleBodies!, {
         onFileWritten: (filePath) => ctx.db.addManagedFile(ctx.projectId, filePath),
       });
-      ctx.added += currentRules.length;
-      task.title = `Installed ${totalRules} rule${totalRules === 1 ? '' : 's'}`;
+      ctx.added += installedRules.length;
+      task.title =
+        failedInTask > 0
+          ? `Installed ${installedRules.length} of ${totalRules} rule${totalRules === 1 ? '' : 's'}`
+          : `Installed ${installedRules.length} rule${installedRules.length === 1 ? '' : 's'}`;
     },
   };
 }

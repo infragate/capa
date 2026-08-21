@@ -1,18 +1,34 @@
 import type { CapaDatabase } from "../db/database";
+import {
+	normalizeCapabilities,
+	parseCapabilitiesFile,
+} from "../shared/capabilities";
 import { logger } from "../shared/logger";
 import { detectCapabilitiesFile } from "../shared/paths";
+import { trustStdioServers } from "../shared/stdio-allowlist";
 import { projectUiUrl } from "../shared/ui-urls";
 import { extractAllVariables } from "../shared/variable-resolver";
 import type { Capabilities } from "../types/capabilities";
 import type { OAuth2Config } from "../types/oauth";
 import type { CapabilitiesFileWatcher } from "./capabilities-watcher";
+import { matchRoute } from "./match-route";
 import type { CapaMCPServer, ValidationProgressEvent } from "./mcp-handler";
+import {
+	type McpServerStateManager,
+	syncProjectServerEnablement,
+} from "./mcp-server-state";
 import { OAuth2Manager } from "./oauth-manager";
+import {
+	type OAuth2ServerEntry,
+	serverHasExplicitAuthHeader,
+	syncServerOAuth2Requirement,
+} from "./oauth-server-sync";
 import {
 	type EffectiveCapsCacheEntry,
 	loadEffectiveCapabilities,
 } from "./resolve-effective-capabilities";
 import type { SessionManager } from "./session-manager";
+import { syncProjectManagedArtifactsAndWrapShadows } from "./sync-project-artifacts";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
@@ -30,6 +46,81 @@ export interface ConfigureRouteDeps {
 		servers: Capabilities["servers"],
 		previousServers?: Capabilities["servers"],
 	) => void | Promise<void>;
+	mcpServerState?: McpServerStateManager;
+	/** Notify live UI clients after server enablement changes. */
+	notifyProjectChanged?: (projectId: string) => void;
+}
+
+async function applyProjectServerEnablement(
+	deps: ConfigureRouteDeps,
+	projectId: string,
+	servers: Capabilities["servers"],
+	previousServers: Capabilities["servers"] | undefined,
+): Promise<void> {
+	if (!deps.mcpServerState) return;
+	syncProjectServerEnablement(
+		deps.mcpServerState,
+		projectId,
+		servers,
+		previousServers,
+	);
+	const mcpServer = deps.getOrCreateMCPServer(projectId);
+	if (mcpServer) {
+		await mcpServer.disconnectNonEnabledServers((serverId) =>
+			deps.mcpServerState!.isEnabled(projectId, serverId),
+		);
+	}
+	deps.notifyProjectChanged?.(projectId);
+}
+
+async function syncManagedArtifactsForProject(
+	deps: ConfigureRouteDeps,
+	projectId: string,
+	capabilitiesToUse: Capabilities,
+): Promise<void> {
+	const apiLogger = logger.child("CapaServer").child("API");
+	const project = deps.db.getProject(projectId);
+	if (!project) return;
+
+	const file = await detectCapabilitiesFile(project.path);
+	if (!file) return;
+
+	const artifacts = await syncProjectManagedArtifactsAndWrapShadows({
+		projectPath: project.path,
+		projectId,
+		capabilitiesFilePath: file.path,
+		capabilities: capabilitiesToUse,
+		db: deps.db,
+		serverOrigin: deps.uiOrigin(),
+	});
+	for (const w of [
+		...artifacts.hooks.warnings,
+		...artifacts.rules.warnings,
+		...artifacts.agents.warnings,
+		...artifacts.subagents.warnings,
+	]) {
+		apiLogger.warn(w);
+	}
+	if (artifacts.hooks.installed > 0 || artifacts.hooks.removed > 0) {
+		apiLogger.info(
+			`Hooks synced (installed=${artifacts.hooks.installed}, removed=${artifacts.hooks.removed})`,
+		);
+	}
+	if (artifacts.rules.installed > 0 || artifacts.rules.removed > 0) {
+		apiLogger.info(
+			`Rules synced (installed=${artifacts.rules.installed}, removed=${artifacts.rules.removed})`,
+		);
+	}
+	if (artifacts.agents.installed > 0 || artifacts.agents.removed > 0) {
+		apiLogger.info(
+			`Agent instructions synced (installed=${artifacts.agents.installed}, removed=${artifacts.agents.removed})`,
+		);
+	}
+	if (artifacts.subagents.installed > 0 || artifacts.subagents.removed > 0) {
+		apiLogger.info(
+			`Sub-agents synced (installed=${artifacts.subagents.installed}, removed=${artifacts.subagents.removed})`,
+		);
+	}
 }
 
 /**
@@ -65,9 +156,24 @@ export async function applyProjectCapabilitiesOnly(
 		deps.effectiveCapsCache.delete(projectId);
 	}
 
+	const previousCapabilities =
+		deps.sessionManager.getProjectCapabilities(projectId);
 	deps.sessionManager.setProjectCapabilities(projectId, capabilitiesToUse);
 	if (project) {
 		void deps.capsWatcher.watchProject(projectId, project.path);
+	}
+
+	// UI capability writes (add/remove servers) use this light path instead of
+	// full configure — still auto-enable servers present in capabilities.
+	await applyProjectServerEnablement(
+		deps,
+		projectId,
+		capabilitiesToUse.servers,
+		previousCapabilities?.servers,
+	);
+
+	if (project) {
+		await syncManagedArtifactsForProject(deps, projectId, capabilitiesToUse);
 	}
 
 	apiLogger.success(
@@ -142,12 +248,7 @@ export async function runProjectConfigure(
 	// -- OAuth2 detection (parallel) ------------------------------------
 	const oauth2Candidates = capabilitiesToUse.servers.filter((server) => {
 		if (!server.def.url) return false;
-		const hasExplicitAuth =
-			server.def.headers &&
-			Object.keys(server.def.headers).some(
-				(k) => k.toLowerCase() === "authorization",
-			);
-		if (hasExplicitAuth) {
+		if (serverHasExplicitAuthHeader(server)) {
 			apiLogger.debug(
 				`Skipping OAuth2 detection for ${server.id} (explicit auth header configured)`,
 			);
@@ -165,74 +266,28 @@ export async function runProjectConfigure(
 	});
 
 	let oauth2Done = 0;
+	let oauth2CapabilitiesChanged = false;
 	const oauth2Results = await Promise.all(
 		oauth2Candidates.map(async (server) => {
-			const existingOAuth = server.def.oauth2;
-			let entry: {
-				serverId: string;
-				serverUrl: string;
-				displayName: string;
-				isConnected: boolean;
-			} | null = null;
+			let entry: OAuth2ServerEntry | null = null;
 			try {
 				apiLogger.debug(`Checking server: ${server.id}`);
-				const oauth2Config = await deps.oauth2Manager.detectOAuth2Requirement(
-					server.def.url!,
-					{
-						tlsSkipVerify: server.def.tlsSkipVerify,
-					},
+				const sync = await syncServerOAuth2Requirement(
+					projectId,
+					server,
+					deps.oauth2Manager,
 				);
-				if (oauth2Config) {
-					apiLogger.debug(`OAuth2 required for ${server.id}`);
-					let isConnected = deps.oauth2Manager.isServerConnected(
-						projectId,
-						server.id,
-					);
-
-					if (isConnected) {
-						const accessToken = await deps.oauth2Manager.getAccessToken(
-							projectId,
-							server.id,
-							oauth2Config,
-						);
-						isConnected = !!accessToken;
-						if (!isConnected) {
-							apiLogger.warn(`OAuth2 token invalid/expired for ${server.id}`);
-						}
-					}
-
-					const merged: any = { ...(existingOAuth ?? {}), ...oauth2Config };
-					const embeddedClientId =
-						(existingOAuth as any)?.client_id ??
-						(existingOAuth as any)?.clientId ??
-						(existingOAuth as any)?.CLIENT_ID ??
-						(existingOAuth as any)?.oauth?.clientId ??
-						(existingOAuth as any)?.oauth?.client_id;
-					if (embeddedClientId) merged.client_id = embeddedClientId;
-					const embeddedCallbackPort =
-						(existingOAuth as any)?.callback_port ??
-						(existingOAuth as any)?.callbackPort ??
-						(existingOAuth as any)?.CALLBACK_PORT;
-					if (
-						typeof embeddedCallbackPort === "number" &&
-						embeddedCallbackPort > 0
-					) {
-						merged.callback_port = embeddedCallbackPort;
-					} else if (typeof embeddedCallbackPort === "string") {
-						const parsed = Number(embeddedCallbackPort);
-						if (Number.isFinite(parsed) && parsed > 0)
-							merged.callback_port = parsed;
-					}
+				if (sync.changed) oauth2CapabilitiesChanged = true;
+				entry = sync.entry;
+				if (entry) {
 					apiLogger.debug(
-						`OAuth2 merged for ${server.id}: client_id=${merged.client_id ? "set" : "missing"} callback_port=${merged.callback_port ?? "missing"} registrationEndpoint=${merged.registrationEndpoint ? "set" : "missing"}`,
+						`OAuth2 required for ${server.id} (connected=${entry.isConnected})`,
 					);
-					server.def.oauth2 = merged;
-					entry = {
-						serverId: server.id,
-						serverUrl: server.def.url!,
-						displayName: server.displayName ?? server.id,
-						isConnected,
-					};
+					if (!entry.isConnected) {
+						apiLogger.warn(`OAuth2 token invalid/expired for ${server.id}`);
+					}
+				} else if (sync.changed) {
+					apiLogger.debug(`OAuth2 no longer required for ${server.id}`);
 				}
 			} catch (error: any) {
 				apiLogger.warn(
@@ -252,10 +307,10 @@ export async function runProjectConfigure(
 		}),
 	);
 	const oauth2Servers = oauth2Results.filter(
-		(e): e is NonNullable<typeof e> => e !== null,
+		(e): e is OAuth2ServerEntry => e !== null,
 	);
 
-	if (oauth2Servers.length > 0) {
+	if (oauth2CapabilitiesChanged || oauth2Servers.length > 0) {
 		deps.sessionManager.setProjectCapabilities(projectId, capabilitiesToUse);
 	}
 
@@ -277,6 +332,8 @@ export async function runProjectConfigure(
 
 	// -- Tool validation (parallel per server) --------------------------
 	apiLogger.info("Validating tools...");
+	// Trust authored defs only — never resolve secrets into the allowlist fingerprint.
+	trustStdioServers(projectId, capabilitiesToUse.servers ?? []);
 	let toolValidationResults: any[] = [];
 	try {
 		const mcpServer = deps.getOrCreateMCPServer(projectId);
@@ -326,6 +383,19 @@ export async function runProjectConfigure(
 		apiLogger.failure(`Tool validation error: ${error.message}`);
 	}
 
+	// Install / UI / wrap configure: enable every server in capabilities and
+	// drop connections for servers removed from the project.
+	await applyProjectServerEnablement(
+		deps,
+		projectId,
+		capabilitiesToUse.servers,
+		previousCapabilities?.servers,
+	);
+
+	if (project) {
+		await syncManagedArtifactsForProject(deps, projectId, capabilitiesToUse);
+	}
+
 	if (missingVars.length > 0 || needsOAuth2Connection) {
 		apiLogger.warn(`Missing variables: ${missingVars.join(", ")}`);
 		if (needsOAuth2Connection) {
@@ -355,6 +425,30 @@ export async function runProjectConfigure(
 	};
 }
 
+async function capabilitiesForConfigure(
+	deps: ConfigureRouteDeps,
+	projectId: string,
+	requested: Capabilities,
+): Promise<Capabilities> {
+	const project = deps.db.getProject(projectId);
+	if (!project) {
+		throw new Error("Project not found");
+	}
+	const file = await detectCapabilitiesFile(project.path);
+	if (!file) {
+		throw new Error("No capabilities file on disk for this project");
+	}
+	const onDisk = await parseCapabilitiesFile(file.path, file.format);
+	// Wrap-install compatibility: overlay providers only. Stdio spawn config
+	// (cmd/args/cwd/env) always comes from the on-disk document.
+	// Ignore empty provider arrays — wrapping with no identity providers used
+	// to send `providers: []`, which blocked plugin MCP expansion.
+	if (requested.providers && requested.providers.length > 0) {
+		onDisk.providers = requested.providers;
+	}
+	return onDisk;
+}
+
 export async function handleProjectConfigure(
 	deps: ConfigureRouteDeps,
 	projectId: string,
@@ -365,11 +459,23 @@ export async function handleProjectConfigure(
 		.toLowerCase()
 		.includes("application/x-ndjson");
 
-	let capabilities: Capabilities;
+	let requested: unknown;
 	try {
-		capabilities = await request.json();
+		requested = await request.json();
 	} catch (error: any) {
 		apiLogger.failure(`Error parsing capabilities: ${error.message}`);
+		return new Response(JSON.stringify({ error: error.message }), {
+			status: 400,
+			headers: JSON_HEADERS,
+		});
+	}
+
+	let capabilities: Capabilities;
+	try {
+		const parsed = normalizeCapabilities(requested);
+		capabilities = await capabilitiesForConfigure(deps, projectId, parsed);
+	} catch (error: any) {
+		apiLogger.failure(`Error: ${error.message}`);
 		return new Response(JSON.stringify({ error: error.message }), {
 			status: 400,
 			headers: JSON_HEADERS,
@@ -460,4 +566,21 @@ export async function handleProjectConfigure(
 			"Cache-Control": "no-cache",
 		},
 	});
+}
+
+/**
+ * Dispatcher for `/api/projects/:id/configure`.
+ * Returns null if the path is not the configure route.
+ */
+export async function dispatchConfigure(
+	deps: ConfigureRouteDeps,
+	path: string,
+	method: string,
+	request: Request,
+): Promise<Response | null> {
+	const config = matchRoute(path, "/api/projects/:projectId/configure");
+	if (config && method === "POST") {
+		return handleProjectConfigure(deps, config.projectId, request);
+	}
+	return null;
 }

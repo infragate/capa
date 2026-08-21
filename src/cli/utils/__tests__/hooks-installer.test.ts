@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+import { createHash } from 'crypto';
 import {
   existsSync,
   mkdtempSync,
@@ -9,15 +10,18 @@ import {
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { CapaDatabase } from '../../../db/database';
-import { installHooks, pruneOrphanHooks, cleanHooks } from '../hooks-installer';
-import { LockfileBuilder } from '../../../shared/lockfile';
+import { installHooks, pruneOrphanHooks, cleanHooks } from '../hooks';
+import { emptyLockfile, LockfileBuilder } from '../../../shared/lockfile';
 import type { Hook } from '../../../types/hooks';
 import type { AuthenticatedFetch } from '../../../shared/authenticated-fetch';
 import type { GetSnapshotResult } from '../../../shared/cache';
 
-function makeAuthFetch(): AuthenticatedFetch {
+const REMOTE_HOOK_BODY = 'echo from-remote\n';
+const REMOTE_HOOK_SHA256 = createHash('sha256').update(REMOTE_HOOK_BODY, 'utf8').digest('hex');
+
+function makeAuthFetch(body = REMOTE_HOOK_BODY): AuthenticatedFetch {
   return {
-    fetch: async () => new Response('echo from-remote\n', { status: 200, headers: { 'Content-Type': 'text/plain' } }),
+    fetch: async () => new Response(body, { status: 200, headers: { 'Content-Type': 'text/plain' } }),
     hasAuth: () => false,
   } as unknown as AuthenticatedFetch;
 }
@@ -287,7 +291,7 @@ describe('hooks-installer (claude inline-config)', () => {
         {
           id: 'remote-hook',
           on: 'beforeShell',
-          source: { type: 'remote', url: 'https://example.com/hook.sh' },
+          source: { type: 'remote', url: 'https://8.8.8.8/hook.sh' },
         },
       ],
       providers: ['claude-code'],
@@ -301,8 +305,105 @@ describe('hooks-installer (claude inline-config)', () => {
     expect(lock.hooks).toHaveLength(1);
     expect(lock.hooks[0].id).toBe('remote-hook');
     expect(lock.hooks[0].source).toBe('remote');
-    expect(lock.hooks[0].url).toBe('https://example.com/hook.sh');
-    expect(lock.hooks[0].bodySha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(lock.hooks[0].url).toBe('https://8.8.8.8/hook.sh');
+    expect(lock.hooks[0].bodySha256).toBe(REMOTE_HOOK_SHA256);
+  });
+
+  it('rejects HTTP remote hook URLs at install time', async () => {
+    await expect(
+      installHooks({
+        projectPath,
+        projectId,
+        capabilitiesFilePath: join(projectPath, 'capabilities.yaml'),
+        hooks: [
+          {
+            id: 'http-hook',
+            on: 'beforeShell',
+            source: { type: 'remote', url: 'http://example.com/hook.sh' },
+          },
+        ],
+        providers: ['claude-code'],
+        db,
+        authFetch: makeAuthFetch(),
+        getRepoSnapshot: stubGetRepoSnapshot,
+      }),
+    ).rejects.toThrow(/https/i);
+  });
+
+  it('rejects private and metadata HTTPS hook URLs at install time', async () => {
+    await expect(
+      installHooks({
+        projectPath,
+        projectId,
+        capabilitiesFilePath: join(projectPath, 'capabilities.yaml'),
+        hooks: [
+          {
+            id: 'ssrf-hook',
+            on: 'beforeShell',
+            source: { type: 'remote', url: 'https://10.0.0.9/hook.sh' },
+          },
+        ],
+        providers: ['claude-code'],
+        db,
+        authFetch: makeAuthFetch(),
+        getRepoSnapshot: stubGetRepoSnapshot,
+      }),
+    ).rejects.toThrow(/not allowed/i);
+
+    await expect(
+      installHooks({
+        projectPath,
+        projectId,
+        capabilitiesFilePath: join(projectPath, 'capabilities.yaml'),
+        hooks: [
+          {
+            id: 'metadata-hook',
+            on: 'beforeShell',
+            source: { type: 'remote', url: 'https://169.254.169.254/latest/meta-data/' },
+          },
+        ],
+        providers: ['claude-code'],
+        db,
+        authFetch: makeAuthFetch(),
+        getRepoSnapshot: stubGetRepoSnapshot,
+      }),
+    ).rejects.toThrow(/not allowed/i);
+  });
+
+  it('fails install when a pinned bodySha256 does not match the fetched body', async () => {
+    const previous = emptyLockfile();
+    previous.hooks.push({
+      id: 'remote-hook',
+      source: 'remote',
+      repo: null,
+      url: 'https://8.8.8.8/hook.sh',
+      requestedVersion: null,
+      requestedRef: null,
+      resolvedRef: null,
+      resolvedVersion: null,
+      bodySha256: createHash('sha256').update('original-body\n', 'utf8').digest('hex'),
+    });
+    const lockBuilder = new LockfileBuilder(previous);
+
+    await expect(
+      installHooks({
+        projectPath,
+        projectId,
+        capabilitiesFilePath: join(projectPath, 'capabilities.yaml'),
+        hooks: [
+          {
+            id: 'remote-hook',
+            on: 'beforeShell',
+            source: { type: 'remote', url: 'https://8.8.8.8/hook.sh' },
+          },
+        ],
+        providers: ['claude-code'],
+        db,
+        authFetch: makeAuthFetch('echo mutated\n'),
+        getRepoSnapshot: stubGetRepoSnapshot,
+        lockBuilder,
+      }),
+    ).rejects.toThrow(/content changed upstream/i);
   });
 });
 
@@ -561,7 +662,7 @@ describe('hooks-installer — pruneOrphanHooks / cleanHooks', () => {
           id: 'shared-remote',
           on: 'beforeShell',
           type: 'command',
-          source: { type: 'remote', url: 'https://example.com/hook.sh' },
+          source: { type: 'remote', url: 'https://8.8.8.8/hook.sh' },
         },
       ],
       providers: ['cursor', 'claude-code'],

@@ -13,6 +13,7 @@ import {
 } from '../capabilities';
 import { logger } from '../logger';
 import { mkdtempSync, rmSync } from 'fs';
+import { writeFile } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import type { Capabilities } from '../../types/capabilities';
@@ -128,6 +129,41 @@ describe('capabilities', () => {
       const result = normalizeCapabilities(capabilities);
       expect(result).toEqual(capabilities);
     });
+    it('normalizes legacy oauth2 aliases on servers at load', () => {
+      const result = normalizeCapabilities({
+        skills: [],
+        servers: [
+          {
+            id: 'slack',
+            type: 'mcp',
+            def: {
+              url: 'https://mcp.slack.com/mcp',
+              oauth2: {
+                client_id: 'legacy-app',
+                callback_port: 3118,
+                authorizationUrl: 'https://auth.example/authorize',
+                tokenUrl: 'https://auth.example/token',
+              },
+            },
+          },
+        ],
+        tools: [],
+      });
+      expect(result.servers[0].def.oauth2).toEqual({
+        clientId: 'legacy-app',
+        callbackPort: 3118,
+        authorizationEndpoint: 'https://auth.example/authorize',
+        tokenEndpoint: 'https://auth.example/token',
+      });
+    });
+
+    it('rejects MCP servers missing both url and cmd', () => {
+      expect(() =>
+        normalizeCapabilities({
+          servers: [{ id: 'bad', type: 'mcp', def: {} }],
+        }),
+      ).toThrow(/url or cmd/);
+    });
   });
 
   describe('createDefaultCapabilities', () => {
@@ -200,6 +236,47 @@ describe('capabilities', () => {
         rules: [],
         subagents: [],
         hooks: [],
+      });
+    });
+
+    it('should parse MCP env/headers secret source objects', async () => {
+      const filePath = join(tempDir, 'secret-sources.yaml');
+      await writeFile(
+        filePath,
+        `providers: [cursor]
+skills: []
+tools: []
+servers:
+  - id: brave
+    type: mcp
+    def:
+      cmd: npx
+      env:
+        LITERAL: ${'${BraveApiKey}'}
+        FROM_ENV:
+          fromEnv: BRAVE_API_KEY
+        FROM_CMD:
+          fromCommand: op read "op://Vault/Item/credential"
+        FROM_FILE:
+          fromFile: ./secrets/token
+  - id: remote
+    type: mcp
+    def:
+      url: https://mcp.example.com
+      headers:
+        Authorization:
+          fromEnv: MCP_BEARER
+`,
+      );
+      const parsed = await parseCapabilitiesFile(filePath, 'yaml');
+      expect(parsed.servers[0].def.env).toEqual({
+        LITERAL: '${BraveApiKey}',
+        FROM_ENV: { fromEnv: 'BRAVE_API_KEY' },
+        FROM_CMD: { fromCommand: 'op read "op://Vault/Item/credential"' },
+        FROM_FILE: { fromFile: './secrets/token' },
+      });
+      expect(parsed.servers[1].def.headers).toEqual({
+        Authorization: { fromEnv: 'MCP_BEARER' },
       });
     });
 

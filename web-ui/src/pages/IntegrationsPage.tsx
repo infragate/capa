@@ -5,10 +5,11 @@ import { TopBar } from '../components/layout/TopBar';
 import { Page } from '../components/layout/Page';
 import { Alert } from '../components/common/Alert';
 import { Spinner } from '../components/common/Spinner';
+import { FaGithub, FaGitlab } from 'react-icons/fa';
 import { GitHubCard } from '../features/integrations/components/GitHubCard';
 import { GitLabCard } from '../features/integrations/components/GitLabCard';
-import { GitHubEnterpriseCard } from '../features/integrations/components/GitHubEnterpriseCard';
-import { GitLabSelfManagedCard } from '../features/integrations/components/GitLabSelfManagedCard';
+import { HostTokenIntegrationCard } from '../features/integrations/components/HostTokenIntegrationCard';
+import { integrationsApi } from '../features/integrations/api';
 import { useIntegrations, useDisconnectIntegration } from '../features/integrations/hooks';
 import { safeDecode } from '../lib/utils';
 
@@ -103,17 +104,25 @@ export function IntegrationsPage() {
                 {t('selfManaged.description')}
               </p>
               <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-4">
-                <GitHubEnterpriseCard
+                <HostTokenIntegrationCard
                   integration={findIntegration('github-enterprise')}
                   onMessage={handleMessage}
                   onDisconnect={handleDisconnect}
                   onRefresh={handleRefresh}
+                  platform="github-enterprise"
+                  i18nKey="githubEnterprise"
+                  icon={<FaGithub className="h-8 w-8" />}
+                  connectFn={integrationsApi.connectGitHubEnterprise}
                 />
-                <GitLabSelfManagedCard
+                <HostTokenIntegrationCard
                   integration={findIntegration('gitlab-self-managed')}
                   onMessage={handleMessage}
                   onDisconnect={handleDisconnect}
                   onRefresh={handleRefresh}
+                  platform="gitlab-self-managed"
+                  i18nKey="gitlabSelfManaged"
+                  icon={<FaGitlab className="h-8 w-8 text-[#fc6d26]" />}
+                  connectFn={integrationsApi.connectGitLabSelfManaged}
                 />
               </div>
             </div>

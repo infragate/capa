@@ -1,0 +1,37 @@
+name: Qlty Smells
+
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [main, develop]
+
+concurrency:
+  group: qlty-smells-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smells:
+    name: Code Smells
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          # Full history so --upstream can diff against the base branch / parent commit.
+          fetch-depth: 0
+
+      - name: Install Qlty CLI
+        uses: qltysh/qlty-action/install@v2.3.0
+
+      - name: Check for new code smells
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE_REF="origin/${{ github.base_ref }}"
+            echo "Comparing smells against $BASE_REF"
+            qlty smells --upstream "$BASE_REF"
+          else
+            echo "Comparing smells against HEAD^"
+            qlty smells --upstream HEAD^
+          fi

@@ -34,6 +34,8 @@ interface ActivitySpanRowProps {
   fresh?: boolean;
   /** Linked from a file selection in the run file tree. */
   fileLinked?: boolean;
+  /** Linked from a command selection in the run commands list. */
+  commandLinked?: boolean;
 }
 
 export function ActivitySpanRow({
@@ -45,6 +47,7 @@ export function ActivitySpanRow({
   nestedPayload = false,
   fresh = false,
   fileLinked = false,
+  commandLinked = false,
 }: ActivitySpanRowProps) {
   const { t } = useTranslation('projects');
   const [open, setOpen] = useState(false);
@@ -71,9 +74,9 @@ export function ActivitySpanRow({
           'flex w-full items-center gap-2.5 px-3 py-1.5 text-left cursor-pointer',
           'transition-colors duration-100',
           fresh && 'activity-span-fresh',
-          fileLinked &&
+          (fileLinked || commandLinked) &&
             'ring-1 ring-inset ring-accent-primary/25',
-          fileLinked && !open && 'bg-accent-primary/[0.08]',
+          (fileLinked || commandLinked) && !open && 'bg-accent-primary/[0.08]',
           errored && 'bg-error-bg hover:bg-error-bg',
           capa
             ? cn(
@@ -107,7 +110,10 @@ export function ActivitySpanRow({
             {call.tool_name}
           </span>
           {summary ? (
-            <span className="ml-2 font-normal text-text-tertiary" title={summary}>
+            <span
+              className="ml-2 select-text font-normal text-text-tertiary"
+              title={summary}
+            >
               {summary}
             </span>
           ) : null}

@@ -9,7 +9,12 @@ import {
 	type ToolCallKind,
 	type ToolCallStatus,
 } from "../types/database";
-import { type ProjectRouteDeps } from "./project-routes";
+import { matchRoute } from "./match-route";
+import {
+	handleGetProjectActivity,
+	handleGetProjectActivityStats,
+	type ProjectRouteDeps,
+} from "./project-routes";
 import type { ToolCallTracer } from "./tool-call-tracer";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
@@ -236,4 +241,55 @@ export async function handleSyncActivityHooks(
 			},
 		);
 	}
+}
+
+export type ActivityRouteDeps = ProjectRouteDeps & {
+	toolCallTracer: ToolCallTracer;
+};
+
+/**
+ * Dispatcher for `/api/projects/:id/activity…` routes.
+ * Returns null if the path is not an activity route.
+ */
+export async function dispatchActivity(
+	deps: ActivityRouteDeps,
+	path: string,
+	method: string,
+	request: Request,
+): Promise<Response | null> {
+	const url = new URL(request.url);
+
+	const activity = matchRoute(path, "/api/projects/:projectId/activity");
+	if (activity && method === "GET") {
+		return handleGetProjectActivity(
+			deps,
+			activity.projectId,
+			url.searchParams.get("limit"),
+			url.searchParams.get("before"),
+			url.searchParams.get("beforeId"),
+			url.searchParams.get("sessionId"),
+			url.searchParams.get("conversationId"),
+			url.searchParams.get("generationId"),
+		);
+	}
+
+	const stats = matchRoute(path, "/api/projects/:projectId/activity/stats");
+	if (stats && method === "GET") {
+		return handleGetProjectActivityStats(deps, stats.projectId);
+	}
+
+	const hooksSync = matchRoute(
+		path,
+		"/api/projects/:projectId/activity/hooks/sync",
+	);
+	if (hooksSync && method === "POST") {
+		return handleSyncActivityHooks(deps, hooksSync.projectId);
+	}
+
+	const events = matchRoute(path, "/api/projects/:projectId/activity/events");
+	if (events && method === "POST") {
+		return handlePostProjectActivityEvent(deps, events.projectId, request);
+	}
+
+	return null;
 }

@@ -154,6 +154,20 @@ describe('CapaDatabase — registry operations', () => {
     expect(r.status).toBe('installed');
   });
 
+  it('persists contentSha256 and preserves it on partial upsert', () => {
+    const hash = 'a'.repeat(64);
+    db.upsertRegistry({
+      slug: 's1',
+      type: 'url',
+      source: 'https://example.com/adapter.ts',
+      status: 'pending',
+      contentSha256: hash,
+    });
+    expect(db.getRegistry('s1')!.contentSha256).toBe(hash);
+    db.upsertRegistry({ slug: 's1', type: 'url', source: 'https://example.com/adapter.ts' });
+    expect(db.getRegistry('s1')!.contentSha256).toBe(hash);
+  });
+
   it('list returns registries in creation order', async () => {
     db.upsertRegistry({ slug: 'a', type: 'github', source: 'x/y@a' });
     await Bun.sleep(2);

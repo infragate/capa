@@ -18,6 +18,7 @@ import {
   registryListCommand,
   registryPathCommand,
   registryAddCommand,
+  registryApproveCommand,
   registryRemoveCommand,
   registryRefreshCommand,
   registrySetEnabledCommand,
@@ -74,7 +75,8 @@ if (process.argv[2] === '__server__') {
       .option('-q, --quiet', 'Suppress non-essential output')
       .option('-v, --verbose', 'Verbose output')
       .option('--no-color', 'Disable colored output')
-      .option('-y, --yes', 'Auto-accept all confirms');
+      .option('-y, --yes', 'Auto-accept all confirms')
+      .option('--headless', 'Headless environment: never launch a browser; print URLs to open manually');
 
     program.hook('preAction', () => {
       const opts = program.opts();
@@ -84,6 +86,7 @@ if (process.argv[2] === '__server__') {
         verbose: Boolean(opts.verbose),
         noColor: !opts.color,
         yes: Boolean(opts.yes),
+        headless: Boolean(opts.headless),
       });
     });
 
@@ -118,8 +121,14 @@ if (process.argv[2] === '__server__') {
       .option('--cmd <bin>', 'Server stdio command')
       .option('--arg <token>', 'Server stdio arg (repeatable)', collectRepeatable, [])
       .option('--env-var <KEY=VAL>', 'Server env var (repeatable)', collectRepeatable, [])
+      .option('--env-from-env <KEY=VAR>', 'Server env from process env (repeatable)', collectRepeatable, [])
+      .option('--env-from-command <KEY=CMD>', 'Server env from command stdout (repeatable)', collectRepeatable, [])
+      .option('--env-from-file <KEY=PATH>', 'Server env from file contents (repeatable)', collectRepeatable, [])
       .option('--url <url>', 'Remote MCP server URL')
       .option('--header <KEY=VAL>', 'Remote MCP header (repeatable)', collectRepeatable, [])
+      .option('--header-from-env <KEY=VAR>', 'Remote MCP header from process env (repeatable)', collectRepeatable, [])
+      .option('--header-from-command <KEY=CMD>', 'Remote MCP header from command stdout (repeatable)', collectRepeatable, [])
+      .option('--header-from-file <KEY=PATH>', 'Remote MCP header from file contents (repeatable)', collectRepeatable, [])
       .option('--cwd <path>', 'Server working directory')
       .option('--description <text>', 'Optional description')
       .option('--mcp-server <id>', 'Tool: MCP server reference (@id or id)')
@@ -156,8 +165,14 @@ if (process.argv[2] === '__server__') {
           arg: options.arg,
           // Commander --env is already used for .env file; server env uses --env-var
           env: options.envVar,
+          envFromEnv: options.envFromEnv,
+          envFromCommand: options.envFromCommand,
+          envFromFile: options.envFromFile,
           url: options.url,
           header: options.header,
+          headerFromEnv: options.headerFromEnv,
+          headerFromCommand: options.headerFromCommand,
+          headerFromFile: options.headerFromFile,
           cwd: options.cwd,
           description: options.description,
           mcpServer: options.mcpServer,
@@ -185,14 +200,18 @@ if (process.argv[2] === '__server__') {
       .option('-p, --provider <id>', 'Install for a single provider (e.g. "cursor", "claude-code")')
       .option('--no-cache', 'Bypass the on-disk cache and lockfile; re-resolve every remote source')
       .option('--passthrough', 'Write provider-native files from the capabilities file (no capa server/proxy)')
+      .option('--dry-run', 'Print the executable surface and exit without installing')
+      .option('-y, --yes', 'Skip confirmation (required in non-interactive / CI)')
       .action(async (options) => {
         // Commander inverts --no-* flags: `options.cache` is true by default and
         // false when --no-cache is passed. Convert to the explicit noCache flag.
+        if (options.yes) setFlags({ yes: true });
         await installCommand({
           envFile: options.env,
           provider: options.provider,
           noCache: options.cache === false,
           passthrough: options.passthrough === true,
+          dryRun: options.dryRun === true,
         });
       });
 
@@ -272,7 +291,9 @@ if (process.argv[2] === '__server__') {
     program
       .command('upgrade')
       .description('Upgrade capa to the latest version')
-      .action(async () => {
+      .option('-y, --yes', 'Skip confirmation (required in non-interactive / CI)')
+      .action(async (options: { yes?: boolean }) => {
+        if (options.yes) setFlags({ yes: true });
         await upgradeCommand();
       });
 
@@ -343,13 +364,16 @@ if (process.argv[2] === '__server__') {
 
     registryCmd
       .command('add <source> [slug]')
-      .description('Fetch a registry adapter from a git repo or HTTPS URL and install it')
+      .description(
+        'Add a registry adapter (git/HTTPS) or Claude marketplace (owner/repo) and install it',
+      )
       .option(
         '--type <type>',
         'Source type: github, gitlab, url, or claude-marketplace (auto-detected from source by default)',
       )
       .option('--no-cache', 'Bypass the on-disk repo cache when fetching')
-      .action(async (source: string, slug: string | undefined, opts: { type?: string; cache?: boolean }) => {
+      .option('-y, --yes', 'Skip confirmation (required in non-interactive / CI)')
+      .action(async (source: string, slug: string | undefined, opts: { type?: string; cache?: boolean; yes?: boolean }) => {
         let type: RegistrySourceType | undefined;
         if (opts.type) {
           if (
@@ -365,7 +389,15 @@ if (process.argv[2] === '__server__') {
           }
           type = opts.type;
         }
-        await registryAddCommand(source, slug, { type, noCache: opts.cache === false });
+        await registryAddCommand(source, slug, { type, noCache: opts.cache === false, yes: !!opts.yes });
+      });
+
+    registryCmd
+      .command('approve <slug>')
+      .description('Execute a pending staged registry adapter after reviewing it')
+      .option('-y, --yes', 'Skip confirmation (required in non-interactive / CI)')
+      .action(async (slug: string, opts: { yes?: boolean }) => {
+        await registryApproveCommand(slug, { yes: !!opts.yes });
       });
 
     registryCmd

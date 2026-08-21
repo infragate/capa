@@ -1,11 +1,14 @@
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Activity as ActivityIcon } from 'lucide-react';
 import { Spinner } from '../../../../components/common/Spinner';
 import { Alert } from '../../../../components/common/Alert';
-import { useProjectActivity, useProject } from '../../hooks';
+import { useProjectActivity } from '../../activityHooks';
+import { useProject } from '../../hooks';
 import { ActivityChart } from './ActivityChart';
 import { ActivityFeed } from './ActivityFeed';
 import { ActivityStatsBar } from './ActivityStats';
+import { ActivityTracesDialog, type ActivityTracesView } from './ActivitySessionDialog';
 
 interface ActivitySectionProps {
   projectId: string;
@@ -13,6 +16,7 @@ interface ActivitySectionProps {
 
 export function ActivitySection({ projectId }: ActivitySectionProps) {
   const { t } = useTranslation('projects');
+  const [tracesView, setTracesView] = useState<ActivityTracesView | null>(null);
   const {
     calls,
     stats,
@@ -55,14 +59,30 @@ export function ActivitySection({ projectId }: ActivitySectionProps) {
         </div>
       ) : (
         <ActivityFeed
+          projectId={projectId}
           calls={calls}
           hasMore={hasMore}
           loadingMore={loadingMore}
           onLoadMore={() => void loadMore()}
           live={live}
           projectPath={project?.path ?? null}
+          onViewConversation={(conversationId) =>
+            setTracesView({ kind: 'conversation', id: conversationId })
+          }
         />
       )}
+
+      <ActivityTracesDialog
+        projectId={projectId}
+        view={tracesView}
+        open={tracesView != null}
+        onOpenChange={(open) => {
+          if (!open) setTracesView(null);
+        }}
+        projectPath={project?.path ?? null}
+        feedCalls={calls}
+        live={live}
+      />
     </div>
   );
 }

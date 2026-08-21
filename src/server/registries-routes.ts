@@ -1,16 +1,19 @@
 import type { CapaDatabase } from "../db/database";
 import { createAuthenticatedFetch } from "../shared/authenticated-fetch";
+import type { logger } from "../shared/logger";
 import {
 	deriveSlug,
+	executeStagedRegistry,
 	fetchAdapterSource,
-	installRegistry,
 	isValidSlug,
 	removeInstalledAdapter,
+	stageRegistry,
 } from "../shared/registries/installer";
 import type { RegistryManager } from "../shared/registries/manager";
 import type { RegistrySourceType } from "../types/database";
-import type { RegistryManifest } from "../types/registry";
+import type { RegistryCapability, RegistryManifest } from "../types/registry";
 import { clientErrorMessage } from "./http-error";
+import { matchRoute } from "./match-route";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
@@ -40,6 +43,54 @@ function parseTypeQuery(value: string | null): RegistrySourceType | null {
 
 const TYPE_HELP = "github, gitlab, url, claude-marketplace";
 
+type RegistryInstallInput = {
+	slug: string;
+	type: RegistrySourceType;
+	source: string;
+};
+
+/** Stage adapter bytes, execute (import), persist as installed — web UI is explicit approval. */
+async function stageAndInstallRegistry(
+	db: CapaDatabase,
+	manager: RegistryManager,
+	input: RegistryInstallInput,
+	authFetch: ReturnType<typeof createAuthenticatedFetch>,
+	opts: { enabled?: boolean; noCache?: boolean } = {},
+) {
+	const result = await stageRegistry(input, authFetch, opts);
+	try {
+		await executeStagedRegistry(input.slug, result.contentSha256);
+	} catch (err: any) {
+		const message = clientErrorMessage(err);
+		db.upsertRegistry({
+			slug: input.slug,
+			type: input.type,
+			source: input.source,
+			status: "failed",
+			enabled: opts.enabled ?? true,
+			lastError: message,
+			resolvedRef: result.resolvedRef,
+			installedAt: null,
+			contentSha256: result.contentSha256,
+		});
+		await manager.reload().catch(() => {});
+		throw new Error(message);
+	}
+
+	const record = db.upsertRegistry({
+		slug: input.slug,
+		type: input.type,
+		source: input.source,
+		status: "installed",
+		enabled: opts.enabled ?? true,
+		lastError: null,
+		resolvedRef: result.resolvedRef,
+		installedAt: Date.now(),
+		contentSha256: result.contentSha256,
+	});
+	await manager.reload().catch(() => {});
+	return record;
+}
 
 export async function listRegistriesHandler(
 	db: CapaDatabase,
@@ -89,7 +140,10 @@ export async function createRegistryHandler(
 	try {
 		installSlug = body.slug?.trim() || deriveSlug(source, type);
 	} catch (err: any) {
-		return jsonError(`Cannot derive slug: ${clientErrorMessage(err, "invalid source")}`, 400);
+		return jsonError(
+			`Cannot derive slug: ${clientErrorMessage(err, "invalid source")}`,
+			400,
+		);
 	}
 	if (!isValidSlug(installSlug)) {
 		return jsonError(
@@ -113,22 +167,13 @@ export async function createRegistryHandler(
 			return jsonError(`Registry "${installSlug}" already exists.`, 409);
 		}
 
-		const result = await installRegistry(
+		const record = await stageAndInstallRegistry(
+			db,
+			manager,
 			{ slug: installSlug, type, source },
 			authFetch,
 		);
-		const record = db.upsertRegistry({
-			slug: installSlug,
-			type,
-			source,
-			status: "installed",
-			enabled: true,
-			lastError: null,
-			resolvedRef: result.resolvedRef,
-			installedAt: Date.now(),
-		});
-		await manager.reload().catch(() => {});
-		return jsonOk({ registry: record, manifest: result.manifest }, 201);
+		return jsonOk({ registry: record });
 	} catch (err: any) {
 		return jsonError(clientErrorMessage(err), 400);
 	}
@@ -198,22 +243,14 @@ export async function patchRegistryHandler(
 	if (needsReinstall) {
 		try {
 			const authFetch = createAuthenticatedFetch(db);
-			const result = await installRegistry(
+			const record = await stageAndInstallRegistry(
+				db,
+				manager,
 				{ slug, type: newType!, source: newSource },
 				authFetch,
+				{ enabled: hasEnabled ? body.enabled! : existing.enabled },
 			);
-			const record = db.upsertRegistry({
-				slug,
-				type: newType!,
-				source: newSource,
-				status: "installed",
-				enabled: hasEnabled ? body.enabled! : existing.enabled,
-				lastError: null,
-				resolvedRef: result.resolvedRef,
-				installedAt: Date.now(),
-			});
-			await manager.reload().catch(() => {});
-			return jsonOk({ registry: record, manifest: result.manifest });
+			return jsonOk({ registry: record });
 		} catch (err: any) {
 			const message = clientErrorMessage(err);
 			// Persist the new pointer so the user can fix and retry, but mark
@@ -251,22 +288,13 @@ export async function refreshRegistryHandler(
 	}
 	try {
 		const authFetch = createAuthenticatedFetch(db);
-		const result = await installRegistry(
+		const record = await stageAndInstallRegistry(
+			db,
+			manager,
 			{ slug: existing.slug, type: existing.type, source: existing.source },
 			authFetch,
 		);
-		const record = db.upsertRegistry({
-			slug: existing.slug,
-			type: existing.type,
-			source: existing.source,
-			status: "installed",
-			enabled: true,
-			lastError: null,
-			resolvedRef: result.resolvedRef,
-			installedAt: Date.now(),
-		});
-		await manager.reload().catch(() => {});
-		return jsonOk({ registry: record, manifest: result.manifest });
+		return jsonOk({ registry: record });
 	} catch (err: any) {
 		const message = clientErrorMessage(err);
 		db.setRegistryStatus(slug, "failed", message);
@@ -311,4 +339,125 @@ export async function previewRegistryHandler(
 	} catch (err: any) {
 		return jsonError(clientErrorMessage(err), 400);
 	}
+}
+
+export interface RegistriesRouteDeps {
+	db: CapaDatabase;
+	registryManager: RegistryManager;
+	logger: typeof logger;
+}
+
+export async function searchRegistryHandler(
+	deps: RegistriesRouteDeps,
+	registryId: string,
+	url: URL,
+): Promise<Response> {
+	const log = deps.logger.child("API");
+	log.info(`Registry search: ${registryId}`);
+	try {
+		const capability = (url.searchParams.get("capability") ??
+			"skills") as RegistryCapability;
+		const query = url.searchParams.get("q") ?? undefined;
+		const limit = url.searchParams.has("limit")
+			? Number(url.searchParams.get("limit"))
+			: undefined;
+		const cursor = url.searchParams.get("cursor") ?? undefined;
+
+		const result = await deps.registryManager.search(registryId, {
+			capability,
+			query,
+			limit,
+			cursor,
+		});
+		return jsonOk(result);
+	} catch (error: any) {
+		log.failure(`Registry search error: ${error.message}`);
+		const status = error.message.includes("not found") ? 404 : 502;
+		return new Response(
+			JSON.stringify({ error: error.message, registry: registryId }),
+			{ status, headers: JSON_HEADERS },
+		);
+	}
+}
+
+export async function viewRegistryHandler(
+	deps: RegistriesRouteDeps,
+	registryId: string,
+	itemId: string,
+	url: URL,
+): Promise<Response> {
+	const log = deps.logger.child("API");
+	log.info(`Registry view: ${registryId} / ${itemId}`);
+	try {
+		const capability = (url.searchParams.get("capability") ??
+			"skills") as RegistryCapability;
+		const detail = await deps.registryManager.view(registryId, {
+			capability,
+			id: itemId,
+		});
+		return jsonOk(detail);
+	} catch (error: any) {
+		log.failure(`Registry view error: ${error.message}`);
+		const status = error.message.includes("not found") ? 404 : 502;
+		return new Response(
+			JSON.stringify({ error: error.message, registry: registryId }),
+			{ status, headers: JSON_HEADERS },
+		);
+	}
+}
+
+/**
+ * Dispatcher for `/api/registries…` routes.
+ * Returns null if the path is not a registries route.
+ */
+export async function dispatchRegistries(
+	deps: RegistriesRouteDeps,
+	path: string,
+	method: string,
+	request: Request,
+): Promise<Response | null> {
+	const url = new URL(request.url);
+
+	if (path === "/api/registries" && method === "GET") {
+		return listRegistriesHandler(deps.db, deps.registryManager);
+	}
+
+	if (path === "/api/registries" && method === "POST") {
+		return createRegistryHandler(deps.db, deps.registryManager, request);
+	}
+
+	if (path === "/api/registries/preview" && method === "GET") {
+		return previewRegistryHandler(deps.db, url);
+	}
+
+	const search = matchRoute(path, "/api/registries/:slug/search");
+	if (search && method === "GET") {
+		return searchRegistryHandler(deps, search.slug, url);
+	}
+
+	// view uses a wildcard tail so item IDs containing slashes work
+	const view = matchRoute(path, "/api/registries/:slug/view/:item+");
+	if (view && method === "GET") {
+		return viewRegistryHandler(deps, view.slug, view.item, url);
+	}
+
+	const refresh = matchRoute(path, "/api/registries/:slug/refresh");
+	if (refresh && method === "POST") {
+		return refreshRegistryHandler(deps.db, deps.registryManager, refresh.slug);
+	}
+
+	const item = matchRoute(path, "/api/registries/:slug");
+	if (item && method === "DELETE") {
+		return deleteRegistryHandler(deps.db, deps.registryManager, item.slug);
+	}
+	if (item && method === "PATCH") {
+		return patchRegistryHandler(
+			deps.db,
+			deps.registryManager,
+			item.slug,
+			request,
+		);
+	}
+
+	return null;
 }

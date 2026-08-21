@@ -385,16 +385,17 @@ describe('cache', () => {
     });
 
     it('requests a blobless partial clone (--filter=blob:none right after --mirror)', async () => {
-      let capturedArgs: string[] = [];
+      const capturedCalls: string[][] = [];
       const execFileSpy = spyOn(childProcess, 'execFile').mockImplementation(
         ((_cmd: string, args: string[], _opts: object, cb: (err: null, result: { stdout: string; stderr: string }) => void) => {
-          capturedArgs = args;
+          capturedCalls.push(args);
           cb(null, { stdout: '', stderr: '' });
         }) as typeof childProcess.execFile
       );
 
       await ensureMirrorClone('github', 'owner/repo', noAuthFetch, 'https://example.com/owner/repo.git');
 
+      const capturedArgs = capturedCalls.find((a) => a.includes('clone') && a.includes('--mirror')) ?? [];
       const mirrorIdx = capturedArgs.indexOf('--mirror');
       expect(mirrorIdx).toBeGreaterThanOrEqual(0);
       expect(capturedArgs[mirrorIdx + 1]).toBe('--filter=blob:none');

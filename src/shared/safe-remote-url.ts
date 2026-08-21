@@ -67,26 +67,46 @@ function isBlockedIpv6(ip: string): boolean {
 	return false;
 }
 
+export class RemoteUrlPolicyError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "RemoteUrlPolicyError";
+	}
+}
+
+/**
+ * Synchronous public-https checks: scheme, credentials, and blocked
+ * host / IP literals. Does not perform DNS (safe to use in validators).
+ */
+export function assertPublicHttpsUrlShape(urlString: string): URL {
+	let u: URL;
+	try {
+		u = new URL(urlString);
+	} catch {
+		throw new RemoteUrlPolicyError(`Invalid URL: ${urlString}`);
+	}
+	if (u.protocol !== "https:") {
+		throw new RemoteUrlPolicyError(
+			`Only https URLs are allowed (got ${u.protocol})`,
+		);
+	}
+	if (u.username || u.password) {
+		throw new RemoteUrlPolicyError(
+			"URLs with embedded credentials are not allowed",
+		);
+	}
+	if (isBlockedHostnameOrIp(u.hostname)) {
+		throw new RemoteUrlPolicyError(`URL host is not allowed: ${u.hostname}`);
+	}
+	return u;
+}
+
 /**
  * Parse `urlString` and ensure it is a public https URL (no credentials).
  * Resolves DNS and rejects private/reserved addresses.
  */
 export async function assertPublicHttpsUrl(urlString: string): Promise<URL> {
-	let u: URL;
-	try {
-		u = new URL(urlString);
-	} catch {
-		throw new Error(`Invalid URL: ${urlString}`);
-	}
-	if (u.protocol !== "https:") {
-		throw new Error(`Only https URLs are allowed (got ${u.protocol})`);
-	}
-	if (u.username || u.password) {
-		throw new Error("URLs with embedded credentials are not allowed");
-	}
-	if (isBlockedHostnameOrIp(u.hostname)) {
-		throw new Error(`URL host is not allowed: ${u.hostname}`);
-	}
+	const u = assertPublicHttpsUrlShape(urlString);
 
 	// Literal public IPs need no further DNS check.
 	if (isIP(u.hostname)) {
@@ -97,7 +117,7 @@ export async function assertPublicHttpsUrl(urlString: string): Promise<URL> {
 		const records = await lookup(u.hostname, { all: true });
 		for (const rec of records) {
 			if (isBlockedHostnameOrIp(rec.address)) {
-				throw new Error(
+				throw new RemoteUrlPolicyError(
 					`URL host resolves to a private address (${rec.address})`,
 				);
 			}
@@ -110,7 +130,7 @@ export async function assertPublicHttpsUrl(urlString: string): Promise<URL> {
 			throw err;
 		}
 		// DNS failure — treat as unsafe rather than fetching blindly
-		throw new Error(
+		throw new RemoteUrlPolicyError(
 			`Could not resolve host "${u.hostname}": ${err instanceof Error ? err.message : String(err)}`,
 		);
 	}

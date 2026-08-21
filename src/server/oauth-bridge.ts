@@ -18,7 +18,46 @@
  * Module-level pure function so it's trivially unit-testable and doesn't pull
  * `CapaServer` into the test graph.
  */
+import { injectHtmlAuthToken } from "./api-guards";
+import { getSpaAuthToken } from "./auth-middleware";
+import { htmlSecurityHeaders } from "./html-security-headers";
+
 export type GitOAuthPlatform = "github" | "gitlab";
+
+/**
+ * Cloud OAuth redirects back to our callback with `?state=…&flowId=…` already in
+ * the redirect URL, then append tokens with a second `?` instead of `&`:
+ *   …/callback?state=x&flowId=y?access_token=z
+ * URLSearchParams treats `access_token` as part of `flowId`. Coerce inner `?` → `&`.
+ */
+export function normalizeOAuthCallbackQuery(search: string): string {
+	if (!search || search === "?") return "";
+	const raw = search.startsWith("?") ? search.slice(1) : search;
+	return raw.replace(/\?/g, "&");
+}
+
+export function parseOAuthCallbackSearchParams(search: string): URLSearchParams {
+	return new URLSearchParams(normalizeOAuthCallbackQuery(search));
+}
+
+/** True when the cloud OAuth redirect should render the HTML bridge (query and/or hash tokens). */
+export function gitOAuthCallbackNeedsBridge(url: URL): boolean {
+	const params = parseOAuthCallbackSearchParams(url.search);
+	if (
+		params.has("access_token") ||
+		params.has("refresh_token") ||
+		params.has("token")
+	) {
+		return true;
+	}
+	// Cloud may return tokens in the fragment (#access_token=...) which never hits the
+	// server — still serve the bridge when state/flowId prove this is our callback.
+	return (
+		params.has("state") ||
+		params.has("flowId") ||
+		params.has("flow_id")
+	);
+}
 
 export function buildOAuthBridgeHtml(platform: GitOAuthPlatform): string {
 	const callbackPath = `/api/integrations/${platform}/oauth/callback`;
@@ -47,11 +86,24 @@ export function buildOAuthBridgeHtml(platform: GitOAuthPlatform): string {
 </div>
 <script>
 (async () => {
-  var params = new URLSearchParams(window.location.search);
-  var accessToken = params.get('access_token');
-  var refreshToken = params.get('refresh_token');
-  var expiresInRaw = params.get('expires_in');
-  var oauthError = params.get('error');
+  var qs = window.location.search.slice(1).replace(/\\?/g, '&');
+  var params = new URLSearchParams(qs);
+  var hashRaw = window.location.hash;
+  var hashParams = new URLSearchParams(hashRaw && hashRaw.charAt(0) === '#' ? hashRaw.slice(1) : hashRaw);
+  function pick(name, alt) {
+    var v = params.get(name);
+    if (v) return v;
+    if (alt) { v = params.get(alt); if (v) return v; }
+    v = hashParams.get(name);
+    if (v) return v;
+    return alt ? hashParams.get(alt) : null;
+  }
+  var accessToken = pick('access_token', 'token');
+  var refreshToken = pick('refresh_token');
+  var expiresInRaw = pick('expires_in');
+  var oauthError = pick('error');
+  var state = pick('state');
+  var flowId = pick('flowId', 'flow_id');
   try {
     history.replaceState(null, '', window.location.pathname);
   } catch (_) {}
@@ -62,9 +114,13 @@ export function buildOAuthBridgeHtml(platform: GitOAuthPlatform): string {
     var body = { access_token: accessToken };
     if (refreshToken) body.refresh_token = refreshToken;
     if (expiresInRaw) body.expires_in = parseInt(expiresInRaw, 10);
+    if (state) body.state = state;
+    if (flowId) body.flowId = flowId;
+    var headers = { 'Content-Type': 'application/json' };
+    if (window.__CAPA_AUTH_TOKEN__) headers['Authorization'] = 'Bearer ' + window.__CAPA_AUTH_TOKEN__;
     var resp = await fetch(${JSON.stringify(callbackPath)}, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: headers,
       body: JSON.stringify(body),
       credentials: 'same-origin',
       redirect: 'manual',
@@ -89,12 +145,13 @@ export function buildOAuthBridgeHtml(platform: GitOAuthPlatform): string {
 }
 
 export function oauthBridgeResponse(platform: GitOAuthPlatform): Response {
-	return new Response(buildOAuthBridgeHtml(platform), {
+	const html = injectHtmlAuthToken(buildOAuthBridgeHtml(platform), getSpaAuthToken());
+	return new Response(html, {
 		status: 200,
-		headers: {
+		headers: htmlSecurityHeaders({
 			"Content-Type": "text/html; charset=utf-8",
 			"Cache-Control": "no-store",
 			"Referrer-Policy": "no-referrer",
-		},
+		}),
 	});
 }

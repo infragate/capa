@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { installSubAgentInstructions, removeSubAgentInstructions } from '../agents-file';
+import { installSubAgentInstructions, removeSubAgentInstructions } from '../agents-file/index';
 import type { SubAgent, Capabilities, Tool } from '../../../types/capabilities';
 
 // Minimal capabilities fixture with two tools

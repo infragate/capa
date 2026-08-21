@@ -5,6 +5,7 @@ import {
 	resolve as winResolve,
 } from "path/win32";
 import { resolve as posixResolve } from "path/posix";
+import type { OAuth2Config } from "../../types/capabilities";
 import type { NormalizedPluginMCPServerDef } from "../../types/plugin";
 import { asParsedMcpServerEntry, isPlainObject } from "./types-helpers";
 
@@ -29,48 +30,170 @@ function pickField(
 	return undefined;
 }
 
-/**
- * Normalize an OAuth2 config block (under any of `oauth2`/`oauth`/`auth`) to
- * the canonical capa shape: `client_id`, `client_secret`, `callback_port`,
- * etc. Unknown/extra fields are preserved untouched so per-server quirks can
- * still flow through to downstream consumers.
- */
-function normalizeOAuth2Block(
-	raw: unknown,
-): Record<string, unknown> | undefined {
-	if (!isPlainObject(raw))
-		return raw === undefined ? undefined : (raw as Record<string, unknown>);
-	const result: Record<string, unknown> = { ...raw };
-
-	const clientId = pickField(raw, ["client_id", "clientId", "CLIENT_ID"]);
-	if (typeof clientId === "string" && clientId.length > 0) {
-		result.client_id = clientId;
-	}
-
-	const clientSecret = pickField(raw, [
+/** Keys that are aliases of a canonical camelCase OAuth field (stripped after map). */
+const OAUTH_ALIAS_KEYS = new Set(
+	[
+		"client_id",
+		"clientId",
+		"CLIENT_ID",
 		"client_secret",
 		"clientSecret",
 		"CLIENT_SECRET",
-	]);
-	if (typeof clientSecret === "string" && clientSecret.length > 0) {
-		result.client_secret = clientSecret;
-	}
-
-	const callbackPort = pickField(raw, [
 		"callback_port",
 		"callbackPort",
 		"CALLBACK_PORT",
-	]);
-	if (typeof callbackPort === "number" && callbackPort > 0) {
-		result.callback_port = callbackPort;
-	} else if (typeof callbackPort === "string") {
-		const parsed = Number(callbackPort);
-		if (Number.isFinite(parsed) && parsed > 0) {
-			result.callback_port = parsed;
-		}
+		"authorization_endpoint",
+		"authorizationEndpoint",
+		"authorizationUrl",
+		"authorization_url",
+		"token_endpoint",
+		"tokenEndpoint",
+		"tokenUrl",
+		"token_url",
+		"resource_server",
+		"resourceServer",
+		"registration_endpoint",
+		"registrationEndpoint",
+		"redirect_uri",
+		"redirectUri",
+		"oauth",
+		"auth",
+	].map((k) => k.toLowerCase()),
+);
+
+function positivePort(value: unknown): number | undefined {
+	if (typeof value === "number" && value > 0) return value;
+	if (typeof value === "string") {
+		const parsed = Number(value);
+		if (Number.isFinite(parsed) && parsed > 0) return parsed;
+	}
+	return undefined;
+}
+
+/**
+ * Normalize an OAuth2 config block (under any of `oauth2`/`oauth`/`auth`) to
+ * the canonical capa camelCase shape. Unknown/extra non-alias fields are
+ * preserved so per-server quirks can still flow through.
+ */
+export function normalizeOAuth2Block(
+	raw: unknown,
+): OAuth2Config | undefined {
+	if (raw === undefined || raw === null) return undefined;
+	if (!isPlainObject(raw)) return undefined;
+
+	const nested = isPlainObject(raw.oauth)
+		? raw.oauth
+		: isPlainObject(raw.auth)
+			? raw.auth
+			: undefined;
+	const flat: Record<string, unknown> = nested
+		? { ...nested, ...raw }
+		: { ...raw };
+
+	const result: Record<string, unknown> = {};
+	for (const [key, value] of Object.entries(raw)) {
+		if (OAUTH_ALIAS_KEYS.has(key.toLowerCase())) continue;
+		result[key] = value;
 	}
 
-	return result;
+	const clientId = pickField(flat, ["clientId", "client_id", "CLIENT_ID"]);
+	if (typeof clientId === "string" && clientId.length > 0) {
+		result.clientId = clientId;
+	}
+
+	const clientSecret = pickField(flat, [
+		"clientSecret",
+		"client_secret",
+		"CLIENT_SECRET",
+	]);
+	if (typeof clientSecret === "string" && clientSecret.length > 0) {
+		result.clientSecret = clientSecret;
+	}
+
+	const callbackPort = positivePort(
+		pickField(flat, ["callbackPort", "callback_port", "CALLBACK_PORT"]),
+	);
+	if (callbackPort !== undefined) result.callbackPort = callbackPort;
+
+	const authorizationEndpoint = pickField(flat, [
+		"authorizationEndpoint",
+		"authorization_endpoint",
+		"authorizationUrl",
+		"authorization_url",
+	]);
+	if (
+		typeof authorizationEndpoint === "string" &&
+		authorizationEndpoint.length > 0
+	) {
+		result.authorizationEndpoint = authorizationEndpoint;
+	}
+
+	const tokenEndpoint = pickField(flat, [
+		"tokenEndpoint",
+		"token_endpoint",
+		"tokenUrl",
+		"token_url",
+	]);
+	if (typeof tokenEndpoint === "string" && tokenEndpoint.length > 0) {
+		result.tokenEndpoint = tokenEndpoint;
+	}
+
+	const resourceServer = pickField(flat, [
+		"resourceServer",
+		"resource_server",
+	]);
+	if (typeof resourceServer === "string" && resourceServer.length > 0) {
+		result.resourceServer = resourceServer;
+	}
+
+	const registrationEndpoint = pickField(flat, [
+		"registrationEndpoint",
+		"registration_endpoint",
+	]);
+	if (
+		typeof registrationEndpoint === "string" &&
+		registrationEndpoint.length > 0
+	) {
+		result.registrationEndpoint = registrationEndpoint;
+	}
+
+	const redirectUri = pickField(flat, ["redirectUri", "redirect_uri"]);
+	if (typeof redirectUri === "string" && redirectUri.length > 0) {
+		result.redirectUri = redirectUri;
+	}
+
+	const scopes = pickField(flat, ["scopes"]);
+	if (Array.isArray(scopes)) {
+		result.scopes = scopes.filter((s): s is string => typeof s === "string");
+	}
+
+	const scope = pickField(flat, ["scope"]);
+	if (typeof scope === "string" && scope.length > 0) {
+		result.scope = scope;
+	}
+
+	const pkce = pickField(flat, ["pkce"]);
+	if (typeof pkce === "boolean") result.pkce = pkce;
+
+	return result as OAuth2Config;
+}
+
+/**
+ * Plugin manifests are untrusted: only plain string maps are accepted for
+ * headers/env. SecretValue objects (`fromCommand` / `fromFile` / `fromEnv`)
+ * must come from user-owned capabilities, never from a plugin MCP entry.
+ */
+function stringRecordOnly(
+	value: unknown,
+): Record<string, string> | undefined | null {
+	if (value === undefined || value === null) return undefined;
+	if (!isPlainObject(value)) return null;
+	const out: Record<string, string> = {};
+	for (const [key, entry] of Object.entries(value)) {
+		if (typeof entry !== "string") return null;
+		out[key] = entry;
+	}
+	return out;
 }
 
 /**
@@ -85,24 +208,24 @@ export function normalizeMcpServerEntry(
 
 	const url = parsed.url;
 	if (typeof url === "string" && url.length > 0) {
+		const headers = stringRecordOnly(parsed.headers);
+		if (headers === null) return null;
 		const rawOauth = parsed.oauth2 ?? parsed.oauth ?? parsed.auth;
 		return {
 			url,
-			headers: isPlainObject(parsed.headers)
-				? (parsed.headers as Record<string, string>)
-				: undefined,
+			headers,
 			oauth2: normalizeOAuth2Block(rawOauth),
 		};
 	}
 
 	const command = parsed.command ?? parsed.cmd;
 	if (typeof command !== "string") return null;
+	const env = stringRecordOnly(parsed.env);
+	if (env === null) return null;
 	return {
 		cmd: command,
 		args: Array.isArray(parsed.args) ? parsed.args : undefined,
-		env: isPlainObject(parsed.env)
-			? (parsed.env as Record<string, string>)
-			: undefined,
+		env,
 	};
 }
 
@@ -314,7 +437,7 @@ export function resolvePluginServerDef(
 	env?: Record<string, string>;
 	url?: string;
 	headers?: Record<string, string>;
-	oauth2?: unknown;
+	oauth2?: OAuth2Config;
 } {
 	if (def.url) {
 		return {

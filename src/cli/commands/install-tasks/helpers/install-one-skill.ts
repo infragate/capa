@@ -3,11 +3,12 @@ import { resolve, join, dirname, basename } from 'path';
 import type { Skill, Capabilities } from '../../../../types/capabilities';
 import type { CapaDatabase } from '../../../../db/database';
 import { createAuthenticatedFetch, AuthenticatedFetch } from '../../../../shared/authenticated-fetch';
-import { displayIntegrationPrompt, getIntegrationsUrl, parseRepoUrl } from '../../../utils/integration-helper';
+import { getIntegrationsUrl, parseRepoUrl } from '../../../utils/integration-helper';
 import { getProvider, getAllProviders } from '../../../../shared/providers';
 import { getGitProvider } from '../../../../shared/git-providers/registry';
 import { LockfileBuilder } from '../../../../shared/lockfile';
 import { assertSafeRepoPath } from '../../../../shared/repo-file';
+import { assertCapaOwnedInstallPath } from '../../../../shared/install-path-guard';
 import {
   describeUnsafeCapabilityId,
   isSafeCapabilityId,
@@ -234,10 +235,11 @@ export async function installOneSkill(
           const repoInfo = parseRepoUrl(skill.def.url);
           if (repoInfo && repoInfo.platform) {
             const integrationsUrl = getIntegrationsUrl(settings.server.host, settings.server.port);
-            console.error(`\n  ✗ Unable to access URL (it may require authentication)`);
-            displayIntegrationPrompt(getGitProvider(repoInfo.platform)?.displayName ?? repoInfo.platform, integrationsUrl);
-            try { db.close(); } catch {}
-            process.exit(1);
+            const platformLabel = getGitProvider(repoInfo.platform)?.displayName ?? repoInfo.platform;
+            throw new Error(
+              `Unable to access URL for skill "${skill.id}" (authentication may be required).\n` +
+                `Connect ${platformLabel} at: ${integrationsUrl}`,
+            );
           }
         }
         throw new Error(`Failed to fetch: ${response.statusText}`);
@@ -293,48 +295,39 @@ export async function installOneSkill(
     const providerEntry = getProvider(client);
 
     if (!providerEntry) {
-      console.error(`  ✗ Unknown client: ${client}`);
-      console.error(`\n  Supported clients:`);
-
       const supportedAgents = getAllProviders()
         .map((p) => ({ name: p.id, displayName: p.displayName }))
         .sort((a, b) => a.displayName.localeCompare(b.displayName));
 
       const maxDisplayNameLength = Math.max(...supportedAgents.map((a) => a.displayName.length));
-      for (const agent of supportedAgents) {
-        console.error(`    - ${agent.displayName.padEnd(maxDisplayNameLength)} (${agent.name})`);
-      }
-
-      try { db.close(); } catch {}
-      process.exit(1);
+      const lines = supportedAgents.map(
+        (agent) => `    - ${agent.displayName.padEnd(maxDisplayNameLength)} (${agent.name})`,
+      );
+      throw new Error(
+        `Unknown client: ${client}\n\n  Supported clients:\n${lines.join('\n')}`,
+      );
     }
 
     const skillsBaseDir = join(projectPath, providerEntry.skillsDir);
     const skillDir = assertSafeRepoPath(skillsBaseDir, skill.id);
     const skillMdPath = join(skillDir, 'SKILL.md');
+    assertCapaOwnedInstallPath(projectPath, skillDir);
 
     if (existsSync(skillDir)) {
       if (trackManaged) {
         const managedFiles = db.getManagedFiles(projectId);
         if (!managedFiles.includes(skillDir)) {
-          console.error(
-            `  ✗ Directory already exists and is not managed by capa: ${skillDir}`
+          throw new Error(
+            `Directory already exists and is not managed by capa: ${skillDir}\n` +
+              `Please delete it manually and run "capa install" again.`,
           );
-          console.error('    Please delete it manually and run "capa install" again.');
-          try { db.close(); } catch {}
-          process.exit(1);
         }
         rmSync(skillDir, { recursive: true, force: true });
       } else {
-        // Passthrough must not delete directories capa does not own.
-        console.error(
-          `  ✗ Directory already exists: ${skillDir}`
+        throw new Error(
+          `Directory already exists: ${skillDir}\n` +
+            'Passthrough will not overwrite existing skill directories. Delete it manually and retry.',
         );
-        console.error(
-          '    Passthrough will not overwrite existing skill directories. Delete it manually and retry.',
-        );
-        try { db.close(); } catch {}
-        process.exit(1);
       }
     }
 

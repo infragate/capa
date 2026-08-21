@@ -1,17 +1,31 @@
 import type { CapaDatabase } from "../db/database";
 import { parseCapabilitiesFile } from "../shared/capabilities";
 import { detectCapabilitiesFile } from "../shared/paths";
-import type { Capabilities } from "../types/capabilities";
+import { trustStdioServers } from "../shared/stdio-allowlist";
+import type {
+	Capabilities,
+	MCPServer,
+} from "../types/capabilities";
+import { clientErrorMessage } from "./http-error";
+import { matchRoute } from "./match-route";
 import type { CapaMCPServer, ShellToolInfo } from "./mcp-handler";
+import type { McpServerStateManager } from "./mcp-server-state";
 import type { SessionManager } from "./session-manager";
 import { resolveSkillContentById } from "./skill-content";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
+/** Record stdio launch approval from authored defs (secret pointers, not resolved values). */
+function trustAuthoredStdioServer(projectId: string, server: MCPServer): void {
+	if (!server.def?.cmd) return;
+	trustStdioServers(projectId, [server]);
+}
+
 export interface McpMetaRouteDeps {
 	db: CapaDatabase;
 	sessionManager: SessionManager;
 	getOrCreateMCPServer: (projectId: string) => CapaMCPServer | null;
+	mcpServerState: McpServerStateManager;
 }
 
 export async function handleGetServerTools(
@@ -36,6 +50,7 @@ export async function handleGetServerTools(
 			});
 		}
 
+		const enabled = deps.mcpServerState.isEnabled(projectId, serverId);
 		const mcpServer = deps.getOrCreateMCPServer(projectId);
 		if (!mcpServer) {
 			return new Response(JSON.stringify({ error: "Project not found" }), {
@@ -44,12 +59,23 @@ export async function handleGetServerTools(
 			});
 		}
 
+		if (!enabled) {
+			return new Response(
+				JSON.stringify({ tools: [], enabled: false, connected: false }),
+				{ headers: JSON_HEADERS },
+			);
+		}
+
+		// Only connect when the user has explicitly enabled the server.
 		const tools = await mcpServer.listServerTools(serverId, capabilities, {
 			throwOnError: true,
+			connect: true,
+			timeoutMs: 10_000,
 		});
-		return new Response(JSON.stringify({ tools }), {
-			headers: JSON_HEADERS,
-		});
+		return new Response(
+			JSON.stringify({ tools, enabled: true, connected: true }),
+			{ headers: JSON_HEADERS },
+		);
 	} catch (error: any) {
 		const detail = error?.message ?? String(error);
 		const needsAuth = /authentication failed|reconnect oauth2/i.test(detail);
@@ -60,6 +86,107 @@ export async function handleGetServerTools(
 			status: 502,
 			headers: JSON_HEADERS,
 		});
+	}
+}
+
+export async function handleSetServerEnabled(
+	deps: McpMetaRouteDeps,
+	projectId: string,
+	serverId: string,
+	request: Request,
+): Promise<Response> {
+	try {
+		let body: { enabled?: boolean };
+		try {
+			body = (await request.json()) as { enabled?: boolean };
+		} catch {
+			return new Response(JSON.stringify({ error: "Invalid JSON body" }), {
+				status: 400,
+				headers: JSON_HEADERS,
+			});
+		}
+
+		if (typeof body.enabled !== "boolean") {
+			return new Response(
+				JSON.stringify({ error: 'Body must include boolean "enabled"' }),
+				{ status: 400, headers: JSON_HEADERS },
+			);
+		}
+
+		const capabilities = deps.sessionManager.getProjectCapabilities(projectId);
+		if (!capabilities) {
+			return new Response(JSON.stringify({ error: "Project not configured" }), {
+				status: 404,
+				headers: JSON_HEADERS,
+			});
+		}
+
+		const server = capabilities.servers.find((s) => s.id === serverId);
+		if (!server) {
+			return new Response(JSON.stringify({ error: "Server not found" }), {
+				status: 404,
+				headers: JSON_HEADERS,
+			});
+		}
+
+		const mcpServer = deps.getOrCreateMCPServer(projectId);
+		if (!mcpServer) {
+			return new Response(JSON.stringify({ error: "Project not found" }), {
+				status: 404,
+				headers: JSON_HEADERS,
+			});
+		}
+
+		if (body.enabled) {
+			trustAuthoredStdioServer(projectId, server);
+
+			deps.mcpServerState.setEnabled(projectId, serverId, true);
+
+			try {
+				await mcpServer.listServerTools(serverId, capabilities, {
+					throwOnError: true,
+					connect: true,
+					timeoutMs: 15_000,
+				});
+			} catch (error: unknown) {
+				// Keep the server enabled — tokens may still be valid and connect
+				// can succeed later without forcing another OAuth round-trip.
+				const detail = clientErrorMessage(
+					error,
+					"Failed to connect MCP server",
+				);
+				const needsAuth = /authentication|oauth2|reconnect/i.test(detail);
+				return new Response(
+					JSON.stringify({
+						serverId,
+						enabled: true,
+						connected: false,
+						error: detail,
+						needsAuth,
+					}),
+					{ headers: JSON_HEADERS },
+				);
+			}
+		} else {
+			deps.mcpServerState.setEnabled(projectId, serverId, false);
+			await mcpServer.disconnectNonEnabledServers((id) =>
+				deps.mcpServerState.isEnabled(projectId, id),
+			);
+		}
+
+		const connected = body.enabled;
+		return new Response(
+			JSON.stringify({ serverId, enabled: body.enabled, connected }),
+			{ headers: JSON_HEADERS },
+		);
+	} catch (error: unknown) {
+		return new Response(
+			JSON.stringify({ error: clientErrorMessage(error, "Request failed") }),
+			{
+				status: 500,
+				headers: JSON_HEADERS,
+			},
+		);
 	}
 }
 
@@ -211,4 +338,73 @@ export async function handleGetShellToolSchema(
 			headers: JSON_HEADERS,
 		});
 	}
+}
+
+/**
+ * Dispatcher for MCP meta API routes (server tools, skills content, shell tools).
+ * Returns null if the path is not handled here.
+ */
+export async function dispatchMcpMeta(
+	deps: McpMetaRouteDeps,
+	path: string,
+	method: string,
+	request: Request,
+): Promise<Response | null> {
+	const url = new URL(request.url);
+
+	const serverTools = matchRoute(
+		path,
+		"/api/projects/:projectId/servers/:serverId/tools",
+	);
+	if (serverTools && method === "GET") {
+		return handleGetServerTools(
+			deps,
+			serverTools.projectId,
+			serverTools.serverId,
+		);
+	}
+
+	const serverEnabled = matchRoute(
+		path,
+		"/api/projects/:projectId/servers/:serverId/enabled",
+	);
+	if (serverEnabled && method === "POST") {
+		return handleSetServerEnabled(
+			deps,
+			serverEnabled.projectId,
+			serverEnabled.serverId,
+			request,
+		);
+	}
+
+	const skillContent = matchRoute(
+		path,
+		"/api/projects/:projectId/skills/:skillId/content",
+	);
+	if (skillContent && method === "GET") {
+		return handleGetSkillContent(
+			deps,
+			skillContent.projectId,
+			skillContent.skillId,
+		);
+	}
+
+	const shellTools = matchRoute(path, "/api/projects/:projectId/shell-tools");
+	if (shellTools && method === "GET") {
+		return handleGetShellTools(deps, shellTools.projectId);
+	}
+
+	const shellToolSchema = matchRoute(
+		path,
+		"/api/projects/:projectId/shell-tool-schema",
+	);
+	if (shellToolSchema && method === "GET") {
+		return handleGetShellToolSchema(
+			deps,
+			shellToolSchema.projectId,
+			url.searchParams.get("tool") || "",
+		);
+	}
+
+	return null;
 }

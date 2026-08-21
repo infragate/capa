@@ -76,8 +76,47 @@ Both forms accept an optional pinning suffix:
 
 ## Servers Section
 
-- **Local (subprocess)**: `def.cmd`, `def.args`, optional `def.env` with `${VarName}`.
+- **Local (subprocess)**: `def.cmd`, `def.args`, optional `def.env`.
 - **Remote (HTTP)**: `def.url`, optional `def.headers`. Use `tlsSkipVerify: true` for self-signed certs. OAuth2 probe is skipped when `Authorization` header is set.
+
+### Secret values (`env` / `headers`)
+
+Each map value may be:
+
+| Form | Example | When resolved |
+|------|---------|----------------|
+| Literal / capa variable | `"${BraveApiKey}"` or `"plain"` | `${VarName}` from encrypted project variables at connect time |
+| `fromEnv` | `{ fromEnv: "BRAVE_API_KEY" }` | OS env var at connect / passthrough write time |
+| `fromCommand` | `{ fromCommand: "op read \"op://Vault/Item/credential\"" }` | Command stdout (trimmed), on demand |
+| `fromFile` | `{ fromFile: "./secrets/token" }` | File contents (UTF-8, trailing newline stripped); relative to project root |
+
+External sources are **not** stored in capa’s DB — they are fetched when an MCP client connects (or when `--passthrough` materializes native configs). Prefer them when the org already mandates 1Password, Vault, aws-vault, etc.
+
+```yaml
+servers:
+  - id: brave-search-server
+    type: mcp
+    def:
+      cmd: npx
+      args: [-y, "@modelcontextprotocol/server-brave-search"]
+      env:
+        # Stored in capa (encrypted at rest):
+        BRAVE_API_KEY: ${BraveApiKey}
+        # Or on-demand from the OS / a secret manager:
+        # BRAVE_API_KEY:
+        #   fromEnv: BRAVE_API_KEY
+        # OTHER:
+        #   fromCommand: op read "op://Vault/Item/credential"
+  - id: remote-mcp
+    type: mcp
+    def:
+      url: https://mcp.example.com
+      headers:
+        Authorization:
+          fromEnv: MCP_BEARER_TOKEN
+```
+
+CLI equivalents: `--env-var`, `--env-from-env`, `--env-from-command`, `--env-from-file` (and matching `--header-from-*`).
 
 Optional top-level `description` is shown in `capa sh`.
 

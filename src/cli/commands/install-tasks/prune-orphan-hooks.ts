@@ -1,20 +1,24 @@
 import type { Task } from '../../ui';
-import { pruneOrphanHooks } from '../../utils/hooks-installer';
+import { pruneOrphanHooks } from '../../utils/hooks';
 import { validateHooks } from '../../../shared/hooks-validate';
 import {
   buildSystemActivityHooks,
   isAgentActivityEnabled,
 } from '../../../shared/agent-activity';
 import type { InstallCtx } from './context';
+import {
+  materialInstallProviders,
+  wrapHookPruneOptions,
+} from './helpers/install-providers';
 
 /**
  * Drop any `managed_hooks` entries whose hook is no longer declared in
  * `capabilities.hooks` (plus capa system activity hooks when enabled)
  * or whose provider is no longer in the active set.
  *
- * Skipped entirely on wrap shadow installs — wrap must only *add* provider
- * config under the shadow workspace and must never prune shared project
- * identity state (e.g. Cursor hooks on the real project).
+ * Wrap shadow installs scope prune to `resolvedProviders` and paths under
+ * the shadow workspace so shared identity rows (e.g. Cursor on the real
+ * project) are never touched.
  *
  * Runs *before* `install-hooks` so installs always converge on the
  * requested state — a hook moved from `cursor` to `claude-code` results
@@ -23,11 +27,9 @@ import type { InstallCtx } from './context';
 export function pruneOrphanHooksTask(): Task<InstallCtx> {
   return {
     title: 'Pruning orphan hooks',
-    enabled: (ctx) =>
-      !ctx.isWrapInstall &&
-      (ctx.capabilitiesToUse.providers ?? ctx.resolvedProviders).length > 0,
+    enabled: (ctx) => materialInstallProviders(ctx).length > 0,
     task: async (ctx) => {
-      const providers = ctx.capabilitiesToUse.providers ?? ctx.resolvedProviders;
+      const providers = materialInstallProviders(ctx);
       const rawHooks = ctx.capabilitiesToUse.hooks ?? [];
       // Validate at this point too so an invalid hook doesn't make the
       // prune think it's still desired (and skip the orphan).
@@ -43,6 +45,7 @@ export function pruneOrphanHooksTask(): Task<InstallCtx> {
           desiredHooks,
           providers,
           ctx.db,
+          wrapHookPruneOptions(ctx) ?? {},
         );
         for (const w of warnings) ctx.warnings.push(w);
         if (removed > 0) {

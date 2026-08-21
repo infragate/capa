@@ -242,6 +242,7 @@ export function CapabilitiesSection({
         icon={Wrench}
         count={servers.length + tools.length}
         forceOpen={forceOpen.tools}
+        suggestOpen={needsOAuthCount > 0}
         keepMounted={addServerOpen || editServerOpen || addCommandToolOpen}
         badges={
           needsOAuthCount > 0 ? (

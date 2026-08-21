@@ -2,10 +2,13 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { CapaDatabase } from "../db/database";
 import { logger } from "../shared/logger";
+import { isStdioTrusted } from "../shared/stdio-allowlist";
 import {
-	hasUnresolvedVariables,
-	resolveVariablesInObject,
-} from "../shared/variable-resolver";
+	hasUnresolvedMcpSecrets,
+	resolveMcpServerDef,
+	SecretValueResolveError,
+	secretValueMapForFingerprint,
+} from "../shared/secret-value";
 import type {
 	MCPServerDefinition,
 	ToolMCPDefinition,
@@ -14,15 +17,21 @@ import { VERSION } from "../version";
 import { HttpMCPTransport } from "./http-mcp-transport";
 import {
 	MCPOAuthDisconnectedError,
+	MCPServerDisabledError,
 	MCPSessionExpiredError,
+	MCPStdioUntrustedError,
 } from "./mcp-proxy-errors";
 import { OAuth2Manager } from "./oauth-manager";
 import { HiddenStdioClientTransport as StdioClientTransport } from "./stdio-client-transport";
 
 export {
 	MCPOAuthDisconnectedError,
+	MCPServerDisabledError,
 	MCPSessionExpiredError,
+	MCPStdioUntrustedError,
 } from "./mcp-proxy-errors";
+
+export type McpEnabledCheck = (serverId: string) => boolean;
 
 /** Timeout for MCP client.connect() — prevents hanging on an unresponsive server (ms). */
 const MCP_CONNECT_TIMEOUT_MS = 15_000;
@@ -41,15 +50,26 @@ export class MCPProxy {
 	private clients = new Map<string, Client>();
 	/** Launch fingerprint for each cached client (cmd/args/env/cwd/url/…). */
 	private clientFingerprints = new Map<string, string>();
+	/** Coalesce concurrent connects/listTools for the same server. */
+	private connectInFlight = new Map<string, Promise<Client | null>>();
+	private listToolsInFlight = new Map<string, Promise<any[]>>();
 	/** Last unexpected stdio exit reason per server (from transport onerror). */
 	private stdioExitReasons = new Map<string, string>();
 	private logger = logger.child("MCPProxy");
+	private isServerEnabled: McpEnabledCheck;
 
-	constructor(db: CapaDatabase, projectId: string, projectPath: string) {
+	constructor(
+		db: CapaDatabase,
+		projectId: string,
+		projectPath: string,
+		options: { isServerEnabled?: McpEnabledCheck } = {},
+	) {
 		this.db = db;
 		this.projectId = projectId;
 		this.projectPath = projectPath;
 		this.oauth2Manager = new OAuth2Manager(db);
+		this.isServerEnabled =
+			options.isServerEnabled ?? (() => true);
 	}
 
 	/**
@@ -69,15 +89,35 @@ export class MCPProxy {
 			`Tool name: ${definition.tool}, Args: ${JSON.stringify(args)}`,
 		);
 
-		// Resolve variables in server definition
-		const resolvedServerDef = resolveVariablesInObject(
-			serverDefinition,
-			this.projectId,
-			this.db,
-		);
+		if (
+			serverDefinition.cmd &&
+			!isStdioTrusted(this.projectId, serverDefinition)
+		) {
+			this.logger.warn(
+				`Refusing to spawn untrusted stdio MCP server ${serverId}`,
+			);
+			throw new MCPStdioUntrustedError(serverId);
+		}
 
-		// Check for unresolved variables
-		if (hasUnresolvedVariables(resolvedServerDef)) {
+		let resolvedServerDef: MCPServerDefinition;
+		try {
+			resolvedServerDef = await resolveMcpServerDef(serverDefinition, {
+				projectId: this.projectId,
+				projectPath: this.projectPath,
+				db: this.db,
+			});
+		} catch (error) {
+			const msg =
+				error instanceof SecretValueResolveError
+					? error.message
+					: error instanceof Error
+						? error.message
+						: String(error);
+			this.logger.failure(`Secret resolve failed: ${msg}`);
+			return { success: false, error: msg };
+		}
+
+		if (hasUnresolvedMcpSecrets(resolvedServerDef)) {
 			this.logger.failure("Unresolved variables in server configuration");
 			return {
 				success: false,
@@ -92,6 +132,10 @@ export class MCPProxy {
 			client = await this.getOrCreateClient(serverId, resolvedServerDef);
 		} catch (error) {
 			if (error instanceof MCPOAuthDisconnectedError) {
+				this.logger.failure(error.message);
+				return { success: false, error: error.message };
+			}
+			if (error instanceof MCPServerDisabledError) {
 				this.logger.failure(error.message);
 				return { success: false, error: error.message };
 			}
@@ -199,22 +243,114 @@ export class MCPProxy {
 	async listTools(
 		serverId: string,
 		serverDefinition: MCPServerDefinition,
-		options: { throwOnError?: boolean; timeoutMs?: number } = {},
+		options: {
+			throwOnError?: boolean;
+			timeoutMs?: number;
+			connect?: boolean;
+			/** Skip enabled-state gate (install-time validation only). */
+			bypassEnabledCheck?: boolean;
+		} = {},
 	): Promise<any[]> {
-		const { throwOnError = false, timeoutMs = 15000 } = options;
+		const {
+			throwOnError = false,
+			timeoutMs = 15000,
+			connect = true,
+			bypassEnabledCheck = false,
+		} = options;
 		// Strip @ prefix from server ID if present
 		const cleanServerId = serverId.replace("@", "");
+		const flightKey = `${cleanServerId}:${connect ? "c" : "nc"}:${timeoutMs}`;
+		const inFlight = this.listToolsInFlight.get(flightKey);
+		if (inFlight) {
+			this.logger.debug(
+				`Coalescing concurrent listTools for ${cleanServerId}`,
+			);
+			return inFlight;
+		}
 
-		const resolvedServerDef = resolveVariablesInObject(
+		const work = this.listToolsOnce(
+			cleanServerId,
 			serverDefinition,
-			this.projectId,
-			this.db,
-		);
+			{ throwOnError, timeoutMs, connect, bypassEnabledCheck },
+		).finally(() => {
+			this.listToolsInFlight.delete(flightKey);
+		});
+		this.listToolsInFlight.set(flightKey, work);
+		return work;
+	}
+
+	private async listToolsOnce(
+		cleanServerId: string,
+		serverDefinition: MCPServerDefinition,
+		options: {
+			throwOnError: boolean;
+			timeoutMs: number;
+			connect: boolean;
+			bypassEnabledCheck: boolean;
+		},
+	): Promise<any[]> {
+		const { throwOnError, timeoutMs, connect, bypassEnabledCheck } = options;
+
+		if (
+			serverDefinition.cmd &&
+			!isStdioTrusted(this.projectId, serverDefinition)
+		) {
+			const err = new MCPStdioUntrustedError(cleanServerId);
+			if (throwOnError) throw err;
+			this.logger.warn(
+				`Refusing to spawn untrusted stdio MCP server ${cleanServerId}`,
+			);
+			return [];
+		}
+
+		let resolvedServerDef: MCPServerDefinition;
+		try {
+			resolvedServerDef = await resolveMcpServerDef(serverDefinition, {
+				projectId: this.projectId,
+				projectPath: this.projectPath,
+				db: this.db,
+			});
+		} catch (error) {
+			if (throwOnError) throw error;
+			this.logger.failure(
+				`Secret resolve failed: ${error instanceof Error ? error.message : String(error)}`,
+			);
+			return [];
+		}
+
+		if (hasUnresolvedMcpSecrets(resolvedServerDef)) {
+			if (throwOnError) {
+				throw new Error(
+					"Server configuration has unresolved variables. Please configure credentials.",
+				);
+			}
+			return [];
+		}
 
 		let client: Client | null;
 		try {
-			client = await this.getOrCreateClient(cleanServerId, resolvedServerDef);
+			if (!connect) {
+				client = this.clients.get(cleanServerId) ?? null;
+				if (!client) {
+					if (throwOnError) {
+						throw new Error(
+							`MCP server "${cleanServerId}" is not connected`,
+						);
+					}
+					return [];
+				}
+			} else {
+				client = await this.getOrCreateClient(
+					cleanServerId,
+					resolvedServerDef,
+					bypassEnabledCheck,
+				);
+			}
 		} catch (error) {
+			if (error instanceof MCPServerDisabledError) {
+				if (throwOnError) throw error;
+				return [];
+			}
 			if (error instanceof MCPOAuthDisconnectedError) {
 				if (throwOnError) throw error;
 				return [];
@@ -233,6 +369,10 @@ export class MCPProxy {
 			return result.tools;
 		} catch (error) {
 			if (error instanceof MCPSessionExpiredError) {
+				if (!connect) {
+					if (throwOnError) throw error;
+					return [];
+				}
 				this.logger.warn(
 					`Session expired for ${cleanServerId}, reconnecting...`,
 				);
@@ -281,7 +421,12 @@ export class MCPProxy {
 	private async getOrCreateClient(
 		serverId: string,
 		serverDefinition: MCPServerDefinition,
+		bypassEnabledCheck = false,
 	): Promise<Client | null> {
+		if (!bypassEnabledCheck && !this.isServerEnabled(serverId)) {
+			throw new MCPServerDisabledError(serverId);
+		}
+
 		const fingerprint = mcpServerLaunchFingerprint(serverDefinition);
 		const existing = this.clients.get(serverId);
 		if (existing) {
@@ -297,6 +442,30 @@ export class MCPProxy {
 			await this.closeServer(serverId);
 		}
 
+		const inFlight = this.connectInFlight.get(serverId);
+		if (inFlight) {
+			this.logger.debug(
+				`Coalescing concurrent connect for MCP server: ${serverId}`,
+			);
+			return inFlight;
+		}
+
+		const work = this.connectClientOnce(
+			serverId,
+			serverDefinition,
+			fingerprint,
+		).finally(() => {
+			this.connectInFlight.delete(serverId);
+		});
+		this.connectInFlight.set(serverId, work);
+		return work;
+	}
+
+	private async connectClientOnce(
+		serverId: string,
+		serverDefinition: MCPServerDefinition,
+		fingerprint: string,
+	): Promise<Client | null> {
 		this.logger.info(`Creating new MCP client for server: ${serverId}`);
 
 		// For local subprocess-based servers
@@ -397,10 +566,17 @@ export class MCPProxy {
 				`Command: ${serverDefinition.cmd}, Args: ${JSON.stringify(serverDefinition.args || [])}`,
 			);
 
+			const stringEnv: Record<string, string> = {};
+			if (serverDefinition.env) {
+				for (const [k, v] of Object.entries(serverDefinition.env)) {
+					if (typeof v === "string") stringEnv[k] = v;
+				}
+			}
+
 			const transport = new StdioClientTransport({
 				command: serverDefinition.cmd!,
 				args: serverDefinition.args || [],
-				env: { ...process.env, ...serverDefinition.env } as Record<
+				env: { ...process.env, ...stringEnv } as Record<
 					string,
 					string
 				>,
@@ -544,6 +720,11 @@ export class MCPProxy {
 		}
 	}
 
+	/** Server IDs with an active cached client. */
+	getConnectedServerIds(): string[] {
+		return [...this.clients.keys()];
+	}
+
 	/**
 	 * Close a single cached MCP client (stdio child or HTTP session).
 	 */
@@ -625,10 +806,10 @@ export function mcpServerLaunchFingerprint(def: MCPServerDefinition): string {
 	return JSON.stringify({
 		cmd: def.cmd ?? null,
 		args: def.args ?? null,
-		env: sorted(def.env),
+		env: sorted(secretValueMapForFingerprint(def.env)),
 		cwd: def.cwd ?? null,
 		url: def.url ?? null,
-		headers: sorted(def.headers),
+		headers: sorted(secretValueMapForFingerprint(def.headers)),
 		tlsSkipVerify: def.tlsSkipVerify ?? false,
 	});
 }

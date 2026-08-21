@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'bun:test';
-import { buildOAuthBridgeHtml, oauthBridgeResponse } from '../oauth-bridge';
+import {
+  buildOAuthBridgeHtml,
+  gitOAuthCallbackNeedsBridge,
+  normalizeOAuthCallbackQuery,
+  parseOAuthCallbackSearchParams,
+  oauthBridgeResponse,
+} from '../oauth-bridge';
 
 /**
  * The cloud OAuth provider redirects via GET with `?access_token=...` in the query
@@ -30,12 +36,14 @@ describe('git OAuth callback bridge', () => {
       expect(replaceIdx).toBeLessThan(postIdx);
     });
 
-    it('reads tokens from window.location.search rather than baking them in', () => {
+    it('reads tokens from query and hash (access_token, token alias)', () => {
       const html = buildOAuthBridgeHtml('gitlab');
       expect(html).toContain('window.location.search');
-      expect(html).toContain("params.get('access_token')");
-      expect(html).toContain("params.get('refresh_token')");
-      expect(html).toContain("params.get('expires_in')");
+      expect(html).toContain(".replace(/\\?/g, '&')");
+      expect(html).toContain('location.hash');
+      expect(html).toContain("pick('access_token', 'token')");
+      expect(html).toContain("pick('refresh_token')");
+      expect(html).toContain("pick('expires_in')");
     });
 
     it('re-issues the callback as POST with JSON body', () => {
@@ -55,6 +63,32 @@ describe('git OAuth callback bridge', () => {
     it('sets Referrer-Policy via meta tag so the cloud URL never leaks', () => {
       const html = buildOAuthBridgeHtml('gitlab');
       expect(html).toMatch(/<meta\s+name="referrer"\s+content="no-referrer"/);
+    });
+  });
+
+  describe('normalizeOAuthCallbackQuery', () => {
+    it('coerces a second ? from cloud redirects into &', () => {
+      const search =
+        '?state=abc&flowId=abc?access_token=ghu_test&refresh_token=ghr_test&expires_in=28800&provider=github.com';
+      const params = parseOAuthCallbackSearchParams(search);
+      expect(params.get('state')).toBe('abc');
+      expect(params.get('flowId')).toBe('abc');
+      expect(params.get('access_token')).toBe('ghu_test');
+      expect(params.get('refresh_token')).toBe('ghr_test');
+      expect(params.get('expires_in')).toBe('28800');
+      expect(normalizeOAuthCallbackQuery(search)).toBe(
+        'state=abc&flowId=abc&access_token=ghu_test&refresh_token=ghr_test&expires_in=28800&provider=github.com',
+      );
+    });
+
+    it('gitOAuthCallbackNeedsBridge detects access_token after normalization', () => {
+      expect(
+        gitOAuthCallbackNeedsBridge(
+          new URL(
+            'http://127.0.0.1:5912/api/integrations/github/oauth/callback?state=x&flowId=y?access_token=t',
+          ),
+        ),
+      ).toBe(true);
     });
   });
 
