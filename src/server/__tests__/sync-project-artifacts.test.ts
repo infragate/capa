@@ -81,7 +81,9 @@ hooks: []
 			db,
 			sessionManager,
 			oauth2Manager: {} as OAuth2Manager,
-			capsWatcher: { watchProject: async () => {} } as CapabilitiesFileWatcher,
+			capsWatcher: {
+				watchProject: async () => {},
+			} as unknown as CapabilitiesFileWatcher,
 			effectiveCapsCache: new Map(),
 			getOrCreateMCPServer: () =>
 				({ disconnectNonEnabledServers: async () => {} }) as unknown as CapaMCPServer,
@@ -190,6 +192,8 @@ hooks: []
 				{
 					id: "reviewer",
 					description: "Reviews code changes",
+					skills: [],
+					tools: [],
 				},
 			],
 		};
@@ -206,22 +210,32 @@ describe("syncProjectManagedArtifacts wrap shadow path", () => {
 	let realDir: string;
 	let shadowDir: string;
 	let db: CapaDatabase;
+	let dbPath: string;
+	let prevHome: string | undefined;
 	const projectId = "proj-wrap-shadow";
 
 	beforeEach(() => {
+		prevHome = process.env.HOME;
+		const home = mkdtempSync(join(tmpdir(), "capa-wrap-sync-home-"));
+		process.env.HOME = home;
+		process.env.USERPROFILE = home;
+
 		realDir = mkdtempSync(join(tmpdir(), "capa-wrap-hooks-real-"));
 		shadowDir = mkdtempSync(join(tmpdir(), "capa-wrap-hooks-shadow-"));
 		mkdirSync(join(shadowDir, ".cursor"), { recursive: true });
 		writeFileSync(join(realDir, "capabilities.yaml"), "providers: [cursor]\n");
-		db = new CapaDatabase(":memory:");
+		dbPath = join(realDir, "test.db");
+		db = new CapaDatabase(dbPath);
 		db.upsertProject({ id: projectId, path: realDir });
 		db.setProjectProviders(projectId, ["cursor"]);
 	});
 
 	afterEach(() => {
+		db.close();
 		rmSync(realDir, { recursive: true, force: true });
 		rmSync(shadowDir, { recursive: true, force: true });
-		db.close();
+		if (prevHome === undefined) delete process.env.HOME;
+		else process.env.HOME = prevHome;
 	});
 
 	it("writes cursor hooks.json under the shadow workspace projectPath", async () => {
@@ -295,5 +309,48 @@ describe("syncProjectManagedArtifacts wrap shadow path", () => {
 		expect(readFileSync(join(realDir, "AGENTS.md"), "utf-8")).toBe(
 			"# User-owned\n",
 		);
+	});
+
+	it("warns and continues when a wrap shadow marker references an unknown provider", async () => {
+		const cachePath = join(getWorkspacesDir(), `bad-provider-${Date.now()}`);
+		const workspacePath = join(cachePath, "project");
+		mkdirSync(workspacePath, { recursive: true });
+		writeFileSync(
+			join(cachePath, WORKSPACE_MARKER),
+			JSON.stringify({
+				realProjectPath: realDir,
+				providerId: "not-a-real-provider",
+				workingDir: "project",
+			}),
+			"utf-8",
+		);
+
+		const result = await syncProjectManagedArtifactsAndWrapShadows({
+			projectPath: realDir,
+			projectId,
+			capabilitiesFilePath: join(realDir, "capabilities.yaml"),
+			capabilities: {
+				providers: ["cursor"],
+				skills: [],
+				tools: [],
+				servers: [],
+				hooks: [
+					{
+						id: "wrap-hook",
+						on: "sessionStart",
+						type: "command",
+						command: "echo wrap",
+					},
+				],
+			},
+			db,
+			serverOrigin: "http://127.0.0.1:5912",
+		});
+
+		expect(result.hooks.warnings.some((w) => w.includes("unknown provider"))).toBe(
+			true,
+		);
+		expect(result.skipped).toBe(true);
+		rmSync(cachePath, { recursive: true, force: true });
 	});
 });

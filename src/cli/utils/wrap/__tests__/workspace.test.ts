@@ -12,7 +12,8 @@ import { tmpdir } from 'os';
 import { getWrappableProvider } from '../../../../shared/providers';
 import { WORKSPACE_MARKER } from '../../../../shared/workspaces/paths';
 import * as install from '../../../commands/install';
-import { prepareWorkspace, computeCapabilitiesFingerprint, workspaceDirName, workingDirName } from '../workspace';
+import { prepareWorkspace, computeCapabilitiesFingerprint, workspaceDirName, workingDirName, listWrapWorkspacesForProject } from '../workspace';
+import { getWorkspacesDir } from '../../../../shared/workspaces/paths';
 
 const installMock = mock(async () => {});
 
@@ -204,5 +205,37 @@ hooks: []
     );
     const b = await computeCapabilitiesFingerprint(realDir);
     expect(a).not.toBe(b);
+  });
+});
+
+describe('listWrapWorkspacesForProject', () => {
+  let realDir: string;
+  let homeCtx: { home: string; restore: () => void };
+
+  beforeEach(() => {
+    realDir = mkdtempSync(join(tmpdir(), 'capa-ws-list-real-'));
+    homeCtx = isolateHome();
+  });
+
+  afterEach(() => {
+    homeCtx.restore();
+    rmSync(realDir, { recursive: true, force: true });
+  });
+
+  it('ignores markers whose workingDir escapes the cache root', async () => {
+    const cachePath = join(getWorkspacesDir(), `escape-${Date.now()}`);
+    mkdirSync(cachePath, { recursive: true });
+    writeFileSync(
+      join(cachePath, WORKSPACE_MARKER),
+      JSON.stringify({
+        realProjectPath: realDir,
+        providerId: 'cursor',
+        workingDir: '..',
+      }),
+      'utf-8',
+    );
+
+    expect(await listWrapWorkspacesForProject(realDir)).toHaveLength(0);
+    rmSync(cachePath, { recursive: true, force: true });
   });
 });

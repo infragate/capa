@@ -16,7 +16,7 @@ import {
 } from "../shared/agent-activity";
 import { createAuthenticatedFetch } from "../shared/authenticated-fetch";
 import { validateHooks } from "../shared/hooks-validate";
-import { validateProvider } from "../shared/providers/resolve";
+import { getProvider } from "../shared/providers";
 import {
 	syncProjectSubagents,
 	type SyncSectionResult,
@@ -143,22 +143,45 @@ export async function syncProjectManagedArtifactsAndWrapShadows(opts: {
 	let skipped = true;
 
 	const shadows = await listWrapWorkspacesForProject(opts.projectPath);
+	const shadowWarnings: string[] = [];
 	for (const shadow of shadows) {
-		const shadowResult = await syncProjectManagedArtifacts({
-			...opts,
-			projectPath: shadow.workspacePath,
-			providers: [validateProvider(shadow.providerId)],
-			pruneOptions: {
-				onlyDesiredProviders: true,
-				mutateRoot: shadow.workspacePath,
-			},
-			materializeShadow: true,
-		});
-		hooks = mergeSyncSections(hooks, shadowResult.hooks);
-		rules = mergeSyncSections(rules, shadowResult.rules);
-		agents = mergeSyncSections(agents, shadowResult.agents);
-		subagents = mergeSyncSections(subagents, shadowResult.subagents);
-		if (!shadowResult.skipped) skipped = false;
+		const provider = getProvider(shadow.providerId);
+		if (!provider) {
+			shadowWarnings.push(
+				`Skipped wrap shadow at ${shadow.cachePath}: unknown provider "${shadow.providerId}"`,
+			);
+			continue;
+		}
+		try {
+			const shadowResult = await syncProjectManagedArtifacts({
+				...opts,
+				projectPath: shadow.workspacePath,
+				providers: [provider.id],
+				pruneOptions: {
+					onlyDesiredProviders: true,
+					mutateRoot: shadow.workspacePath,
+				},
+				materializeShadow: true,
+			});
+			hooks = mergeSyncSections(hooks, shadowResult.hooks);
+			rules = mergeSyncSections(rules, shadowResult.rules);
+			agents = mergeSyncSections(agents, shadowResult.agents);
+			subagents = mergeSyncSections(subagents, shadowResult.subagents);
+			if (!shadowResult.skipped) skipped = false;
+		} catch (err: unknown) {
+			shadowWarnings.push(
+				`Failed to sync wrap shadow at ${shadow.cachePath}: ${
+					err instanceof Error ? err.message : String(err)
+				}`,
+			);
+		}
+	}
+
+	if (shadowWarnings.length > 0) {
+		hooks = {
+			...hooks,
+			warnings: [...hooks.warnings, ...shadowWarnings],
+		};
 	}
 
 	return { hooks, rules, agents, subagents, skipped };

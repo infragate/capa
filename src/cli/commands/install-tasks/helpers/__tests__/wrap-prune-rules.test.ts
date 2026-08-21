@@ -10,19 +10,21 @@ describe('pruneRules wrap shadow scope', () => {
   let realDir: string;
   let shadowDir: string;
   let db: CapaDatabase;
+  let dbPath: string;
   const projectId = 'proj-wrap-rules';
 
   beforeEach(() => {
     realDir = mkdtempSync(join(tmpdir(), 'capa-wrap-rules-real-'));
     shadowDir = mkdtempSync(join(tmpdir(), 'capa-wrap-rules-shadow-'));
-    db = new CapaDatabase(':memory:');
+    dbPath = join(realDir, 'test.db');
+    db = new CapaDatabase(dbPath);
     db.upsertProject({ id: projectId, path: realDir });
   });
 
   afterEach(() => {
+    db.close();
     rmSync(realDir, { recursive: true, force: true });
     rmSync(shadowDir, { recursive: true, force: true });
-    db.close();
   });
 
   it('removes orphan rules under the shadow workspace only', () => {
