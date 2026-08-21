@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'fs';
-import { dirname, join } from 'path';
+import { dirname } from 'path';
 import type { AgentFileConfig, SecurityOptions } from '../../../types/capabilities';
 import {
   loadBlockedPhrases,
