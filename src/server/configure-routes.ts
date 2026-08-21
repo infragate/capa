@@ -13,7 +13,10 @@ import type { OAuth2Config } from "../types/oauth";
 import type { CapabilitiesFileWatcher } from "./capabilities-watcher";
 import { matchRoute } from "./match-route";
 import type { CapaMCPServer, ValidationProgressEvent } from "./mcp-handler";
-import type { McpServerStateManager } from "./mcp-server-state";
+import {
+	type McpServerStateManager,
+	syncProjectServerEnablement,
+} from "./mcp-server-state";
 import { OAuth2Manager } from "./oauth-manager";
 import {
 	type OAuth2ServerEntry,
@@ -25,6 +28,7 @@ import {
 	loadEffectiveCapabilities,
 } from "./resolve-effective-capabilities";
 import type { SessionManager } from "./session-manager";
+import { syncProjectManagedArtifactsAndWrapShadows } from "./sync-project-artifacts";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
@@ -43,6 +47,80 @@ export interface ConfigureRouteDeps {
 		previousServers?: Capabilities["servers"],
 	) => void | Promise<void>;
 	mcpServerState?: McpServerStateManager;
+	/** Notify live UI clients after server enablement changes. */
+	notifyProjectChanged?: (projectId: string) => void;
+}
+
+async function applyProjectServerEnablement(
+	deps: ConfigureRouteDeps,
+	projectId: string,
+	servers: Capabilities["servers"],
+	previousServers: Capabilities["servers"] | undefined,
+): Promise<void> {
+	if (!deps.mcpServerState) return;
+	syncProjectServerEnablement(
+		deps.mcpServerState,
+		projectId,
+		servers,
+		previousServers,
+	);
+	const mcpServer = deps.getOrCreateMCPServer(projectId);
+	if (mcpServer) {
+		await mcpServer.disconnectNonEnabledServers((serverId) =>
+			deps.mcpServerState!.isEnabled(projectId, serverId),
+		);
+	}
+	deps.notifyProjectChanged?.(projectId);
+}
+
+async function syncManagedArtifactsForProject(
+	deps: ConfigureRouteDeps,
+	projectId: string,
+	capabilitiesToUse: Capabilities,
+): Promise<void> {
+	const apiLogger = logger.child("CapaServer").child("API");
+	const project = deps.db.getProject(projectId);
+	if (!project) return;
+
+	const file = await detectCapabilitiesFile(project.path);
+	if (!file) return;
+
+	const artifacts = await syncProjectManagedArtifactsAndWrapShadows({
+		projectPath: project.path,
+		projectId,
+		capabilitiesFilePath: file.path,
+		capabilities: capabilitiesToUse,
+		db: deps.db,
+		serverOrigin: deps.uiOrigin(),
+	});
+	for (const w of [
+		...artifacts.hooks.warnings,
+		...artifacts.rules.warnings,
+		...artifacts.agents.warnings,
+		...artifacts.subagents.warnings,
+	]) {
+		apiLogger.warn(w);
+	}
+	if (artifacts.hooks.installed > 0 || artifacts.hooks.removed > 0) {
+		apiLogger.info(
+			`Hooks synced (installed=${artifacts.hooks.installed}, removed=${artifacts.hooks.removed})`,
+		);
+	}
+	if (artifacts.rules.installed > 0 || artifacts.rules.removed > 0) {
+		apiLogger.info(
+			`Rules synced (installed=${artifacts.rules.installed}, removed=${artifacts.rules.removed})`,
+		);
+	}
+	if (artifacts.agents.installed > 0 || artifacts.agents.removed > 0) {
+		apiLogger.info(
+			`Agent instructions synced (installed=${artifacts.agents.installed}, removed=${artifacts.agents.removed})`,
+		);
+	}
+	if (artifacts.subagents.installed > 0 || artifacts.subagents.removed > 0) {
+		apiLogger.info(
+			`Sub-agents synced (installed=${artifacts.subagents.installed}, removed=${artifacts.subagents.removed})`,
+		);
+	}
 }
 
 /**
@@ -78,9 +156,24 @@ export async function applyProjectCapabilitiesOnly(
 		deps.effectiveCapsCache.delete(projectId);
 	}
 
+	const previousCapabilities =
+		deps.sessionManager.getProjectCapabilities(projectId);
 	deps.sessionManager.setProjectCapabilities(projectId, capabilitiesToUse);
 	if (project) {
 		void deps.capsWatcher.watchProject(projectId, project.path);
+	}
+
+	// UI capability writes (add/remove servers) use this light path instead of
+	// full configure — still auto-enable servers present in capabilities.
+	await applyProjectServerEnablement(
+		deps,
+		projectId,
+		capabilitiesToUse.servers,
+		previousCapabilities?.servers,
+	);
+
+	if (project) {
+		await syncManagedArtifactsForProject(deps, projectId, capabilitiesToUse);
 	}
 
 	apiLogger.success(
@@ -290,15 +383,17 @@ export async function runProjectConfigure(
 		apiLogger.failure(`Tool validation error: ${error.message}`);
 	}
 
-	// Install validation connects servers temporarily; drop connections for
-	// servers the user has not explicitly enabled in the UI.
-	if (deps.mcpServerState) {
-		const mcpServer = deps.getOrCreateMCPServer(projectId);
-		if (mcpServer) {
-			await mcpServer.disconnectNonEnabledServers((serverId) =>
-				deps.mcpServerState!.isEnabled(projectId, serverId),
-			);
-		}
+	// Install / UI / wrap configure: enable every server in capabilities and
+	// drop connections for servers removed from the project.
+	await applyProjectServerEnablement(
+		deps,
+		projectId,
+		capabilitiesToUse.servers,
+		previousCapabilities?.servers,
+	);
+
+	if (project) {
+		await syncManagedArtifactsForProject(deps, projectId, capabilitiesToUse);
 	}
 
 	if (missingVars.length > 0 || needsOAuth2Connection) {

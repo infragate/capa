@@ -15,6 +15,7 @@ export {
   getTargetFilenames,
   installAgentsFile,
   cleanAgentsFile,
+  cleanAgentInstructionSnippets,
 } from './install';
 
 export {

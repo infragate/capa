@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test';
-import { McpServerStateManager } from '../mcp-server-state';
+import { McpServerStateManager, syncProjectServerEnablement } from '../mcp-server-state';
 
 describe('McpServerStateManager', () => {
   it('defaults servers to disabled', () => {
@@ -20,5 +20,20 @@ describe('McpServerStateManager', () => {
     const mgr = new McpServerStateManager();
     mgr.setEnabled('proj', '@slack', true);
     expect(mgr.getEnabledServers('proj').has('slack')).toBe(true);
+  });
+});
+
+describe('syncProjectServerEnablement', () => {
+  it('enables current servers and disables removed ones', () => {
+    const mgr = new McpServerStateManager();
+    mgr.setEnabled('proj', 'old', true);
+    syncProjectServerEnablement(
+      mgr,
+      'proj',
+      [{ id: 'brave', type: 'mcp', def: { cmd: 'npx' } }],
+      [{ id: 'old', type: 'mcp', def: { cmd: 'x' } }],
+    );
+    expect(mgr.isEnabled('proj', 'brave')).toBe(true);
+    expect(mgr.isEnabled('proj', 'old')).toBe(false);
   });
 });

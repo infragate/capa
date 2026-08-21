@@ -154,10 +154,10 @@ function renderSkillsBlock(
 	opts: { backtick: boolean },
 ): string[] {
 	const header = opts.backtick ? "**Skills:**" : "Skills:";
-	if (subAgent.skills.length === 0) {
+	if ((subAgent.skills ?? []).length === 0) {
 		return [header, "- (none)"];
 	}
-	const bullets = subAgent.skills.map((skillId) => {
+	const bullets = (subAgent.skills ?? []).map((skillId) => {
 		const desc = skillDescriptions.get(skillId);
 		const name = opts.backtick ? `\`${skillId}\`` : skillId;
 		return desc ? `- ${name} — ${desc}` : `- ${name}`;
@@ -171,10 +171,10 @@ function renderToolsBlock(
 	opts: { backtick: boolean },
 ): string[] {
 	const header = opts.backtick ? "**Tools:**" : "Tools:";
-	if (subAgent.tools.length === 0) {
+	if ((subAgent.tools ?? []).length === 0) {
 		return [header, "- (none)"];
 	}
-	const bullets = subAgent.tools.map((toolId) => {
+	const bullets = (subAgent.tools ?? []).map((toolId) => {
 		const { qualified, capaSh, description } = resolveTool(
 			toolId,
 			capabilities,

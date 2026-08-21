@@ -11,7 +11,8 @@ import { clearWrapSession, writeWrapSession } from '../utils/wrap/session-file';
 import { ensureWrapBinaryOnPath } from './wrap-ensure-binary';
 import { ensureWrapServerRunning } from './wrap-ensure-server';
 import { resolveWrapProviderArg } from './wrap-prompt';
-import { info, error } from '../ui';
+import { syncWrapProjectConfigure } from '../utils/wrap/sync-configure';
+import { info, error, warn } from '../ui';
 
 export interface WrapOptions {
   project?: string;
@@ -104,8 +105,9 @@ export async function wrapCommand(
 
   // Warm wrap reuses the shadow workspace without install — still need the
   // server for MCP tools, capa sh, and activity/telemetry hooks.
+  let wrapServerUrl: string;
   try {
-    await ensureWrapServerRunning();
+    ({ url: wrapServerUrl } = await ensureWrapServerRunning());
   } catch (err) {
     error(err instanceof Error ? err.message : String(err));
     process.exit(1);
@@ -133,6 +135,22 @@ export async function wrapCommand(
         : `Reusing wrap workspace for ${provider.displayName}`,
   );
   info(prepared.workspacePath);
+
+  if (!prepared.installed) {
+    try {
+      await syncWrapProjectConfigure({
+        realProjectPath: prepared.realProjectPath,
+        wrapProviderId: provider.id,
+        serverUrl: wrapServerUrl,
+      });
+    } catch (err) {
+      warn(
+        `Could not sync MCP server enablement: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  }
 
   if (!writeWrapSession(prepared.cachePath, {
     pid: process.pid,

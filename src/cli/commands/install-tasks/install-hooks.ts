@@ -6,6 +6,7 @@ import { raiseInstallError } from './install-error-policy';
 import type { CachePlatform } from '../../../shared/cache';
 import type { InstallCtx } from './context';
 import { getRepoSnapshot } from './helpers/repo-snapshot';
+import { materialInstallProviders } from './helpers/install-providers';
 
 export function installHooksTask(): Task<InstallCtx> {
   return {
@@ -23,7 +24,7 @@ export function installHooksTask(): Task<InstallCtx> {
         return;
       }
 
-      const providers = ctx.capabilitiesToUse.providers ?? ctx.resolvedProviders;
+      const providers = materialInstallProviders(ctx);
       const repoFetchAuth = createAuthenticatedFetch(ctx.db);
       task.output = `${valid.length} hook${valid.length === 1 ? '' : 's'} → ${providers.length} provider${providers.length === 1 ? '' : 's'}`;
 

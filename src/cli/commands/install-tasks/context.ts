@@ -30,8 +30,9 @@ export interface InstallCtx {
   configureProviders: string[];
   /**
    * True when writing into a wrap shadow workspace under a different identity
-   * path. Wrap installs only materialize the wrap provider into the shadow;
-   * they never run orphan prune/cleanup against the shared project identity.
+   * path. Wrap installs materialize only the wrap provider under the shadow;
+   * prune/cleanup is scoped to that provider and shadow paths so shared
+   * identity state on the real project is never touched.
    */
   isWrapInstall: boolean;
   lockBuilder: LockfileBuilder;

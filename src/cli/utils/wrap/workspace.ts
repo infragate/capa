@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import { basename, join, resolve } from 'path';
+import { basename, isAbsolute, join, relative, resolve } from 'path';
 import { existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'fs';
 import { rm } from 'fs/promises';
 import * as yaml from 'js-yaml';
@@ -397,6 +397,67 @@ export async function pruneWorkspaces(): Promise<number> {
     }
   }
   return removed;
+}
+
+export interface WrapWorkspaceEntry {
+  cachePath: string;
+  workspacePath: string;
+  providerId: string;
+}
+
+/** Single path segment — rejects `..`, separators, and absolute paths. */
+function isSafeWorkingDirName(name: string): boolean {
+  if (!name || name === '.' || name === '..') return false;
+  if (name.includes('/') || name.includes('\\')) return false;
+  return !isAbsolute(name);
+}
+
+function isPathInside(parentDir: string, candidatePath: string): boolean {
+  const parent = resolve(parentDir);
+  const candidate = resolve(candidatePath);
+  const rel = relative(parent, candidate);
+  if (rel === '') return false;
+  return !rel.startsWith('..') && !isAbsolute(rel);
+}
+
+/**
+ * Active wrap shadow workspaces whose marker points at `realProjectPath`.
+ */
+export async function listWrapWorkspacesForProject(
+  realProjectPath: string,
+): Promise<WrapWorkspaceEntry[]> {
+  await ensureCapaDir();
+  const dir = getWorkspacesDir();
+  if (!existsSync(dir)) return [];
+
+  const real = resolve(realProjectPath);
+  const entries: WrapWorkspaceEntry[] = [];
+
+  for (const name of readdirSync(dir)) {
+    const cachePath = join(dir, name);
+    try {
+      if (!statSync(cachePath).isDirectory()) continue;
+      const markerPath = join(cachePath, WORKSPACE_MARKER);
+      if (!existsSync(markerPath)) continue;
+      const data = (await Bun.file(markerPath).json()) as WorkspaceMarker;
+      if (!data?.realProjectPath || !data.providerId) continue;
+      if (!pathsEqual(data.realProjectPath, real)) continue;
+      const workName = data.workingDir ?? workingDirName(data.realProjectPath);
+      if (!isSafeWorkingDirName(workName)) continue;
+      const workspacePath = resolve(cachePath, workName);
+      if (!isPathInside(cachePath, workspacePath)) continue;
+      if (!existsSync(workspacePath)) continue;
+      entries.push({
+        cachePath,
+        workspacePath,
+        providerId: data.providerId,
+      });
+    } catch {
+      // skip invalid cache dirs
+    }
+  }
+
+  return entries;
 }
 
 /**

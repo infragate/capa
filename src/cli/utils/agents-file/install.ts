@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'fs';
-import { dirname } from 'path';
+import { dirname, join } from 'path';
 import type { AgentFileConfig, SecurityOptions } from '../../../types/capabilities';
 import {
   loadBlockedPhrases,
@@ -13,7 +13,14 @@ import {
 import { getProvider, getAllProviders } from '../../../shared/providers';
 import { fetchRepoFile, assertSafeRepoPath } from '../../../shared/repo-file';
 import { taskLog } from '../../ui';
-import { upsertSnippet, removeAllCapaSnippets, listCapaSnippetIds, removeSnippet } from './snippets';
+import {
+  renderAgentInstructionSnippets,
+  clearAgentInstructionSnippets as stripAgentInstructionSnippetsFromContent,
+  clearCapaSnippetMarkers,
+  fileHasManagedAgentInstructions,
+  sanitizeAgentSourceContent,
+  fileHasCapaInstructionsMarkers,
+} from './snippets';
 import { readMdFile, writeMdFile, deleteMdFile } from './md-io';
 import {
   fetchRemoteContent,
@@ -21,6 +28,7 @@ import {
   resolveRepoSnippet,
   type RepoFetchContext,
 } from './remote';
+import { assertAgentSourceNotInstructionsTarget } from './source-guard';
 
 const UNIVERSAL_AGENTS_FILENAME = 'AGENTS.md';
 
@@ -57,12 +65,19 @@ function applyConfigToFile(
   projectPath: string,
   filename: string,
   hasBase: boolean,
-  snippetBodies: Map<string, string>
-): void {
-  let content = readMdFile(projectPath, filename);
+  snippetBodies: Map<string, string>,
+  forceMaterialize: boolean,
+): boolean {
+  const existing = readMdFile(projectPath, filename);
+  if (
+    !forceMaterialize &&
+    existing !== '' &&
+    !fileHasCapaInstructionsMarkers(existing)
+  ) {
+    return false;
+  }
 
-  const snippetEntries = [...snippetBodies.entries()].filter(([id]) => id !== BASE_BLOCK_ID);
-  const currentIds = new Set<string>(snippetEntries.map(([id]) => id));
+  const snippets: Array<{ id: string; body: string }> = [];
 
   if (hasBase) {
     const baseBody = snippetBodies.get(BASE_BLOCK_ID);
@@ -71,22 +86,46 @@ function applyConfigToFile(
         `Internal error: hasBase=true but no '${BASE_BLOCK_ID}' entry in snippetBodies.`
       );
     }
-    content = upsertSnippet(content, BASE_BLOCK_ID, baseBody);
-    currentIds.add(BASE_BLOCK_ID);
+    snippets.push({ id: BASE_BLOCK_ID, body: baseBody });
   }
 
-  for (const [id, body] of snippetEntries) {
-    content = upsertSnippet(content, id, body);
+  for (const [id, body] of snippetBodies.entries()) {
+    if (id === BASE_BLOCK_ID) continue;
+    snippets.push({ id, body });
   }
 
-  for (const id of listCapaSnippetIds(content)) {
-    if (!currentIds.has(id)) {
-      taskLog(`  Removing stale agent snippet "${id}" from ${filename}`);
-      content = removeSnippet(content, id);
+  const content = renderAgentInstructionSnippets(existing, snippets);
+
+  if (content.trim() === '') {
+    deleteMdFile(projectPath, filename);
+    return true;
+  }
+  writeMdFile(projectPath, filename, content);
+  return true;
+}
+
+/** Remove agent instruction blocks from target files (rules / sub-agent blocks stay). */
+export function cleanAgentInstructionSnippets(
+  projectPath: string,
+  providers: string[],
+): number {
+  let removed = 0;
+  for (const filename of getTargetFilenames(providers)) {
+    const existing = readMdFile(projectPath, filename);
+    if (existing === '') continue;
+    if (!fileHasManagedAgentInstructions(existing)) continue;
+
+    const cleaned = stripAgentInstructionSnippetsFromContent(existing);
+    removed++;
+    if (cleaned.trim() === '') {
+      deleteMdFile(projectPath, filename);
+      taskLog(`  ✓ Removed ${filename} (no remaining content)`);
+    } else {
+      writeMdFile(projectPath, filename, cleaned + '\n');
+      taskLog(`  ✓ Cleared agent instruction snippets from ${filename}`);
     }
   }
-
-  writeMdFile(projectPath, filename, content);
+  return removed;
 }
 
 export async function installAgentsFile(
@@ -106,17 +145,24 @@ export async function installAgentsFile(
     : [];
   const allowedCharacters = sanitizeEnabled ? getAllowedCharacters(security) : null;
 
-  function applySecurityChecks(content: string, sourceLabel: string): string {
+  function prepareSnippetBody(content: string, sourceLabel: string): string {
+    let prepared = sanitizeAgentSourceContent(content);
     if (blockedEnabled && blockedPhrases.length > 0) {
-      const check = checkBlockedPhrases(content, blockedPhrases);
+      const check = checkBlockedPhrases(prepared, blockedPhrases);
       if (check.blocked) {
+        if (ctx.onBlockedPhrase) {
+          ctx.onBlockedPhrase(sourceLabel, check.phrase!);
+          throw new Error(
+            `Agent instructions blocked phrase "${check.phrase}" in ${sourceLabel}`,
+          );
+        }
         reportBlockedPhraseAndExit(sourceLabel, '(agents)', check.phrase!);
       }
     }
     if (sanitizeEnabled && allowedCharacters !== null) {
-      content = sanitizeContent(content, allowedCharacters);
+      prepared = sanitizeContent(prepared, allowedCharacters);
     }
-    return content;
+    return prepared;
   }
 
   const snippetBodies = new Map<string, string>();
@@ -143,6 +189,12 @@ export async function installAgentsFile(
           `agents.base local file not found: ${resolvedPath} (resolved from path "${config.base.path}")`
         );
       }
+      assertAgentSourceNotInstructionsTarget(
+        projectPath,
+        resolvedPath,
+        targetFiles,
+        'agents.base',
+      );
       taskLog(`  Using base agents file from ${resolvedPath}`);
       baseContent = readFileSync(resolvedPath, 'utf8');
     } else if (baseType === 'github' || baseType === 'gitlab') {
@@ -196,7 +248,7 @@ export async function installAgentsFile(
       );
     }
 
-    snippetBodies.set(BASE_BLOCK_ID, applySecurityChecks(baseContent, 'agents:base'));
+    snippetBodies.set(BASE_BLOCK_ID, prepareSnippetBody(baseContent, 'agents:base'));
   }
 
   for (const snippet of config.additional ?? []) {
@@ -256,6 +308,12 @@ export async function installAgentsFile(
             `(resolved from path "${snippet.path}")`,
         );
       }
+      assertAgentSourceNotInstructionsTarget(
+        projectPath,
+        resolvedPath,
+        targetFiles,
+        `agents snippet "${snippet.id}"`,
+      );
       taskLog(`  Reading local snippet "${resolvedId}" from ${resolvedPath}`);
       body = readFileSync(resolvedPath, 'utf8');
     } else if (snippet.type === 'github' || snippet.type === 'gitlab') {
@@ -266,13 +324,36 @@ export async function installAgentsFile(
       throw new Error(`Unknown agent snippet type: ${(snippet as any).type}`);
     }
 
-    snippetBodies.set(resolvedId, applySecurityChecks(body, `agents:${resolvedId}`));
+    snippetBodies.set(resolvedId, prepareSnippetBody(body, `agents:${resolvedId}`));
+  }
+
+  const hasContent = !!config.base || (config.additional?.length ?? 0) > 0;
+  if (!hasContent) {
+    cleanAgentInstructionSnippets(projectPath, providers);
+    return;
   }
 
   const hasBase = !!config.base;
+  const forceMaterialize = ctx.forceMaterialize === true;
+  let updatedAny = false;
   for (const filename of targetFiles) {
-    applyConfigToFile(projectPath, filename, hasBase, snippetBodies);
-    taskLog(`  ✓ ${filename} updated`);
+    if (
+      applyConfigToFile(
+        projectPath,
+        filename,
+        hasBase,
+        snippetBodies,
+        forceMaterialize,
+      )
+    ) {
+      updatedAny = true;
+      taskLog(`  ✓ ${filename} updated`);
+    }
+  }
+  if (!updatedAny && !ctx.quiet) {
+    taskLog(
+      '  · Skipped agent instruction files (existing user-owned content, no capa markers)',
+    );
   }
 }
 
@@ -287,7 +368,7 @@ export function cleanAgentsFile(projectPath: string, providers: string[]): void 
     const content = readMdFile(projectPath, filename);
     if (content === '') continue;
 
-    const cleaned = removeAllCapaSnippets(content);
+    const cleaned = clearCapaSnippetMarkers(content);
 
     if (cleaned.trim() === '') {
       deleteMdFile(projectPath, filename);
