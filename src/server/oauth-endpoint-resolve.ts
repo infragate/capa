@@ -1,12 +1,13 @@
-import type { OAuth2Config } from "../types/oauth";
-
 /**
  * Resolve auth/token endpoints from canonical camelCase fields, with legacy
  * alias fallbacks for session/DB oauth2 blocks that predate ingest normalization
  * (`tokenUrl` / `authorizationUrl`, snake_case, etc.).
+ *
+ * Accepts any oauth2-shaped object (capabilities config, discovery result, or
+ * legacy session JSON) — callers may pass optional or required endpoint fields.
  */
 export function resolveAuthorizationEndpoint(
-	oauth2Config: OAuth2Config | Record<string, unknown>,
+	oauth2Config: object,
 ): string | undefined {
 	const cfg = oauth2Config as Record<string, unknown>;
 	return firstNonEmptyString(
@@ -17,9 +18,7 @@ export function resolveAuthorizationEndpoint(
 	);
 }
 
-export function resolveTokenEndpoint(
-	oauth2Config: OAuth2Config | Record<string, unknown>,
-): string | undefined {
+export function resolveTokenEndpoint(oauth2Config: object): string | undefined {
 	const cfg = oauth2Config as Record<string, unknown>;
 	return firstNonEmptyString(
 		cfg.tokenEndpoint,
