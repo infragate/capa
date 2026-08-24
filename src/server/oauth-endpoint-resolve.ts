@@ -15,7 +15,6 @@ export type OAuthEndpointResolvable = {
 	token_endpoint?: string;
 	authorization_url?: string;
 	token_url?: string;
-	[key: string]: unknown;
 };
 
 export function resolveAuthorizationEndpoint(

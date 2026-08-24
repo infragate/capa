@@ -45,17 +45,12 @@ describe('OAuth2Manager', () => {
   });
 
 	describe('isPermanentRefreshFailure', () => {
-    it('classifies only HTTP 403 as permanent', () => {
-      const res403 = new Response('', { status: 403 });
-      expect(isPermanentRefreshFailure(undefined, res403, 'anything')).toBe(true);
-    });
-
-    it('treats 401/400 with invalid_grant as transient (keep tokens)', () => {
+    it('classifies 401/403 with invalid_grant as permanent', () => {
       const res401 = new Response('', { status: 401 });
-      expect(isPermanentRefreshFailure(undefined, res401, '{"error":"invalid_grant"}')).toBe(false);
+      expect(isPermanentRefreshFailure(undefined, res401, '{"error":"invalid_grant"}')).toBe(true);
 
-      const res400 = new Response('', { status: 400 });
-      expect(isPermanentRefreshFailure(undefined, res400, 'invalid_token')).toBe(false);
+      const res403 = new Response('', { status: 403 });
+      expect(isPermanentRefreshFailure(undefined, res403, 'invalid_token')).toBe(true);
     });
 
     it('treats 500 responses as transient', () => {

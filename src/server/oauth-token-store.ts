@@ -1,6 +1,6 @@
 import type { CapaDatabase } from "../db/database";
 import { logger } from "../shared/logger";
-import { isPermanentRefreshFailure } from "../shared/oauth-refresh";
+import { isMcpOAuthTokenPermanentFailure } from "../shared/oauth-refresh";
 import type { OAuth2Config } from "../types/oauth";
 import {
 	resolveTokenEndpoint,
@@ -135,7 +135,7 @@ export async function refreshAccessToken(
 			log.failure(
 				`Token refresh failed: ${response.status} ${response.statusText}`,
 			);
-			if (isPermanentRefreshFailure(undefined, response, body)) {
+			if (isMcpOAuthTokenPermanentFailure(undefined, response, body)) {
 				db.deleteOAuthToken(projectId, serverId);
 				log.info(`Deleted invalid token for ${serverId}`);
 			} else {
@@ -148,8 +148,8 @@ export async function refreshAccessToken(
 		if (parsed.error || !parsed.accessToken) {
 			const message = parsed.error || "Token response did not include access_token";
 			log.failure(`Token refresh failed: ${message}`);
-			// Only a clear HTTP 403 may delete stored tokens automatically.
-			if (isPermanentRefreshFailure(undefined, response, message)) {
+			// Only a clear HTTP 403 may delete stored MCP tokens automatically.
+			if (isMcpOAuthTokenPermanentFailure(undefined, response, message)) {
 				db.deleteOAuthToken(projectId, serverId);
 				log.info(`Deleted invalid token for ${serverId}`);
 			} else {
@@ -175,7 +175,7 @@ export async function refreshAccessToken(
 		return true;
 	} catch (error: any) {
 		log.failure(`Token refresh error: ${error.message}`);
-		if (isPermanentRefreshFailure(error)) {
+		if (isMcpOAuthTokenPermanentFailure(error)) {
 			db.deleteOAuthToken(projectId, serverId);
 			log.info(`Deleted failed token for ${serverId}`);
 		} else {
