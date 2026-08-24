@@ -185,7 +185,6 @@
     "idInvalidChars": "ID may only contain letters, numbers, hyphens, and underscores",
     "serverId": "Server ID",
     "serverIdRequired": "Server ID is required",
-    "serverDisplayName": "Display name",
     "serverDescription": "Description",
     "serverAdvanced": "Advanced",
     "serverHeaders": "HTTP headers",
