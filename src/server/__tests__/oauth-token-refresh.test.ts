@@ -109,4 +109,29 @@ describe("refreshAccessToken", () => {
 		expect(ok).toBe(true);
 		expect(new URLSearchParams(body).get("client_id")).toBe("test-app-id");
 	});
+
+	it("refreshes when oauth2 config only has legacy tokenUrl alias", async () => {
+		let postedUrl = "";
+		globalThis.fetch = (async (input: RequestInfo | URL) => {
+			postedUrl = String(input);
+			return new Response(
+				JSON.stringify({
+					access_token: "new-access",
+					refresh_token: "new-refresh",
+					expires_in: 3600,
+				}),
+				{ status: 200, headers: { "Content-Type": "application/json" } },
+			);
+		}) as unknown as typeof fetch;
+
+		const ok = await refreshAccessToken(db, "p1", "mcp-server", {
+			authorizationUrl: "https://example.com/authorize",
+			tokenUrl: "https://example.com/token",
+			resourceServer: "https://example.com",
+			clientId: "test-app-id",
+		} as never);
+
+		expect(ok).toBe(true);
+		expect(postedUrl).toBe("https://example.com/token");
+	});
 });

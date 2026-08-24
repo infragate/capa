@@ -71,6 +71,34 @@ describe("preserveDiscoveredOAuth2", () => {
 		);
 	});
 
+	it("copies legacy tokenUrl / authorizationUrl aliases as canonical fields", () => {
+		const previous: Capabilities = {
+			providers: [],
+			skills: [],
+			tools: [],
+			servers: [
+				mcpServer("legacy", "https://mcp.example/mcp", {
+					authorizationUrl: "https://auth.example/authorize",
+					tokenUrl: "https://auth.example/token",
+				} as Capabilities["servers"][number]["def"]["oauth2"]),
+			],
+		};
+		const fresh: Capabilities = {
+			providers: [],
+			skills: [],
+			tools: [],
+			servers: [mcpServer("legacy", "https://mcp.example/mcp")],
+		};
+
+		const result = preserveDiscoveredOAuth2(fresh, previous);
+		expect(result.servers[0].def.oauth2?.authorizationEndpoint).toBe(
+			"https://auth.example/authorize",
+		);
+		expect(result.servers[0].def.oauth2?.tokenEndpoint).toBe(
+			"https://auth.example/token",
+		);
+	});
+
 	it("keeps plugin-embedded clientId when copying discovered endpoints", () => {
 		const previous: Capabilities = {
 			providers: [],
