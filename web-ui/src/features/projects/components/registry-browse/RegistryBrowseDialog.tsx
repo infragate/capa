@@ -4,12 +4,12 @@ import { ChevronDown, Loader2, Search, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useRegistries } from '../../../registries/hooks';
 import { registriesApi, type RegistryItemDetail } from '../../../registries/api';
-import { useAddFromRegistry, useAppendCapability } from '../../hooks';
+import { useAddFromRegistry, useAppendCapability, useProject } from '../../hooks';
 import { capaIdErrorMessage, sanitizeCapaIdInput } from '../../../../lib/ids';
 import { LocalPathPicker } from '../LocalPathPicker';
 import { ResultList } from './ResultList';
 import { DetailPanel } from './DetailPanel';
-import type { ResultRow } from './types';
+import { isRegistryItemInstalled, type ResultRow } from './types';
 
 
 const ALL = '__all__';
@@ -35,6 +35,7 @@ export function RegistryBrowseDialog({
 }: RegistryBrowseDialogProps) {
   const { t } = useTranslation('projects');
   const { data: registries } = useRegistries();
+  const { data: project } = useProject(projectId);
   const addMutation = useAddFromRegistry(projectId);
   const appendMutation = useAppendCapability(projectId);
 
@@ -60,6 +61,25 @@ export function RegistryBrowseDialog({
     () => (registries ?? []).filter((r) => r.capabilities?.includes(capability)),
     [registries, capability],
   );
+
+  const installedIds = useMemo(() => {
+    const caps = project?.capabilities;
+    const ids = new Set<string>();
+    if (capability === 'skills') {
+      for (const skill of caps?.skills ?? []) {
+        if (skill.id) ids.add(skill.id);
+      }
+    } else {
+      for (const plugin of caps?.plugins ?? []) {
+        if (plugin.id) ids.add(plugin.id);
+      }
+    }
+    return ids;
+  }, [capability, project?.capabilities]);
+
+  const selectedInstalled = selected
+    ? isRegistryItemInstalled(selected.id, installedIds)
+    : false;
 
   const selectedRegistry = useMemo(() => {
     if (registryId === ALL) return null;
@@ -457,6 +477,7 @@ export function RegistryBrowseDialog({
                   results={results}
                   selected={selected}
                   showRegistry={registryId === ALL}
+                  installedIds={installedIds}
                   onSelect={setSelected}
                 />
                 <DetailPanel
@@ -464,6 +485,7 @@ export function RegistryBrowseDialog({
                   detail={detail}
                   detailLoading={detailLoading}
                   busy={busy}
+                  installed={selectedInstalled}
                   onAdd={() => void handleAdd()}
                 />
               </div>
