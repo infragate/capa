@@ -1,16 +1,25 @@
 import { useTranslation } from 'react-i18next';
+import { Check } from 'lucide-react';
 import { Spinner } from '../../../../components/common/Spinner';
-import type { ResultRow } from './types';
+import { isRegistryItemInstalled, type ResultRow } from './types';
 
 interface ResultListProps {
   searching: boolean;
   results: ResultRow[];
   selected: ResultRow | null;
   showRegistry: boolean;
+  installedIds?: ReadonlySet<string>;
   onSelect: (item: ResultRow) => void;
 }
 
-export function ResultList({ searching, results, selected, showRegistry, onSelect }: ResultListProps) {
+export function ResultList({
+  searching,
+  results,
+  selected,
+  showRegistry,
+  installedIds,
+  onSelect,
+}: ResultListProps) {
   const { t } = useTranslation('projects');
 
   return (
@@ -25,6 +34,9 @@ export function ResultList({ searching, results, selected, showRegistry, onSelec
         results.map((item) => {
           const active =
             selected?.id === item.id && selected?.registryId === item.registryId;
+          const installed = installedIds
+            ? isRegistryItemInstalled(item.id, installedIds, item.installSnippet)
+            : false;
           return (
             <button
               key={`${item.registryId}:${item.id}`}
@@ -44,9 +56,16 @@ export function ResultList({ searching, results, selected, showRegistry, onSelec
                     className="h-4 w-4 shrink-0 rounded-sm object-contain opacity-70"
                   />
                 ) : null}
-                <span className="truncate font-mono text-xs font-medium text-text-primary">
+                <span className="min-w-0 flex-1 truncate font-mono text-xs font-medium text-text-primary">
                   {item.title || item.id}
                 </span>
+                {installed && (
+                  <Check
+                    size={14}
+                    className="shrink-0 text-success-text"
+                    aria-label={t('actions.installed')}
+                  />
+                )}
               </div>
               {item.description && (
                 <span className="mt-1 line-clamp-2 text-[11px] text-text-secondary">

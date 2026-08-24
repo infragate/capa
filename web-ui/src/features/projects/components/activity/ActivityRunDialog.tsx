@@ -26,6 +26,7 @@ import { filterActivityCalls, filterRunsBySearch } from './filterActivityCalls';
 import { ActivityProcessDiagram } from './ActivityProcessDiagram';
 import type { ActivityRunRightView } from './ActivityRunViewTabs';
 import { useProjectActivityGeneration } from '../../activityHooks';
+import { useProject } from '../../hooks';
 import {
   aggregateDurationMs,
   runsEvents,
@@ -68,6 +69,8 @@ export function ActivityRunDialog({
   emptyLabel,
 }: ActivityRunDialogProps) {
   const { t } = useTranslation('projects');
+  const { data: project } = useProject(open ? projectId : null);
+  const managedSkills = project?.capabilities?.skills ?? [];
   const multiMode = (runs?.length ?? 0) > 0;
   const generationQuery = useProjectActivityGeneration(
     projectId,
@@ -419,6 +422,8 @@ export function ActivityRunDialog({
                       <ActivityRunSkillsPanel
                         events={displayEvents}
                         projectPath={projectPath}
+                        projectId={projectId}
+                        managedSkills={managedSkills}
                       />
                     </div>
                   </div>
