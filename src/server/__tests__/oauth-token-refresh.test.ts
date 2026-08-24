@@ -67,9 +67,9 @@ describe("refreshAccessToken", () => {
 		rmSync(tempDir, { recursive: true, force: true });
 	});
 
-	it("keeps the token when the provider returns 200 without access_token", async () => {
+	it("keeps the token when a 200 payload fails without an explicit invalid/expired marker", async () => {
 		globalThis.fetch = (async () =>
-			new Response(JSON.stringify({ ok: false, error: "invalid_refresh_token" }), {
+			new Response(JSON.stringify({ ok: false, error: "temporarily_unavailable" }), {
 				status: 200,
 				headers: { "Content-Type": "application/json" },
 			})) as unknown as typeof fetch;
@@ -87,11 +87,49 @@ describe("refreshAccessToken", () => {
 		);
 	});
 
-	it("deletes the token only on a clear HTTP 403 from the token endpoint", async () => {
+	it("keeps the token on bare 403 without an explicit invalid/expired marker", async () => {
 		globalThis.fetch = (async () =>
 			new Response("forbidden", {
 				status: 403,
 				headers: { "Content-Type": "text/plain" },
+			})) as unknown as typeof fetch;
+
+		const ok = await refreshAccessToken(db, "p1", "mcp-server", {
+			authorizationEndpoint: "https://example.com/authorize",
+			tokenEndpoint: "https://example.com/token",
+			resourceServer: "https://example.com",
+			clientId: "test-app-id",
+		});
+
+		expect(ok).toBe(false);
+		expect(db.getOAuthToken("p1", "mcp-server")?.refresh_token).toBe(
+			"old-refresh",
+		);
+	});
+
+	it("deletes the token when the AS explicitly reports invalid_grant", async () => {
+		globalThis.fetch = (async () =>
+			new Response(JSON.stringify({ error: "invalid_grant" }), {
+				status: 400,
+				headers: { "Content-Type": "application/json" },
+			})) as unknown as typeof fetch;
+
+		const ok = await refreshAccessToken(db, "p1", "mcp-server", {
+			authorizationEndpoint: "https://example.com/authorize",
+			tokenEndpoint: "https://example.com/token",
+			resourceServer: "https://example.com",
+			clientId: "test-app-id",
+		});
+
+		expect(ok).toBe(false);
+		expect(db.getOAuthToken("p1", "mcp-server")).toBeNull();
+	});
+
+	it("deletes the token when a 200 error payload explicitly says invalid_refresh", async () => {
+		globalThis.fetch = (async () =>
+			new Response(JSON.stringify({ ok: false, error: "invalid_refresh_token" }), {
+				status: 200,
+				headers: { "Content-Type": "application/json" },
 			})) as unknown as typeof fetch;
 
 		const ok = await refreshAccessToken(db, "p1", "mcp-server", {

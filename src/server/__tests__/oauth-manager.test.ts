@@ -53,7 +53,15 @@ describe('OAuth2Manager', () => {
       expect(isPermanentRefreshFailure(undefined, res403, 'invalid_token')).toBe(true);
     });
 
-    it('treats 500 responses as transient', () => {
+    it('keeps tokens on bare 4xx without an explicit invalid/expired marker', () => {
+      const res401 = new Response('', { status: 401 });
+      expect(isPermanentRefreshFailure(undefined, res401, 'rate limited')).toBe(false);
+
+      const res403 = new Response('', { status: 403 });
+      expect(isPermanentRefreshFailure(undefined, res403, 'forbidden')).toBe(false);
+    });
+
+    it('treats 500 responses as transient even with invalid_grant in the body', () => {
       const res500 = new Response('', { status: 500 });
       expect(isPermanentRefreshFailure(undefined, res500, 'invalid_grant')).toBe(false);
     });
