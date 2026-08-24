@@ -14,7 +14,6 @@ import {
 
 function serverHasAdvanced(server: Server): boolean {
   return !!(
-    server.displayName ||
     server.description ||
     (server.headers && Object.keys(server.headers).length > 0) ||
     (server.env && Object.keys(server.env).length > 0) ||
@@ -42,7 +41,6 @@ export function ServerDialog({
   const [url, setUrl] = useState('');
   const [cmd, setCmd] = useState('');
   const [args, setArgs] = useState('');
-  const [displayName, setDisplayName] = useState('');
   const [description, setDescription] = useState('');
   const [headers, setHeaders] = useState<SecretValuePair[]>([]);
   const [env, setEnv] = useState<SecretValuePair[]>([]);
@@ -67,7 +65,6 @@ export function ServerDialog({
     setUrl('');
     setCmd('');
     setArgs('');
-    setDisplayName('');
     setDescription('');
     setHeaders([]);
     setEnv([]);
@@ -91,7 +88,6 @@ export function ServerDialog({
     setUrl(s.url || '');
     setCmd(s.cmd || '');
     setArgs((s.args || []).join(' '));
-    setDisplayName(s.displayName || '');
     setDescription(s.description || '');
     setHeaders(recordToSecretPairs(s.headers));
     setEnv(recordToSecretPairs(s.env));
@@ -160,7 +156,6 @@ export function ServerDialog({
       id: id.trim(),
       type: 'mcp',
       def,
-      displayName: displayName.trim() || null,
       description: description.trim() || null,
     };
     return entry;
@@ -290,14 +285,6 @@ export function ServerDialog({
                 </button>
                 {advancedOpen && (
                   <div className="ui-panel-enter space-y-3 border-t border-border-tertiary px-2.5 py-3">
-                    <label className="block text-xs text-text-secondary">
-                      {t('actions.serverDisplayName')}
-                      <input
-                        value={displayName}
-                        onChange={(e) => setDisplayName(e.target.value)}
-                        className="mt-1 w-full rounded-sm border border-border-tertiary bg-bg-tertiary px-2.5 py-2 text-sm text-text-primary"
-                      />
-                    </label>
                     <label className="block text-xs text-text-secondary">
                       {t('actions.serverDescription')}
                       <textarea
