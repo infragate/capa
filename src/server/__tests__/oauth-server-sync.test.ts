@@ -187,7 +187,7 @@ describe("mergePluginEmbeddedOAuth", () => {
 });
 
 describe("syncServerOAuth2Requirement", () => {
-	it("clears stale OAuth config when the live URL no longer requires auth", async () => {
+	it("clears stale OAuth config when the live URL no longer requires auth, without deleting tokens", async () => {
 		const server = mcpServer(
 			"server-a",
 			"https://new.example/mcp",
@@ -195,7 +195,7 @@ describe("syncServerOAuth2Requirement", () => {
 		);
 		const disconnects: string[] = [];
 		const oauth2Manager = {
-			detectOAuth2Requirement: async () => null,
+			detectOAuth2Requirement: async () => ({ status: "not_required" }),
 			isServerConnected: () => true,
 			getAccessToken: async () => "token",
 			disconnect: (_projectId: string, serverId: string) => {
@@ -212,6 +212,38 @@ describe("syncServerOAuth2Requirement", () => {
 		expect(result.changed).toBe(true);
 		expect(result.entry).toBeNull();
 		expect(server.def.oauth2).toBeUndefined();
-		expect(disconnects).toEqual(["server-a"]);
+		expect(disconnects).toEqual([]);
+	});
+
+	it("keeps OAuth config and tokens when the probe is inconclusive (unreachable)", async () => {
+		const server = mcpServer(
+			"server-a",
+			"https://unreachable.example/mcp",
+			DETECTED_OAUTH,
+		);
+		const disconnects: string[] = [];
+		const oauth2Manager = {
+			detectOAuth2Requirement: async () => ({
+				status: "inconclusive",
+				reason: "network failure",
+			}),
+			isServerConnected: () => true,
+			getAccessToken: async () => "token",
+			disconnect: (_projectId: string, serverId: string) => {
+				disconnects.push(serverId);
+			},
+		} as unknown as OAuth2Manager;
+
+		const result = await syncServerOAuth2Requirement(
+			"proj-1",
+			server,
+			oauth2Manager,
+		);
+
+		expect(result.changed).toBe(false);
+		expect(result.entry?.serverId).toBe("server-a");
+		expect(result.entry?.isConnected).toBe(true);
+		expect(server.def.oauth2).toEqual(DETECTED_OAUTH);
+		expect(disconnects).toEqual([]);
 	});
 });

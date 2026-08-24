@@ -44,13 +44,18 @@ describe('OAuth2Manager', () => {
     ).not.toThrow();
   });
 
-  describe('isPermanentRefreshFailure', () => {
-    it('classifies 401/403 with invalid_grant as permanent', () => {
-      const res401 = new Response('', { status: 401 });
-      expect(isPermanentRefreshFailure(undefined, res401, '{"error":"invalid_grant"}')).toBe(true);
-
+	describe('isPermanentRefreshFailure', () => {
+    it('classifies only HTTP 403 as permanent', () => {
       const res403 = new Response('', { status: 403 });
-      expect(isPermanentRefreshFailure(undefined, res403, 'invalid_token')).toBe(true);
+      expect(isPermanentRefreshFailure(undefined, res403, 'anything')).toBe(true);
+    });
+
+    it('treats 401/400 with invalid_grant as transient (keep tokens)', () => {
+      const res401 = new Response('', { status: 401 });
+      expect(isPermanentRefreshFailure(undefined, res401, '{"error":"invalid_grant"}')).toBe(false);
+
+      const res400 = new Response('', { status: 400 });
+      expect(isPermanentRefreshFailure(undefined, res400, 'invalid_token')).toBe(false);
     });
 
     it('treats 500 responses as transient', () => {
@@ -70,7 +75,7 @@ describe('OAuth2Manager', () => {
       globalThis.fetch = originalFetch;
     });
 
-    it('returns null (does not throw) when the server is unreachable', async () => {
+    it('returns inconclusive (does not throw) when the server is unreachable', async () => {
       // Simulate a connection-refused / aborted fetch — the same class of error
       // that an unreachable MCP server produces at the network layer.
       globalThis.fetch = (async () => {
@@ -79,15 +84,15 @@ describe('OAuth2Manager', () => {
 
       const manager = new OAuth2Manager(makeMockDb());
       const result = await manager.detectOAuth2Requirement('http://192.0.2.1:9999/mcp');
-      expect(result).toBeNull();
+      expect(result.status).toBe('inconclusive');
     });
 
-    it('returns null when the MCP server returns a non-401 status', async () => {
+    it('returns not_required when the MCP server returns a non-401 status', async () => {
       globalThis.fetch = (async () => new Response('', { status: 200 })) as unknown as typeof fetch;
 
       const manager = new OAuth2Manager(makeMockDb());
       const result = await manager.detectOAuth2Requirement('http://localhost:9999/mcp');
-      expect(result).toBeNull();
+      expect(result.status).toBe('not_required');
     });
   });
 

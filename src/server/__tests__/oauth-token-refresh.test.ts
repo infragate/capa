@@ -67,11 +67,31 @@ describe("refreshAccessToken", () => {
 		rmSync(tempDir, { recursive: true, force: true });
 	});
 
-	it("does not throw when the provider returns 200 without access_token", async () => {
+	it("keeps the token when the provider returns 200 without access_token", async () => {
 		globalThis.fetch = (async () =>
 			new Response(JSON.stringify({ ok: false, error: "invalid_refresh_token" }), {
 				status: 200,
 				headers: { "Content-Type": "application/json" },
+			})) as unknown as typeof fetch;
+
+		const ok = await refreshAccessToken(db, "p1", "mcp-server", {
+			authorizationEndpoint: "https://example.com/authorize",
+			tokenEndpoint: "https://example.com/token",
+			resourceServer: "https://example.com",
+			clientId: "test-app-id",
+		});
+
+		expect(ok).toBe(false);
+		expect(db.getOAuthToken("p1", "mcp-server")?.refresh_token).toBe(
+			"old-refresh",
+		);
+	});
+
+	it("deletes the token only on a clear HTTP 403 from the token endpoint", async () => {
+		globalThis.fetch = (async () =>
+			new Response("forbidden", {
+				status: 403,
+				headers: { "Content-Type": "text/plain" },
 			})) as unknown as typeof fetch;
 
 		const ok = await refreshAccessToken(db, "p1", "mcp-server", {
@@ -129,7 +149,7 @@ describe("refreshAccessToken", () => {
 			tokenUrl: "https://example.com/token",
 			resourceServer: "https://example.com",
 			clientId: "test-app-id",
-		} as never);
+		});
 
 		expect(ok).toBe(true);
 		expect(postedUrl).toBe("https://example.com/token");

@@ -3,28 +3,46 @@
  * alias fallbacks for session/DB oauth2 blocks that predate ingest normalization
  * (`tokenUrl` / `authorizationUrl`, snake_case, etc.).
  *
- * Accepts any oauth2-shaped object (capabilities config, discovery result, or
+ * Accepts oauth2-shaped objects (capabilities config, discovery result, or
  * legacy session JSON) — callers may pass optional or required endpoint fields.
  */
+export type OAuthEndpointResolvable = {
+	authorizationEndpoint?: string;
+	tokenEndpoint?: string;
+	authorizationUrl?: string;
+	tokenUrl?: string;
+	authorization_endpoint?: string;
+	token_endpoint?: string;
+	authorization_url?: string;
+	token_url?: string;
+	[key: string]: unknown;
+};
+
 export function resolveAuthorizationEndpoint(
-	oauth2Config: object,
+	oauth2Config: OAuthEndpointResolvable | null | undefined,
 ): string | undefined {
-	const cfg = oauth2Config as Record<string, unknown>;
+	if (oauth2Config == null || typeof oauth2Config !== "object") {
+		return undefined;
+	}
 	return firstNonEmptyString(
-		cfg.authorizationEndpoint,
-		cfg.authorizationUrl,
-		cfg.authorization_endpoint,
-		cfg.authorization_url,
+		oauth2Config.authorizationEndpoint,
+		oauth2Config.authorizationUrl,
+		oauth2Config.authorization_endpoint,
+		oauth2Config.authorization_url,
 	);
 }
 
-export function resolveTokenEndpoint(oauth2Config: object): string | undefined {
-	const cfg = oauth2Config as Record<string, unknown>;
+export function resolveTokenEndpoint(
+	oauth2Config: OAuthEndpointResolvable | null | undefined,
+): string | undefined {
+	if (oauth2Config == null || typeof oauth2Config !== "object") {
+		return undefined;
+	}
 	return firstNonEmptyString(
-		cfg.tokenEndpoint,
-		cfg.tokenUrl,
-		cfg.token_endpoint,
-		cfg.token_url,
+		oauth2Config.tokenEndpoint,
+		oauth2Config.tokenUrl,
+		oauth2Config.token_endpoint,
+		oauth2Config.token_url,
 	);
 }
 

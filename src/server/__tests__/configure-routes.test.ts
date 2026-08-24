@@ -68,7 +68,7 @@ describe("handleProjectConfigure", () => {
 			db,
 			sessionManager,
 			oauth2Manager: {
-				detectOAuth2Requirement: async () => null,
+				detectOAuth2Requirement: async () => ({ status: "not_required" }),
 				isServerConnected: () => false,
 				getAccessToken: async () => null,
 			} as unknown as OAuth2Manager,

@@ -380,9 +380,9 @@ export async function handleOAuth2Start(
 					tlsSkipVerify: server.def.tlsSkipVerify,
 				},
 			);
-			if (!detected) {
+			if (detected.status === "not_required") {
+				// Clear stale oauth2 config only — never delete tokens from a probe.
 				delete server.def.oauth2;
-				deps.oauth2Manager.disconnect(projectId, serverId);
 				deps.sessionManager.setProjectCapabilities(projectId, capabilities);
 				return new Response(
 					JSON.stringify({
@@ -392,21 +392,26 @@ export async function handleOAuth2Start(
 					{ status: 409, headers: JSON_HEADERS },
 				);
 			}
-			configForFlow = {
-				...configForFlow,
-				...detected,
-				authorizationEndpoint:
-					configForFlow.authorizationEndpoint || detected.authorizationEndpoint,
-				tokenEndpoint: configForFlow.tokenEndpoint || detected.tokenEndpoint,
-				resourceServer:
-					configForFlow.resourceServer ||
-					detected.resourceServer ||
-					server.def.url,
-				scope: detected.scope ?? configForFlow.scope,
-				...(effectiveClientId ? { clientId: effectiveClientId } : {}),
-			};
-			server.def.oauth2 = configForFlow;
-			deps.sessionManager.setProjectCapabilities(projectId, capabilities);
+			if (detected.status === "required") {
+				configForFlow = {
+					...configForFlow,
+					...detected.config,
+					authorizationEndpoint:
+						configForFlow.authorizationEndpoint ||
+						detected.config.authorizationEndpoint,
+					tokenEndpoint:
+						configForFlow.tokenEndpoint || detected.config.tokenEndpoint,
+					resourceServer:
+						configForFlow.resourceServer ||
+						detected.config.resourceServer ||
+						server.def.url,
+					scope: detected.config.scope ?? configForFlow.scope,
+					...(effectiveClientId ? { clientId: effectiveClientId } : {}),
+				};
+				server.def.oauth2 = configForFlow;
+				deps.sessionManager.setProjectCapabilities(projectId, capabilities);
+			}
+			// inconclusive: keep existing oauth2 endpoints and continue the flow
 		}
 
 		const { url: authUrl, state } =
