@@ -35,7 +35,7 @@ export function RegistryBrowseDialog({
 }: RegistryBrowseDialogProps) {
   const { t } = useTranslation('projects');
   const { data: registries } = useRegistries();
-  const { data: project } = useProject(projectId);
+  const { data: project } = useProject(open ? projectId : null);
   const addMutation = useAddFromRegistry(projectId);
   const appendMutation = useAppendCapability(projectId);
 
@@ -78,7 +78,11 @@ export function RegistryBrowseDialog({
   }, [capability, project?.capabilities]);
 
   const selectedInstalled = selected
-    ? isRegistryItemInstalled(selected.id, installedIds)
+    ? isRegistryItemInstalled(
+        selected.id,
+        installedIds,
+        detail?.installSnippet ?? selected.installSnippet,
+      )
     : false;
 
   const selectedRegistry = useMemo(() => {

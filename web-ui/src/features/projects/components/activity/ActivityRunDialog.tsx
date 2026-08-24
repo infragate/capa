@@ -69,7 +69,7 @@ export function ActivityRunDialog({
   emptyLabel,
 }: ActivityRunDialogProps) {
   const { t } = useTranslation('projects');
-  const { data: project } = useProject(projectId);
+  const { data: project } = useProject(open ? projectId : null);
   const managedSkills = project?.capabilities?.skills ?? [];
   const multiMode = (runs?.length ?? 0) > 0;
   const generationQuery = useProjectActivityGeneration(

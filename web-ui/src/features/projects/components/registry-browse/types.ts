@@ -6,11 +6,23 @@ export type ResultRow = RegistryItemSummary & {
   registryIcon?: string;
 };
 
+function snippetIdOf(
+  installSnippet?: Record<string, unknown> | null,
+): string | undefined {
+  const id = installSnippet?.id;
+  return typeof id === 'string' && id.length > 0 ? id : undefined;
+}
+
 /**
  * Resolve the capa capability id a registry item would install as
- * (matches server-side handleFromRegistry naming).
+ * (matches server-side handleFromRegistry: `installSnippet.id ?? leaf(itemId)`).
  */
-export function registryInstallId(itemId: string): string {
+export function registryInstallId(
+  itemId: string,
+  installSnippet?: Record<string, unknown> | null,
+): string {
+  const fromSnippet = snippetIdOf(installSnippet);
+  if (fromSnippet) return fromSnippet;
   const leaf = itemId.split('/').pop();
   return leaf && leaf.length > 0 ? leaf : itemId;
 }
@@ -19,8 +31,13 @@ export function registryInstallId(itemId: string): string {
 export function isRegistryItemInstalled(
   itemId: string,
   installedIds: ReadonlySet<string>,
+  installSnippet?: Record<string, unknown> | null,
 ): boolean {
   if (installedIds.has(itemId)) return true;
-  const leaf = registryInstallId(itemId);
-  return leaf !== itemId && installedIds.has(leaf);
+  const installId = registryInstallId(itemId, installSnippet);
+  if (installedIds.has(installId)) return true;
+  // Also accept leaf(itemId) when snippet id differs, in case older installs
+  // used the leaf path before snippet ids were honored.
+  const leaf = itemId.split('/').pop();
+  return !!(leaf && leaf !== itemId && leaf !== installId && installedIds.has(leaf));
 }

@@ -35,7 +35,7 @@ export function ResultList({
           const active =
             selected?.id === item.id && selected?.registryId === item.registryId;
           const installed = installedIds
-            ? isRegistryItemInstalled(item.id, installedIds)
+            ? isRegistryItemInstalled(item.id, installedIds, item.installSnippet)
             : false;
           return (
             <button
