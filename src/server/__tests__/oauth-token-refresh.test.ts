@@ -67,7 +67,65 @@ describe("refreshAccessToken", () => {
 		rmSync(tempDir, { recursive: true, force: true });
 	});
 
-	it("does not throw when the provider returns 200 without access_token", async () => {
+	it("keeps the token when a 200 payload fails without an explicit invalid/expired marker", async () => {
+		globalThis.fetch = (async () =>
+			new Response(JSON.stringify({ ok: false, error: "temporarily_unavailable" }), {
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			})) as unknown as typeof fetch;
+
+		const ok = await refreshAccessToken(db, "p1", "mcp-server", {
+			authorizationEndpoint: "https://example.com/authorize",
+			tokenEndpoint: "https://example.com/token",
+			resourceServer: "https://example.com",
+			clientId: "test-app-id",
+		});
+
+		expect(ok).toBe(false);
+		expect(db.getOAuthToken("p1", "mcp-server")?.refresh_token).toBe(
+			"old-refresh",
+		);
+	});
+
+	it("keeps the token on bare 403 without an explicit invalid/expired marker", async () => {
+		globalThis.fetch = (async () =>
+			new Response("forbidden", {
+				status: 403,
+				headers: { "Content-Type": "text/plain" },
+			})) as unknown as typeof fetch;
+
+		const ok = await refreshAccessToken(db, "p1", "mcp-server", {
+			authorizationEndpoint: "https://example.com/authorize",
+			tokenEndpoint: "https://example.com/token",
+			resourceServer: "https://example.com",
+			clientId: "test-app-id",
+		});
+
+		expect(ok).toBe(false);
+		expect(db.getOAuthToken("p1", "mcp-server")?.refresh_token).toBe(
+			"old-refresh",
+		);
+	});
+
+	it("deletes the token when the AS explicitly reports invalid_grant", async () => {
+		globalThis.fetch = (async () =>
+			new Response(JSON.stringify({ error: "invalid_grant" }), {
+				status: 400,
+				headers: { "Content-Type": "application/json" },
+			})) as unknown as typeof fetch;
+
+		const ok = await refreshAccessToken(db, "p1", "mcp-server", {
+			authorizationEndpoint: "https://example.com/authorize",
+			tokenEndpoint: "https://example.com/token",
+			resourceServer: "https://example.com",
+			clientId: "test-app-id",
+		});
+
+		expect(ok).toBe(false);
+		expect(db.getOAuthToken("p1", "mcp-server")).toBeNull();
+	});
+
+	it("deletes the token when a 200 error payload explicitly says invalid_refresh", async () => {
 		globalThis.fetch = (async () =>
 			new Response(JSON.stringify({ ok: false, error: "invalid_refresh_token" }), {
 				status: 200,
@@ -108,5 +166,30 @@ describe("refreshAccessToken", () => {
 
 		expect(ok).toBe(true);
 		expect(new URLSearchParams(body).get("client_id")).toBe("test-app-id");
+	});
+
+	it("refreshes when oauth2 config only has legacy tokenUrl alias", async () => {
+		let postedUrl = "";
+		globalThis.fetch = (async (input: RequestInfo | URL) => {
+			postedUrl = String(input);
+			return new Response(
+				JSON.stringify({
+					access_token: "new-access",
+					refresh_token: "new-refresh",
+					expires_in: 3600,
+				}),
+				{ status: 200, headers: { "Content-Type": "application/json" } },
+			);
+		}) as unknown as typeof fetch;
+
+		const ok = await refreshAccessToken(db, "p1", "mcp-server", {
+			authorizationUrl: "https://example.com/authorize",
+			tokenUrl: "https://example.com/token",
+			resourceServer: "https://example.com",
+			clientId: "test-app-id",
+		});
+
+		expect(ok).toBe(true);
+		expect(postedUrl).toBe("https://example.com/token");
 	});
 });

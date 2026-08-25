@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import {
 	buildOAuthAuthorizationServerMetadataUrl,
 	detectOAuth2Requirement,
+	OAuth2DetectionStatus,
 	resolveOAuthScope,
 	sanitizeOAuthScope,
 } from "../oauth-discovery";
@@ -146,15 +147,37 @@ describe("detectOAuth2Requirement", () => {
 		const result = await detectOAuth2Requirement(
 			"https://mcp-gateway.example.test/mcp",
 		);
-		expect(result).not.toBeNull();
-		expect(result?.authorizationEndpoint).toBe(
+		expect(result.status).toBe(OAuth2DetectionStatus.REQUIRED);
+		if (result.status !== OAuth2DetectionStatus.REQUIRED) return;
+		expect(result.config.authorizationEndpoint).toBe(
 			"https://mcp-auth.example.test/realms/tenant/protocol/openid-connect/auth",
 		);
-		expect(result?.tokenEndpoint).toBe(
+		expect(result.config.tokenEndpoint).toBe(
 			"https://mcp-auth.example.test/realms/tenant/protocol/openid-connect/token",
 		);
-		expect(result?.scope).toBe(
+		expect(result.config.scope).toBe(
 			"openid email profile offline_access api.read",
 		);
+	});
+
+	it("returns inconclusive when the MCP server is unreachable", async () => {
+		globalThis.fetch = (async () => {
+			throw new DOMException("The operation was aborted.", "AbortError");
+		}) as unknown as typeof fetch;
+
+		const result = await detectOAuth2Requirement(
+			"https://unreachable.example.test/mcp",
+		);
+		expect(result.status).toBe(OAuth2DetectionStatus.INCONCLUSIVE);
+	});
+
+	it("returns not_required on a successful unauthenticated initialize", async () => {
+		globalThis.fetch = (async () =>
+			new Response("", { status: 200 })) as unknown as typeof fetch;
+
+		const result = await detectOAuth2Requirement(
+			"https://open.example.test/mcp",
+		);
+		expect(result.status).toBe(OAuth2DetectionStatus.NOT_REQUIRED);
 	});
 });

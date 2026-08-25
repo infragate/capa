@@ -140,8 +140,8 @@ export function ServerDialog({
       const oauth2: Record<string, unknown> = {};
       if (oauthClientId.trim()) oauth2.clientId = oauthClientId.trim();
       if (oauthClientSecret.trim()) oauth2.clientSecret = oauthClientSecret.trim();
-      if (oauthAuthUrl.trim()) oauth2.authorizationUrl = oauthAuthUrl.trim();
-      if (oauthTokenUrl.trim()) oauth2.tokenUrl = oauthTokenUrl.trim();
+      if (oauthAuthUrl.trim()) oauth2.authorizationEndpoint = oauthAuthUrl.trim();
+      if (oauthTokenUrl.trim()) oauth2.tokenEndpoint = oauthTokenUrl.trim();
       if (scopes.length) oauth2.scopes = scopes;
       if (oauthRedirectUri.trim()) oauth2.redirectUri = oauthRedirectUri.trim();
       if (oauthPkce) oauth2.pkce = true;

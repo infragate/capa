@@ -14,7 +14,7 @@ import {
 import type { CapaMCPServer } from "../mcp-handler";
 import { handleGetServerTools } from "../mcp-meta-routes";
 import { McpServerStateManager } from "../mcp-server-state";
-import type { OAuth2Manager } from "../oauth-manager";
+import { OAuth2DetectionStatus, type OAuth2Manager } from "../oauth-manager";
 import { SessionManager } from "../session-manager";
 
 const DISK_CAPS = `providers: []
@@ -68,7 +68,9 @@ describe("handleProjectConfigure", () => {
 			db,
 			sessionManager,
 			oauth2Manager: {
-				detectOAuth2Requirement: async () => null,
+				detectOAuth2Requirement: async () => ({
+					status: OAuth2DetectionStatus.NOT_REQUIRED,
+				}),
 				isServerConnected: () => false,
 				getAccessToken: async () => null,
 			} as unknown as OAuth2Manager,
