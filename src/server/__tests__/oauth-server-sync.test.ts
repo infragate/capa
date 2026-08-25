@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { Capabilities, MCPServer } from "../../types/capabilities";
 import type { OAuth2Config } from "../../types/oauth";
-import type { OAuth2Manager } from "../oauth-manager";
+import { OAuth2DetectionStatus, type OAuth2Manager } from "../oauth-manager";
 import {
 	mergeDetectedOAuth2,
 	mergeEmbeddedOAuthFields,
@@ -195,7 +195,9 @@ describe("syncServerOAuth2Requirement", () => {
 		);
 		const disconnects: string[] = [];
 		const oauth2Manager = {
-			detectOAuth2Requirement: async () => ({ status: "not_required" }),
+			detectOAuth2Requirement: async () => ({
+				status: OAuth2DetectionStatus.NOT_REQUIRED,
+			}),
 			isServerConnected: () => true,
 			getAccessToken: async () => "token",
 			disconnect: (_projectId: string, serverId: string) => {
@@ -224,7 +226,7 @@ describe("syncServerOAuth2Requirement", () => {
 		const disconnects: string[] = [];
 		const oauth2Manager = {
 			detectOAuth2Requirement: async () => ({
-				status: "inconclusive",
+				status: OAuth2DetectionStatus.INCONCLUSIVE,
 				reason: "network failure",
 			}),
 			isServerConnected: () => true,

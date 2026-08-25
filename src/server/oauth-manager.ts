@@ -8,6 +8,7 @@ import { isPermanentRefreshFailure } from "../shared/oauth-refresh";
 import type { OAuth2Config } from "../types/oauth";
 import {
 	detectOAuth2Requirement,
+	OAuth2DetectionStatus,
 	type OAuth2DetectionResult,
 } from "./oauth-discovery";
 import { generateAuthorizationUrl, handleCallback } from "./oauth-pkce-flow";
@@ -19,7 +20,7 @@ import {
 } from "./oauth-token-store";
 
 // Re-exported for backwards compatibility with existing import sites.
-export { isPermanentRefreshFailure };
+export { isPermanentRefreshFailure, OAuth2DetectionStatus };
 export type { OAuth2DetectionResult };
 
 export class OAuth2Manager {
@@ -49,7 +50,7 @@ export class OAuth2Manager {
 		options?: { tlsSkipVerify?: boolean },
 	): Promise<OAuth2DetectionResult> {
 		const result = await detectOAuth2Requirement(serverUrl, options, this.log);
-		if (result.status === "required") {
+		if (result.status === OAuth2DetectionStatus.REQUIRED) {
 			this.oauth2ConfigCache.set(serverUrl, result.config);
 		}
 		return result;

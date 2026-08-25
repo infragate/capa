@@ -7,7 +7,7 @@ import { projectUiUrl } from "../shared/ui-urls";
 import type { MCPServer } from "../types/capabilities";
 import type { OAuth2Config } from "../types/oauth";
 import { matchRoute } from "./match-route";
-import type { OAuth2Manager } from "./oauth-manager";
+import { OAuth2DetectionStatus, type OAuth2Manager } from "./oauth-manager";
 import { syncAllServersOAuth2Requirements } from "./oauth-server-sync";
 import {
 	type EffectiveCapsCacheEntry,
@@ -380,7 +380,7 @@ export async function handleOAuth2Start(
 					tlsSkipVerify: server.def.tlsSkipVerify,
 				},
 			);
-			if (detected.status === "not_required") {
+			if (detected.status === OAuth2DetectionStatus.NOT_REQUIRED) {
 				// Clear stale oauth2 config only — never delete tokens from a probe.
 				delete server.def.oauth2;
 				deps.sessionManager.setProjectCapabilities(projectId, capabilities);
@@ -392,7 +392,7 @@ export async function handleOAuth2Start(
 					{ status: 409, headers: JSON_HEADERS },
 				);
 			}
-			if (detected.status === "required") {
+			if (detected.status === OAuth2DetectionStatus.REQUIRED) {
 				configForFlow = {
 					...configForFlow,
 					...detected.config,

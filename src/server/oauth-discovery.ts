@@ -122,17 +122,26 @@ export function resolveOAuthScope(options: {
 }
 
 /**
- * Result of probing whether an MCP server requires OAuth2.
+ * Probe outcome for whether an MCP server requires OAuth2.
  *
- * - `required`: clear 401 + discoverable auth-server metadata
- * - `not_required`: reachable server answered without requiring OAuth
- * - `inconclusive`: network/timeout/5xx/401-without-metadata — callers must
+ * - REQUIRED: clear 401 + discoverable auth-server metadata
+ * - NOT_REQUIRED: reachable server answered without requiring OAuth
+ * - INCONCLUSIVE: network/timeout/5xx/401-without-metadata — callers must
  *   not treat this as "OAuth went away" or delete stored tokens
  */
+export const OAuth2DetectionStatus = {
+	REQUIRED: "required",
+	NOT_REQUIRED: "not_required",
+	INCONCLUSIVE: "inconclusive",
+} as const;
+
+export type OAuth2DetectionStatus =
+	(typeof OAuth2DetectionStatus)[keyof typeof OAuth2DetectionStatus];
+
 export type OAuth2DetectionResult =
-	| { status: "required"; config: OAuth2Config }
-	| { status: "not_required" }
-	| { status: "inconclusive"; reason: string };
+	| { status: typeof OAuth2DetectionStatus.REQUIRED; config: OAuth2Config }
+	| { status: typeof OAuth2DetectionStatus.NOT_REQUIRED }
+	| { status: typeof OAuth2DetectionStatus.INCONCLUSIVE; reason: string };
 
 /**
  * Detect if an MCP server requires OAuth2 authentication.
@@ -174,12 +183,12 @@ export async function detectOAuth2Requirement(
 		if (response.status >= 500) {
 			const reason = `MCP probe returned ${response.status}`;
 			log.warn(reason);
-			return { status: "inconclusive", reason };
+			return { status: OAuth2DetectionStatus.INCONCLUSIVE, reason };
 		}
 
 		if (response.status !== 401) {
 			log.debug(`No OAuth2 required (status: ${response.status})`);
-			return { status: "not_required" };
+			return { status: OAuth2DetectionStatus.NOT_REQUIRED };
 		}
 
 		const serverUrlObj = new URL(serverUrl);
@@ -249,7 +258,7 @@ export async function detectOAuth2Requirement(
 		if (!authMetadata) {
 			const reason = "401 received but auth server metadata unavailable";
 			log.warn(reason);
-			return { status: "inconclusive", reason };
+			return { status: OAuth2DetectionStatus.INCONCLUSIVE, reason };
 		}
 
 		const grantTypes = authMetadata.grant_types_supported;
@@ -258,12 +267,12 @@ export async function detectOAuth2Requirement(
 			!grantTypes.includes("authorization_code")
 		) {
 			log.debug("Auth server does not support authorization_code grant");
-			return { status: "not_required" };
+			return { status: OAuth2DetectionStatus.NOT_REQUIRED };
 		}
 		const responseTypes = authMetadata.response_types_supported;
 		if (Array.isArray(responseTypes) && !responseTypes.includes("code")) {
 			log.debug("Auth server does not support response_type=code");
-			return { status: "not_required" };
+			return { status: OAuth2DetectionStatus.NOT_REQUIRED };
 		}
 
 		const scope = resolveOAuthScope({
@@ -281,10 +290,10 @@ export async function detectOAuth2Requirement(
 		};
 
 		log.success("OAuth2 detected");
-		return { status: "required", config };
+		return { status: OAuth2DetectionStatus.REQUIRED, config };
 	} catch (error: any) {
 		const reason = error?.message ?? "OAuth2 detection failed";
 		log.failure(`Error detecting OAuth2: ${reason}`);
-		return { status: "inconclusive", reason };
+		return { status: OAuth2DetectionStatus.INCONCLUSIVE, reason };
 	}
 }

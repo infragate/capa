@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { OAuth2Manager, isPermanentRefreshFailure } from '../oauth-manager';
+import { OAuth2Manager, isPermanentRefreshFailure, OAuth2DetectionStatus } from '../oauth-manager';
 import { shouldSkipTlsVerify } from '../../shared/tls-skip-verify';
 import type { CapaDatabase } from '../../db/database';
 
@@ -87,7 +87,7 @@ describe('OAuth2Manager', () => {
 
       const manager = new OAuth2Manager(makeMockDb());
       const result = await manager.detectOAuth2Requirement('http://192.0.2.1:9999/mcp');
-      expect(result.status).toBe('inconclusive');
+      expect(result.status).toBe(OAuth2DetectionStatus.INCONCLUSIVE);
     });
 
     it('returns not_required when the MCP server returns a non-401 status', async () => {
@@ -95,7 +95,7 @@ describe('OAuth2Manager', () => {
 
       const manager = new OAuth2Manager(makeMockDb());
       const result = await manager.detectOAuth2Requirement('http://localhost:9999/mcp');
-      expect(result.status).toBe('not_required');
+      expect(result.status).toBe(OAuth2DetectionStatus.NOT_REQUIRED);
     });
   });
 

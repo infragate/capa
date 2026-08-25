@@ -3,7 +3,7 @@ import type {
 	OAuth2Config as CapabilitiesOAuth2Config,
 } from "../types/capabilities";
 import type { OAuth2Config } from "../types/oauth";
-import type { OAuth2Manager } from "./oauth-manager";
+import { OAuth2DetectionStatus, type OAuth2Manager } from "./oauth-manager";
 
 function readEmbeddedClientId(
 	oauth: CapabilitiesOAuth2Config | undefined,
@@ -121,7 +121,7 @@ export async function syncServerOAuth2Requirement(
 		tlsSkipVerify: server.def.tlsSkipVerify,
 	});
 
-	if (detected.status === "required") {
+	if (detected.status === OAuth2DetectionStatus.REQUIRED) {
 		const merged = mergeDetectedOAuth2(existingOAuth, detected.config);
 		const changed =
 			!existingOAuth ||
@@ -143,7 +143,7 @@ export async function syncServerOAuth2Requirement(
 		};
 	}
 
-	if (detected.status === "inconclusive") {
+	if (detected.status === OAuth2DetectionStatus.INCONCLUSIVE) {
 		// Unreachable / timed out / ambiguous probe — keep oauth2 + tokens.
 		if (!existingOAuth) return { changed: false, entry: null };
 		const isConnected = oauth2Manager.isServerConnected(projectId, server.id);
@@ -158,7 +158,7 @@ export async function syncServerOAuth2Requirement(
 		};
 	}
 
-	// not_required: drop stale oauth2 config, but never delete tokens.
+	// NOT_REQUIRED: drop stale oauth2 config, but never delete tokens.
 	if (existingOAuth) {
 		delete server.def.oauth2;
 		return { changed: true, entry: null };
