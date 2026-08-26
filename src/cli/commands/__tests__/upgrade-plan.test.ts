@@ -10,8 +10,8 @@ import {
   upgradeConfirmationState,
 } from '../upgrade-plan';
 
-const VENDOR_INSTALL_SH = 'https://capa.infragate.ai/install.sh';
-const VENDOR_INSTALL_PS1 = 'https://capa.infragate.ai/install.ps1';
+const VENDOR_INSTALL_SH = 'https://capa.sh/install.sh';
+const VENDOR_INSTALL_PS1 = 'https://capa.sh/install.ps1';
 
 function sha256Hex(data: string | Uint8Array): string {
   return createHash('sha256').update(data).digest('hex');
@@ -38,7 +38,7 @@ describe('capa upgrade planning', () => {
       'https://github.com/infragate/capa/releases/download/v1.2.3/install.sh',
     );
     expect(url).not.toBe(VENDOR_INSTALL_SH);
-    expect(url).not.toContain('capa.infragate.ai');
+    expect(url).not.toContain('capa.sh');
 
     const ps1 = githubReleaseAssetUrl('1.2.3', 'install.ps1');
     expect(ps1).toBe(
@@ -71,7 +71,7 @@ describe('capa upgrade planning', () => {
       },
     });
 
-    expect(fetched.some((u) => u.includes('capa.infragate.ai'))).toBe(false);
+    expect(fetched.some((u) => u.includes('capa.sh'))).toBe(false);
     expect(plan.tag).toBe('v9.9.9');
     expect(plan.version).toBe('9.9.9');
     expect(plan.installerAsset).toBe('install.sh');
