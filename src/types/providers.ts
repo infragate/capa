@@ -214,7 +214,7 @@ export interface HooksIntegration {
    * every provider that uses the matcher-grouped layout (Claude Code, Gemini
    * CLI, Codex, Windsurf, Antigravity); the variant labels exist only as
    * future-proofing in case a provider diverges (e.g. extra fields). The
-   * `cursor` shape is a flat array with `pattern`+`name` per entry.
+   * `cursor` shape is a flat array with `matcher`+`name` per entry.
    *
    * Codex serialises through the same `claude` shape; the storage format is
    * what makes it land as TOML rather than JSON.

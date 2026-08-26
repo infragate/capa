@@ -120,7 +120,7 @@ export interface Hook {
   /** Inline prompt text. Required when `type` is `prompt` and `source` is unset. */
   prompt?: string;
 
-  /** Provider-specific tool/glob filter (e.g. Claude `matcher`, Cursor `pattern`). */
+  /** Provider-specific tool/glob filter (e.g. Claude `matcher`, Cursor `matcher`). */
   matcher?: string;
   /** Per-hook timeout in seconds. Provider may clamp or ignore. */
   timeout?: number;
