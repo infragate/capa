@@ -302,7 +302,7 @@ Lifecycle hooks installed into each provider's hook configuration. The schema is
   - **Provider-scoped events** (e.g. `cursor:beforeShellExecution`) target a single provider verbatim and are skipped for everyone else.
 - `type` (optional): `command` (default — shell command) or `prompt` (text injected into the model when supported).
 - `command` / `prompt` (one of, when no `source`): Inline body for command/prompt-type hooks.
-- `matcher` (optional): Provider-specific glob/pattern (e.g. Claude `Bash`, Cursor `rm -rf *`).
+- `matcher` (optional): Provider-specific tool/glob filter (e.g. Claude `Bash`, Cursor `Write|Edit` on `postToolUse`).
 - `timeout` (optional): Per-hook timeout in seconds; provider may clamp.
 - `failClosed` (optional): When true, hook failure aborts the action (Cursor only today).
 - `sequential` (optional): Run hooks one-at-a-time instead of in parallel.

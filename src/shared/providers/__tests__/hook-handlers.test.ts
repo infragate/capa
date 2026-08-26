@@ -58,7 +58,7 @@ describe('hook-handlers — buildHookEntry', () => {
     expect(out.entry.name).toBe('capa:lint');
   });
 
-  it('cursor shape stores entries as flat arrays with pattern + name', () => {
+  it('cursor shape stores entries as flat arrays with matcher + name', () => {
     const hook: Hook = { id: 'block-rm', on: 'beforeShell', command: 'echo blocked', matcher: 'rm -rf' };
     const out = buildHookEntry(cursorIntegration, {
       hook,
@@ -68,8 +68,30 @@ describe('hook-handlers — buildHookEntry', () => {
     expect(out.eventName).toBe('beforeShellExecution');
     expect(out.entry.command).toBe('echo blocked');
     expect(out.entry.type).toBeUndefined();
-    expect(out.entry.pattern).toBe('rm -rf');
+    expect(out.entry.matcher).toBe('rm -rf');
+    expect(out.entry.pattern).toBeUndefined();
     expect(out.entry.name).toBe('capa:block-rm');
+  });
+
+  it('cursor shape preserves matcher verbatim on postToolUse and never emits pattern', () => {
+    const hook: Hook = {
+      id: 'cursor-matcher-repro',
+      on: 'afterTool',
+      command: './.agent/hooks/check-stale-docs-cursor.sh',
+      matcher: 'Write|Edit',
+      timeout: 10,
+    };
+    const out = buildHookEntry(cursorIntegration, {
+      hook,
+      runReference: './.agent/hooks/check-stale-docs-cursor.sh',
+      mapping: { event: 'postToolUse' },
+    });
+    expect(out.eventName).toBe('postToolUse');
+    expect(out.entry.matcher).toBe('Write|Edit');
+    expect(out.entry.pattern).toBeUndefined();
+    expect(Object.keys(out.entry).sort()).toEqual(
+      ['command', 'matcher', 'name', 'timeout'].sort(),
+    );
   });
 
   it('cursor shape emits a prompt entry for type: prompt hooks', () => {
@@ -92,7 +114,8 @@ describe('hook-handlers — buildHookEntry', () => {
     expect(out.entry.type).toBe('prompt');
     expect(out.entry.prompt).toBe('Only allow read-only commands.');
     expect(out.entry.command).toBeUndefined();
-    expect(out.entry.pattern).toBe('rm -rf');
+    expect(out.entry.matcher).toBe('rm -rf');
+    expect(out.entry.pattern).toBeUndefined();
     expect(out.entry.timeout).toBe(10);
     expect(out.entry.name).toBe('capa:safe-shell');
   });
