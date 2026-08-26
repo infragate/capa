@@ -71,6 +71,8 @@
   },
   "actions": {
     "add": "Add",
+    "installed": "Installed",
+    "alreadyInstalled": "Already installed in this project",
     "save": "Save",
     "edit": "Edit",
     "cancel": "Cancel",
@@ -185,7 +187,6 @@
     "idInvalidChars": "ID may only contain letters, numbers, hyphens, and underscores",
     "serverId": "Server ID",
     "serverIdRequired": "Server ID is required",
-    "serverDisplayName": "Display name",
     "serverDescription": "Description",
     "serverAdvanced": "Advanced",
     "serverHeaders": "HTTP headers",
@@ -338,7 +339,8 @@
       "empty": "No skills detected from file activity.",
       "emptyHint": "Skills appear when the agent reads or edits a SKILL.md file.",
       "count": "{{count}} skill",
-      "count_other": "{{count}} skills"
+      "count_other": "{{count}} skills",
+      "openSkill": "Open skill {{id}}"
     },
     "runCommands": {
       "aria": "Shell commands in this run",

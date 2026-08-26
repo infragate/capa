@@ -2,7 +2,10 @@ import type { CapaDatabase } from "../db/database";
 import { logger } from "../shared/logger";
 import { isPermanentRefreshFailure } from "../shared/oauth-refresh";
 import type { OAuth2Config } from "../types/oauth";
-import { resolveTokenEndpoint } from "./oauth-endpoint-resolve";
+import {
+	resolveTokenEndpoint,
+	type OAuthEndpointResolvable,
+} from "./oauth-endpoint-resolve";
 
 const tokenLogger = logger.child("OAuth2TokenStore");
 
@@ -76,7 +79,7 @@ export async function refreshAccessToken(
 	db: CapaDatabase,
 	projectId: string,
 	serverId: string,
-	oauth2Config: OAuth2Config,
+	oauth2Config: OAuth2Config | OAuthEndpointResolvable,
 	log = tokenLogger,
 ): Promise<boolean> {
 	try {
@@ -95,7 +98,7 @@ export async function refreshAccessToken(
 		const clientId = resolveStoredClientId(
 			projectId,
 			serverId,
-			oauth2Config,
+			oauth2Config as OAuth2Config,
 			db,
 		);
 		const clientSecret = db.getVariable(
@@ -145,10 +148,8 @@ export async function refreshAccessToken(
 		if (parsed.error || !parsed.accessToken) {
 			const message = parsed.error || "Token response did not include access_token";
 			log.failure(`Token refresh failed: ${message}`);
-			if (
-				isPermanentRefreshFailure(undefined, response, message) ||
-				/invalid|expired|revoked|not_found|unauthorized/i.test(message)
-			) {
+			// Only wipe when the AS explicitly marks the token invalid/expired.
+			if (isPermanentRefreshFailure(undefined, response, message)) {
 				db.deleteOAuthToken(projectId, serverId);
 				log.info(`Deleted invalid token for ${serverId}`);
 			} else {

@@ -14,7 +14,6 @@ import {
 
 function serverHasAdvanced(server: Server): boolean {
   return !!(
-    server.displayName ||
     server.description ||
     (server.headers && Object.keys(server.headers).length > 0) ||
     (server.env && Object.keys(server.env).length > 0) ||
@@ -42,7 +41,6 @@ export function ServerDialog({
   const [url, setUrl] = useState('');
   const [cmd, setCmd] = useState('');
   const [args, setArgs] = useState('');
-  const [displayName, setDisplayName] = useState('');
   const [description, setDescription] = useState('');
   const [headers, setHeaders] = useState<SecretValuePair[]>([]);
   const [env, setEnv] = useState<SecretValuePair[]>([]);
@@ -67,7 +65,6 @@ export function ServerDialog({
     setUrl('');
     setCmd('');
     setArgs('');
-    setDisplayName('');
     setDescription('');
     setHeaders([]);
     setEnv([]);
@@ -91,7 +88,6 @@ export function ServerDialog({
     setUrl(s.url || '');
     setCmd(s.cmd || '');
     setArgs((s.args || []).join(' '));
-    setDisplayName(s.displayName || '');
     setDescription(s.description || '');
     setHeaders(recordToSecretPairs(s.headers));
     setEnv(recordToSecretPairs(s.env));
@@ -99,8 +95,10 @@ export function ServerDialog({
     setTlsSkipVerify(!!s.tlsSkipVerify);
     setOauthClientId(s.oauth2?.clientId || '');
     setOauthClientSecret(s.oauth2?.clientSecret || '');
-    setOauthAuthUrl(s.oauth2?.authorizationUrl || '');
-    setOauthTokenUrl(s.oauth2?.tokenUrl || '');
+    setOauthAuthUrl(
+      s.oauth2?.authorizationEndpoint || s.oauth2?.authorizationUrl || '',
+    );
+    setOauthTokenUrl(s.oauth2?.tokenEndpoint || s.oauth2?.tokenUrl || '');
     setOauthScopes((s.oauth2?.scopes || []).join(' '));
     setOauthRedirectUri(s.oauth2?.redirectUri || '');
     setOauthPkce(!!s.oauth2?.pkce);
@@ -144,12 +142,22 @@ export function ServerDialog({
       const oauth2: Record<string, unknown> = {};
       if (oauthClientId.trim()) oauth2.clientId = oauthClientId.trim();
       if (oauthClientSecret.trim()) oauth2.clientSecret = oauthClientSecret.trim();
-      if (oauthAuthUrl.trim()) oauth2.authorizationUrl = oauthAuthUrl.trim();
-      if (oauthTokenUrl.trim()) oauth2.tokenUrl = oauthTokenUrl.trim();
       if (scopes.length) oauth2.scopes = scopes;
       if (oauthRedirectUri.trim()) oauth2.redirectUri = oauthRedirectUri.trim();
       if (oauthPkce) oauth2.pkce = true;
-      if (Object.keys(oauth2).length > 0) def.oauth2 = oauth2;
+      const authEndpoint = oauthAuthUrl.trim();
+      const tokenEndpoint = oauthTokenUrl.trim();
+      const hasOauthValues =
+        Object.keys(oauth2).length > 0 || !!authEndpoint || !!tokenEndpoint;
+      if (hasOauthValues) {
+        // Always send canonical endpoint fields so an empty input can clear
+        // persisted values through mergeServerDef (omitted keys are kept).
+        oauth2.authorizationEndpoint = authEndpoint || null;
+        oauth2.tokenEndpoint = tokenEndpoint || null;
+        def.oauth2 = oauth2;
+      } else if (isEdit) {
+        def.oauth2 = null;
+      }
     } else {
       const envMap = secretPairsToRecord(env);
       if (envMap) def.env = envMap;
@@ -160,7 +168,6 @@ export function ServerDialog({
       id: id.trim(),
       type: 'mcp',
       def,
-      displayName: displayName.trim() || null,
       description: description.trim() || null,
     };
     return entry;
@@ -290,14 +297,6 @@ export function ServerDialog({
                 </button>
                 {advancedOpen && (
                   <div className="ui-panel-enter space-y-3 border-t border-border-tertiary px-2.5 py-3">
-                    <label className="block text-xs text-text-secondary">
-                      {t('actions.serverDisplayName')}
-                      <input
-                        value={displayName}
-                        onChange={(e) => setDisplayName(e.target.value)}
-                        className="mt-1 w-full rounded-sm border border-border-tertiary bg-bg-tertiary px-2.5 py-2 text-sm text-text-primary"
-                      />
-                    </label>
                     <label className="block text-xs text-text-secondary">
                       {t('actions.serverDescription')}
                       <textarea

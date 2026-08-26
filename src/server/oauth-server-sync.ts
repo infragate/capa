@@ -3,7 +3,7 @@ import type {
 	OAuth2Config as CapabilitiesOAuth2Config,
 } from "../types/capabilities";
 import type { OAuth2Config } from "../types/oauth";
-import type { OAuth2Manager } from "./oauth-manager";
+import { OAuth2DetectionStatus, type OAuth2Manager } from "./oauth-manager";
 
 function readEmbeddedClientId(
 	oauth: CapabilitiesOAuth2Config | undefined,
@@ -92,7 +92,10 @@ export type SyncServerOAuth2Result = {
 
 /**
  * Probe the live MCP URL and align def.oauth2 with what the server actually needs.
- * Clears stale OAuth config when the URL no longer returns 401 + WWW-Authenticate.
+ *
+ * Clears stale oauth2 *config* when the URL clearly no longer requires OAuth.
+ * Never deletes stored tokens from sync — tokens are only removed on an
+ * explicit user disconnect or a clear HTTP 403 from the token endpoint.
  */
 export async function syncServerOAuth2Requirement(
 	projectId: string,
@@ -104,51 +107,44 @@ export async function syncServerOAuth2Requirement(
 	}
 
 	if (serverHasExplicitAuthHeader(server)) {
+		// Static Authorization header replaces OAuth config, but do not wipe
+		// stored tokens here — only a clear 403 (or explicit disconnect) may.
 		if (server.def.oauth2) {
 			delete server.def.oauth2;
-			oauth2Manager.disconnect(projectId, server.id);
 			return { changed: true, entry: null };
 		}
 		return { changed: false, entry: null };
 	}
 
 	const existingOAuth = server.def.oauth2;
-	try {
-		const detected = await oauth2Manager.detectOAuth2Requirement(server.def.url, {
-			tlsSkipVerify: server.def.tlsSkipVerify,
-		});
+	const detected = await oauth2Manager.detectOAuth2Requirement(server.def.url, {
+		tlsSkipVerify: server.def.tlsSkipVerify,
+	});
 
-		if (detected) {
-			const merged = mergeDetectedOAuth2(existingOAuth, detected);
-			const changed =
-				!existingOAuth ||
-				JSON.stringify(existingOAuth) !== JSON.stringify(merged);
-			server.def.oauth2 = merged;
+	if (detected.status === OAuth2DetectionStatus.REQUIRED) {
+		const merged = mergeDetectedOAuth2(existingOAuth, detected.config);
+		const changed =
+			!existingOAuth ||
+			JSON.stringify(existingOAuth) !== JSON.stringify(merged);
+		server.def.oauth2 = merged;
 
-			let isConnected = oauth2Manager.isServerConnected(projectId, server.id);
-			// Token row presence is the source of truth for "authenticated" in the UI.
-			// Refresh may fail transiently without invalidating stored credentials.
+		const isConnected = oauth2Manager.isServerConnected(projectId, server.id);
+		// Token row presence is the source of truth for "authenticated" in the UI.
+		// Refresh may fail transiently without invalidating stored credentials.
 
-			return {
-				changed,
-				entry: {
-					serverId: server.id,
-					serverUrl: server.def.url,
-					displayName: server.displayName ?? server.id,
-					isConnected,
-				},
-			};
-		}
+		return {
+			changed,
+			entry: {
+				serverId: server.id,
+				serverUrl: server.def.url,
+				displayName: server.displayName ?? server.id,
+				isConnected,
+			},
+		};
+	}
 
-		if (existingOAuth) {
-			delete server.def.oauth2;
-			oauth2Manager.disconnect(projectId, server.id);
-			return { changed: true, entry: null };
-		}
-
-		return { changed: false, entry: null };
-	} catch {
-		// Transient probe failures should not strip a working OAuth config.
+	if (detected.status === OAuth2DetectionStatus.INCONCLUSIVE) {
+		// Unreachable / timed out / ambiguous probe — keep oauth2 + tokens.
 		if (!existingOAuth) return { changed: false, entry: null };
 		const isConnected = oauth2Manager.isServerConnected(projectId, server.id);
 		return {
@@ -161,6 +157,14 @@ export async function syncServerOAuth2Requirement(
 			},
 		};
 	}
+
+	// NOT_REQUIRED: drop stale oauth2 config, but never delete tokens.
+	if (existingOAuth) {
+		delete server.def.oauth2;
+		return { changed: true, entry: null };
+	}
+
+	return { changed: false, entry: null };
 }
 
 export type SyncAllServersOAuth2Result = {

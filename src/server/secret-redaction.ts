@@ -22,6 +22,24 @@ function asObj(value: unknown): Record<string, unknown> | null {
 	return value as Record<string, unknown>;
 }
 
+function isClearedOauthField(value: unknown): boolean {
+	return value === "" || value === null;
+}
+
+/** Drop canonical + alias endpoint keys when the patch explicitly clears them. */
+function clearEmptyOAuthEndpoint(
+	oauth2: Record<string, unknown>,
+	incoming: Record<string, unknown>,
+	canonical: string,
+	aliases: string[],
+): void {
+	if (!(canonical in incoming) || !isClearedOauthField(incoming[canonical])) {
+		return;
+	}
+	delete oauth2[canonical];
+	for (const alias of aliases) delete oauth2[alias];
+}
+
 export function isSensitiveHeaderName(name: string): boolean {
 	return SENSITIVE_HEADER.test(name);
 }
@@ -119,7 +137,9 @@ export function mergeServerDef(
 
 	const prevOauth = asObj(prev.oauth2);
 	const nextOauth = asObj(incoming.oauth2);
-	if (nextOauth) {
+	if (incoming.oauth2 === null) {
+		delete merged.oauth2;
+	} else if (nextOauth) {
 		const oauth2: Record<string, unknown> = { ...prevOauth, ...nextOauth };
 		const incomingSecret = nextOauth.clientSecret;
 		if (
@@ -130,6 +150,16 @@ export function mergeServerDef(
 		) {
 			oauth2.clientSecret = prevOauth.clientSecret;
 		}
+		clearEmptyOAuthEndpoint(oauth2, nextOauth, "authorizationEndpoint", [
+			"authorizationUrl",
+			"authorization_endpoint",
+			"authorization_url",
+		]);
+		clearEmptyOAuthEndpoint(oauth2, nextOauth, "tokenEndpoint", [
+			"tokenUrl",
+			"token_endpoint",
+			"token_url",
+		]);
 		merged.oauth2 = oauth2;
 	}
 

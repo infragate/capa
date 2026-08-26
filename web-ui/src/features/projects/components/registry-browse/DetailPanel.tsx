@@ -1,5 +1,5 @@
+import { Check, Loader2 } from 'lucide-react';
 import { useMemo } from 'react';
-import { Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { RegistryItemDetail } from '../../../registries/api';
 import { Spinner } from '../../../../components/common/Spinner';
@@ -12,10 +12,19 @@ interface DetailPanelProps {
   detail: RegistryItemDetail | null;
   detailLoading: boolean;
   busy: boolean;
+  /** True when this registry item is already in the project's capabilities. */
+  installed?: boolean;
   onAdd: () => void;
 }
 
-export function DetailPanel({ selected, detail, detailLoading, busy, onAdd }: DetailPanelProps) {
+export function DetailPanel({
+  selected,
+  detail,
+  detailLoading,
+  busy,
+  installed = false,
+  onAdd,
+}: DetailPanelProps) {
   const { t } = useTranslation('projects');
 
   const previewHtml = useMemo(
@@ -47,15 +56,25 @@ export function DetailPanel({ selected, detail, detailLoading, busy, onAdd }: De
                 {detail.version ? ` · ${detail.version}` : ''}
               </p>
             </div>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={onAdd}
-              className="inline-flex shrink-0 items-center gap-2 rounded-sm bg-accent-primary px-3 py-2 text-xs font-medium text-white cursor-pointer disabled:opacity-50"
-            >
-              {busy && <Loader2 size={14} className="animate-spin" />}
-              {t('actions.add')}
-            </button>
+            {installed ? (
+              <span
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-sm border border-success-border/40 bg-success-bg/40 px-3 py-2 text-xs font-medium text-success-text"
+                title={t('actions.alreadyInstalled')}
+              >
+                <Check size={14} aria-hidden />
+                {t('actions.installed')}
+              </span>
+            ) : (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={onAdd}
+                className="inline-flex shrink-0 items-center gap-2 rounded-sm bg-accent-primary px-3 py-2 text-xs font-medium text-white cursor-pointer disabled:opacity-50"
+              >
+                {busy && <Loader2 size={14} className="animate-spin" />}
+                {t('actions.add')}
+              </button>
+            )}
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
             {detail.files && detail.files.length > 0 && (

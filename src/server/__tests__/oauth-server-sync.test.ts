@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { Capabilities, MCPServer } from "../../types/capabilities";
 import type { OAuth2Config } from "../../types/oauth";
-import type { OAuth2Manager } from "../oauth-manager";
+import { OAuth2DetectionStatus, type OAuth2Manager } from "../oauth-manager";
 import {
 	mergeDetectedOAuth2,
 	mergeEmbeddedOAuthFields,
@@ -68,6 +68,34 @@ describe("preserveDiscoveredOAuth2", () => {
 		const result = preserveDiscoveredOAuth2(fresh, previous);
 		expect(result.servers[0].def.oauth2?.authorizationEndpoint).toBe(
 			"https://auth.example/authorize",
+		);
+	});
+
+	it("copies legacy tokenUrl / authorizationUrl aliases as canonical fields", () => {
+		const previous: Capabilities = {
+			providers: [],
+			skills: [],
+			tools: [],
+			servers: [
+				mcpServer("legacy", "https://mcp.example/mcp", {
+					authorizationUrl: "https://auth.example/authorize",
+					tokenUrl: "https://auth.example/token",
+				} as Capabilities["servers"][number]["def"]["oauth2"]),
+			],
+		};
+		const fresh: Capabilities = {
+			providers: [],
+			skills: [],
+			tools: [],
+			servers: [mcpServer("legacy", "https://mcp.example/mcp")],
+		};
+
+		const result = preserveDiscoveredOAuth2(fresh, previous);
+		expect(result.servers[0].def.oauth2?.authorizationEndpoint).toBe(
+			"https://auth.example/authorize",
+		);
+		expect(result.servers[0].def.oauth2?.tokenEndpoint).toBe(
+			"https://auth.example/token",
 		);
 	});
 
@@ -159,7 +187,7 @@ describe("mergePluginEmbeddedOAuth", () => {
 });
 
 describe("syncServerOAuth2Requirement", () => {
-	it("clears stale OAuth config when the live URL no longer requires auth", async () => {
+	it("clears stale OAuth config when the live URL no longer requires auth, without deleting tokens", async () => {
 		const server = mcpServer(
 			"server-a",
 			"https://new.example/mcp",
@@ -167,7 +195,9 @@ describe("syncServerOAuth2Requirement", () => {
 		);
 		const disconnects: string[] = [];
 		const oauth2Manager = {
-			detectOAuth2Requirement: async () => null,
+			detectOAuth2Requirement: async () => ({
+				status: OAuth2DetectionStatus.NOT_REQUIRED,
+			}),
 			isServerConnected: () => true,
 			getAccessToken: async () => "token",
 			disconnect: (_projectId: string, serverId: string) => {
@@ -184,6 +214,38 @@ describe("syncServerOAuth2Requirement", () => {
 		expect(result.changed).toBe(true);
 		expect(result.entry).toBeNull();
 		expect(server.def.oauth2).toBeUndefined();
-		expect(disconnects).toEqual(["server-a"]);
+		expect(disconnects).toEqual([]);
+	});
+
+	it("keeps OAuth config and tokens when the probe is inconclusive (unreachable)", async () => {
+		const server = mcpServer(
+			"server-a",
+			"https://unreachable.example/mcp",
+			DETECTED_OAUTH,
+		);
+		const disconnects: string[] = [];
+		const oauth2Manager = {
+			detectOAuth2Requirement: async () => ({
+				status: OAuth2DetectionStatus.INCONCLUSIVE,
+				reason: "network failure",
+			}),
+			isServerConnected: () => true,
+			getAccessToken: async () => "token",
+			disconnect: (_projectId: string, serverId: string) => {
+				disconnects.push(serverId);
+			},
+		} as unknown as OAuth2Manager;
+
+		const result = await syncServerOAuth2Requirement(
+			"proj-1",
+			server,
+			oauth2Manager,
+		);
+
+		expect(result.changed).toBe(false);
+		expect(result.entry?.serverId).toBe("server-a");
+		expect(result.entry?.isConnected).toBe(true);
+		expect(server.def.oauth2).toEqual(DETECTED_OAUTH);
+		expect(disconnects).toEqual([]);
 	});
 });

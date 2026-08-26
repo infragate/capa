@@ -6,7 +6,11 @@ import type { CapaDatabase } from "../db/database";
 import { logger } from "../shared/logger";
 import { isPermanentRefreshFailure } from "../shared/oauth-refresh";
 import type { OAuth2Config } from "../types/oauth";
-import { detectOAuth2Requirement } from "./oauth-discovery";
+import {
+	detectOAuth2Requirement,
+	OAuth2DetectionStatus,
+	type OAuth2DetectionResult,
+} from "./oauth-discovery";
 import { generateAuthorizationUrl, handleCallback } from "./oauth-pkce-flow";
 import {
 	disconnect,
@@ -16,7 +20,8 @@ import {
 } from "./oauth-token-store";
 
 // Re-exported for backwards compatibility with existing import sites.
-export { isPermanentRefreshFailure };
+export { isPermanentRefreshFailure, OAuth2DetectionStatus };
+export type { OAuth2DetectionResult };
 
 export class OAuth2Manager {
 	private db: CapaDatabase;
@@ -36,17 +41,19 @@ export class OAuth2Manager {
 	}
 
 	/**
-	 * Detect if an MCP server requires OAuth2 authentication
+	 * Detect if an MCP server requires OAuth2 authentication.
+	 * Returns required / not_required / inconclusive — never collapses
+	 * network failures into "OAuth no longer required".
 	 */
 	async detectOAuth2Requirement(
 		serverUrl: string,
 		options?: { tlsSkipVerify?: boolean },
-	): Promise<OAuth2Config | null> {
-		const config = await detectOAuth2Requirement(serverUrl, options, this.log);
-		if (config) {
-			this.oauth2ConfigCache.set(serverUrl, config);
+	): Promise<OAuth2DetectionResult> {
+		const result = await detectOAuth2Requirement(serverUrl, options, this.log);
+		if (result.status === OAuth2DetectionStatus.REQUIRED) {
+			this.oauth2ConfigCache.set(serverUrl, result.config);
 		}
-		return config;
+		return result;
 	}
 
 	/**

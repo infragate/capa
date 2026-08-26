@@ -7,6 +7,10 @@ import { LockfileBuilder, loadLockfile } from "../shared/lockfile";
 import { logger } from "../shared/logger";
 import { validateProvider } from "../shared/providers/resolve";
 import type { Capabilities } from "../types/capabilities";
+import {
+	resolveAuthorizationEndpoint,
+	resolveTokenEndpoint,
+} from "./oauth-endpoint-resolve";
 import { mergeEmbeddedOAuthFields, mergePluginEmbeddedOAuth } from "./oauth-server-sync";
 
 const log = logger.child("plugin-resolve");
@@ -222,8 +226,10 @@ export function preserveDiscoveredOAuth2(
 		// URL changes invalidate previously discovered OAuth metadata.
 		if (prev?.def?.url !== server.def?.url) continue;
 
-		const prevAuth = prevOAuth.authorizationEndpoint;
-		const prevToken = prevOAuth.tokenEndpoint;
+		// Prefer canonical fields; fall back to legacy aliases still present in
+		// pre-normalize session/DB oauth2 blocks (tokenUrl / authorizationUrl).
+		const prevAuth = resolveAuthorizationEndpoint(prevOAuth);
+		const prevToken = resolveTokenEndpoint(prevOAuth);
 		if (
 			!prevAuth &&
 			!prevToken &&

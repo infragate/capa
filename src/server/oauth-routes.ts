@@ -7,7 +7,7 @@ import { projectUiUrl } from "../shared/ui-urls";
 import type { MCPServer } from "../types/capabilities";
 import type { OAuth2Config } from "../types/oauth";
 import { matchRoute } from "./match-route";
-import type { OAuth2Manager } from "./oauth-manager";
+import { OAuth2DetectionStatus, type OAuth2Manager } from "./oauth-manager";
 import { syncAllServersOAuth2Requirements } from "./oauth-server-sync";
 import {
 	type EffectiveCapsCacheEntry,
@@ -380,9 +380,9 @@ export async function handleOAuth2Start(
 					tlsSkipVerify: server.def.tlsSkipVerify,
 				},
 			);
-			if (!detected) {
+			if (detected.status === OAuth2DetectionStatus.NOT_REQUIRED) {
+				// Clear stale oauth2 config only — never delete tokens from a probe.
 				delete server.def.oauth2;
-				deps.oauth2Manager.disconnect(projectId, serverId);
 				deps.sessionManager.setProjectCapabilities(projectId, capabilities);
 				return new Response(
 					JSON.stringify({
@@ -392,21 +392,42 @@ export async function handleOAuth2Start(
 					{ status: 409, headers: JSON_HEADERS },
 				);
 			}
-			configForFlow = {
-				...configForFlow,
-				...detected,
-				authorizationEndpoint:
-					configForFlow.authorizationEndpoint || detected.authorizationEndpoint,
-				tokenEndpoint: configForFlow.tokenEndpoint || detected.tokenEndpoint,
-				resourceServer:
-					configForFlow.resourceServer ||
-					detected.resourceServer ||
-					server.def.url,
-				scope: detected.scope ?? configForFlow.scope,
-				...(effectiveClientId ? { clientId: effectiveClientId } : {}),
-			};
-			server.def.oauth2 = configForFlow;
-			deps.sessionManager.setProjectCapabilities(projectId, capabilities);
+			if (detected.status === OAuth2DetectionStatus.REQUIRED) {
+				configForFlow = {
+					...configForFlow,
+					...detected.config,
+					authorizationEndpoint:
+						configForFlow.authorizationEndpoint ||
+						detected.config.authorizationEndpoint,
+					tokenEndpoint:
+						configForFlow.tokenEndpoint || detected.config.tokenEndpoint,
+					resourceServer:
+						configForFlow.resourceServer ||
+						detected.config.resourceServer ||
+						server.def.url,
+					scope: detected.config.scope ?? configForFlow.scope,
+					...(effectiveClientId ? { clientId: effectiveClientId } : {}),
+				};
+				server.def.oauth2 = configForFlow;
+				deps.sessionManager.setProjectCapabilities(projectId, capabilities);
+			} else if (detected.status === OAuth2DetectionStatus.INCONCLUSIVE) {
+				// Ambiguous probe or unsupported grant/response type: keep oauth2.
+				// Do not start a flow we cannot complete when metadata is present
+				// but authorization_code/code is missing.
+				const reason = detected.reason;
+				if (
+					reason.includes("authorization_code") ||
+					reason.includes("response_type=code")
+				) {
+					return new Response(
+						JSON.stringify({
+							error: `This server requires OAuth, but its authorization server does not support the authorization-code flow. ${reason}`,
+						}),
+						{ status: 409, headers: JSON_HEADERS },
+					);
+				}
+				// Other inconclusive outcomes: keep existing endpoints and continue.
+			}
 		}
 
 		const { url: authUrl, state } =

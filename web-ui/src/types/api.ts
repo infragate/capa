@@ -77,6 +77,8 @@ export interface ServerOAuth2Config {
   clientSecret?: string | null;
   authorizationUrl: string | null;
   tokenUrl: string | null;
+  authorizationEndpoint?: string | null;
+  tokenEndpoint?: string | null;
   scopes: string[] | null;
   redirectUri: string | null;
   pkce: boolean;
