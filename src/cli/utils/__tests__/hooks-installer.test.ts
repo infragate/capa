@@ -452,6 +452,98 @@ describe('hooks-installer (cursor standalone)', () => {
     const rows = db.getManagedHooks(projectId);
     expect(rows).toHaveLength(1);
   });
+
+  it('serializes matcher as matcher, never pattern, on postToolUse', async () => {
+    const result = await installHooks({
+      projectPath,
+      projectId,
+      capabilitiesFilePath: join(projectPath, 'capabilities.yaml'),
+      hooks: [
+        {
+          id: 'cursor-matcher-repro',
+          on: 'afterTool',
+          matcher: 'Write|Edit',
+          command: 'echo check-docs',
+          timeout: 10,
+          failClosed: false,
+        },
+      ],
+      providers: ['cursor'],
+      db,
+      authFetch: makeAuthFetch(),
+      getRepoSnapshot: stubGetRepoSnapshot,
+    });
+    expect(result.installed).toBe(1);
+    expect(result.warnings).toEqual([]);
+
+    const config = JSON.parse(
+      readFileSync(join(projectPath, '.cursor', 'hooks.json'), 'utf-8'),
+    ) as { hooks: { postToolUse: Array<Record<string, unknown>> } };
+    expect(config.hooks.postToolUse).toHaveLength(1);
+    const entry = config.hooks.postToolUse[0];
+    expect(entry.matcher).toBe('Write|Edit');
+    expect(entry.pattern).toBeUndefined();
+    expect(entry.command).toBe('echo check-docs');
+    expect(entry.timeout).toBe(10);
+    expect(entry.name).toBe('capa:cursor-matcher-repro');
+    expect(Object.keys(entry)).not.toContain('pattern');
+  });
+
+  it('cleanHooks removes only capa-owned cursor entries', async () => {
+    const hooksPath = join(projectPath, '.cursor', 'hooks.json');
+    require('fs').mkdirSync(join(projectPath, '.cursor'), { recursive: true });
+    writeFileSync(
+      hooksPath,
+      JSON.stringify(
+        {
+          version: 1,
+          hooks: {
+            postToolUse: [
+              { command: './user-hook.sh', matcher: 'Read', name: 'user-authored' },
+            ],
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    await installHooks({
+      projectPath,
+      projectId,
+      capabilitiesFilePath: join(projectPath, 'capabilities.yaml'),
+      hooks: [
+        {
+          id: 'cursor-matcher-repro',
+          on: 'afterTool',
+          matcher: 'Write|Edit',
+          command: 'echo capa',
+        },
+      ],
+      providers: ['cursor'],
+      db,
+      authFetch: makeAuthFetch(),
+      getRepoSnapshot: stubGetRepoSnapshot,
+    });
+
+    const beforeClean = JSON.parse(readFileSync(hooksPath, 'utf-8')) as {
+      hooks: { postToolUse: Array<{ name?: string }> };
+    };
+    expect(beforeClean.hooks.postToolUse).toHaveLength(2);
+
+    const { removed } = cleanHooks(projectPath, projectId, db);
+    expect(removed).toBe(1);
+    expect(db.getManagedHooks(projectId)).toEqual([]);
+
+    const after = JSON.parse(readFileSync(hooksPath, 'utf-8')) as {
+      hooks: { postToolUse: Array<{ name?: string; command?: string; matcher?: string; pattern?: string }> };
+    };
+    expect(after.hooks.postToolUse).toHaveLength(1);
+    expect(after.hooks.postToolUse[0].name).toBe('user-authored');
+    expect(after.hooks.postToolUse[0].command).toBe('./user-hook.sh');
+    expect(after.hooks.postToolUse[0].matcher).toBe('Read');
+    expect(after.hooks.postToolUse[0].pattern).toBeUndefined();
+  });
 });
 
 describe('hooks-installer — pruneOrphanHooks / cleanHooks', () => {

@@ -73,7 +73,7 @@ export function coalescePluginHook(
   if (providers.size > 1) {
     delete existing.providers;
     // Matcher from one provider (e.g. Claude SessionStart kinds) must not
-    // become a Cursor `pattern` filter on the unified hook.
+    // become a Cursor `matcher` filter on the unified hook.
     if ((existing.matcher ?? '') !== (candidate.matcher ?? '')) {
       delete existing.matcher;
     }

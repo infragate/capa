@@ -59,6 +59,23 @@ export interface HookEntryOutput {
 
 const NAME_TAG_PREFIX = "capa:";
 
+/**
+ * Cursor-documented per-script keys, plus capa's `name` tag used for
+ * surgical install/clean. `pattern` is intentionally absent — Cursor
+ * filters with `matcher`, and emitting `pattern` is the bug in #202.
+ * Docs: https://cursor.com/docs/agent/hooks
+ */
+const CURSOR_HOOK_ENTRY_KEYS = new Set([
+	"command",
+	"type",
+	"prompt",
+	"matcher",
+	"timeout",
+	"failClosed",
+	"loop_limit",
+	"name",
+]);
+
 export function buildNameTag(
 	hookId: string,
 	prefix: string = NAME_TAG_PREFIX,
@@ -151,12 +168,13 @@ function buildCursorEntry(input: HookEntryInput): HookEntryOutput {
 		? { type: "prompt", prompt: runReference }
 		: { command: runReference };
 	const matcher = resolveMatcher(input);
-	if (matcher) entry.pattern = matcher;
+	if (matcher) entry.matcher = matcher;
 	if (hook.timeout !== undefined) entry.timeout = hook.timeout;
 	if (hook.failClosed) entry.failClosed = true;
 	const prefix = input.nameTagPrefix ?? NAME_TAG_PREFIX;
 	const nameTag = buildNameTag(hook.id, prefix);
 	entry.name = nameTag;
+	assertCursorHookEntrySchema(entry);
 	return {
 		eventName: mapping.event,
 		entry,
@@ -381,4 +399,23 @@ function ensureArray(obj: Record<string, unknown>, key: string): unknown[] {
 	const next: unknown[] = [];
 	obj[key] = next;
 	return next;
+}
+
+/**
+ * Refuse to serialise a Cursor entry with keys Cursor does not document.
+ * In particular, never emit `pattern` as a stand-in for `matcher`.
+ */
+function assertCursorHookEntrySchema(entry: Record<string, unknown>): void {
+	const keys = Object.keys(entry);
+	if (keys.includes("pattern")) {
+		throw new Error(
+			'Cursor hook entries must use "matcher", not the unsupported "pattern" field',
+		);
+	}
+	const unknown = keys.filter((k) => !CURSOR_HOOK_ENTRY_KEYS.has(k));
+	if (unknown.length > 0) {
+		throw new Error(
+			`Cursor hook entry has unsupported keys: ${unknown.sort().join(", ")}`,
+		);
+	}
 }
