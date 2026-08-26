@@ -109,7 +109,7 @@ EXAMPLES:
     # verifies SHA256 against SHA256SUMS.txt, then runs the local file)
 
     # Convenience only — does not verify the installer script itself:
-    curl -LsSf https://capa.infragate.ai/install.sh | sh
+    curl -LsSf https://capa.sh/install.sh | sh
 EOF
 }
 
