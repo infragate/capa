@@ -25,7 +25,8 @@ describe('installOneSkill id hardening', () => {
 
   afterEach(() => {
     db.close();
-    rmSync(tempDir, { recursive: true, force: true });
+    // Windows can keep SQLite WAL/SHM locked briefly after close().
+    rmSync(tempDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   });
 
   it('rejects skill ids that leave the provider skills directory', async () => {
