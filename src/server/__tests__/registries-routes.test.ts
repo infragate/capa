@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, spyOn } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import * as cache from '../../shared/cache';
 import * as config from '../../shared/config';
 import * as safeRemoteUrl from '../../shared/safe-remote-url';
 import { CapaDatabase } from '../../db/database';
@@ -539,50 +540,60 @@ describe('registries-routes', () => {
 
     it('installs a git-backed marketplace when materializing from a local snapshot fixture', async () => {
       // Simulate install by writing managed files directly then loading —
-      // full git clone is covered by unit source-mapping tests.
-      const { writeFileSync: write } = await import('fs');
-      const slug = 'dk-local';
-      const dir = join(managedDir, slug);
-      mkdirSync(dir, { recursive: true });
-      write(join(dir, 'marketplace.json'), MARKETPLACE_JSON);
-      write(
-        join(dir, 'marketplace.meta.json'),
-        JSON.stringify({
+      // full git clone is covered by unit source-mapping tests. Stub the
+      // snapshot helper because manager.view() otherwise clones the plugin
+      // repo via inspectPlugin and can exceed bun's 5s default timeout.
+      const snapshotSpy = spyOn(cache, 'getOrCreateSnapshot').mockRejectedValue(
+        new Error('git clone must not run during local marketplace fixture test'),
+      );
+      try {
+        const { writeFileSync: write } = await import('fs');
+        const slug = 'dk-local';
+        const dir = join(managedDir, slug);
+        mkdirSync(dir, { recursive: true });
+        write(join(dir, 'marketplace.json'), MARKETPLACE_JSON);
+        write(
+          join(dir, 'marketplace.meta.json'),
+          JSON.stringify({
+            source: 'giuseppe-trisciuoglio/developer-kit',
+            host: 'github',
+            ownerRepo: 'giuseppe-trisciuoglio/developer-kit',
+            marketplaceName: 'developer-kit',
+            pluginCount: 2,
+            fetchedAt: Date.now(),
+          }),
+        );
+        db.upsertRegistry({
+          slug,
+          type: 'claude-marketplace',
           source: 'giuseppe-trisciuoglio/developer-kit',
-          host: 'github',
-          ownerRepo: 'giuseppe-trisciuoglio/developer-kit',
-          marketplaceName: 'developer-kit',
-          pluginCount: 2,
-          fetchedAt: Date.now(),
-        }),
-      );
-      db.upsertRegistry({
-        slug,
-        type: 'claude-marketplace',
-        source: 'giuseppe-trisciuoglio/developer-kit',
-        status: 'installed',
-        enabled: true,
-      });
-      await manager.reload();
-      const detail = await manager.view(slug, {
-        capability: 'plugins',
-        id: 'developer-kit-typescript',
-      });
-      expect(detail.installSnippet).toMatchObject({
-        id: 'developer-kit-typescript',
-        type: 'github',
-        def: {
-          repo: 'giuseppe-trisciuoglio/developer-kit::plugins/developer-kit-typescript',
-        },
-      });
+          status: 'installed',
+          enabled: true,
+        });
+        await manager.reload();
+        const detail = await manager.view(slug, {
+          capability: 'plugins',
+          id: 'developer-kit-typescript',
+        });
+        expect(detail.installSnippet).toMatchObject({
+          id: 'developer-kit-typescript',
+          type: 'github',
+          def: {
+            repo: 'giuseppe-trisciuoglio/developer-kit::plugins/developer-kit-typescript',
+          },
+        });
 
-      const core = await manager.view(slug, {
-        capability: 'plugins',
-        id: 'developer-kit',
-      });
-      expect((core.installSnippet as any).def.repo).toBe(
-        'giuseppe-trisciuoglio/developer-kit::plugins/developer-kit-core',
-      );
+        const core = await manager.view(slug, {
+          capability: 'plugins',
+          id: 'developer-kit',
+        });
+        expect((core.installSnippet as any).def.repo).toBe(
+          'giuseppe-trisciuoglio/developer-kit::plugins/developer-kit-core',
+        );
+        expect(snapshotSpy).toHaveBeenCalled();
+      } finally {
+        snapshotSpy.mockRestore();
+      }
     });
   });
 });
