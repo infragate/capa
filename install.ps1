@@ -61,7 +61,7 @@ USAGE:
     .\install.ps1 [OPTIONS]
     
     Or via web:
-    powershell -ExecutionPolicy ByPass -c "irm https://capa.infragate.ai/install.ps1 | iex"
+    powershell -ExecutionPolicy ByPass -c "irm https://capa.sh/install.ps1 | iex"
 
 OPTIONS:
     -InstallDir <DIR>
@@ -88,13 +88,13 @@ ENVIRONMENT VARIABLES:
 
 EXAMPLES:
     # Install with defaults
-    irm https://capa.infragate.ai/install.ps1 | iex
+    irm https://capa.sh/install.ps1 | iex
 
     # Install to custom directory
-    `$env:CAPA_INSTALL_DIR="C:\Tools"; irm https://capa.infragate.ai/install.ps1 | iex
+    `$env:CAPA_INSTALL_DIR="C:\Tools"; irm https://capa.sh/install.ps1 | iex
 
     # Install without modifying PATH
-    powershell -c "irm https://capa.infragate.ai/install.ps1 | iex" -NoModifyPath
+    powershell -c "irm https://capa.sh/install.ps1 | iex" -NoModifyPath
 "@
 }
 

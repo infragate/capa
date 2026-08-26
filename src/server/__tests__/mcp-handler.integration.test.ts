@@ -693,7 +693,7 @@ describe('handleMessage > initialize (server icons)', () => {
     expect(resp.result.serverInfo.description).toBe(
       'An agentic skills and tools package manager',
     );
-    expect(resp.result.serverInfo.websiteUrl).toBe('https://capa.infragate.ai');
+    expect(resp.result.serverInfo.websiteUrl).toBe('https://capa.sh');
 
     const icons = resp.result.serverInfo.icons;
     expect(icons).toHaveLength(1);
