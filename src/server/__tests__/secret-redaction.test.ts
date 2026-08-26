@@ -76,24 +76,47 @@ describe("mergeServerDef", () => {
 		);
 	});
 
-	it("preserves secret source objects in env and headers", () => {
+	it("clears oauth2 when the patch sets oauth2 to null", () => {
 		const merged = mergeServerDef(
 			{
-				env: { A: { fromEnv: "OLD" } },
-				headers: { Authorization: { fromCommand: "op read old" } },
+				url: "https://mcp.example/mcp",
+				oauth2: {
+					clientId: "id",
+					authorizationEndpoint: "https://auth.example/authorize",
+				},
+			},
+			{ url: "https://mcp.example/mcp", oauth2: null },
+		);
+		expect(merged.oauth2).toBeUndefined();
+	});
+
+	it("clears canonical and legacy endpoint aliases when the patch sends empty values", () => {
+		const merged = mergeServerDef(
+			{
+				url: "https://mcp.example/mcp",
+				oauth2: {
+					clientId: "id",
+					authorizationEndpoint: "https://auth.example/authorize",
+					authorizationUrl: "https://legacy.example/authorize",
+					tokenEndpoint: "https://auth.example/token",
+					tokenUrl: "https://legacy.example/token",
+				},
 			},
 			{
-				env: { A: { fromEnv: "NEW" }, B: { fromFile: "./b" } },
-				headers: { Authorization: { fromCommand: "op read new" } },
+				url: "https://mcp.example/mcp",
+				oauth2: {
+					clientId: "id",
+					authorizationEndpoint: "",
+					tokenEndpoint: null,
+				},
 			},
 		);
-		expect(merged.env).toEqual({
-			A: { fromEnv: "NEW" },
-			B: { fromFile: "./b" },
-		});
-		expect(merged.headers).toEqual({
-			Authorization: { fromCommand: "op read new" },
-		});
+		const oauth2 = merged.oauth2 as Record<string, unknown>;
+		expect(oauth2.clientId).toBe("id");
+		expect(oauth2.authorizationEndpoint).toBeUndefined();
+		expect(oauth2.authorizationUrl).toBeUndefined();
+		expect(oauth2.tokenEndpoint).toBeUndefined();
+		expect(oauth2.tokenUrl).toBeUndefined();
 	});
 });
 

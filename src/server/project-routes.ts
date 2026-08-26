@@ -13,6 +13,10 @@ import { clientErrorMessage } from "./http-error";
 import { matchRoute } from "./match-route";
 import type { CapaMCPServer } from "./mcp-handler";
 import type { McpServerStateManager } from "./mcp-server-state";
+import {
+	resolveAuthorizationEndpoint,
+	resolveTokenEndpoint,
+} from "./oauth-endpoint-resolve";
 import { OAuth2Manager } from "./oauth-manager";
 import { listProjectFs, writeProjectImport } from "./project-fs";
 import {
@@ -188,6 +192,12 @@ export async function handleGetProject(
 								? deps.oauth2Manager.isServerConnected(projectId, s.id)
 								: null;
 							const enabled = deps.mcpServerState.isEnabled(projectId, s.id);
+							const authorizationEndpoint = s.def?.oauth2
+								? (resolveAuthorizationEndpoint(s.def.oauth2) ?? null)
+								: null;
+							const tokenEndpoint = s.def?.oauth2
+								? (resolveTokenEndpoint(s.def.oauth2) ?? null)
+								: null;
 							return redactServerForApi({
 								id: s.id,
 								type: s.type,
@@ -202,9 +212,10 @@ export async function handleGetProject(
 									? {
 											clientId: s.def.oauth2.clientId ?? null,
 											clientSecret: s.def.oauth2.clientSecret ?? null,
-											authorizationUrl:
-												s.def.oauth2.authorizationEndpoint ?? null,
-											tokenUrl: s.def.oauth2.tokenEndpoint ?? null,
+											authorizationUrl: authorizationEndpoint,
+											tokenUrl: tokenEndpoint,
+											authorizationEndpoint,
+											tokenEndpoint,
 											scopes:
 												s.def.oauth2.scopes ??
 												(s.def.oauth2.scope ? [s.def.oauth2.scope] : null),

@@ -90,12 +90,20 @@ describe('OAuth2Manager', () => {
       expect(result.status).toBe(OAuth2DetectionStatus.INCONCLUSIVE);
     });
 
-    it('returns not_required when the MCP server returns a non-401 status', async () => {
+    it('returns not_required when unauthenticated initialize succeeds', async () => {
       globalThis.fetch = (async () => new Response('', { status: 200 })) as unknown as typeof fetch;
 
       const manager = new OAuth2Manager(makeMockDb());
       const result = await manager.detectOAuth2Requirement('http://localhost:9999/mcp');
       expect(result.status).toBe(OAuth2DetectionStatus.NOT_REQUIRED);
+    });
+
+    it('returns inconclusive for non-401 client errors', async () => {
+      globalThis.fetch = (async () => new Response('', { status: 403 })) as unknown as typeof fetch;
+
+      const manager = new OAuth2Manager(makeMockDb());
+      const result = await manager.detectOAuth2Requirement('http://localhost:9999/mcp');
+      expect(result.status).toBe(OAuth2DetectionStatus.INCONCLUSIVE);
     });
   });
 

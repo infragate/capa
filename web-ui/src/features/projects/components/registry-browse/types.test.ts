@@ -33,4 +33,13 @@ describe('isRegistryItemInstalled', () => {
       isRegistryItemInstalled('owner/repo/display-name', installed),
     ).toBe(false);
   });
+
+  it('does not treat a catalog id as installed when the snippet id differs', () => {
+    const installed = new Set(['owner/repo/display-name']);
+    expect(
+      isRegistryItemInstalled('owner/repo/display-name', installed, {
+        id: 'canonical-id',
+      }),
+    ).toBe(false);
+  });
 });

@@ -125,9 +125,10 @@ export function resolveOAuthScope(options: {
  * Probe outcome for whether an MCP server requires OAuth2.
  *
  * - REQUIRED: clear 401 + discoverable auth-server metadata
- * - NOT_REQUIRED: reachable server answered without requiring OAuth
- * - INCONCLUSIVE: network/timeout/5xx/401-without-metadata — callers must
- *   not treat this as "OAuth went away" or delete stored tokens
+ * - NOT_REQUIRED: unauthenticated MCP initialize succeeded (2xx)
+ * - INCONCLUSIVE: network/timeout/non-2xx-except-401/401-without-metadata/
+ *   unsupported grant — callers must not treat this as "OAuth went away"
+ *   or delete stored tokens
  */
 export const OAuth2DetectionStatus = {
 	REQUIRED: "required",
@@ -178,17 +179,17 @@ export async function detectOAuth2Requirement(
 			...tlsFetchOptions(tlsSkipVerify),
 		} as RequestInit);
 
-		// 5xx / other ambiguous statuses: server is reachable but we cannot
-		// conclude that OAuth is no longer required.
-		if (response.status >= 500) {
+		// Only a successful unauthenticated initialize proves OAuth is absent.
+		// 401 continues discovery. Other 4xx/3xx/5xx are protocol, gateway, or
+		// auth-adjacent failures and must not erase stored OAuth configuration.
+		if (response.status !== 401) {
+			if (response.ok) {
+				log.debug(`No OAuth2 required (status: ${response.status})`);
+				return { status: OAuth2DetectionStatus.NOT_REQUIRED };
+			}
 			const reason = `MCP probe returned ${response.status}`;
 			log.warn(reason);
 			return { status: OAuth2DetectionStatus.INCONCLUSIVE, reason };
-		}
-
-		if (response.status !== 401) {
-			log.debug(`No OAuth2 required (status: ${response.status})`);
-			return { status: OAuth2DetectionStatus.NOT_REQUIRED };
 		}
 
 		const serverUrlObj = new URL(serverUrl);
@@ -266,13 +267,15 @@ export async function detectOAuth2Requirement(
 			Array.isArray(grantTypes) &&
 			!grantTypes.includes("authorization_code")
 		) {
-			log.debug("Auth server does not support authorization_code grant");
-			return { status: OAuth2DetectionStatus.NOT_REQUIRED };
+			const reason = "Auth server does not support authorization_code grant";
+			log.warn(reason);
+			return { status: OAuth2DetectionStatus.INCONCLUSIVE, reason };
 		}
 		const responseTypes = authMetadata.response_types_supported;
 		if (Array.isArray(responseTypes) && !responseTypes.includes("code")) {
-			log.debug("Auth server does not support response_type=code");
-			return { status: OAuth2DetectionStatus.NOT_REQUIRED };
+			const reason = "Auth server does not support response_type=code";
+			log.warn(reason);
+			return { status: OAuth2DetectionStatus.INCONCLUSIVE, reason };
 		}
 
 		const scope = resolveOAuthScope({

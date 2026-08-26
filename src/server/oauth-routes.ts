@@ -410,8 +410,24 @@ export async function handleOAuth2Start(
 				};
 				server.def.oauth2 = configForFlow;
 				deps.sessionManager.setProjectCapabilities(projectId, capabilities);
+			} else if (detected.status === OAuth2DetectionStatus.INCONCLUSIVE) {
+				// Ambiguous probe or unsupported grant/response type: keep oauth2.
+				// Do not start a flow we cannot complete when metadata is present
+				// but authorization_code/code is missing.
+				const reason = detected.reason;
+				if (
+					reason.includes("authorization_code") ||
+					reason.includes("response_type=code")
+				) {
+					return new Response(
+						JSON.stringify({
+							error: `This server requires OAuth, but its authorization server does not support the authorization-code flow. ${reason}`,
+						}),
+						{ status: 409, headers: JSON_HEADERS },
+					);
+				}
+				// Other inconclusive outcomes: keep existing endpoints and continue.
 			}
-			// inconclusive: keep existing oauth2 endpoints and continue the flow
 		}
 
 		const { url: authUrl, state } =

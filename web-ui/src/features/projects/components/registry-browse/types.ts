@@ -33,11 +33,9 @@ export function isRegistryItemInstalled(
   installedIds: ReadonlySet<string>,
   installSnippet?: Record<string, unknown> | null,
 ): boolean {
-  if (installedIds.has(itemId)) return true;
   const installId = registryInstallId(itemId, installSnippet);
   if (installedIds.has(installId)) return true;
-  // Also accept leaf(itemId) when snippet id differs, in case older installs
-  // used the leaf path before snippet ids were honored.
+  // Legacy installs used the leaf path before snippet ids were honored.
   const leaf = itemId.split('/').pop();
-  return !!(leaf && leaf !== itemId && leaf !== installId && installedIds.has(leaf));
+  return !!(leaf && leaf !== installId && installedIds.has(leaf));
 }

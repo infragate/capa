@@ -180,4 +180,51 @@ describe("detectOAuth2Requirement", () => {
 		);
 		expect(result.status).toBe(OAuth2DetectionStatus.NOT_REQUIRED);
 	});
+
+	it("returns inconclusive for ambiguous client errors that are not 401", async () => {
+		for (const status of [400, 403, 404]) {
+			globalThis.fetch = (async () =>
+				new Response("", { status })) as unknown as typeof fetch;
+
+			const result = await detectOAuth2Requirement(
+				"https://ambiguous.example.test/mcp",
+			);
+			expect(result.status).toBe(OAuth2DetectionStatus.INCONCLUSIVE);
+			if (result.status === OAuth2DetectionStatus.INCONCLUSIVE) {
+				expect(result.reason).toContain(String(status));
+			}
+		}
+	});
+
+	it("returns inconclusive when metadata lacks authorization_code support", async () => {
+		globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+			const url = String(input);
+			if (url === "https://mcp.example.test/mcp" && init?.method === "POST") {
+				return new Response("", {
+					status: 401,
+					headers: { "WWW-Authenticate": 'Bearer realm="mcp"' },
+				});
+			}
+			if (
+				url ===
+				"https://mcp.example.test/.well-known/oauth-authorization-server"
+			) {
+				return Response.json({
+					authorization_endpoint: "https://auth.example.test/authorize",
+					token_endpoint: "https://auth.example.test/token",
+					grant_types_supported: ["client_credentials"],
+					response_types_supported: ["token"],
+				});
+			}
+			return new Response("", { status: 404 });
+		}) as unknown as typeof fetch;
+
+		const result = await detectOAuth2Requirement(
+			"https://mcp.example.test/mcp",
+		);
+		expect(result.status).toBe(OAuth2DetectionStatus.INCONCLUSIVE);
+		if (result.status === OAuth2DetectionStatus.INCONCLUSIVE) {
+			expect(result.reason).toContain("authorization_code");
+		}
+	});
 });

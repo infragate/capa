@@ -95,8 +95,10 @@ export function ServerDialog({
     setTlsSkipVerify(!!s.tlsSkipVerify);
     setOauthClientId(s.oauth2?.clientId || '');
     setOauthClientSecret(s.oauth2?.clientSecret || '');
-    setOauthAuthUrl(s.oauth2?.authorizationUrl || '');
-    setOauthTokenUrl(s.oauth2?.tokenUrl || '');
+    setOauthAuthUrl(
+      s.oauth2?.authorizationEndpoint || s.oauth2?.authorizationUrl || '',
+    );
+    setOauthTokenUrl(s.oauth2?.tokenEndpoint || s.oauth2?.tokenUrl || '');
     setOauthScopes((s.oauth2?.scopes || []).join(' '));
     setOauthRedirectUri(s.oauth2?.redirectUri || '');
     setOauthPkce(!!s.oauth2?.pkce);
@@ -140,12 +142,22 @@ export function ServerDialog({
       const oauth2: Record<string, unknown> = {};
       if (oauthClientId.trim()) oauth2.clientId = oauthClientId.trim();
       if (oauthClientSecret.trim()) oauth2.clientSecret = oauthClientSecret.trim();
-      if (oauthAuthUrl.trim()) oauth2.authorizationEndpoint = oauthAuthUrl.trim();
-      if (oauthTokenUrl.trim()) oauth2.tokenEndpoint = oauthTokenUrl.trim();
       if (scopes.length) oauth2.scopes = scopes;
       if (oauthRedirectUri.trim()) oauth2.redirectUri = oauthRedirectUri.trim();
       if (oauthPkce) oauth2.pkce = true;
-      if (Object.keys(oauth2).length > 0) def.oauth2 = oauth2;
+      const authEndpoint = oauthAuthUrl.trim();
+      const tokenEndpoint = oauthTokenUrl.trim();
+      const hasOauthValues =
+        Object.keys(oauth2).length > 0 || !!authEndpoint || !!tokenEndpoint;
+      if (hasOauthValues) {
+        // Always send canonical endpoint fields so an empty input can clear
+        // persisted values through mergeServerDef (omitted keys are kept).
+        oauth2.authorizationEndpoint = authEndpoint || null;
+        oauth2.tokenEndpoint = tokenEndpoint || null;
+        def.oauth2 = oauth2;
+      } else if (isEdit) {
+        def.oauth2 = null;
+      }
     } else {
       const envMap = secretPairsToRecord(env);
       if (envMap) def.env = envMap;
