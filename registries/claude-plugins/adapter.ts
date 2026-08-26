@@ -115,7 +115,7 @@ const MAX_LISTING_PAGES = 50;
 const LIST_CACHE_TTL_MS = 10 * 60 * 1000;
 const SUMMARY_PREVIEW_CHARS = 600;
 const UA =
-  'Mozilla/5.0 (compatible; capa-registry-claude-plugins/1.0; +https://capa.infragate.ai)';
+  'Mozilla/5.0 (compatible; capa-registry-claude-plugins/1.0; +https://capa.sh)';
 
 // Anthropic's official plugin marketplace manifest — the source of truth
 // for `(repo, path, sha)` per plugin. We pin to `main` because that's
