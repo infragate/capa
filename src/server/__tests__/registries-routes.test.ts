@@ -5,6 +5,7 @@ import { tmpdir } from 'os';
 import * as config from '../../shared/config';
 import * as safeRemoteUrl from '../../shared/safe-remote-url';
 import { CapaDatabase } from '../../db/database';
+import { loadClaudeMarketplaceAdapter } from '../../shared/registries/claude-marketplace';
 import { RegistryManager } from '../../shared/registries/manager';
 import {
   listRegistriesHandler,
@@ -539,7 +540,9 @@ describe('registries-routes', () => {
 
     it('installs a git-backed marketplace when materializing from a local snapshot fixture', async () => {
       // Simulate install by writing managed files directly then loading —
-      // full git clone is covered by unit source-mapping tests.
+      // full git clone is covered by unit source-mapping tests. View through
+      // loadClaudeMarketplaceAdapter without a db so inspectPlugin is not
+      // attached (manager.view() would clone the plugin repo).
       const { writeFileSync: write } = await import('fs');
       const slug = 'dk-local';
       const dir = join(managedDir, slug);
@@ -564,7 +567,10 @@ describe('registries-routes', () => {
         enabled: true,
       });
       await manager.reload();
-      const detail = await manager.view(slug, {
+      expect((await manager.list()).some((m) => m.id === slug)).toBe(true);
+
+      const adapter = loadClaudeMarketplaceAdapter(slug);
+      const detail = await adapter.view({
         capability: 'plugins',
         id: 'developer-kit-typescript',
       });
@@ -576,7 +582,7 @@ describe('registries-routes', () => {
         },
       });
 
-      const core = await manager.view(slug, {
+      const core = await adapter.view({
         capability: 'plugins',
         id: 'developer-kit',
       });

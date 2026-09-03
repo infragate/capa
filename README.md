@@ -61,13 +61,13 @@ The teammate who clones tomorrow gets the exact setup you have today.
 **macOS and Linux:**
 
 ```bash
-curl -LsSf https://capa.infragate.ai/install.sh | sh
+curl -LsSf https://capa.sh/install.sh | sh
 ```
 
 **Windows:**
 
 ```powershell
-powershell -ExecutionPolicy ByPass -c "irm https://capa.infragate.ai/install.ps1 | iex"
+powershell -ExecutionPolicy ByPass -c "irm https://capa.sh/install.ps1 | iex"
 ```
 
 ## Quick start
@@ -198,7 +198,7 @@ capabilities.yaml  ──►  capa install  ──►  provider files (.cursor/,
         │
         └──► Web UI editor ◄──► file watcher ◄──► disk
 
-Agent ──MCP──► capa gateway (:5912) ──proxy──► upstream MCP (stdio / HTTP / SSE)
+Agent ──MCP──► capa gateway (:5912)  ──proxy──► upstream MCP (stdio / HTTP / SSE)
                      │
                      ├── on-demand tools (setup_tools / call_tool)
                      ├── per-sub-agent filtered endpoints
@@ -226,6 +226,6 @@ capa upgrade [--yes]                   # pin GitHub release + verify installer c
 
 Guides, the full schema reference, and the registry catalog:
 
-**[https://capa.infragate.ai](https://capa.infragate.ai/getting-started/introduction/)**
+**[https://capa.sh](https://capa.sh/getting-started/introduction/)**
 
 Maintainer-oriented internals (install pipeline, provider matrix, lockfile semantics) live in [`docs/`](./docs/README.md).

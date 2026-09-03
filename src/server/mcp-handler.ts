@@ -171,7 +171,7 @@ export class CapaMCPServer {
 				version: VERSION,
 				title: "capa",
 				description: "An agentic skills and tools package manager",
-				websiteUrl: "https://capa.infragate.ai",
+				websiteUrl: "https://capa.sh",
 				icons: CAPA_SERVER_ICONS,
 			},
 			{
@@ -1045,7 +1045,7 @@ export class CapaMCPServer {
 						title: "capa",
 						version: VERSION,
 						description: "An agentic skills and tools package manager",
-						websiteUrl: "https://capa.infragate.ai",
+						websiteUrl: "https://capa.sh",
 						icons: CAPA_SERVER_ICONS,
 					},
 				},

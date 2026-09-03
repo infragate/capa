@@ -2,7 +2,7 @@
  * Web UI route helpers for the capa server SPA.
  */
 
-export const CAPA_DOCS_URL = "https://capa.infragate.ai/getting-started/introduction/";
+export const CAPA_DOCS_URL = "https://capa.sh/getting-started/introduction/";
 export const CAPA_CLOUD_OAUTH_URL = "https://capa.infragate.ai/auth";
 
 /** Shown before browser OAuth. Cloud host is pinned; not request-controlled. */
