@@ -106,6 +106,7 @@ export async function syncProjectManagedArtifacts(opts: {
 		providers,
 		db: opts.db,
 		serverOrigin: opts.serverOrigin,
+		materializeShadow: opts.materializeShadow,
 	});
 
 	return { hooks, rules, agents, subagents, skipped: false };

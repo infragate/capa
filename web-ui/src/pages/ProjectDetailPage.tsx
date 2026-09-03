@@ -145,6 +145,7 @@ export function ProjectDetailPage() {
                 rules={caps?.rules ?? []}
                 hooks={caps?.hooks ?? []}
                 agents={caps?.agents ?? null}
+                providers={caps?.providers ?? []}
                 plugins={caps?.plugins ?? []}
                 resolvedPlugins={caps?.resolvedPlugins ?? []}
                 projectId={projectId}

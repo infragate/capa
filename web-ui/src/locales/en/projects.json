@@ -433,6 +433,8 @@
   "subagents": {
     "title": "Sub-Agents",
     "subtitle": "Named agent configurations with scoped skills and tools",
+    "providers": "Providers",
+    "allProviders": "All active providers",
     "skills": "Skills",
     "tools": "Tools",
     "instructions": "Instructions",

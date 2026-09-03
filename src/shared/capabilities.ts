@@ -17,6 +17,7 @@ import type {
 } from "../types/capabilities";
 import { logger } from "./logger";
 import { normalizeOAuth2Block } from "./plugin-manifest/mcp-parser";
+import { getProvider } from "./providers";
 import { secretValueRecordSchema } from "./secret-value";
 
 const KNOWN_CAPABILITY_KEYS = new Set([
@@ -231,6 +232,22 @@ const optionsSchema = z
 
 /** Loose entries for sections Wave 2d will tighten (hooks) or lower priority. */
 const looseEntrySchema = z.record(z.string(), z.unknown());
+const providerIdSchema = z.string().min(1).transform((id, ctx) => {
+	const provider = getProvider(id);
+	if (!provider) {
+		ctx.addIssue({
+			code: "custom",
+			message: `Unknown provider: ${id}`,
+		});
+		return z.NEVER;
+	}
+	return provider.id;
+});
+const subAgentSchema = z
+	.object({
+		providers: z.array(providerIdSchema).optional(),
+	})
+	.passthrough();
 
 export const capabilitiesSchema = z
 	.object({
@@ -241,7 +258,7 @@ export const capabilitiesSchema = z
 		plugins: z.preprocess((val) => val ?? [], z.array(pluginSchema)),
 		options: z.preprocess((val) => val ?? {}, optionsSchema),
 		agents: z.record(z.string(), z.unknown()).optional(),
-		subagents: z.preprocess((val) => val ?? [], z.array(looseEntrySchema)),
+		subagents: z.preprocess((val) => val ?? [], z.array(subAgentSchema)),
 		rules: z.preprocess((val) => val ?? [], z.array(looseEntrySchema)),
 		hooks: z.preprocess((val) => val ?? [], z.array(looseEntrySchema)),
 	})

@@ -345,6 +345,30 @@ describe('Codex pilot integration', () => {
     );
   });
 
+  it('omits Codex MCP declarations when tool exposure is disabled', () => {
+    const codex = getProvider('codex')!;
+    const result = buildSubAgentFile(
+      codex,
+      {
+        id: 'reviewer',
+        description: 'Reviews changes',
+        skills: [],
+        tools: [],
+      },
+      {
+        providers: ['codex'],
+        options: { toolExposure: 'none' },
+        skills: [],
+        servers: [],
+        tools: [],
+      },
+    );
+    const parsed = TOML.parse(result) as any;
+
+    expect(parsed.mcp_servers).toBeUndefined();
+    expect(result).not.toContain('url = ""');
+  });
+
   it('buildSubAgentFile kebab-cases snake_case tool ids in the capa sh form', () => {
     const codex = getProvider('codex')!;
     const subAgent = {
