@@ -43,7 +43,7 @@ tools:
 #   - `owner/repo@plugin-name`        — recursive search by basename / manifest name
 #   - `owner/repo::path/inside/repo`  — exact subpath
 
-# subagents: [ { id, description?, skills, tools, instructions? } ]
+# subagents: [ { id, providers?, description?, skills, tools, instructions? } ]
 ```
 
 ## Skills Section (seven types)
@@ -192,6 +192,7 @@ The **filtered MCP endpoint** at `/{projectId}/agents/{id}/mcp` exposes only the
 subagents:
   - id: infra-agent
     description: AWS CDK and Terraform specialist. Use when working in backend-infra/ or user-infra/.
+    providers: [claude-code, cursor]
     skills:
       - my-iac-skill          # skill IDs from the top-level skills array
     tools:
@@ -214,6 +215,7 @@ subagents:
 
 **Fields:**
 - `id` (required): Unique identifier. Used as the MCP key (`capa-{id}`) and agent file name.
+- `providers` (optional): Provider allow-list for this subagent. Omit it or use `[]` to generate an adapter for every active top-level provider. Unknown provider IDs fail validation; known providers that are not active are ignored; active providers without a subagent integration produce a warning. Retargeting and clean remove only adapters and MCP entries that retain Capa's generated ownership signature, preserving same-name files or entries that were replaced manually.
 - `description` (optional): Role description. For Cursor this drives automatic delegation — be specific.
 - `skills` (required): List of skill IDs from the top-level `skills` array.
 - `tools` (required): List of tools the subagent may call. Each entry references a tool in the top-level `tools` array using any of three equivalent forms — `tool_id` (bare local id), `server.tool` (qualified), or `@server.tool` (same dialect `skills.requires` uses). All three resolve to the same tool; pick whichever reads best. Only the resolved tools are exposed on the filtered MCP endpoint.

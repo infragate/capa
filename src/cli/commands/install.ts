@@ -206,10 +206,12 @@ async function installCommandBody(opts: {
 
   let resolvedProviders: string[];
   let configureProviders: string[];
+  let previousProviders: string[];
   let isWrapInstall = false;
   try {
     // Always store the real project path for MCP tool cwd / identity.
     db.upsertProject({ id: projectId, path: idPath });
+    previousProviders = db.getProjectProviders(projectId);
     const authoredProviders = [...(capabilities.providers ?? [])];
     resolvedProviders = await resolveProvidersForInstall({
       flagProvider,
@@ -270,6 +272,7 @@ async function installCommandBody(opts: {
     settings,
     serverStatus: { running: true, url: serverStatus.url },
     resolvedProviders,
+    previousProviders,
     configureProviders,
     isWrapInstall,
     lockBuilder,

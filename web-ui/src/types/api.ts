@@ -127,6 +127,7 @@ export interface ResolvedPlugin {
 export interface SubAgent {
   id: string;
   description: string | null;
+  providers: string[];
   skills: string[];
   tools: string[];
   instructions: string | null;

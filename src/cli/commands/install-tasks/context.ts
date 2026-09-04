@@ -21,6 +21,8 @@ export interface InstallCtx {
   settings: Awaited<ReturnType<typeof loadSettings>>;
   serverStatus: { running: boolean; url: string };
   resolvedProviders: string[];
+  /** Provider selection stored before this install updates project ownership. */
+  previousProviders: string[];
   /**
    * Providers sent to POST /configure (identity / real project session).
    * For wrap installs this stays the authored capabilities.providers list so

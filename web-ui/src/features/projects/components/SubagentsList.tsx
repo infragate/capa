@@ -17,6 +17,7 @@ interface SubagentsListProps {
   subagents: SubAgent[];
   skills: Skill[];
   tools: Tool[];
+  providers: string[];
   search: string;
   projectId: string;
   addOpen: boolean;
@@ -27,6 +28,7 @@ export function SubagentsList({
   subagents,
   skills,
   tools,
+  providers,
   search,
   projectId,
   addOpen,
@@ -40,7 +42,10 @@ export function SubagentsList({
   const [viewing, setViewing] = useState<SubAgent | null>(null);
   const searching = !!search.trim();
   const visible = subagents.filter((s) =>
-    matchesSearch([s.id, s.description, s.instructions, ...s.skills, ...s.tools], search),
+    matchesSearch(
+      [s.id, s.description, s.instructions, ...s.providers, ...s.skills, ...s.tools],
+      search,
+    ),
   );
 
   return (
@@ -135,6 +140,7 @@ export function SubagentsList({
         initial={editing?.sourcePlugin ? null : editing}
         skills={skills}
         tools={tools}
+        providers={providers}
         projectId={projectId}
         busy={updateMutation.isPending}
         onOpenChange={(open) => {
@@ -214,6 +220,27 @@ function SubagentViewDialog({
               <p className="text-sm text-text-secondary">{agent.description}</p>
             )}
 
+            {agent && (
+              <div>
+                <div className="mb-1.5 text-xs font-medium text-text-tertiary">
+                  {t('subagents.providers')}
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {(agent.providers.length > 0
+                    ? agent.providers
+                    : [t('subagents.allProviders')]
+                  ).map((provider) => (
+                    <span
+                      key={provider}
+                      className="rounded-sm bg-bg-secondary px-1.5 py-0.5 font-mono text-[10px] text-text-tertiary"
+                    >
+                      {provider}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {(agent?.skills.length ?? 0) > 0 && (
               <div>
                 <div className="mb-1.5 text-xs font-medium text-text-tertiary">
@@ -275,6 +302,7 @@ function SubagentDialog({
   initial,
   skills,
   tools,
+  providers,
   projectId,
   onOpenChange,
   onUpdate,
@@ -284,6 +312,7 @@ function SubagentDialog({
   initial: SubAgent | null;
   skills: Skill[];
   tools: Tool[];
+  providers: string[];
   projectId: string;
   onOpenChange: (open: boolean) => void;
   onUpdate: (entryId: string, patch: Record<string, unknown>) => Promise<void>;
@@ -295,6 +324,7 @@ function SubagentDialog({
   const [id, setId] = useState('');
   const [description, setDescription] = useState('');
   const [instructions, setInstructions] = useState('');
+  const [selectedProviders, setSelectedProviders] = useState<string[]>([]);
   const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
   const [selectedTools, setSelectedTools] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -304,6 +334,7 @@ function SubagentDialog({
     setId(initial?.id || '');
     setDescription(initial?.description || '');
     setInstructions(initial?.instructions || '');
+    setSelectedProviders(initial?.providers || []);
     setSelectedSkills(initial?.skills || []);
     setSelectedTools(initial?.tools || []);
     setError(null);
@@ -324,6 +355,14 @@ function SubagentDialog({
     );
   }
 
+  function toggleProvider(providerId: string) {
+    setSelectedProviders((list) =>
+      list.includes(providerId)
+        ? list.filter((value) => value !== providerId)
+        : [...list, providerId],
+    );
+  }
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
@@ -336,6 +375,7 @@ function SubagentDialog({
       id: id.trim(),
       description: description.trim() || undefined,
       instructions: instructions.trim() || undefined,
+      providers: selectedProviders,
       skills: selectedSkills,
       tools: selectedTools,
     };
@@ -396,6 +436,32 @@ function SubagentDialog({
                 className="mt-1 w-full rounded-sm border border-border-tertiary bg-bg-tertiary px-2.5 py-2 text-xs text-text-primary"
               />
             </label>
+            <div>
+              <div className="mb-1 text-xs text-text-secondary">
+                {t('subagents.providers')}
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {providers.map((provider) => (
+                  <button
+                    key={provider}
+                    type="button"
+                    onClick={() => toggleProvider(provider)}
+                    className={`rounded-sm px-1.5 py-0.5 font-mono text-[10px] cursor-pointer ${
+                      selectedProviders.includes(provider)
+                        ? 'bg-accent-primary/15 text-accent-primary'
+                        : 'bg-bg-tertiary text-text-tertiary'
+                    }`}
+                  >
+                    {provider}
+                  </button>
+                ))}
+                {selectedProviders.length === 0 && (
+                  <span className="text-[11px] text-text-tertiary">
+                    {t('subagents.allProviders')}
+                  </span>
+                )}
+              </div>
+            </div>
             <div>
               <div className="mb-1 text-xs text-text-secondary">{t('detail.skills')}</div>
               <div className="flex flex-wrap gap-1">

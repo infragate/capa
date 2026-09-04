@@ -26,7 +26,12 @@ import { RegistriesRepo, type RegistryUpsertInput } from "./registries";
 import { migrateSecretsAtRest } from "./migrate-secrets";
 import { initSchema } from "./schema";
 import { SessionsRepo } from "./sessions";
-import { SubAgentsRepo } from "./sub-agents";
+import {
+	type InstalledSubAgent,
+	type SubAgentInstallationInput,
+	type SubAgentInstallationRemoval,
+	SubAgentsRepo,
+} from "./sub-agents";
 import {
 	type ActivityCorrelationLookup,
 	type ToolCallFinish,
@@ -110,16 +115,28 @@ export class CapaDatabase {
 	}
 
 	// Sub-agent operations
-	upsertSubAgent(projectId: string, agentId: string): void {
-		return this.subAgents.upsert(projectId, agentId);
+	upsertSubAgent(
+		projectId: string,
+		agentId: string,
+		installation?: SubAgentInstallationInput,
+	): void {
+		return this.subAgents.upsert(projectId, agentId, installation);
 	}
 
-	getSubAgents(projectId: string): Array<{ agent_id: string }> {
+	getSubAgents(projectId: string): InstalledSubAgent[] {
 		return this.subAgents.getAll(projectId);
 	}
 
 	removeSubAgent(projectId: string, agentId: string): void {
 		return this.subAgents.remove(projectId, agentId);
+	}
+
+	removeSubAgentInstallation(
+		projectId: string,
+		agentId: string,
+		removal: SubAgentInstallationRemoval,
+	): void {
+		return this.subAgents.removeInstallation(projectId, agentId, removal);
 	}
 
 	setProjectCapabilities(projectId: string, capabilitiesJson: string): void {

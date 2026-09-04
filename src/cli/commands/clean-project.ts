@@ -3,14 +3,22 @@ import { rm } from 'fs/promises';
 import { join, resolve } from 'path';
 import { isCapaOwnedInstallPath } from '../../shared/install-path-guard';
 import { isUnderWrapWorkspacesDir } from '../../shared/workspaces/paths';
-import { detectCapabilitiesFile } from '../../shared/paths';
+import { canonicalizePath, detectCapabilitiesFile } from '../../shared/paths';
 import { parseCapabilitiesFile } from '../../shared/capabilities';
 import { getLockfilePath } from '../../shared/lockfile';
 import { resolveProvidersForClean } from '../../shared/providers/resolve';
 import { getAllProviders, getProvider } from '../../shared/providers';
+import {
+  resolvePreviousSubAgentProviders,
+  resolveSubAgentProviders,
+} from '../../shared/subagent-providers';
 import type { CapaDatabase } from '../../db/database';
 import type { Capabilities } from '../../types/capabilities';
-import { unregisterMCPServer, unregisterSubAgentMCPServer } from '../utils/mcp-client-manager';
+import {
+  purgeCursorSubAgentMCPEntries,
+  unregisterMCPServer,
+  unregisterSubAgentMCPServer,
+} from '../utils/mcp-client-manager';
 import { cleanAgentsFile, removeSubAgentInstructions } from '../utils/agents-file/index';
 import { cleanRules } from '../utils/rules-installer';
 import { cleanHooks } from '../utils/hooks';
@@ -144,6 +152,7 @@ export async function cleanProject(opts: CleanProjectOptions): Promise<CleanProj
     db,
     projectId,
   });
+  const storedProviders = db.getProjectProviders(projectId);
   const providers = providersForOnDiskCleanup(resolvedProviders);
 
   const managedFiles = db.getManagedFiles(projectId);
@@ -209,16 +218,52 @@ export async function cleanProject(opts: CleanProjectOptions): Promise<CleanProj
   // not tracked as managed_files. Remove by id from the DB *and* from the
   // capabilities file so a clean still works when the DB row was already wiped
   // or capabilities.yaml omits `providers:`.
+  const installedAgents = db.getSubAgents(projectId);
+  const installedAgentsById = new Map(
+    installedAgents.map((agent) => [agent.agent_id, agent]),
+  );
+  const installPath = canonicalizePath(projectPath);
+  const configuredAgentsById = new Map(
+    (capabilities?.subagents ?? []).map((agent) => [agent.id, agent]),
+  );
   const agentIds = new Set<string>([
-    ...db.getSubAgents(projectId).map((row) => row.agent_id),
-    ...(capabilities?.subagents ?? []).map((a) => a.id),
+    ...installedAgentsById.keys(),
+    ...configuredAgentsById.keys(),
   ]);
 
   if (providers.length > 0 && agentIds.size > 0 && !wrapOnlyManagedArtifacts) {
+    try {
+      await purgeCursorSubAgentMCPEntries(projectPath, projectId);
+    } catch (err) {
+      warnings.push(
+        `Failed to purge stale sub-agent MCP entries: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
     for (const agentId of agentIds) {
       try {
-        await unregisterSubAgentMCPServer(projectPath, agentId, providers);
-        removeSubAgentInstructions(projectPath, agentId, providers);
+        const installedAgent = installedAgentsById.get(agentId);
+        const configuredAgent = configuredAgentsById.get(agentId);
+        const agentProviders = installedAgent
+          ? resolvePreviousSubAgentProviders({
+              installedAgent,
+              installPath,
+              activeProviders: providers,
+              previousProjectProviders: storedProviders,
+              isWrapInstall: false,
+            })
+          : configuredAgent
+            ? resolveSubAgentProviders(configuredAgent, providers).supported
+            : providers;
+        if (agentProviders.length === 0) continue;
+        await unregisterSubAgentMCPServer(
+          projectPath,
+          agentId,
+          agentProviders,
+          projectId,
+        );
+        removeSubAgentInstructions(projectPath, agentId, agentProviders);
       } catch (err) {
         warnings.push(
           `Failed to unregister sub-agent ${agentId}: ${

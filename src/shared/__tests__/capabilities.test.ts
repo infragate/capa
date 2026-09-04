@@ -129,6 +129,42 @@ describe('capabilities', () => {
       const result = normalizeCapabilities(capabilities);
       expect(result).toEqual(capabilities);
     });
+
+    it('validates and preserves sub-agent provider allow-lists', () => {
+      const result = normalizeCapabilities({
+        subagents: [
+          {
+            id: 'reviewer',
+            providers: ['claude-code', 'codex'],
+            skills: [],
+            tools: [],
+          },
+        ],
+      });
+
+      expect(result.subagents?.[0].providers).toEqual(['claude-code', 'codex']);
+      expect(
+        normalizeCapabilities({
+          subagents: [{ id: 'reviewer', providers: ['CLAUDE-CODE'] }],
+        }).subagents?.[0].providers,
+      ).toEqual(['claude-code']);
+      expect(() =>
+        normalizeCapabilities({
+          subagents: [{ id: 'reviewer', providers: 'claude-code' }],
+        }),
+      ).toThrow(/subagents\.0\.providers/);
+      expect(() =>
+        normalizeCapabilities({
+          subagents: [{ id: 'reviewer', providers: [''] }],
+        }),
+      ).toThrow(/subagents\.0\.providers\.0/);
+      expect(() =>
+        normalizeCapabilities({
+          subagents: [{ id: 'reviewer', providers: ['not-a-provider'] }],
+        }),
+      ).toThrow(/subagents\.0\.providers\.0: Unknown provider: not-a-provider/);
+    });
+
     it('normalizes legacy oauth2 aliases on servers at load', () => {
       const result = normalizeCapabilities({
         skills: [],

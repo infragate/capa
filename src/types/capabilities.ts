@@ -234,6 +234,8 @@ export interface RequiredCommand {
 export interface SubAgent {
   /** Unique identifier. Used as the MCP server key (`capa-{id}`) and agent file name. */
   id: string;
+  /** Restrict this sub-agent to active provider ids. Empty/omitted installs for all. */
+  providers?: string[];
   /**
    * Human-readable description of this agent's role.
    * For Cursor: written into the `description` frontmatter field which drives

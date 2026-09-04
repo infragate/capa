@@ -99,6 +99,25 @@ describe('sub-agent MCP client registration', () => {
     expect(existsSync(join(tempDir, '.mcp.json'))).toBe(false);
   });
 
+  it('preserves a generated MCP key that was replaced manually', async () => {
+    await registerSubAgentMCPServer(
+      tempDir,
+      'infra-agent',
+      'http://localhost:5912/proj-1/agents/infra-agent/mcp',
+      ['claude-code'],
+    );
+    const configPath = join(tempDir, '.mcp.json');
+    const config = readConfig(configPath);
+    config.mcpServers['capa-infra-agent'] = { url: 'https://example.com/manual' };
+    writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+
+    await unregisterSubAgentMCPServer(tempDir, 'infra-agent', ['claude-code']);
+
+    expect(readConfig(configPath).mcpServers['capa-infra-agent']).toEqual({
+      url: 'https://example.com/manual',
+    });
+  });
+
   it('registers sub-agent MCP only for claude-code when both providers given', async () => {
     await registerSubAgentMCPServer(
       tempDir,

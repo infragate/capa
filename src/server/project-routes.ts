@@ -236,6 +236,7 @@ export async function handleGetProject(
 						subagents: (capabilities.subagents || []).map((sa) => ({
 							id: sa.id,
 							description: sa.description || null,
+							providers: sa.providers || [],
 							skills: sa.skills,
 							tools: sa.tools,
 							instructions: sa.instructions || null,

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { installSubAgentInstructions, removeSubAgentInstructions } from '../agents-file/index';
@@ -291,6 +291,21 @@ describe('removeSubAgentInstructions', () => {
 
     expect(existsSync(join(tempDir, '.claude', 'agents', 'infra-agent.md'))).toBe(false);
     expect(existsSync(join(tempDir, '.claude', 'agents', 'api-agent.md'))).toBe(true);
+  });
+
+  it('preserves a generated adapter that was replaced manually', () => {
+    const filePath = join(tempDir, '.claude', 'agents', 'infra-agent.md');
+    installSubAgentInstructions(
+      tempDir,
+      { id: 'infra-agent', description: 'infra', skills: [], tools: [] },
+      capabilities,
+      ['claude-code'],
+    );
+    writeFileSync(filePath, 'manual replacement\n', 'utf8');
+
+    removeSubAgentInstructions(tempDir, 'infra-agent', ['claude-code']);
+
+    expect(readFileSync(filePath, 'utf8')).toBe('manual replacement\n');
   });
 
   it('removes .cursor/agents/{id}.md for cursor', () => {

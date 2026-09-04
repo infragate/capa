@@ -9,13 +9,29 @@ import {
 	unregisterSubAgentMCPServer,
 } from "../cli/utils/mcp-client-manager";
 import type { CapaDatabase } from "../db/database";
-import { getProvider } from "./providers";
+import type { InstalledSubAgent } from "../db/sub-agents";
 import type { Capabilities } from "../types/capabilities";
+import { canonicalizePath } from "./paths";
+import { getProvider } from "./providers";
+import {
+	getSubAgentProviderWarnings,
+	resolvePreviousSubAgentProviders,
+	resolveSubAgentProviders,
+} from "./subagent-providers";
 
 export interface SyncSectionResult {
 	installed: number;
 	removed: number;
 	warnings: string[];
+}
+
+function providersInstalledAt(
+	agent: InstalledSubAgent,
+	installPath: string,
+): string[] | undefined {
+	return agent.installations.find(
+		(installation) => installation.install_path === installPath,
+	)?.provider_ids;
 }
 
 /**
@@ -29,22 +45,43 @@ export async function syncProjectSubagents(opts: {
 	providers: string[];
 	db: CapaDatabase;
 	serverOrigin: string;
+	materializeShadow?: boolean;
+	previousProviders?: string[];
 }): Promise<SyncSectionResult> {
 	const warnings: string[] = [];
 	const toolExposure = opts.capabilities.options?.toolExposure;
 	const skipMcpWrites = toolExposure === "none";
+	const installPath = canonicalizePath(opts.projectPath);
 	const installedAgents = opts.db.getSubAgents(opts.projectId);
 	const currentSubagents = opts.capabilities.subagents ?? [];
 	const currentAgentIds = new Set(currentSubagents.map((a) => a.id));
 	const removedAgents = installedAgents.filter(
-		({ agent_id }) => !currentAgentIds.has(agent_id),
+		(agent) =>
+			!currentAgentIds.has(agent.agent_id) &&
+			(agent.legacy_unscoped || providersInstalledAt(agent, installPath)),
 	);
+	const installedById = new Map(
+		installedAgents.map((agent) => [agent.agent_id, agent]),
+	);
+	const lifecycleProviders = [
+		...new Set([
+			...opts.providers,
+			...installedAgents.flatMap(
+				(installedAgent) =>
+					resolvePreviousSubAgentProviders({
+						installedAgent,
+						installPath,
+						activeProviders: opts.providers,
+						previousProjectProviders:
+							opts.previousProviders ??
+							opts.db.getProjectProviders(opts.projectId),
+						isWrapInstall: opts.materializeShadow === true,
+					}),
+			),
+		]),
+	];
 
-	const agentsNeedingMcpCleanup = skipMcpWrites
-		? installedAgents.map(({ agent_id }) => agent_id)
-		: removedAgents.map(({ agent_id }) => agent_id);
-
-	const needsPurge = opts.providers.some((id) => {
+	const needsPurge = lifecycleProviders.some((id) => {
 		const provider = getProvider(id);
 		return (
 			provider &&
@@ -64,7 +101,7 @@ export async function syncProjectSubagents(opts: {
 
 	if (needsPurge) {
 		try {
-			await purgeCursorSubAgentMCPEntries(opts.projectPath);
+			await purgeCursorSubAgentMCPEntries(opts.projectPath, opts.projectId);
 		} catch (err: unknown) {
 			warnings.push(
 				`Failed to purge stale sub-agent MCP entries: ${err instanceof Error ? err.message : String(err)}`,
@@ -72,58 +109,110 @@ export async function syncProjectSubagents(opts: {
 		}
 	}
 
-	const cleanupSet = new Set(agentsNeedingMcpCleanup);
-	for (const { agent_id } of removedAgents) {
+	for (const installedAgent of removedAgents) {
+		const { agent_id } = installedAgent;
+		const previousProviders = resolvePreviousSubAgentProviders({
+			installedAgent,
+			installPath,
+			activeProviders: opts.providers,
+			previousProjectProviders:
+				opts.previousProviders ?? opts.db.getProjectProviders(opts.projectId),
+			isWrapInstall: opts.materializeShadow === true,
+		});
 		try {
 			await unregisterSubAgentMCPServer(
 				opts.projectPath,
 				agent_id,
-				opts.providers,
+				previousProviders,
+				opts.projectId,
 			);
-			removeSubAgentInstructions(opts.projectPath, agent_id, opts.providers);
-			opts.db.removeSubAgent(opts.projectId, agent_id);
+			removeSubAgentInstructions(opts.projectPath, agent_id, previousProviders);
+			opts.db.removeSubAgentInstallation(
+				opts.projectId,
+				agent_id,
+				{
+					installPath,
+					removeLegacy: opts.materializeShadow !== true,
+				},
+			);
 			removed++;
-			cleanupSet.delete(agent_id);
 		} catch (err: unknown) {
 			warnings.push(
 				`Failed to remove sub-agent "${agent_id}": ${err instanceof Error ? err.message : String(err)}`,
 			);
 		}
 	}
-	for (const agent_id of cleanupSet) {
-		try {
-			await unregisterSubAgentMCPServer(
-				opts.projectPath,
-				agent_id,
-				opts.providers,
-			);
-		} catch (err: unknown) {
-			warnings.push(
-				`Failed to unregister MCP for sub-agent "${agent_id}": ${err instanceof Error ? err.message : String(err)}`,
-			);
-		}
-	}
-
 	for (const subAgent of currentSubagents) {
 		try {
-			if (!skipMcpWrites) {
+			const targets = resolveSubAgentProviders(
+				subAgent,
+				opts.providers,
+			);
+			const { supported } = targets;
+			warnings.push(...getSubAgentProviderWarnings(subAgent, targets));
+
+			const previous = installedById.get(subAgent.id);
+			const previousProviders = previous
+				? resolvePreviousSubAgentProviders({
+						installedAgent: previous,
+						installPath,
+						activeProviders: opts.providers,
+						previousProjectProviders:
+							opts.previousProviders ??
+							opts.db.getProjectProviders(opts.projectId),
+						isWrapInstall: opts.materializeShadow === true,
+					})
+				: [];
+			const staleProviders = previousProviders.filter(
+				(providerId) => !supported.includes(providerId),
+			);
+			if (staleProviders.length > 0) {
+				await unregisterSubAgentMCPServer(
+					opts.projectPath,
+					subAgent.id,
+					staleProviders,
+					opts.projectId,
+				);
+				removeSubAgentInstructions(
+					opts.projectPath,
+					subAgent.id,
+					staleProviders,
+				);
+			}
+
+			if (skipMcpWrites) {
+				await unregisterSubAgentMCPServer(
+					opts.projectPath,
+					subAgent.id,
+					supported,
+					opts.projectId,
+				);
+			} else {
 				const agentMcpUrl = `${opts.serverOrigin}/${opts.projectId}/agents/${subAgent.id}/mcp`;
 				await registerSubAgentMCPServer(
 					opts.projectPath,
 					subAgent.id,
 					agentMcpUrl,
-					opts.providers,
+					supported,
 				);
 			}
 			installSubAgentInstructions(
 				opts.projectPath,
 				subAgent,
 				opts.capabilities,
-				opts.providers,
+				supported,
 				skillDescriptions,
 			);
-			opts.db.upsertSubAgent(opts.projectId, subAgent.id);
-			installed++;
+			opts.db.upsertSubAgent(
+				opts.projectId,
+				subAgent.id,
+				{
+					installPath,
+					providerIds: supported,
+					migrateLegacy: opts.materializeShadow !== true,
+				},
+			);
+			if (supported.length > 0) installed++;
 		} catch (err: unknown) {
 			warnings.push(
 				`Failed to install sub-agent "${subAgent.id}": ${err instanceof Error ? err.message : String(err)}`,

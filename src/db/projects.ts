@@ -53,6 +53,9 @@ export class ProjectsRepo {
 			this.db.run("DELETE FROM project_capabilities WHERE project_id = ?", [
 				id,
 			]);
+			this.db.run("DELETE FROM sub_agent_installations WHERE project_id = ?", [
+				id,
+			]);
 			this.db.run("DELETE FROM sub_agents WHERE project_id = ?", [id]);
 			this.db.run("DELETE FROM project_providers WHERE project_id = ?", [id]);
 			this.db.run("DELETE FROM tool_calls WHERE project_id = ?", [id]);

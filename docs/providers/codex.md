@@ -16,6 +16,10 @@ Source-of-truth definition: [`src/shared/providers/registry.ts → codex`](../..
 | Rules | folded into `AGENTS.md` | No project-local rules directory; capa writes marker blocks into the instructions file. |
 | Sub-agents | `.codex/agents/<id>.toml` | TOML format; body goes into the `developer_instructions` field. |
 | Hooks | `.codex/config.toml` → `[hooks]` | Matcher-grouped Claude-style layout (`[[hooks.<Event>]]` + nested `[[hooks.<Event>.hooks]]`), serialised as TOML. Capa appends an opaque `name = "capa:<hookId>"` field on entries it owns; Codex's TOML deserialiser ignores unknown fields, so the tag round-trips cleanly and capa uses it for surgical updates without disturbing user-authored entries. |
+
+With `options.toolExposure: none`, generated custom-agent TOML omits
+`mcp_servers` so Codex inherits normal parent configuration without an invalid
+empty server URL.
 | Plugin manifests | — | Not declared; Codex consumes plugins via the same Claude/Cursor manifest paths handled elsewhere. |
 
 ## Hooks event mapping

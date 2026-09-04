@@ -15,6 +15,10 @@ import { expandSecretRecord, loadEnvFileOptional, openAuthDb } from './env';
 import type { MCPServer } from '../../../types/capabilities';
 import type { GetSnapshotResult } from '../../../shared/cache';
 import { getInstallErrorMode } from '../../commands/install-tasks/install-error-policy';
+import {
+  getSubAgentProviderWarnings,
+  resolveSubAgentProviders,
+} from '../../../shared/subagent-providers';
 
 export async function passthroughInstall(opts: {
   envFile?: string | boolean;
@@ -204,8 +208,15 @@ export async function passthroughInstall(opts: {
     const subagents = capabilities.subagents ?? [];
     if (subagents.length > 0) {
       for (const agent of subagents) {
-        installSubAgentInstructions(projectPath, agent, capabilities, providers);
-        added++;
+        const targets = resolveSubAgentProviders(
+          agent,
+          providers,
+        );
+        const { supported } = targets;
+        warnings.push(...getSubAgentProviderWarnings(agent, targets));
+        installSubAgentInstructions(projectPath, agent, capabilities, supported);
+        if (supported.length > 0) added++;
+        else skipped++;
       }
     }
 
