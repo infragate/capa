@@ -7,6 +7,7 @@ import { logger } from "../shared/logger";
 import { detectCapabilitiesFile } from "../shared/paths";
 import { trustStdioServers } from "../shared/stdio-allowlist";
 import { projectUiUrl } from "../shared/ui-urls";
+import { mcpServerIdsPendingCredentials } from "../shared/secret-value";
 import { extractAllVariables } from "../shared/variable-resolver";
 import type { Capabilities } from "../types/capabilities";
 import type { OAuth2Config } from "../types/oauth";
@@ -347,36 +348,42 @@ export async function runProjectConfigure(
 			);
 		}
 
-		const oauth2ServerIds = new Set(
+		const pendingServerIds = new Set(
 			oauth2Servers.filter((s) => !s.isConnected).map((s) => s.serverId),
 		);
-		const nonOAuth2ValidationResults = toolValidationResults.filter(
-			(r) => !oauth2ServerIds.has(r.serverId),
+		for (const id of mcpServerIdsPendingCredentials(
+			capabilitiesToUse.servers ?? [],
+			missingVars,
+		)) {
+			pendingServerIds.add(id);
+		}
+		const nonPendingValidationResults = toolValidationResults.filter(
+			(r) => !pendingServerIds.has(r.serverId),
 		);
-		const oauth2PendingResults = toolValidationResults.filter((r) =>
-			oauth2ServerIds.has(r.serverId),
+		const pendingResults = toolValidationResults.filter((r) =>
+			pendingServerIds.has(r.serverId),
 		);
 
-		if (oauth2PendingResults.length > 0) {
+		if (pendingResults.length > 0) {
 			apiLogger.info(
-				`${oauth2PendingResults.length} tool(s) skipped validation (OAuth2 authentication required)`,
+				`${pendingResults.length} tool(s) skipped validation (credentials pending)`,
 			);
-			for (const pending of oauth2PendingResults) {
+			for (const pending of pendingResults) {
 				pending.success = true;
 				pending.pendingAuth = true;
 				pending.error = undefined;
 			}
 		}
 
-		const failedTools = nonOAuth2ValidationResults.filter((r) => !r.success);
+		const failedTools = nonPendingValidationResults.filter((r) => !r.success);
 		if (failedTools.length > 0) {
 			apiLogger.warn(`${failedTools.length} tool(s) failed validation`);
 			for (const failed of failedTools) {
 				apiLogger.debug(`  ${failed.toolId}: ${failed.error}`);
 			}
-		} else if (nonOAuth2ValidationResults.length > 0) {
+		} else if (nonPendingValidationResults.length > 0) {
 			apiLogger.success(
-				`All ${nonOAuth2ValidationResults.length} non-OAuth2 tool(s) validated successfully`,
+				`All ${nonPendingValidationResults.length} non-pending tool(s) validated successfully`,
 			);
 		}
 	} catch (error: any) {

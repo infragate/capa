@@ -5,6 +5,7 @@ import { join } from "path";
 import {
 	hasUnresolvedSecretSources,
 	isSecretValueObject,
+	mcpServerIdsPendingCredentials,
 	resolveSecretValue,
 	resolveSecretValueRecord,
 	SecretValueResolveError,
@@ -112,5 +113,62 @@ describe("isSecretValueObject / hasUnresolvedSecretSources", () => {
 			}),
 		).toBe(true);
 		expect(hasUnresolvedSecretSources({ env: { K: "done" } })).toBe(false);
+	});
+});
+
+describe("mcpServerIdsPendingCredentials", () => {
+	it("includes servers whose headers still reference a missing ${var}", () => {
+		expect(
+			mcpServerIdsPendingCredentials(
+				[
+					{
+						id: "sharecube",
+						def: {
+							url: "https://example.test/mcp",
+							headers: { Authorization: "Bearer ${ShareCubeApiKey}" },
+						},
+					},
+					{
+						id: "aws-knowledge",
+						def: { url: "https://knowledge-mcp.global.api.aws" },
+					},
+				],
+				["ShareCubeApiKey"],
+			),
+		).toEqual(["sharecube"]);
+	});
+
+	it("does not include a ${var} server once the variable is present", () => {
+		expect(
+			mcpServerIdsPendingCredentials(
+				[
+					{
+						id: "sharecube",
+						def: {
+							url: "https://example.test/mcp",
+							headers: { Authorization: "Bearer ${ShareCubeApiKey}" },
+						},
+					},
+				],
+				[],
+			),
+		).toEqual([]);
+	});
+
+	it("includes servers with unresolved secret-source objects", () => {
+		expect(
+			mcpServerIdsPendingCredentials(
+				[
+					{
+						id: "vaulted",
+						def: {
+							url: "https://example.test/mcp",
+							headers: { Authorization: { fromEnv: "TOKEN" } },
+						},
+					},
+				],
+				[],
+			),
+		).toEqual(["vaulted"]);
 	});
 });

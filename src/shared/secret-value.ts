@@ -6,6 +6,7 @@ import type { CapaDatabase } from "../db/database";
 import type { MCPServerDefinition } from "../types/capabilities";
 import { isPlainObject } from "./plugin-manifest/types-helpers";
 import {
+	extractAllVariables,
 	hasUnresolvedVariables,
 	resolveVariablesInObject,
 } from "./variable-resolver";
@@ -226,6 +227,32 @@ export function hasUnresolvedMcpSecrets(def: MCPServerDefinition): boolean {
 		hasUnresolvedSecretSources(def.headers) ||
 		hasUnresolvedVariables(def)
 	);
+}
+
+/**
+ * Server ids whose MCP def still needs credentials: a ${placeholder} whose
+ * value is missing, or an unresolved secret-source object in env/headers.
+ * Used at install time so those tools are pending rather than failed.
+ */
+export function mcpServerIdsPendingCredentials(
+	servers: Array<{ id: string; def: MCPServerDefinition }>,
+	missingVars: string[],
+): string[] {
+	const missing = new Set(missingVars);
+	const ids: string[] = [];
+	for (const server of servers) {
+		const needsPlaceholder = extractAllVariables(server.def).some((v) =>
+			missing.has(v),
+		);
+		if (
+			needsPlaceholder ||
+			hasUnresolvedSecretSources(server.def.env) ||
+			hasUnresolvedSecretSources(server.def.headers)
+		) {
+			ids.push(server.id);
+		}
+	}
+	return ids;
 }
 
 /** Normalize fingerprint maps that may still contain SecretValue objects. */
