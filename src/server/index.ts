@@ -1136,7 +1136,30 @@ class CapaServer {
         }
       }
 
-      const failedTools = nonOAuth2ValidationResults.filter((r) => !r.success);
+      // Servers whose config still has unset ${VarName} placeholders should not
+      // hard-fail install-time validation — same deferral model as OAuth2.
+      const serversWithMissingVars = new Set<string>();
+      for (const server of capabilitiesToUse.servers ?? []) {
+        const serverVars = extractAllVariables(server.def);
+        if (serverVars.some((v) => missingVars.includes(v))) {
+          serversWithMissingVars.add(server.id);
+        }
+      }
+      const credentialPendingResults = toolValidationResults.filter(
+        (r) => r.serverId && serversWithMissingVars.has(r.serverId) && !r.success,
+      );
+      if (credentialPendingResults.length > 0) {
+        apiLogger.info(
+          `${credentialPendingResults.length} tool(s) skipped validation (missing credentials)`,
+        );
+        for (const pending of credentialPendingResults) {
+          pending.success = true;
+          pending.pendingAuth = true;
+          pending.error = undefined;
+        }
+      }
+
+      const failedTools = toolValidationResults.filter((r) => !r.success && !r.pendingAuth);
       if (failedTools.length > 0) {
         apiLogger.warn(`${failedTools.length} tool(s) failed validation`);
         for (const failed of failedTools) {

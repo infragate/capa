@@ -1,6 +1,22 @@
 import type { Task, TaskWrapper } from '../../ui';
 import type { InstallCtx } from './context';
 import { getUnexposedToolIds } from './helpers/tool-warnings';
+import { extractAllVariables } from '../../../shared/variable-resolver';
+
+function serverIdsWithMissingVariables(
+  capabilities: InstallCtx['capabilitiesToUse'],
+  missingVariables: string[],
+): Set<string> {
+  const missing = new Set(missingVariables);
+  const serverIds = new Set<string>();
+  for (const server of capabilities.servers ?? []) {
+    const serverVars = extractAllVariables(server.def);
+    if (serverVars.some((v) => missing.has(v))) {
+      serverIds.add(server.id);
+    }
+  }
+  return serverIds;
+}
 
 export function configureToolsTask(): Task<InstallCtx> {
   return {
@@ -63,6 +79,8 @@ export function configureToolsTask(): Task<InstallCtx> {
       }
 
       const result = ctx.configureResult as {
+        needsCredentials?: boolean;
+        missingVariables?: string[];
         toolValidation?: Array<{
           toolId: string;
           success: boolean;
@@ -74,6 +92,27 @@ export function configureToolsTask(): Task<InstallCtx> {
       };
 
       if (result.toolValidation && result.toolValidation.length > 0) {
+        // When credentials are still missing, validation against those servers is
+        // expected to fail (unresolved ${VarName} headers, etc.). Defer like OAuth2.
+        if (result.needsCredentials && result.missingVariables?.length) {
+          const pendingCredentialServers = serverIdsWithMissingVariables(
+            ctx.capabilitiesToUse,
+            result.missingVariables,
+          );
+          for (const entry of result.toolValidation) {
+            if (
+              entry.serverId &&
+              pendingCredentialServers.has(entry.serverId) &&
+              !entry.success &&
+              !entry.pendingAuth
+            ) {
+              entry.success = true;
+              entry.pendingAuth = true;
+              entry.error = undefined;
+            }
+          }
+        }
+
         const successful = result.toolValidation.filter((t) => t.success && !t.pendingAuth);
         const failed = result.toolValidation.filter((t) => !t.success && !t.pendingAuth);
         const pendingAuth = result.toolValidation.filter((t) => t.pendingAuth);
