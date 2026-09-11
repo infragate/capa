@@ -351,11 +351,25 @@ export async function runProjectConfigure(
 		const pendingServerIds = new Set(
 			oauth2Servers.filter((s) => !s.isConnected).map((s) => s.serverId),
 		);
-		for (const id of mcpServerIdsPendingCredentials(
-			capabilitiesToUse.servers ?? [],
-			missingVars,
-		)) {
-			pendingServerIds.add(id);
+		// Only servers that actually failed need excusing, and resolving a def
+		// can re-run a `fromCommand` secret — so don't touch the ones that
+		// validated fine.
+		const failedServerIds = new Set(
+			toolValidationResults
+				.filter((r) => !r.success && r.serverId)
+				.map((r) => r.serverId),
+		);
+		const pendingCandidates = (capabilitiesToUse.servers ?? []).filter(
+			(s) => failedServerIds.has(s.id) && !pendingServerIds.has(s.id),
+		);
+		if (project && pendingCandidates.length > 0) {
+			for (const id of await mcpServerIdsPendingCredentials(pendingCandidates, {
+				projectId,
+				projectPath: project.path,
+				db: deps.db,
+			})) {
+				pendingServerIds.add(id);
+			}
 		}
 		const nonPendingValidationResults = toolValidationResults.filter(
 			(r) => !pendingServerIds.has(r.serverId),

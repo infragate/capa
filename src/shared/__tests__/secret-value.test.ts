@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
+import type { CapaDatabase } from "../../db/database";
+import type { MCPServer } from "../../types/capabilities";
 import {
 	hasUnresolvedSecretSources,
 	isSecretValueObject,
@@ -10,6 +12,7 @@ import {
 	resolveSecretValueRecord,
 	SecretValueResolveError,
 	secretValueSchema,
+	type SecretValue,
 } from "../secret-value";
 
 describe("secretValueSchema", () => {
@@ -117,58 +120,82 @@ describe("isSecretValueObject / hasUnresolvedSecretSources", () => {
 });
 
 describe("mcpServerIdsPendingCredentials", () => {
-	it("includes servers whose headers still reference a missing ${var}", () => {
+	let dir: string;
+
+	beforeEach(() => {
+		dir = mkdtempSync(join(tmpdir(), "capa-pending-creds-"));
+	});
+
+	afterEach(() => {
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	const ctx = (vars: Record<string, string> = {}) => ({
+		projectId: "p1",
+		projectPath: dir,
+		db: {
+			getVariable: (_projectId: string, key: string) => vars[key] ?? null,
+		} as unknown as CapaDatabase,
+	});
+
+	const server = (id: string, headers: Record<string, SecretValue>) => ({
+		id,
+		def: { url: "https://example.test/mcp", headers },
+	});
+
+	it("includes servers whose headers still reference a missing ${var}", async () => {
 		expect(
-			mcpServerIdsPendingCredentials(
+			await mcpServerIdsPendingCredentials(
 				[
-					{
-						id: "sharecube",
-						def: {
-							url: "https://example.test/mcp",
-							headers: { Authorization: "Bearer ${ShareCubeApiKey}" },
-						},
-					},
-					{
-						id: "aws-knowledge",
-						def: { url: "https://knowledge-mcp.global.api.aws" },
-					},
+					server("sharecube", {
+						Authorization: "Bearer ${ShareCubeApiKey}",
+					}),
+					{ id: "aws-knowledge", def: { url: "https://knowledge.test" } },
 				],
-				["ShareCubeApiKey"],
+				ctx(),
 			),
 		).toEqual(["sharecube"]);
 	});
 
-	it("does not include a ${var} server once the variable is present", () => {
+	it("does not include a ${var} server once the variable is present", async () => {
 		expect(
-			mcpServerIdsPendingCredentials(
-				[
-					{
-						id: "sharecube",
-						def: {
-							url: "https://example.test/mcp",
-							headers: { Authorization: "Bearer ${ShareCubeApiKey}" },
-						},
-					},
-				],
-				[],
+			await mcpServerIdsPendingCredentials(
+				[server("sharecube", { Authorization: "Bearer ${ShareCubeApiKey}" })],
+				ctx({ ShareCubeApiKey: "sk-live" }),
 			),
 		).toEqual([]);
 	});
 
-	it("includes servers with unresolved secret-source objects", () => {
+	it("includes a secret source that fails to resolve", async () => {
 		expect(
-			mcpServerIdsPendingCredentials(
-				[
-					{
-						id: "vaulted",
-						def: {
-							url: "https://example.test/mcp",
-							headers: { Authorization: { fromEnv: "TOKEN" } },
-						},
-					},
-				],
-				[],
+			await mcpServerIdsPendingCredentials(
+				[server("vaulted", { Authorization: { fromEnv: "CAPA_TEST_UNSET" } })],
+				{ ...ctx(), env: {} },
 			),
 		).toEqual(["vaulted"]);
+	});
+
+	it("does not include a secret source that resolves", async () => {
+		expect(
+			await mcpServerIdsPendingCredentials(
+				[server("vaulted", { Authorization: { fromEnv: "CAPA_TEST_TOKEN" } })],
+				{ ...ctx(), env: { CAPA_TEST_TOKEN: "tok" } },
+			),
+		).toEqual([]);
+	});
+
+	it("includes a plugin-contributed server with an unset ${var}", async () => {
+		const pluginServer: MCPServer = {
+			...server("plugin-server", { Authorization: "Bearer ${PluginToken}" }),
+			type: "mcp",
+			sourcePlugin: {
+				id: "some-plugin@abc123",
+				name: "some-plugin",
+				provider: "claude",
+			},
+		};
+		expect(
+			await mcpServerIdsPendingCredentials([pluginServer], ctx()),
+		).toEqual(["plugin-server"]);
 	});
 });

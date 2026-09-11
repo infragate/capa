@@ -6,7 +6,6 @@ import type { CapaDatabase } from "../db/database";
 import type { MCPServerDefinition } from "../types/capabilities";
 import { isPlainObject } from "./plugin-manifest/types-helpers";
 import {
-	extractAllVariables,
 	hasUnresolvedVariables,
 	resolveVariablesInObject,
 } from "./variable-resolver";
@@ -230,25 +229,24 @@ export function hasUnresolvedMcpSecrets(def: MCPServerDefinition): boolean {
 }
 
 /**
- * Server ids whose MCP def still needs credentials: a ${placeholder} whose
- * value is missing, or an unresolved secret-source object in env/headers.
+ * Server ids that cannot be credentialed right now: a secret source that fails
+ * to resolve, or a `${placeholder}` with no value for this project. Judged on
+ * the *resolved* def — a working `fromEnv`/`fromFile`/`fromCommand` source is
+ * not pending, so genuine validation failures still surface. Each def is
+ * inspected on its own, so plugin-contributed servers are covered too.
  * Used at install time so those tools are pending rather than failed.
  */
-export function mcpServerIdsPendingCredentials(
+export async function mcpServerIdsPendingCredentials(
 	servers: Array<{ id: string; def: MCPServerDefinition }>,
-	missingVars: string[],
-): string[] {
-	const missing = new Set(missingVars);
+	ctx: ResolveMcpServerDefContext,
+): Promise<string[]> {
 	const ids: string[] = [];
 	for (const server of servers) {
-		const needsPlaceholder = extractAllVariables(server.def).some((v) =>
-			missing.has(v),
-		);
-		if (
-			needsPlaceholder ||
-			hasUnresolvedSecretSources(server.def.env) ||
-			hasUnresolvedSecretSources(server.def.headers)
-		) {
+		try {
+			const resolved = await resolveMcpServerDef(server.def, ctx);
+			if (hasUnresolvedMcpSecrets(resolved)) ids.push(server.id);
+		} catch (error) {
+			if (!(error instanceof SecretValueResolveError)) throw error;
 			ids.push(server.id);
 		}
 	}
