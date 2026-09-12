@@ -93,7 +93,7 @@ export function ServerDialog({
     setCmd(s.cmd || '');
     setArgs((s.args || []).join(' '));
     setDescription(s.description || '');
-    setExpose(s.expose || 'none');
+    setExpose(s.expose || 'all');
     setExposeTools((s.exposeTools || []).join(', '));
     setHeaders(recordToSecretPairs(s.headers));
     setEnv(recordToSecretPairs(s.env));
@@ -184,7 +184,8 @@ export function ServerDialog({
       type: 'mcp',
       def,
       description: description.trim() || null,
-      expose: expose === 'none' ? null : expose,
+      // Omitted means `all` — write the value only when it differs.
+      expose: expose === 'all' ? null : expose,
       tools: expose === 'except' || expose === 'exactly' ? names : null,
     };
     return entry;

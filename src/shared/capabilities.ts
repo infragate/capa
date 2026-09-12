@@ -94,7 +94,7 @@ const mcpServerDefSchema = z
 	});
 
 const exposePolicyFields = {
-	expose: z.enum(["all", "except", "exactly"]).optional(),
+	expose: z.enum(["all", "except", "exactly", "none"]).optional(),
 	tools: z.array(z.string()).optional(),
 };
 

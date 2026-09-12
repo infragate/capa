@@ -96,9 +96,10 @@ export function collectUnreferencedPluginServerWarnings(capabilities: Capabiliti
   if (resolved.length === 0) return [];
 
   const referencedServerIds = new Set<string>();
-  // An `expose` policy is a reference — that server's tools need no `tools:` entry.
+  // Any server that exposes its own tools is referenced by that policy — only
+  // an `expose: none` server still needs a `tools:` entry to be usable.
   for (const server of capabilities.servers ?? []) {
-    if (server.expose) referencedServerIds.add(server.id);
+    if (server.expose !== 'none') referencedServerIds.add(server.id);
   }
   for (const tool of capabilities.tools) {
     if (tool.type !== 'mcp') continue;

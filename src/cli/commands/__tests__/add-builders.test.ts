@@ -28,9 +28,7 @@ describe('buildServerEntry', () => {
     expect(entry).toEqual({
       id: 'owl',
       type: 'mcp',
-      // A new server exposes its tools by default — otherwise nothing on it
-      // is callable until the user writes a `tools:` entry per tool.
-      expose: 'all',
+      // No `expose` written: omitting it already means `all`.
       def: {
         cmd: 'npx',
         args: ['-y', 'owl-mcp@1.0.14', 'serve'],
@@ -49,13 +47,13 @@ describe('buildServerEntry', () => {
     expect(entry.tools).toEqual(['delete_repo', 'force_push']);
   });
 
-  it('omits the policy for --expose none (explicit tools: only)', () => {
+  it('writes the none opt-out explicitly (omitting would mean all)', () => {
     const entry = buildServerEntry({
       id: 'github',
       url: 'https://example.com/mcp',
       expose: 'none',
     });
-    expect(entry.expose).toBeUndefined();
+    expect(entry.expose).toBe('none');
     expect(entry.tools).toBeUndefined();
   });
 

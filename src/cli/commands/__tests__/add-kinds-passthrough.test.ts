@@ -43,15 +43,21 @@ describe('capa add --server (capabilities file)', () => {
     expect(yaml).toContain('force_push');
   });
 
-  it('writes no policy for --expose none', async () => {
+  it('writes the opt-out for --expose none, and nothing for the default', async () => {
     await addCommand(undefined, {
       server: true,
       id: 'github',
       url: 'https://example.com/mcp',
       expose: 'none',
     });
+    await addCommand(undefined, {
+      server: true,
+      id: 'plain',
+      url: 'https://example.com/mcp',
+    });
     const yaml = readFileSync(join(tempDir, 'capabilities.yaml'), 'utf-8');
-    expect(yaml).not.toContain('expose:');
+    expect(yaml).toContain('expose: none');
+    expect(yaml.match(/expose:/g)).toHaveLength(1);
   });
 
   it('appends an owl-style stdio server', async () => {

@@ -74,16 +74,16 @@ export interface BuildServerOptions {
   headerFromFile?: string[];
   cwd?: string;
   description?: string;
-  /** all | except | exactly | none — omitted means `all` for a new server. */
+  /** all | except | exactly | none — omitted means `all`, capa's default. */
   expose?: string;
   /** Comma-separated remote tool names for except / exactly. */
   tools?: string;
 }
 
 /**
- * Exposure policy for a new server. A server nobody can call is useless, so a
- * new one defaults to `all`; `--expose none` keeps the older explicit-only
- * behavior where each tool needs its own `tools:` entry.
+ * Exposure policy for a new server. Omitting `expose` already means `all`, so
+ * the default writes nothing; `--expose none` is written out because it is the
+ * opt-out, leaving only explicit `tools:` entries.
  */
 function buildExposure(opts: BuildServerOptions): Pick<MCPServer, 'expose' | 'tools'> {
   const mode = (opts.expose ?? 'all').trim().toLowerCase();
@@ -92,17 +92,11 @@ function buildExposure(opts: BuildServerOptions): Pick<MCPServer, 'expose' | 'to
     .map((t) => t.trim())
     .filter(Boolean);
 
-  if (mode === 'none') {
+  if (mode === 'all' || mode === 'none') {
     if (names.length > 0) {
       throw new Error('--tools requires --expose except|exactly.');
     }
-    return {};
-  }
-  if (mode === 'all') {
-    if (names.length > 0) {
-      throw new Error('--tools requires --expose except|exactly.');
-    }
-    return { expose: 'all' };
+    return mode === 'none' ? { expose: 'none' } : {};
   }
   if (mode === 'except' || mode === 'exactly') {
     if (names.length === 0) {

@@ -27,7 +27,7 @@ skills:
 servers:
   - id: server-id
     type: mcp
-    expose: all | except | exactly    # optional; which remote tools become capa tools
+    expose: all | except | exactly | none   # optional, default all
     tools: [remote_name]              # only with except / exactly
     def: { ... }
 
@@ -38,7 +38,7 @@ tools:
 
 # rules: [ { id, type, content?, url?, path?, def?, providers?, appliesTo?, alwaysApply?, description? } ]
 
-# plugins: [ { id?, type: github|gitlab, def: { repo, subpath?, version?, ref?, description? }, servers?: { <manifestKey>: { as?: <serverId>, expose?: all|except|exactly, tools?: [<remoteName>] } } } ]
+# plugins: [ { id?, type: github|gitlab, def: { repo, subpath?, version?, ref?, description? }, servers?: { <manifestKey>: { as?: <serverId>, expose?: all|except|exactly|none, tools?: [<remoteName>] } } } ]
 # Plugins unpack into skills + servers + rules + sub-agents + hooks (Claude/Cursor manifests).
 # `def.repo` mirrors the skill grammar:
 #   - `owner/repo`                    — manifest at the repo root
@@ -130,10 +130,11 @@ capa presents tools it already has to the MCP client.
 
 | `expose` | Tools that exist | `tools` list |
 |---|---|---|
-| omitted | Only explicit `tools:` entries for this server (historical behavior) | must be absent |
+| omitted (**default**) | Same as `all` | must be absent |
 | `all` | Every tool from the server's live `tools/list` | must be absent |
 | `except` | Every remote tool minus the denylist | required — remote names |
 | `exactly` | Only the named remote tools | required — remote names |
+| `none` | Only explicit `tools:` entries for this server | must be absent |
 
 ```yaml
 servers:
@@ -145,27 +146,32 @@ servers:
       url: https://example.com/mcp
 ```
 
+- **A server exposes all of its tools unless you say otherwise.** Declaring a
+  server you then cannot call is never what anyone meant, so an omitted
+  `expose` means `all`. Use `expose: none` for the explicit-`tools:`-only
+  behavior.
 - Exposed tools are callable without a skill `requires:` entry. Under
   `toolExposure: on-demand`, activate the whole server with
   `setup_tools(['@github'])`.
-- An explicit `tools:` entry whose `def.tool` matches a remote tool **overlays**
-  it — that is how `defaults` / `formatter` / a friendlier `id` survive
-  `expose: all` without listing every other tool. The overlay is what runs, and
-  the policy exposes it like any other selected tool (no `requires:` needed).
+- **`tools:` always wins.** An explicit entry whose `def.tool` matches a remote
+  tool **overlays** it — that is how `defaults` / `formatter` / a friendlier
+  `id` survive `expose: all` without listing every other tool. It wins over the
+  policy too: a tool left out by `except` / `exactly` that something declares
+  under `tools:` stays exposed, and install prints a warning naming it. Remove
+  the `tools:` entry to actually hide it.
 - Synthesized tools are resolved from the live server at install/configure time
   and are never written back to the capabilities file. Names in
   `except`/`exactly` that the server does not advertise are install warnings.
-- `capa add --server` defaults new servers to `expose: all`; pass
+- `capa add --server` writes no `expose` (so: `all`); pass
   `--expose except --tools a,b`, `--expose exactly --tools a,b`, or
-  `--expose none` for the explicit-only behavior. Existing files are not
-  migrated — an omitted `expose` keeps working exactly as before.
-- Plugin servers take the same policy: `plugins[].servers.<key>.expose` (with
-  `tools`), alongside `as`.
+  `--expose none`.
+- Plugin servers take the same policy and the same default:
+  `plugins[].servers.<key>.expose` (with `tools`), alongside `as`.
 - `--passthrough` writes the whole native server, so `except` / `exactly` are
   not applied there — the provider gets every tool the server offers.
-- `expose: all` on a 50-tool server with `toolExposure: expose-all` puts a lot of
-  schema in context, and exposes everything an untrusted server offers; pair it
-  with `on-demand`, or use `exactly`.
+- A 50-tool server under `toolExposure: expose-all` puts a lot of schema in
+  context, and exposes everything an untrusted server offers; pair it with
+  `on-demand`, or narrow it with `exactly` / `except` / `none`.
 
 ## Tool Exposure (`options.toolExposure`)
 

@@ -384,10 +384,10 @@ export async function runProjectConfigure(
 	const needsOAuth2Connection = oauth2Servers.some((s) => !s.isConnected);
 
 	// -- Server-exposed tools -------------------------------------------
-	// Servers with an `expose` policy contribute their live remote tools
-	// without one `tools:` entry each. Synthesized here (before validation
-	// and before the session sees the capabilities) so every downstream
-	// consumer — tools/list, `capa sh`, sub-agents — sees one tool list.
+	// Servers contribute their live remote tools without one `tools:` entry
+	// each (`expose` defaults to `all`; `none` opts out). Synthesized here,
+	// before validation and before the session sees the capabilities, so every
+	// downstream consumer — tools/list, `capa sh`, sub-agents — sees one list.
 	const exposeRefresh = await refreshExposedTools(
 		deps,
 		projectId,

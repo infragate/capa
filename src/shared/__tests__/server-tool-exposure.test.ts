@@ -30,8 +30,12 @@ function caps(partial: Partial<Capabilities> = {}): Capabilities {
 const REMOTE = ["search", "create_issue", "delete_repo"];
 
 describe("selectExposedToolNames", () => {
-	it("exposes nothing when no policy is set", () => {
-		expect(selectExposedToolNames(server(), REMOTE).exposed).toEqual([]);
+	it("exposes everything when no policy is written down", () => {
+		expect(selectExposedToolNames(server(), REMOTE).exposed).toEqual(REMOTE);
+	});
+
+	it("exposes nothing for the none opt-out", () => {
+		expect(selectExposedToolNames(server("none"), REMOTE).exposed).toEqual([]);
 	});
 
 	it("all exposes every advertised tool", () => {
@@ -63,11 +67,19 @@ describe("selectExposedToolNames", () => {
 describe("expandServerExposedTools", () => {
 	const list = async () => REMOTE.map((name) => ({ name, description: `d:${name}` }));
 
-	it("leaves capabilities untouched when no server sets a policy", async () => {
-		const input = caps({ servers: [server()] });
+	it("leaves capabilities untouched when every server opts out", async () => {
+		const input = caps({ servers: [server("none")] });
 		const result = await expandServerExposedTools(input, list);
 		expect(result.capabilities).toBe(input);
 		expect(result.warnings).toEqual([]);
+	});
+
+	it("exposes a server that never wrote down a policy", async () => {
+		const result = await expandServerExposedTools(
+			caps({ servers: [server()] }),
+			list,
+		);
+		expect(result.capabilities.tools.map((t) => t.id)).toEqual(REMOTE);
 	});
 
 	it("synthesizes one tool per exposed remote tool", async () => {
@@ -137,6 +149,17 @@ describe("expandServerExposedTools", () => {
 		expect(result.warnings[0]).toMatch(/github.*HTTP 401/);
 	});
 
+	it("warns instead of throwing when the lister throws synchronously", async () => {
+		const result = await expandServerExposedTools(
+			caps({ servers: [server("all")] }),
+			(() => {
+				throw new Error("listServerTools is not a function");
+			}) as never,
+		);
+		expect(result.capabilities.tools).toEqual([]);
+		expect(result.warnings[0]).toMatch(/github.*not a function/);
+	});
+
 	it("warns when except/exactly names a tool the server does not have", async () => {
 		const result = await expandServerExposedTools(
 			caps({ servers: [server("exactly", ["search", "nope"])] }),
@@ -189,5 +212,56 @@ describe("synthesized ids stay unique", () => {
 		expect(
 			result.capabilities.tools.map((t) => (t as any).def.tool),
 		).toEqual(["foo/bar", "foo?bar", "a.b", "a_b"]);
+	});
+});
+
+describe("explicit tools: entries beat the policy", () => {
+	const list = async () =>
+		REMOTE.map((name) => ({ name, description: `d:${name}` }));
+
+	const declared = {
+		id: "nuke",
+		type: "mcp" as const,
+		def: { server: "@github", tool: "delete_repo" },
+	};
+
+	it("exposes a denylisted tool that tools: declares, and warns", async () => {
+		const result = await expandServerExposedTools(
+			caps({
+				servers: [server("except", ["delete_repo"])],
+				tools: [declared],
+			}),
+			list,
+		);
+
+		expect(exposedToolNamesForServer(result.capabilities, "github")).toEqual([
+			"github.search",
+			"github.create_issue",
+			"github.nuke",
+		]);
+		expect(result.warnings[0]).toContain("section declares");
+		expect(result.warnings[0]).toContain('delete_repo (as "nuke")');
+	});
+
+	it("adds a tool left out of an exactly allowlist when tools: declares it", async () => {
+		const result = await expandServerExposedTools(
+			caps({ servers: [server("exactly", ["search"])], tools: [declared] }),
+			list,
+		);
+
+		expect(exposedToolNamesForServer(result.capabilities, "github")).toEqual([
+			"github.search",
+			"github.nuke",
+		]);
+		expect(result.warnings).toHaveLength(1);
+	});
+
+	it("does not expose anything for a server that opted out", async () => {
+		const result = await expandServerExposedTools(
+			caps({ servers: [server("none")], tools: [declared] }),
+			list,
+		);
+		expect(result.added).toEqual([]);
+		expect(result.warnings).toEqual([]);
 	});
 });

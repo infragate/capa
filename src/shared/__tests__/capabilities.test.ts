@@ -193,6 +193,23 @@ describe('capabilities', () => {
       });
     });
 
+    it('accepts the none opt-out and keeps tools tied to except/exactly', () => {
+      const withExtra = (extra: Record<string, unknown>) => ({
+        servers: [
+          { id: 's', type: 'mcp', def: { url: 'https://example.test/mcp' }, ...extra },
+        ],
+      });
+
+      expect(
+        normalizeCapabilities(withExtra({ expose: 'none' })).servers[0].expose,
+      ).toBe('none');
+      // Omitted stays omitted — `all` is the default, not something capa writes.
+      expect(normalizeCapabilities(withExtra({})).servers[0].expose).toBeUndefined();
+      expect(() =>
+        normalizeCapabilities(withExtra({ expose: 'none', tools: ['a'] })),
+      ).toThrow(/only applies to expose/);
+    });
+
     it('validates expose/tools combinations on plugin servers too', () => {
       const plugin = (servers: Record<string, unknown>) => ({
         plugins: [{ type: 'github', def: { repo: 'o/r' }, servers }],

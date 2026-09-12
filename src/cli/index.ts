@@ -130,7 +130,7 @@ if (process.argv[2] === '__server__') {
       .option('--header-from-command <KEY=CMD>', 'Remote MCP header from command stdout (repeatable)', collectRepeatable, [])
       .option('--header-from-file <KEY=PATH>', 'Remote MCP header from file contents (repeatable)', collectRepeatable, [])
       .option('--cwd <path>', 'Server working directory')
-      .option('--expose <mode>', 'Server tool exposure: all (default for new servers) | except | exactly | none')
+      .option('--expose <mode>', 'Server tool exposure: all (default) | except | exactly | none')
       .option('--tools <names>', 'Comma-separated remote tool names for --expose except|exactly')
       .option('--description <text>', 'Optional description')
       .option('--mcp-server <id>', 'Tool: MCP server reference (@id or id)')

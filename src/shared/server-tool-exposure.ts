@@ -1,4 +1,9 @@
-import type { Capabilities, MCPServer, Tool } from "../types/capabilities";
+import type {
+	Capabilities,
+	MCPServer,
+	ServerToolExposure,
+	Tool,
+} from "../types/capabilities";
 import { getQualifiedToolName, normalizeToolName } from "../types/capabilities";
 
 /** One entry of a server's live `tools/list`. */
@@ -7,11 +12,22 @@ export interface RemoteToolInfo {
 	description?: string;
 }
 
-/** Servers that opted into exposing remote tools without per-tool YAML. */
+/**
+ * A server with no `expose` written down exposes everything: declaring a
+ * server you then cannot call is never what someone meant. `none` is the
+ * opt-out for the explicit-`tools:`-only behavior.
+ */
+export function effectiveExpose(server: MCPServer): ServerToolExposure {
+	return server.expose ?? "all";
+}
+
+/** Servers whose remote tools become capa tools (everything but `none`). */
 export function serversWithExposePolicy(
 	capabilities: Capabilities,
 ): MCPServer[] {
-	return (capabilities.servers ?? []).filter((s) => s.expose);
+	return (capabilities.servers ?? []).filter(
+		(s) => effectiveExpose(s) !== "none",
+	);
 }
 
 /**
@@ -27,15 +43,15 @@ export function selectExposedToolNames(
 	const advertised = new Set(remoteNames);
 	const unknown = [...named].filter((n) => !advertised.has(n));
 
-	switch (server.expose) {
-		case "all":
-			return { exposed: remoteNames, unknown: [] };
+	switch (effectiveExpose(server)) {
 		case "except":
 			return { exposed: remoteNames.filter((n) => !named.has(n)), unknown };
 		case "exactly":
 			return { exposed: remoteNames.filter((n) => named.has(n)), unknown };
-		default:
+		case "none":
 			return { exposed: [], unknown: [] };
+		default:
+			return { exposed: remoteNames, unknown: [] };
 	}
 }
 
@@ -108,10 +124,15 @@ export async function expandServerExposedTools(
 	// whole timeout, and doing that serially adds it up across servers.
 	const listings = await Promise.all(
 		servers.map((server) =>
-			listRemoteTools(server.id).then(
-				(remote) => ({ remote, error: null as unknown }),
-				(error) => ({ remote: null, error }),
-			),
+			// `Promise.resolve().then` so a lister that throws synchronously lands
+			// in the same warning path as one that rejects — discovery is
+			// best-effort and must never fail the configure around it.
+			Promise.resolve()
+				.then(() => listRemoteTools(server.id))
+				.then(
+					(remote) => ({ remote, error: null as unknown }),
+					(error) => ({ remote: null, error }),
+				),
 		),
 	);
 
@@ -119,7 +140,7 @@ export async function expandServerExposedTools(
 		const listing = listings[index];
 		if (!listing.remote) {
 			warnings.push(
-				`Server "${server.id}" (expose: ${server.expose}) could not be listed: ${
+				`Server "${server.id}" (expose: ${effectiveExpose(server)}) could not be listed: ${
 					listing.error instanceof Error
 						? listing.error.message
 						: String(listing.error)
@@ -135,18 +156,37 @@ export async function expandServerExposedTools(
 		);
 		if (unknown.length > 0) {
 			warnings.push(
-				`Server "${server.id}" (expose: ${server.expose}) names tool(s) it does not advertise: ${unknown.join(", ")}`,
+				`Server "${server.id}" (expose: ${effectiveExpose(server)}) names tool(s) it does not advertise: ${unknown.join(", ")}`,
 			);
 		}
 		if (remote.length === 0) {
 			warnings.push(
-				`Server "${server.id}" (expose: ${server.expose}) advertised no tools — check its credentials or connection.`,
+				`Server "${server.id}" (expose: ${effectiveExpose(server)}) advertised no tools — check its credentials or connection.`,
 			);
 			continue;
 		}
 
 		const byName = new Map(remote.map((t) => [t.name, t]));
 		const alreadyExplicit = overlaid.get(server.id);
+
+		// An explicit `tools:` entry is the author's last word: it wins over the
+		// policy even where `except`/`exactly` left that remote tool out. Say so —
+		// a denylisted tool that stays callable because something declared it is
+		// exactly the kind of thing to notice at install time.
+		const selected = new Set(exposed);
+		const overriding: string[] = [];
+		for (const [remoteName, tool] of alreadyExplicit ?? []) {
+			if (selected.has(remoteName) || !byName.has(remoteName)) continue;
+			selected.add(remoteName);
+			exposed.push(remoteName);
+			overriding.push(`${remoteName} (as "${tool.id}")`);
+		}
+		if (overriding.length > 0) {
+			warnings.push(
+				`Server "${server.id}" (expose: ${effectiveExpose(server)}) leaves out tool(s) that the \`tools:\` section declares, so they stay exposed: ${overriding.join(", ")}. Remove the \`tools:\` entry to keep them hidden.`,
+			);
+		}
+
 		for (const name of exposed) {
 			const overlay = alreadyExplicit?.get(name);
 			if (overlay) {

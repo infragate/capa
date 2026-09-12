@@ -321,16 +321,17 @@ export interface SkillDefinition {
 }
 
 /**
- * Which of a server's live remote tools become capa tools.
- * Omitted keeps the historical behavior: only explicit `tools:` entries exist.
+ * Which of a server's live remote tools become capa tools. Omitted means
+ * `all` — a server nobody can call is not a useful default. `none` opts out
+ * and leaves only the explicit `tools:` entries, as capa behaved before.
  */
-export type ServerToolExposure = 'all' | 'except' | 'exactly';
+export type ServerToolExposure = 'all' | 'except' | 'exactly' | 'none';
 
 export interface MCPServer {
   id: string;
   type: 'mcp';
   def: MCPServerDefinition;
-  /** Expose remote tools without writing one `tools:` entry per tool. */
+  /** Expose remote tools without writing one `tools:` entry per tool (default `all`). */
   expose?: ServerToolExposure;
   /** Remote tool names: denylist for `except`, allowlist for `exactly`. */
   tools?: string[];
