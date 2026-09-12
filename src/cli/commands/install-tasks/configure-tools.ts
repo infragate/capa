@@ -106,7 +106,7 @@ export function configureToolsTask(): Task<InstallCtx> {
           }
           const suffix =
             pendingServers.size > 0 ? ` (${[...pendingServers].sort().join(', ')})` : '';
-          breakdown.push(`⏳ ${pendingAuth.length} pending OAuth2${suffix}`);
+          breakdown.push(`⏳ ${pendingAuth.length} pending credentials${suffix}`);
         }
         if (failed.length > 0) {
           breakdown.push(`✗ ${failed.length} failed`);
@@ -136,7 +136,7 @@ export function configureToolsTask(): Task<InstallCtx> {
           }
           task.title = `Configuring tools — ${failed.length} of ${result.toolValidation.length} tool(s) failed validation`;
         } else if (pendingAuth.length > 0 && pendingAuth.length < result.toolValidation.length) {
-          task.title = `Configuring tools — ${successful.length} validated, ${pendingAuth.length} pending OAuth2`;
+          task.title = `Configuring tools — ${successful.length} validated, ${pendingAuth.length} pending credentials`;
         } else if (pendingAuth.length === 0) {
           task.title = `Configuring tools — ${result.toolValidation.length} validated`;
         }

@@ -8,7 +8,7 @@ export interface ToolValidationResult {
 	error?: string;
 	serverId?: string;
 	remoteTool?: string;
-	pendingAuth?: boolean; // True if validation was skipped due to pending OAuth2 authentication
+	pendingAuth?: boolean; // True if validation was skipped due to pending credentials (OAuth2 or API key)
 }
 
 /**

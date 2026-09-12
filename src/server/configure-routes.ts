@@ -7,6 +7,7 @@ import { logger } from "../shared/logger";
 import { detectCapabilitiesFile } from "../shared/paths";
 import { trustStdioServers } from "../shared/stdio-allowlist";
 import { projectUiUrl } from "../shared/ui-urls";
+import { mcpServerIdsPendingCredentials } from "../shared/secret-value";
 import { extractAllVariables } from "../shared/variable-resolver";
 import type { Capabilities } from "../types/capabilities";
 import type { OAuth2Config } from "../types/oauth";
@@ -347,36 +348,56 @@ export async function runProjectConfigure(
 			);
 		}
 
-		const oauth2ServerIds = new Set(
+		const pendingServerIds = new Set(
 			oauth2Servers.filter((s) => !s.isConnected).map((s) => s.serverId),
 		);
-		const nonOAuth2ValidationResults = toolValidationResults.filter(
-			(r) => !oauth2ServerIds.has(r.serverId),
+		// Only servers that actually failed need excusing, and resolving a def
+		// can re-run a `fromCommand` secret — so don't touch the ones that
+		// validated fine.
+		const failedServerIds = new Set(
+			toolValidationResults
+				.filter((r) => !r.success && r.serverId)
+				.map((r) => r.serverId),
 		);
-		const oauth2PendingResults = toolValidationResults.filter((r) =>
-			oauth2ServerIds.has(r.serverId),
+		const pendingCandidates = (capabilitiesToUse.servers ?? []).filter(
+			(s) => failedServerIds.has(s.id) && !pendingServerIds.has(s.id),
+		);
+		if (project && pendingCandidates.length > 0) {
+			for (const id of await mcpServerIdsPendingCredentials(pendingCandidates, {
+				projectId,
+				projectPath: project.path,
+				db: deps.db,
+			})) {
+				pendingServerIds.add(id);
+			}
+		}
+		const nonPendingValidationResults = toolValidationResults.filter(
+			(r) => !pendingServerIds.has(r.serverId),
+		);
+		const pendingResults = toolValidationResults.filter((r) =>
+			pendingServerIds.has(r.serverId),
 		);
 
-		if (oauth2PendingResults.length > 0) {
+		if (pendingResults.length > 0) {
 			apiLogger.info(
-				`${oauth2PendingResults.length} tool(s) skipped validation (OAuth2 authentication required)`,
+				`${pendingResults.length} tool(s) skipped validation (credentials pending)`,
 			);
-			for (const pending of oauth2PendingResults) {
+			for (const pending of pendingResults) {
 				pending.success = true;
 				pending.pendingAuth = true;
 				pending.error = undefined;
 			}
 		}
 
-		const failedTools = nonOAuth2ValidationResults.filter((r) => !r.success);
+		const failedTools = nonPendingValidationResults.filter((r) => !r.success);
 		if (failedTools.length > 0) {
 			apiLogger.warn(`${failedTools.length} tool(s) failed validation`);
 			for (const failed of failedTools) {
 				apiLogger.debug(`  ${failed.toolId}: ${failed.error}`);
 			}
-		} else if (nonOAuth2ValidationResults.length > 0) {
+		} else if (nonPendingValidationResults.length > 0) {
 			apiLogger.success(
-				`All ${nonOAuth2ValidationResults.length} non-OAuth2 tool(s) validated successfully`,
+				`All ${nonPendingValidationResults.length} non-pending tool(s) validated successfully`,
 			);
 		}
 	} catch (error: any) {
