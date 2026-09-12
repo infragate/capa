@@ -92,52 +92,6 @@ describe("expandServerExposedTools", () => {
 		expect(result.capabilities.tools[0].description).toBe("d:search");
 	});
 
-	it("keeps an explicit entry as the overlay for that remote tool", async () => {
-		const explicit = {
-			id: "gh_search",
-			type: "mcp" as const,
-			def: {
-				server: "@github",
-				tool: "search",
-				defaults: { count: 5 },
-			},
-		};
-		const result = await expandServerExposedTools(
-			caps({ servers: [server("all")], tools: [explicit] }),
-			list,
-		);
-
-		const forSearch = result.capabilities.tools.filter(
-			(t) => t.type === "mcp" && t.def.tool === "search",
-		);
-		expect(forSearch).toHaveLength(1);
-		// The authored entry, unchanged apart from the policy marker that makes
-		// it callable without a skill requiring it.
-		expect(forSearch[0]).toEqual({ ...explicit, fromServerExpose: true });
-		expect(result.capabilities.tools.map((t) => t.id).sort()).toEqual([
-			"create_issue",
-			"delete_repo",
-			"gh_search",
-		]);
-	});
-
-	it("exposes an overlaid tool without a skill requiring it", async () => {
-		const explicit = {
-			id: "gh_search",
-			type: "mcp" as const,
-			def: { server: "@github", tool: "search", defaults: { count: 5 } },
-		};
-		const result = await expandServerExposedTools(
-			caps({ servers: [server("exactly", ["search"])], tools: [explicit] }),
-			list,
-		);
-
-		expect(result.added.map((t) => t.id)).toEqual(["gh_search"]);
-		expect(exposedToolNamesForServer(result.capabilities, "github")).toEqual([
-			"github.gh_search",
-		]);
-	});
-
 	it("warns instead of throwing when a server cannot be listed", async () => {
 		const result = await expandServerExposedTools(
 			caps({ servers: [server("all")] }),
@@ -215,53 +169,65 @@ describe("synthesized ids stay unique", () => {
 	});
 });
 
-describe("explicit tools: entries beat the policy", () => {
+describe("declared tools turn the policy off", () => {
 	const list = async () =>
 		REMOTE.map((name) => ({ name, description: `d:${name}` }));
 
 	const declared = {
-		id: "nuke",
+		id: "gh_search",
 		type: "mcp" as const,
-		def: { server: "@github", tool: "delete_repo" },
+		def: { server: "@github", tool: "search", defaults: { count: 5 } },
 	};
 
-	it("exposes a denylisted tool that tools: declares, and warns", async () => {
-		const result = await expandServerExposedTools(
-			caps({
-				servers: [server("except", ["delete_repo"])],
-				tools: [declared],
-			}),
-			list,
-		);
+	it("synthesizes nothing for a server the tools: section declares", async () => {
+		const input = caps({ servers: [server()], tools: [declared] });
+		const result = await expandServerExposedTools(input, list);
 
-		expect(exposedToolNamesForServer(result.capabilities, "github")).toEqual([
-			"github.search",
-			"github.create_issue",
-			"github.nuke",
-		]);
-		expect(result.warnings[0]).toContain("section declares");
-		expect(result.warnings[0]).toContain('delete_repo (as "nuke")');
+		expect(result.added).toEqual([]);
+		expect(result.capabilities).toBe(input);
+		expect(result.warnings).toEqual([]);
 	});
 
-	it("adds a tool left out of an exactly allowlist when tools: declares it", async () => {
+	it("warns that a written policy is ignored, and still exposes nothing", async () => {
 		const result = await expandServerExposedTools(
-			caps({ servers: [server("exactly", ["search"])], tools: [declared] }),
+			caps({ servers: [server("all")], tools: [declared] }),
 			list,
 		);
 
-		expect(exposedToolNamesForServer(result.capabilities, "github")).toEqual([
-			"github.search",
-			"github.nuke",
-		]);
+		expect(result.added).toEqual([]);
 		expect(result.warnings).toHaveLength(1);
+		expect(result.warnings[0]).toContain("is ignored because");
+		expect(result.warnings[0]).toContain("github");
 	});
 
-	it("does not expose anything for a server that opted out", async () => {
+	it("does not warn when the ignored policy is the none opt-out", async () => {
 		const result = await expandServerExposedTools(
 			caps({ servers: [server("none")], tools: [declared] }),
 			list,
 		);
-		expect(result.added).toEqual([]);
 		expect(result.warnings).toEqual([]);
 	});
+
+	it("leaves other servers' policies alone", async () => {
+		const other: MCPServer = {
+			id: "aws",
+			type: "mcp",
+			def: { url: "https://aws.test/mcp" },
+		};
+		const result = await expandServerExposedTools(
+			caps({ servers: [server(), other], tools: [declared] }),
+			list,
+		);
+
+		expect(result.added.map((t) => getQualified(t))).toEqual([
+			"aws.search",
+			"aws.create_issue",
+			"aws.delete_repo",
+		]);
+	});
 });
+
+function getQualified(tool: { id: string; def: unknown }): string {
+	const def = tool.def as { server: string };
+	return `${def.server.replace(/^@/, "")}.${tool.id}`;
+}

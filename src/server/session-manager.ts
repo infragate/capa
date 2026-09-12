@@ -1,10 +1,7 @@
 import { nanoid } from "nanoid";
 import type { CapaDatabase } from "../db/database";
 import { logger } from "../shared/logger";
-import {
-	exposedToolNamesForServer,
-	mergeExposedTools,
-} from "../shared/server-tool-exposure";
+import { exposedToolNamesForServer } from "../shared/server-tool-exposure";
 import type { Capabilities, Tool } from "../types/capabilities";
 import {
 	getQualifiedToolName,
@@ -325,10 +322,10 @@ export class SessionManager {
 		if (exposed.length === 0 && incoming.length === 0) return capabilities;
 		return {
 			...capabilities,
-			tools: mergeExposedTools(
-				capabilities.tools.filter((t) => !t.fromServerExpose),
-				exposed,
-			),
+			tools: [
+				...capabilities.tools.filter((t) => !t.fromServerExpose),
+				...exposed,
+			],
 		};
 	}
 

@@ -337,6 +337,9 @@ export function ServerDialog({
                         <option value="exactly">{t('actions.serverExposeExactly')}</option>
                         <option value="none">{t('actions.serverExposeNone')}</option>
                       </select>
+                      <span className="mt-1 block text-[11px] text-text-tertiary">
+                        {t('actions.serverExposeIgnored')}
+                      </span>
                     </label>
                     {(expose === 'except' || expose === 'exactly') && (
                       <label className="block text-xs text-text-secondary">

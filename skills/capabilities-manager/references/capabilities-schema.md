@@ -128,50 +128,65 @@ Which of a server's live remote tools become capa tools, without writing one
 `tools:` entry per tool. Orthogonal to `options.toolExposure`, which controls how
 capa presents tools it already has to the MCP client.
 
-| `expose` | Tools that exist | `tools` list |
+**Declaring tools yourself turns the policy off.** Once any `tools:` entry
+points at a server, those entries are the complete tool list for it — exactly
+how capa behaved before `expose` existed, so no existing file changes meaning.
+`expose` only decides what happens for servers you have *not* curated by hand,
+and install warns if a written `expose` is being ignored for this reason.
+
+| `expose` | Tools that exist (server has no `tools:` entries) | `tools` list |
 |---|---|---|
 | omitted (**default**) | Same as `all` | must be absent |
 | `all` | Every tool from the server's live `tools/list` | must be absent |
 | `except` | Every remote tool minus the denylist | required — remote names |
 | `exactly` | Only the named remote tools | required — remote names |
-| `none` | Only explicit `tools:` entries for this server | must be absent |
+| `none` | Nothing — the server contributes no tools at all | must be absent |
 
 ```yaml
 servers:
-  - id: github
+  - id: github          # no tools: entries point at @github, so the policy runs
     type: mcp
     expose: except
     tools: [delete_repo, force_push]   # remote names, not capa ids
     def:
       url: https://example.com/mcp
+
+  - id: brave           # curated by hand below: expose would be ignored here
+    type: mcp
+    def:
+      cmd: npx
+      args: [-y, "@modelcontextprotocol/server-brave-search"]
+
+tools:
+  - id: search
+    type: mcp
+    def:
+      server: "@brave"
+      tool: brave_web_search
+      defaults: { count: 5 }
 ```
 
-- **A server exposes all of its tools unless you say otherwise.** Declaring a
-  server you then cannot call is never what anyone meant, so an omitted
-  `expose` means `all`. Use `expose: none` for the explicit-`tools:`-only
-  behavior.
-- Exposed tools are callable without a skill `requires:` entry. Under
+- Tools a policy exposes are callable without a skill `requires:` entry. Under
   `toolExposure: on-demand`, activate the whole server with
-  `setup_tools(['@github'])`.
-- **`tools:` always wins.** An explicit entry whose `def.tool` matches a remote
-  tool **overlays** it — that is how `defaults` / `formatter` / a friendlier
-  `id` survive `expose: all` without listing every other tool. It wins over the
-  policy too: a tool left out by `except` / `exactly` that something declares
-  under `tools:` stays exposed, and install prints a warning naming it. Remove
-  the `tools:` entry to actually hide it.
+  `setup_tools(['@github'])`. Tools you declare under `tools:` keep the old
+  behavior — a skill has to require them.
+- Use `expose: none` when a server should contribute nothing on its own and you
+  have not declared entries for it either.
 - Synthesized tools are resolved from the live server at install/configure time
   and are never written back to the capabilities file. Names in
   `except`/`exactly` that the server does not advertise are install warnings.
 - `capa add --server` writes no `expose` (so: `all`); pass
   `--expose except --tools a,b`, `--expose exactly --tools a,b`, or
-  `--expose none`.
-- Plugin servers take the same policy and the same default:
+  `--expose none`. `capa add --tool` prints a note when it turns a server's
+  policy off.
+- Plugin servers take the same policy and the same rule:
   `plugins[].servers.<key>.expose` (with `tools`), alongside `as`.
 - `--passthrough` writes the whole native server, so `except` / `exactly` are
   not applied there — the provider gets every tool the server offers.
 - A 50-tool server under `toolExposure: expose-all` puts a lot of schema in
   context, and exposes everything an untrusted server offers; pair it with
-  `on-demand`, or narrow it with `exactly` / `except` / `none`.
+  `on-demand`, or narrow it with `exactly` / `except` / `none` / explicit
+  `tools:` entries.
 
 ## Tool Exposure (`options.toolExposure`)
 

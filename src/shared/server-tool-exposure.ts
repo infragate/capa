@@ -12,21 +12,55 @@ export interface RemoteToolInfo {
 	description?: string;
 }
 
+/** Server ids that at least one `tools:` entry points at. */
+export function serverIdsWithDeclaredTools(
+	capabilities: Capabilities,
+): Set<string> {
+	const ids = new Set<string>();
+	for (const tool of capabilities.tools ?? []) {
+		if (tool.type !== "mcp") continue;
+		ids.add(tool.def.server.replace(/^@/, ""));
+	}
+	return ids;
+}
+
 /**
  * A server with no `expose` written down exposes everything: declaring a
  * server you then cannot call is never what someone meant. `none` is the
- * opt-out for the explicit-`tools:`-only behavior.
+ * explicit opt-out.
  */
 export function effectiveExpose(server: MCPServer): ServerToolExposure {
 	return server.expose ?? "all";
 }
 
-/** Servers whose remote tools become capa tools (everything but `none`). */
+/**
+ * Servers whose live tools become capa tools.
+ *
+ * **Declaring tools yourself turns the policy off.** Once any `tools:` entry
+ * points at a server, that list is the whole set for it — exactly how capa
+ * behaved before `expose` existed, so no existing file changes meaning. The
+ * policy is for servers you have not curated by hand.
+ */
 export function serversWithExposePolicy(
 	capabilities: Capabilities,
 ): MCPServer[] {
+	const declared = serverIdsWithDeclaredTools(capabilities);
 	return (capabilities.servers ?? []).filter(
-		(s) => effectiveExpose(s) !== "none",
+		(s) => !declared.has(s.id) && effectiveExpose(s) !== "none",
+	);
+}
+
+/**
+ * Servers whose `expose` is written down but ignored because the `tools:`
+ * section already declares entries for them. Surfaced at install: a policy
+ * that silently does nothing is worth one line of output.
+ */
+export function serversWithIgnoredExpose(
+	capabilities: Capabilities,
+): MCPServer[] {
+	const declared = serverIdsWithDeclaredTools(capabilities);
+	return (capabilities.servers ?? []).filter(
+		(s) => declared.has(s.id) && s.expose !== undefined && s.expose !== "none",
 	);
 }
 
@@ -90,9 +124,9 @@ function uniqueToolId(
 }
 
 /**
- * Add a tool entry for every remote tool a server exposes. An explicit
- * `tools:` entry pointing at the same remote tool wins — that is how a Brave
- * `count: 5` default survives `expose: all` without listing every other tool.
+ * Add a tool entry for every remote tool a server exposes. Servers the
+ * `tools:` section already declares entries for are left alone — those entries
+ * are the whole set for that server.
  *
  * Returns a new Capabilities; the input is not modified, and the synthesized
  * entries are never written back to the capabilities file.
@@ -101,23 +135,23 @@ export async function expandServerExposedTools(
 	capabilities: Capabilities,
 	listRemoteTools: (serverId: string) => Promise<RemoteToolInfo[]>,
 ): Promise<{ capabilities: Capabilities; added: Tool[]; warnings: string[] }> {
-	const servers = serversWithExposePolicy(capabilities);
-	if (servers.length === 0) return { capabilities, added: [], warnings: [] };
-
 	const warnings: string[] = [];
+	for (const server of serversWithIgnoredExpose(capabilities)) {
+		warnings.push(
+			`Server "${server.id}": expose: ${server.expose} is ignored because the \`tools:\` section declares entries for it — those entries are the tools for this server. Remove them to let the policy choose.`,
+		);
+	}
+
+	const servers = serversWithExposePolicy(capabilities);
+	if (servers.length === 0) return { capabilities, added: [], warnings };
+
 	const synthesized: Tool[] = [];
 
-	// The explicit entry covering each remote tool, per server — it wins over a
-	// synthesized one, and the policy still has to expose it.
-	const overlaid = new Map<string, Map<string, Tool>>();
+	// Ids must not collide with an existing tool, including a command tool
+	// grouped under this server's name.
 	const takenQualifiedNames = new Set<string>();
 	for (const tool of capabilities.tools ?? []) {
 		takenQualifiedNames.add(normalizeToolName(getQualifiedToolName(tool)));
-		if (tool.type !== "mcp") continue;
-		const serverId = tool.def.server.replace(/^@/, "");
-		const bucket = overlaid.get(serverId) ?? new Map<string, Tool>();
-		if (!bucket.has(tool.def.tool)) bucket.set(tool.def.tool, tool);
-		overlaid.set(serverId, bucket);
 	}
 
 	// One round-trip per server, all at once: a server that is down burns the
@@ -167,35 +201,8 @@ export async function expandServerExposedTools(
 		}
 
 		const byName = new Map(remote.map((t) => [t.name, t]));
-		const alreadyExplicit = overlaid.get(server.id);
-
-		// An explicit `tools:` entry is the author's last word: it wins over the
-		// policy even where `except`/`exactly` left that remote tool out. Say so —
-		// a denylisted tool that stays callable because something declared it is
-		// exactly the kind of thing to notice at install time.
-		const selected = new Set(exposed);
-		const overriding: string[] = [];
-		for (const [remoteName, tool] of alreadyExplicit ?? []) {
-			if (selected.has(remoteName) || !byName.has(remoteName)) continue;
-			selected.add(remoteName);
-			exposed.push(remoteName);
-			overriding.push(`${remoteName} (as "${tool.id}")`);
-		}
-		if (overriding.length > 0) {
-			warnings.push(
-				`Server "${server.id}" (expose: ${effectiveExpose(server)}) leaves out tool(s) that the \`tools:\` section declares, so they stay exposed: ${overriding.join(", ")}. Remove the \`tools:\` entry to keep them hidden.`,
-			);
-		}
 
 		for (const name of exposed) {
-			const overlay = alreadyExplicit?.get(name);
-			if (overlay) {
-				// Keep the authored entry exactly as written — alias, defaults,
-				// formatter — but let the policy expose it, or it would still need
-				// a skill `requires:` while its siblings do not.
-				synthesized.push({ ...overlay, fromServerExpose: true });
-				continue;
-			}
 			// Ids are scoped per server, so only this server's names can clash.
 			const id = uniqueToolId(name, server.id, takenQualifiedNames);
 			const tool: Tool = {
@@ -214,25 +221,11 @@ export async function expandServerExposedTools(
 	return {
 		capabilities: {
 			...capabilities,
-			tools: mergeExposedTools(capabilities.tools ?? [], synthesized),
+			tools: [...(capabilities.tools ?? []), ...synthesized],
 		},
 		added: synthesized,
 		warnings,
 	};
-}
-
-/**
- * Authored tools plus the ones a server policy exposes. An exposed entry
- * replaces the authored tool it was built from (an overlay is the authored
- * entry plus the policy marker), so neither list is duplicated.
- */
-export function mergeExposedTools(authored: Tool[], exposed: Tool[]): Tool[] {
-	if (exposed.length === 0) return authored;
-	const exposedNames = new Set(exposed.map((t) => getQualifiedToolName(t)));
-	return [
-		...authored.filter((t) => !exposedNames.has(getQualifiedToolName(t))),
-		...exposed,
-	];
 }
 
 /**
