@@ -2,6 +2,10 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { CapaDatabase } from "../db/database";
 import { logger } from "../shared/logger";
+import {
+	redactErrorDetail,
+	resolvedSecretValues,
+} from "./secret-redaction";
 import { isStdioTrusted } from "../shared/stdio-allowlist";
 import {
 	hasUnresolvedMcpSecrets,
@@ -42,6 +46,19 @@ export interface MCPToolResult {
 	error?: string;
 }
 
+/**
+ * One-line reason a connect attempt failed, safe to show a user. The def's own
+ * resolved credentials are scrubbed, plus anything else that reads like one —
+ * a non-2xx body can echo the request headers straight back.
+ */
+function connectFailureDetail(
+	error: unknown,
+	def?: MCPServerDefinition,
+): string {
+	const raw = error instanceof Error ? error.message : String(error);
+	return redactErrorDetail(raw, def ? resolvedSecretValues(def) : []);
+}
+
 export class MCPProxy {
 	private db: CapaDatabase;
 	private projectId: string;
@@ -55,6 +72,9 @@ export class MCPProxy {
 	private listToolsInFlight = new Map<string, Promise<any[]>>();
 	/** Last unexpected stdio exit reason per server (from transport onerror). */
 	private stdioExitReasons = new Map<string, string>();
+	/** Why the last connect attempt failed, per server. Kept so callers can
+	 * report "401 Unauthorized" instead of a bare "Could not connect". */
+	private connectFailures = new Map<string, string>();
 	private logger = logger.child("MCPProxy");
 	private isServerEnabled: McpEnabledCheck;
 
@@ -359,7 +379,7 @@ export class MCPProxy {
 		}
 		if (!client) {
 			if (throwOnError) {
-				throw new Error(`Could not connect to MCP server "${cleanServerId}"`);
+				throw new Error(this.connectFailureMessage(cleanServerId));
 			}
 			return [];
 		}
@@ -393,7 +413,7 @@ export class MCPProxy {
 				if (!freshClient) {
 					if (throwOnError) {
 						throw new Error(
-							`Could not reconnect to MCP server "${cleanServerId}"`,
+							this.connectFailureMessage(cleanServerId, "reconnect"),
 						);
 					}
 					return [];
@@ -544,12 +564,17 @@ export class MCPProxy {
 
 			this.clients.set(serverId, client);
 			this.clientFingerprints.set(serverId, fingerprint);
+			this.connectFailures.delete(serverId);
 			this.logger.success("Client connected");
 			return client;
 		} catch (error: any) {
 			this.logger.failure(
 				`Failed to create HTTP client for ${serverId}:`,
 				error,
+			);
+			this.connectFailures.set(
+				serverId,
+				connectFailureDetail(error, serverDefinition),
 			);
 			return null;
 		}
@@ -613,6 +638,7 @@ export class MCPProxy {
 
 			this.clients.set(serverId, client);
 			this.clientFingerprints.set(serverId, fingerprint);
+			this.connectFailures.delete(serverId);
 			this.logger.success("Client connected");
 			return client;
 		} catch (error) {
@@ -620,8 +646,26 @@ export class MCPProxy {
 				`Failed to create MCP client for ${serverId}:`,
 				error,
 			);
+			// The stdio exit reason is raw stderr — scrub it like any other detail.
+			this.connectFailures.set(
+				serverId,
+				connectFailureDetail(
+					this.stdioExitReasons.get(serverId) ?? error,
+					serverDefinition,
+				),
+			);
 			return null;
 		}
+	}
+
+	/**
+	 * "Could not connect" plus why, when the transport told us. A bad API key
+	 * reads as 401 rather than looking like the server is down.
+	 */
+	private connectFailureMessage(serverId: string, verb = "connect"): string {
+		const base = `Could not ${verb} to MCP server "${serverId}"`;
+		const detail = this.connectFailures.get(serverId);
+		return detail ? `${base}: ${detail}` : base;
 	}
 
 	/**
