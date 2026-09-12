@@ -202,6 +202,73 @@ describe('capabilities', () => {
     });
   });
 
+  describe('null fields read as absent', () => {
+    it('accepts a server whose description is an explicit null', () => {
+      const caps = normalizeCapabilities({
+        providers: ['claude-code'],
+        servers: [
+          {
+            id: 'sharecube',
+            type: 'mcp',
+            def: { url: 'https://example.test/mcp' },
+            description: null,
+          },
+        ],
+      });
+
+      expect(caps.servers[0].id).toBe('sharecube');
+      expect(caps.servers[0].description).toBeUndefined();
+    });
+
+    it('keeps a null that is a tool default, not an absent field', () => {
+      const caps = normalizeCapabilities({
+        providers: ['claude-code'],
+        servers: [{ id: 's', type: 'mcp', def: { url: 'https://example.test/mcp' } }],
+        tools: [
+          {
+            id: 'search',
+            type: 'mcp',
+            def: { server: '@s', tool: 'search', defaults: { filter: null } },
+          },
+          {
+            id: 'run',
+            type: 'command',
+            def: {
+              run: {
+                cmd: 'echo',
+                args: [{ name: 'mode', type: 'string', default: null }],
+              },
+            },
+          },
+        ],
+      });
+
+      expect((caps.tools[0].def as any).defaults).toEqual({ filter: null });
+      expect((caps.tools[1].def as any).run.args[0].default).toBeNull();
+    });
+
+    it('accepts a bare "description:" key in YAML (parses as null)', async () => {
+      const file = join(tempDir, 'capabilities.yaml');
+      await writeFile(
+        file,
+        [
+          'providers:',
+          '  - claude-code',
+          'servers:',
+          '  - id: sharecube',
+          '    type: mcp',
+          '    description:',
+          '    def:',
+          '      url: https://example.test/mcp',
+          '',
+        ].join('\n'),
+      );
+
+      const caps = await parseCapabilitiesFile(file, 'yaml');
+      expect(caps.servers[0].description).toBeUndefined();
+    });
+  });
+
   describe('createDefaultCapabilities', () => {
     it('should create default capabilities structure', () => {
       const capabilities = createDefaultCapabilities();
