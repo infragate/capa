@@ -1,4 +1,9 @@
-import type { Capabilities } from '../../../../types/capabilities';
+import {
+  effectiveExpose,
+  serversWithExposePolicy,
+  synthesizedToolId,
+} from '../../../../shared/server-tool-exposure';
+import type { Capabilities, MCPServer } from '../../../../types/capabilities';
 import {
   getQualifiedToolName,
   normalizeToolReference,
@@ -52,6 +57,53 @@ export function collectPluginSkillWarnings(capabilities: Capabilities): string[]
   return warnings;
 }
 
+/** True when a server's policy can still produce a tool by this remote name. */
+function policyCanExpose(server: MCPServer, name: string): boolean {
+  const named = server.tools ?? [];
+  const listed =
+    named.includes(name) || named.some((n) => synthesizedToolId(n) === name);
+  switch (effectiveExpose(server)) {
+    case 'exactly':
+      return listed;
+    case 'except':
+      return !listed;
+    default:
+      // `all`: only the server's live tool list can say, and install has no
+      // business asking it here.
+      return true;
+  }
+}
+
+/**
+ * True when a sub-agent tool ref points at a tool capa resolves from a server
+ * rather than from the file (`@github`, `@github.*`, `@github.create_issue`),
+ * so its absence from `tools:` is expected rather than a typo.
+ *
+ * Only servers that actually expose their own tools count — declaring any
+ * `tools:` entry for a server turns its policy off, as does `expose: none` —
+ * and a name the policy definitively excludes still warns.
+ */
+function referencesExposingServer(
+  toolRef: string,
+  capabilities: Capabilities,
+): boolean {
+  const stripped = (toolRef.startsWith('@') ? toolRef.slice(1) : toolRef)
+    .replace(/\.\*$/, '');
+  const eligible = serversWithExposePolicy(capabilities);
+
+  if (eligible.some((s) => s.id === stripped)) return true;
+
+  // `<serverId>.<remoteName>`. Server ids may contain dots, so match the
+  // longest configured id that prefixes the ref instead of splitting on the
+  // last dot.
+  const server = eligible
+    .filter((s) => stripped.startsWith(`${s.id}.`))
+    .sort((a, b) => b.id.length - a.id.length)[0];
+  if (!server) return false;
+
+  return policyCanExpose(server, stripped.slice(server.id.length + 1));
+}
+
 // Warn for each subagent that references a skill or tool id that is not
 // declared in the top-level `skills` / `tools` arrays. Today these typos
 // pass silently: rendered files include junk bullets and the subagent loses
@@ -61,20 +113,6 @@ export function collectPluginSkillWarnings(capabilities: Capabilities): string[]
 // Tool refs accept three equivalent forms (handled by resolveSubagentToolRef):
 // `@server.tool`, `server.tool`, or the bare local tool id. The warning fires
 // only when none of those resolve.
-/**
- * True when a sub-agent tool ref points at a server whose tools capa resolves
- * from the server itself (`@github`, `@github.*`, `@github.create_issue`).
- */
-function referencesExposingServer(
-  toolRef: string,
-  capabilities: Capabilities,
-): boolean {
-  const stripped = toolRef.startsWith('@') ? toolRef.slice(1) : toolRef;
-  const serverId = stripped.replace(/\.(\*|[^.]+)$/, '');
-  const server = (capabilities.servers ?? []).find((s) => s.id === serverId);
-  return !!server && server.expose !== 'none';
-}
-
 export function collectSubagentRefWarnings(capabilities: Capabilities): string[] {
   const subagents = capabilities.subagents ?? [];
   if (subagents.length === 0) return [];
