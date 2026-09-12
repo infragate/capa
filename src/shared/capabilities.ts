@@ -93,17 +93,55 @@ const mcpServerDefSchema = z
 		message: "MCP server def requires url or cmd",
 	});
 
+const exposePolicyFields = {
+	expose: z.enum(["all", "except", "exactly", "none"]).optional(),
+	tools: z.array(z.string()).optional(),
+};
+
+/**
+ * `tools` is the name list for `except` / `exactly` and means nothing without
+ * one — silently ignoring it, or reading a missing list as an empty denylist,
+ * exposes a different set than the author asked for. Plugin server entries get
+ * the same check: their policy is copied onto the resolved server verbatim.
+ */
+function refineExposePolicy(
+	server: { id?: string; expose?: string; tools?: string[] },
+	ctx: z.RefinementCtx,
+): void {
+	const label = server.id ? `server "${server.id}"` : "plugin server";
+	const names = server.tools ?? [];
+	if (server.expose === "except" || server.expose === "exactly") {
+		if (names.length === 0) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["tools"],
+				message: `${label}: expose: ${server.expose} needs a "tools" list of remote tool names`,
+			});
+		}
+		return;
+	}
+	if (names.length > 0) {
+		ctx.addIssue({
+			code: z.ZodIssueCode.custom,
+			path: ["tools"],
+			message: `${label}: "tools" only applies to expose: except | exactly`,
+		});
+	}
+}
+
 const mcpServerSchema = z
 	.object({
 		id: z.string(),
 		type: z.literal("mcp"),
 		def: mcpServerDefSchema,
+		...exposePolicyFields,
 		sourcePlugin: sourcePluginSchema.optional(),
 		sourcePluginServerKey: z.string().optional(),
 		displayName: z.string().optional(),
 		description: z.string().optional(),
 	})
-	.passthrough();
+	.passthrough()
+	.superRefine(refineExposePolicy);
 
 const toolFormatterSchema = z
 	.object({
@@ -194,7 +232,13 @@ const pluginSchema = z
 		servers: z
 			.record(
 				z.string(),
-				z.object({ as: z.string().optional() }).passthrough(),
+				z
+					.object({
+						as: z.string().optional(),
+						...exposePolicyFields,
+					})
+					.passthrough()
+					.superRefine(refineExposePolicy),
 			)
 			.optional(),
 	})

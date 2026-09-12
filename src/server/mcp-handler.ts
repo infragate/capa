@@ -20,7 +20,7 @@ import type {
 import {
 	getQualifiedToolName,
 	normalizeToolName,
-	resolveSubagentToolRef,
+	resolveSubagentToolRefs,
 } from "../types/capabilities";
 import { VERSION } from "../version";
 import { MCPProxy } from "./mcp-proxy";
@@ -272,8 +272,9 @@ export class CapaMCPServer {
 		if (!subAgent) return null;
 		const allowed = new Set<string>();
 		for (const ref of subAgent.tools) {
-			const tool = resolveSubagentToolRef(ref, capabilities.tools);
-			if (tool) allowed.add(getQualifiedToolName(tool));
+			for (const tool of resolveSubagentToolRefs(ref, capabilities.tools)) {
+				allowed.add(getQualifiedToolName(tool));
+			}
 		}
 		return allowed;
 	}
@@ -569,9 +570,13 @@ export class CapaMCPServer {
 			args,
 		});
 		try {
+			const capabilities = this.sessionManager.getProjectCapabilities(
+				this.projectId,
+			);
 			const toolIds = this.sessionManager.setupTools(
 				this.sessionId!,
 				args.skills,
+				capabilities ? this.getAgentAllowedToolIds(capabilities) : null,
 			);
 			const signatures = await this.buildToolSignaturesFor(toolIds);
 			// `setupTools` updates the session's activeSkills set; read it back so
@@ -761,6 +766,38 @@ export class CapaMCPServer {
 
 			// Check if tool is in available tools for the session (normalize for dot/underscore compat)
 			const normalizedToolName = normalizeToolName(toolName);
+
+			// On a sub-agent endpoint the allow-list is the authority: `call_tool`
+			// otherwise authorizes purely by session activation, which the direct
+			// tools/call path checks before dispatch and this one did not.
+			const agentCapabilities = this.agentId
+				? this.sessionManager.getProjectCapabilities(this.projectId)
+				: null;
+			const agentAllowed = agentCapabilities
+				? this.getAgentAllowedToolIds(agentCapabilities)
+				: null;
+			if (
+				agentAllowed &&
+				![...agentAllowed].some(
+					(id) => normalizeToolName(id) === normalizedToolName,
+				)
+			) {
+				this.logger.warn(
+					`Sub-agent "${this.agentId}" attempted to call unauthorized tool: ${toolName}`,
+				);
+				const result = await this.buildCallToolErrorResult(
+					toolName,
+					`Tool "${toolName}" is not available on this sub-agent endpoint (${this.agentId}). Use the main capa endpoint to access all tools.`,
+					{ includeSchema: false },
+				);
+				this.finishTraceError(
+					traceId,
+					`Tool not available on sub-agent: ${toolName}`,
+					result,
+				);
+				return result;
+			}
+
 			if (
 				!session.availableTools.some(
 					(t) => normalizeToolName(t) === normalizedToolName,

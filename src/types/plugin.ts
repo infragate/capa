@@ -1,6 +1,6 @@
 // Plugin types: capabilities reference, unified manifest, source attribution
 
-import type { OAuth2Config } from './capabilities';
+import type { OAuth2Config, ServerToolExposure } from './capabilities';
 
 /**
  * @see ProviderIntegration.pluginProviderId — registry id may differ from this manifest id
@@ -12,8 +12,9 @@ export type PluginProvider = 'cursor' | 'claude';
  * Per-server configuration for a plugin entry in capabilities.yaml.
  * Keyed by the server name in the plugin manifest's `mcpServers` section.
  *
- * Only `as` is supported — to expose specific tools from a plugin server, declare
- * them explicitly in the top-level `tools` section referencing the (renamed) server.
+ * `as` renames the server; `expose` / `tools` set which of its remote tools
+ * become capa tools. Without an `expose` policy, tools must still be declared
+ * explicitly in the top-level `tools` section referencing the (renamed) server.
  */
 export interface PluginServerConfig {
   /**
@@ -21,6 +22,10 @@ export interface PluginServerConfig {
    * Use this to rename a plugin server or resolve collisions with other servers.
    */
   as?: string;
+  /** Expose this plugin server's remote tools (see `MCPServer.expose`). */
+  expose?: ServerToolExposure;
+  /** Remote tool names for `except` / `exactly`. */
+  tools?: string[];
 }
 
 /**

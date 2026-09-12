@@ -108,6 +108,10 @@ export interface Server {
   /** Whether the user has turned this MCP server on in the UI. */
   enabled: boolean;
   description?: string | null;
+  /** Which remote tools become capa tools: all | except | exactly (null = explicit `tools:` only). */
+  expose?: 'all' | 'except' | 'exactly' | null;
+  /** Remote tool names for except / exactly. */
+  exposeTools?: string[] | null;
 }
 
 export interface ResolvedPlugin {

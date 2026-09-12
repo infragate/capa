@@ -2,7 +2,7 @@ import type { Capabilities } from '../../../../types/capabilities';
 import {
   getQualifiedToolName,
   normalizeToolReference,
-  resolveSubagentToolRef,
+  resolveSubagentToolRefs,
 } from '../../../../types/capabilities';
 
 // Tool IDs not exposed to MCP clients because no skill requires them. In
@@ -18,6 +18,9 @@ export function getUnexposedToolIds(capabilities: Capabilities): string[] {
     }
   }
   return capabilities.tools
+    // Tools from a server's `expose` policy are exposed by that policy, not
+    // by a skill requiring them.
+    .filter((t) => !t.fromServerExpose)
     .map((t) => getQualifiedToolName(t))
     .filter((id) => !requiredBySkills.has(id));
 }
@@ -75,7 +78,7 @@ export function collectSubagentRefWarnings(capabilities: Capabilities): string[]
       }
     }
     for (const toolRef of sa.tools ?? []) {
-      if (!resolveSubagentToolRef(toolRef, capabilities.tools)) {
+      if (resolveSubagentToolRefs(toolRef, capabilities.tools).length === 0) {
         warnings.push(
           `Subagent "${sa.id}" references unknown tool "${toolRef}". ` +
           `Add it under top-level \`tools\` (accepts \`tool_id\`, \`server.tool\`, or \`@server.tool\`) or remove it from the subagent.`,
@@ -93,6 +96,11 @@ export function collectUnreferencedPluginServerWarnings(capabilities: Capabiliti
   if (resolved.length === 0) return [];
 
   const referencedServerIds = new Set<string>();
+  // Any server that exposes its own tools is referenced by that policy — only
+  // an `expose: none` server still needs a `tools:` entry to be usable.
+  for (const server of capabilities.servers ?? []) {
+    if (server.expose !== 'none') referencedServerIds.add(server.id);
+  }
   for (const tool of capabilities.tools) {
     if (tool.type !== 'mcp') continue;
     const mcpDef = tool.def as { server?: string };

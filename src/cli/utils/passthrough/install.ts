@@ -233,6 +233,12 @@ export async function passthroughInstall(opts: {
       const mcpResult = await upsertNativeMcpServer(projectPath, server.id, def, providers);
       warnings.push(...mcpResult.warnings);
       added += mcpResult.written.length;
+      if (server.expose === 'except' || server.expose === 'exactly') {
+        warnings.push(
+          `Server "${server.id}": expose: ${server.expose} is not applied in passthrough — ` +
+            'the provider gets every tool the server offers.',
+        );
+      }
       if (server.def.url) {
         warnings.push(
           `Server "${server.id}": complete OAuth/auth in your provider if required.`,

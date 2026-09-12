@@ -320,10 +320,21 @@ export interface SkillDefinition {
   ref?: string;
 }
 
+/**
+ * Which of a server's live remote tools become capa tools. Omitted means
+ * `all` — a server nobody can call is not a useful default. `none` opts out
+ * and leaves only the explicit `tools:` entries, as capa behaved before.
+ */
+export type ServerToolExposure = 'all' | 'except' | 'exactly' | 'none';
+
 export interface MCPServer {
   id: string;
   type: 'mcp';
   def: MCPServerDefinition;
+  /** Expose remote tools without writing one `tools:` entry per tool (default `all`). */
+  expose?: ServerToolExposure;
+  /** Remote tool names: denylist for `except`, allowlist for `exactly`. */
+  tools?: string[];
   sourcePlugin?: SourcePlugin;
   /** Original mcpServers key from the plugin manifest. Used to look up per-server config (alias, tool filter). */
   sourcePluginServerKey?: string;
@@ -367,6 +378,11 @@ export interface MCPServerDefinition {
 type ToolCommon = {
   id: string;
   sourcePlugin?: SourcePlugin;
+  /**
+   * Set on tools synthesized from a server's `expose` policy. Never written to
+   * the capabilities file, and exposed without a skill `requires:` entry.
+   */
+  fromServerExpose?: true;
   /** Human-readable description shown in capa sh */
   description?: string;
   /**
@@ -469,6 +485,25 @@ export function normalizeToolReference(ref: string): string {
  *
  * Returns `undefined` if no tool matches.
  */
+/**
+ * Tools a sub-agent reference allows. Same forms as resolveSubagentToolRef,
+ * plus a whole server: `@github` or `@github.*` allows every tool of that
+ * server — needed once a server exposes its tools without per-tool entries.
+ */
+export function resolveSubagentToolRefs(ref: string, tools: Tool[]): Tool[] {
+  const stripped = ref.startsWith('@') ? ref.slice(1) : ref;
+  const wildcard = stripped.endsWith('.*');
+  const serverId = wildcard ? stripped.slice(0, -2) : stripped;
+
+  if (!wildcard) {
+    const one = resolveSubagentToolRef(ref, tools);
+    if (one) return [one];
+  }
+  return tools.filter(
+    (t) => t.type === 'mcp' && t.def.server.replace(/^@/, '') === serverId,
+  );
+}
+
 export function resolveSubagentToolRef(ref: string, tools: Tool[]): Tool | undefined {
   const stripped = ref.startsWith('@') ? ref.slice(1) : ref;
   // Qualified-name match handles "@server.tool", "server.tool", and the

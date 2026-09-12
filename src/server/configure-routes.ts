@@ -5,6 +5,10 @@ import {
 } from "../shared/capabilities";
 import { logger } from "../shared/logger";
 import { detectCapabilitiesFile } from "../shared/paths";
+import {
+	expandServerExposedTools,
+	serversWithExposePolicy,
+} from "../shared/server-tool-exposure";
 import { trustStdioServers } from "../shared/stdio-allowlist";
 import { projectUiUrl } from "../shared/ui-urls";
 import { mcpServerIdsPendingCredentials } from "../shared/secret-value";
@@ -125,6 +129,45 @@ async function syncManagedArtifactsForProject(
 }
 
 /**
+ * Rebuild the tools that servers expose through their `expose` policy and hand
+ * the result to the session. Always replaces the project's snapshot — dropping
+ * the last policy has to take tools away, not leave the old ones callable.
+ *
+ * Runs with stdio launches already trusted and with the enabled-state check
+ * bypassed, the same way install-time validation lists tools: on a server's
+ * first configure it is not enabled yet, and its tools would otherwise never
+ * materialize.
+ */
+async function refreshExposedTools(
+	deps: ConfigureRouteDeps,
+	projectId: string,
+	capabilities: Capabilities,
+	apiLogger: ReturnType<typeof logger.child>,
+): Promise<{ capabilities: Capabilities; warnings: string[] }> {
+	const mcpServer = deps.getOrCreateMCPServer(projectId);
+	if (!mcpServer || serversWithExposePolicy(capabilities).length === 0) {
+		deps.sessionManager.setExposedTools(projectId, []);
+		return { capabilities, warnings: [] };
+	}
+
+	trustStdioServers(projectId, capabilities.servers ?? []);
+	const expanded = await expandServerExposedTools(capabilities, (serverId) =>
+		mcpServer.listServerTools(serverId, capabilities, {
+			connect: true,
+			throwOnError: true,
+			bypassEnabledCheck: true,
+			timeoutMs: 15_000,
+		}),
+	);
+	for (const warning of expanded.warnings) apiLogger.warn(warning);
+	apiLogger.info(
+		`Exposed ${expanded.added.length} server tool(s) via expose policy`,
+	);
+	deps.sessionManager.setExposedTools(projectId, expanded.added);
+	return { capabilities: expanded.capabilities, warnings: expanded.warnings };
+}
+
+/**
  * Reload in-memory capabilities after a file write without probing OAuth or
  * validating every MCP tool. Used for reorder (and similar) so large projects
  * do not block or drop the HTTP response while re-checking 6+ servers.
@@ -172,6 +215,16 @@ export async function applyProjectCapabilitiesOnly(
 		capabilitiesToUse.servers,
 		previousCapabilities?.servers,
 	);
+
+	// Server edits land here, not in full configure — a policy added, narrowed,
+	// or removed in the UI has to take effect without a separate install.
+	const refreshed = await refreshExposedTools(
+		deps,
+		projectId,
+		capabilitiesToUse,
+		apiLogger,
+	);
+	capabilitiesToUse = refreshed.capabilities;
 
 	if (project) {
 		await syncManagedArtifactsForProject(deps, projectId, capabilitiesToUse);
@@ -331,6 +384,20 @@ export async function runProjectConfigure(
 
 	const needsOAuth2Connection = oauth2Servers.some((s) => !s.isConnected);
 
+	// -- Server-exposed tools -------------------------------------------
+	// Servers contribute their live remote tools without one `tools:` entry
+	// each (`expose` defaults to `all`; `none` opts out). Synthesized here,
+	// before validation and before the session sees the capabilities, so every
+	// downstream consumer — tools/list, `capa sh`, sub-agents — sees one list.
+	const exposeRefresh = await refreshExposedTools(
+		deps,
+		projectId,
+		capabilitiesToUse,
+		apiLogger,
+	);
+	capabilitiesToUse = exposeRefresh.capabilities;
+	const exposeWarnings = exposeRefresh.warnings;
+
 	// -- Tool validation (parallel per server) --------------------------
 	apiLogger.info("Validating tools...");
 	// Trust authored defs only — never resolve secrets into the allowlist fingerprint.
@@ -435,6 +502,7 @@ export async function runProjectConfigure(
 			oauth2Servers,
 			credentialsUrl,
 			toolValidation: toolValidationResults,
+			...(exposeWarnings.length > 0 ? { exposeWarnings } : {}),
 		};
 	}
 
@@ -443,6 +511,7 @@ export async function runProjectConfigure(
 		success: true,
 		needsCredentials: false,
 		toolValidation: toolValidationResults,
+		...(exposeWarnings.length > 0 ? { exposeWarnings } : {}),
 	};
 }
 

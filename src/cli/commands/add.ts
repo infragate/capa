@@ -50,6 +50,8 @@ export interface AddCommandOptions {
   headerFromFile?: string[];
   cwd?: string;
   description?: string;
+  expose?: string;
+  tools?: string;
   // Tool flags
   mcpServer?: string;
   mcpTool?: string;
@@ -326,6 +328,8 @@ async function appendTypedEntry(
       headerFromFile: options.headerFromFile,
       cwd: options.cwd,
       description: options.description,
+      expose: options.expose,
+      tools: options.tools,
     });
     if ((capabilities.servers ?? []).find((s) => s.id === entry.id)) {
       throw new Error(`Server with id "${entry.id}" already exists in capabilities file.`);
@@ -348,6 +352,21 @@ async function appendTypedEntry(
     });
     if ((capabilities.tools ?? []).find((t) => t.id === entry.id)) {
       throw new Error(`Tool with id "${entry.id}" already exists in capabilities file.`);
+    }
+    // Declaring a tool for a server turns off that server's exposure policy —
+    // say it once, here, where the change actually happens.
+    if (entry.type === 'mcp') {
+      const serverId = entry.def.server.replace(/^@/, '');
+      const alreadyDeclared = (capabilities.tools ?? []).some(
+        (t) => t.type === 'mcp' && t.def.server.replace(/^@/, '') === serverId,
+      );
+      const server = (capabilities.servers ?? []).find((s) => s.id === serverId);
+      if (!alreadyDeclared && server && server.expose !== 'none') {
+        console.log(
+          `Note: "@${serverId}" now has a declared tool, so its tools entries are its whole tool list.\n` +
+            '      Its other remote tools are no longer exposed automatically.',
+        );
+      }
     }
     await appendCapabilityEntry(path, format, 'tools', entry);
     label = 'tool';
