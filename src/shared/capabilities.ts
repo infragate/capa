@@ -246,7 +246,9 @@ const pluginSchema = z
 
 const optionsSchema = z
 	.object({
-		toolExposure: z.enum(["expose-all", "on-demand", "none"]).optional(),
+		toolExposure: z
+			.enum(["expose-all", "on-demand", "search", "none"])
+			.optional(),
 		agentActivity: z.boolean().optional(),
 		security: z
 			.object({

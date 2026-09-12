@@ -9,10 +9,11 @@ const SKIP_KINDS = new Set([
   'session',
   'compact',
   'setup_tools',
+  'search',
 ]);
 
-/** Capa on-demand MCP meta-tools — traced again as the real tool via `call_tool` / `tool`. */
-const CAPA_META_TOOL_NAMES = new Set(['call_tool', 'setup_tools']);
+/** Capa meta-tools (on-demand / search) — traced again as the real tool via `call_tool` / `tool`. */
+const CAPA_META_TOOL_NAMES = new Set(['call_tool', 'setup_tools', 'search']);
 
 /** Canonical labels for well-known agent tools. */
 const TOOL_ALIASES: Record<string, string> = {
