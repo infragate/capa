@@ -880,6 +880,64 @@ describe('handleMessage > search mode', () => {
     expect(payload.message).toMatch(/No tools matched/);
   });
 
+  it('rejects a search call with no query instead of listing everything', async () => {
+    const resp = await call('search', {});
+    const payload = parseToolText(resp.result);
+    expect(payload.error).toMatch(/requires a string "query"/);
+
+    // Nothing was activated by the malformed call.
+    const denied = await h.mcp.handleMessage({
+      jsonrpc: '2.0',
+      id: 3,
+      method: 'tools/call',
+      params: {
+        name: 'call_tool',
+        arguments: { name: 'github.create_issue', data: { title: 't' } },
+      },
+    });
+    expect(parseToolText(denied.result).error).toMatch(/not activated/);
+  });
+
+  it('tells an unactivated call to search, not to call setup_tools', async () => {
+    await h.mcp.handleMessage({ jsonrpc: '2.0', id: 1, method: 'initialize' });
+    const denied = await h.mcp.handleMessage({
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'tools/call',
+      params: {
+        name: 'call_tool',
+        arguments: { name: 'github.create_issue', data: { title: 't' } },
+      },
+    });
+    const error = parseToolText(denied.result).error;
+    expect(error).toMatch(/search/);
+    expect(error).not.toMatch(/setup_tools/);
+  });
+
+  it('still lists everything for an explicitly empty query', async () => {
+    const payload = parseToolText((await call('search', { query: '' })).result);
+    expect(payload.matches.map((m: any) => m.tool)).toEqual([
+      'github.create_issue',
+      'slack.post_message',
+    ]);
+  });
+
+  it('leaves a direct tools/call ungated, like every other mode', async () => {
+    // `capa sh` executes tools by POSTing tools/call with the real tool name,
+    // in every exposure mode — gating that on activation would reject the
+    // shell itself. The activation gate is a discovery convention for the
+    // `call_tool` wrapper; the sub-agent allow-list is the real boundary and
+    // is enforced separately on this path.
+    await h.mcp.handleMessage({ jsonrpc: '2.0', id: 1, method: 'initialize' });
+    const resp = await h.mcp.handleMessage({
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'tools/call',
+      params: { name: 'github.create_issue', arguments: { title: 't' } },
+    });
+    expect(JSON.stringify(resp)).not.toMatch(/not activated/);
+  });
+
   it('points setup_tools at search', async () => {
     const resp = await call('setup_tools', { skills: ['whatever'] });
     expect(JSON.stringify(resp)).toMatch(/search/);

@@ -142,3 +142,68 @@ describe("searchableTools", () => {
 		]);
 	});
 });
+
+describe("ranking and tokenizing details", () => {
+	it("prefers wider query coverage over one strong match", () => {
+		const tools: SearchableTool[] = [
+			{
+				qualifiedName: "deploy",
+				id: "deploy",
+				description: "Ship the service.",
+			},
+			{
+				qualifiedName: "ops.rollout",
+				id: "rollout",
+				description: "Deploy the staging environment.",
+			},
+		];
+
+		// "deploy" alone is an exact id match on the first tool; adding
+		// "staging" makes the second one the better answer.
+		expect(names(searchTools(tools, "deploy"))[0]).toBe("deploy");
+		expect(names(searchTools(tools, "deploy staging"))[0]).toBe("ops.rollout");
+	});
+
+	it("ignores filler words when counting coverage", () => {
+		const tools: SearchableTool[] = [
+			{
+				qualifiedName: "github.create_pr",
+				id: "create_pr",
+				description: "Open a pull request.",
+			},
+			{
+				qualifiedName: "notes.append",
+				id: "append",
+				description: "Add a line to a note in the project.",
+			},
+		];
+
+		expect(names(searchTools(tools, "open a pull request"))[0]).toBe(
+			"github.create_pr",
+		);
+	});
+
+	it("tokenizes non-ASCII words instead of dropping them", () => {
+		expect(tokenize("déployer l'environnement")).toEqual([
+			"déployer",
+			"l",
+			"environnement",
+		]);
+	});
+
+	it("does not fall back to listing everything for a non-ASCII query", () => {
+		const tools: SearchableTool[] = [
+			{ qualifiedName: "a.one", id: "one", description: "first" },
+			{ qualifiedName: "b.two", id: "two", description: "second" },
+		];
+		expect(searchTools(tools, "デプロイ")).toEqual([]);
+	});
+
+	it("still searches when the query is nothing but filler", () => {
+		const tools: SearchableTool[] = [
+			{ qualifiedName: "how_to", id: "how_to", description: "A how-to." },
+			{ qualifiedName: "other", id: "other", description: "Unrelated." },
+		];
+		expect(names(searchTools(tools, "how do I"))).toEqual(["how_to"]);
+	});
+});

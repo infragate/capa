@@ -650,7 +650,15 @@ export class CapaMCPServer {
 		limit?: number;
 	}): Promise<any> {
 		const session = this.ensureSession();
-		const query = typeof args?.query === "string" ? args.query : "";
+		if (typeof args?.query !== "string") {
+			// An explicit "" is the documented list-everything request; a missing
+			// or non-string query is a malformed call, and coercing it would
+			// activate ten unrelated tools.
+			return toolTextError(
+				'search requires a string "query" — the words describing what you need to do.',
+			);
+		}
+		const query = args.query;
 		const traceId = this.beginTrace({
 			kind: "search",
 			toolName: "search",
@@ -673,19 +681,26 @@ export class CapaMCPServer {
 			);
 			const hits = searchTools(candidates, query, args?.limit ?? undefined);
 
-			const matches: SearchMatch[] = [];
-			for (const hit of hits) {
-				const tool = capabilities.tools.find(
-					(t) => getQualifiedToolName(t) === hit.tool.qualifiedName,
-				);
-				if (!tool) continue;
-				const mcpTool = await this.convertToolToMCP(tool, capabilities);
-				matches.push({
-					tool: hit.tool.qualifiedName,
-					signature: buildToolSignature(mcpTool),
-					description: mcpTool.description ?? hit.tool.description,
-				});
-			}
+			// Schema conversion lists the remote server's tools. Run the hits
+			// together so several matches on one server coalesce into a single
+			// round-trip instead of paying that server's timeout once each.
+			const converted: Array<SearchMatch | null> = await Promise.all(
+				hits.map(async (hit): Promise<SearchMatch | null> => {
+					const tool = capabilities.tools.find(
+						(t) => getQualifiedToolName(t) === hit.tool.qualifiedName,
+					);
+					if (!tool) return null;
+					const mcpTool = await this.convertToolToMCP(tool, capabilities);
+					return {
+						tool: hit.tool.qualifiedName,
+						signature: buildToolSignature(mcpTool),
+						description: mcpTool.description ?? hit.tool.description,
+					};
+				}),
+			);
+			const matches: SearchMatch[] = converted.filter(
+				(m): m is SearchMatch => m !== null,
+			);
 
 			if (matches.length > 0) {
 				this.sessionManager.activateTools(
@@ -951,11 +966,17 @@ export class CapaMCPServer {
 				)
 			) {
 				this.logger.warn(`Tool not activated: ${toolName}`);
-				// The tool exists but isn't activated — `setup_tools` is the next
-				// step, so don't pre-emptively dump the schema and confuse the agent.
+				// The tool exists but isn't activated — the next step is whichever
+				// discovery meta-tool this mode exposes, so don't pre-emptively dump
+				// the schema and confuse the agent.
+				const discoveryStep =
+					this.sessionManager.getProjectCapabilities(this.projectId)?.options
+						?.toolExposure === "search"
+						? `Call search("<what you need to do>") first.`
+						: "Call setup_tools with the appropriate skills first.";
 				const result = await this.buildCallToolErrorResult(
 					toolName,
-					`Tool "${toolName}" is not activated. Call setup_tools with the appropriate skills first.`,
+					`Tool "${toolName}" is not activated. ${discoveryStep}`,
 					{ includeSchema: false },
 				);
 				this.finishTraceError(

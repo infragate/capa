@@ -30,12 +30,69 @@ export interface ToolSearchHit {
 const DEFAULT_LIMIT = 10;
 const MAX_LIMIT = 50;
 
-/** Lowercase words, splitting on anything that is not a letter or digit. */
+/**
+ * Words a query contributes nothing by matching. Ranking counts how many of
+ * the query's terms a tool matched, so "open a pull request" must not reward a
+ * tool whose description happens to contain "a".
+ */
+const STOPWORDS = new Set([
+	"a",
+	"an",
+	"the",
+	"and",
+	"or",
+	"of",
+	"for",
+	"to",
+	"in",
+	"on",
+	"at",
+	"by",
+	"with",
+	"from",
+	"into",
+	"is",
+	"are",
+	"be",
+	"do",
+	"does",
+	"it",
+	"its",
+	"this",
+	"that",
+	"my",
+	"me",
+	"i",
+	"we",
+	"you",
+	"how",
+	"what",
+	"can",
+	"should",
+	"want",
+	"need",
+	"using",
+	"use",
+	"please",
+]);
+
+/**
+ * Lowercase words, splitting on anything that is not a letter or digit in any
+ * script — an all-non-ASCII query must produce terms, not look empty.
+ */
 export function tokenize(text: string): string[] {
 	return text
 		.toLowerCase()
-		.split(/[^a-z0-9]+/)
+		.split(/[^\p{L}\p{N}]+/u)
 		.filter(Boolean);
+}
+
+/** Query terms worth scoring: tokenized, de-duplicated, stopwords removed. */
+export function queryTerms(query: string): string[] {
+	const terms = queryTerms(query);
+	const meaningful = terms.filter((t) => !STOPWORDS.has(t));
+	// An all-stopword query ("how do I") still beats listing everything.
+	return meaningful.length > 0 ? meaningful : terms;
 }
 
 /** Shared-prefix length needed to treat two different words as the same one. */
@@ -92,8 +149,8 @@ function scoreTerm(tool: SearchableTool, term: string): number {
 
 /**
  * Tools matching `query`, best first. A tool that matches more of the query's
- * terms outranks one that matches a single term repeatedly, which is what
- * makes a two-word query behave like the AND a person expects.
+ * terms outranks one matching fewer of them however strongly, which is what
+ * makes a multi-word query behave like the AND a person expects.
  *
  * An empty query lists the first `limit` tools alphabetically — "what is
  * there?" is a reasonable thing to ask a search tool.
@@ -128,11 +185,15 @@ export function searchTools(
 			}
 		}
 		if (matchedTerms === 0) continue;
-		hits.push({ tool, score: score + matchedTerms * 3, matchedTerms });
+		hits.push({ tool, score, matchedTerms });
 	}
 
+	// Coverage first: a tool matching two of the query's words beats one that
+	// matches a single word strongly, however heavy that single match scores.
+	// Field weights only break ties within the same coverage.
 	hits.sort(
 		(a, b) =>
+			b.matchedTerms - a.matchedTerms ||
 			b.score - a.score ||
 			a.tool.qualifiedName.localeCompare(b.tool.qualifiedName),
 	);

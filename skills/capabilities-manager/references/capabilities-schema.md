@@ -205,7 +205,7 @@ Notes on `'search'`:
 - `search` takes an optional `limit` (default 10, max 50). An empty query lists tools alphabetically, which is the "what is there?" case.
 - `setup_tools` is not available in this mode — calling it returns a pointer to `search`.
 - Pairs well with a server-wide `expose: all` (see [Server tool exposure](#server-tool-exposure-serversexpose)): the whole server is reachable, and the agent pulls in only the handful of tools each task needs.
-- Tool descriptions are what searches match against, so a server with terse remote descriptions is harder to search. Explicit `tools:` entries with a `description` help.
+- Searches match a tool's id, remote name, server/group, and description. Tools capa synthesized from a server's `expose` policy carry the server's own descriptions; a tool you declare by hand in `tools:` only has the `description` you write there, so write one — the id alone is thin search text.
 
 Notes on `'none'`:
 - The capa HTTP server still runs and the project endpoints stay live; `tools/list` returns empty so MCP-aware agents don't try to discover tools through capa's MCP endpoint. `tools/call` is **not** gated — that's the path `capa sh` uses to execute tools, and gating it would mean rejecting `capa sh` itself.
