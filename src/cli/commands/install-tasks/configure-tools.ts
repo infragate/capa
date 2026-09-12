@@ -80,6 +80,7 @@ export function configureToolsTask(): Task<InstallCtx> {
       }
 
       const result = ctx.configureResult as {
+        exposeWarnings?: string[];
         toolValidation?: Array<{
           toolId: string;
           success: boolean;
@@ -89,6 +90,12 @@ export function configureToolsTask(): Task<InstallCtx> {
           error?: string;
         }>;
       };
+
+      // Servers with an `expose` policy: a typo'd tool name or an empty
+      // tool list is a warning, not a failed install.
+      for (const warning of result.exposeWarnings ?? []) {
+        ctx.warnings.push(warning);
+      }
 
       if (result.toolValidation && result.toolValidation.length > 0) {
         const successful = result.toolValidation.filter((t) => t.success && !t.pendingAuth);

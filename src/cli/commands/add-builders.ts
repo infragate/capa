@@ -74,6 +74,43 @@ export interface BuildServerOptions {
   headerFromFile?: string[];
   cwd?: string;
   description?: string;
+  /** all | except | exactly | none — omitted means `all` for a new server. */
+  expose?: string;
+  /** Comma-separated remote tool names for except / exactly. */
+  tools?: string;
+}
+
+/**
+ * Exposure policy for a new server. A server nobody can call is useless, so a
+ * new one defaults to `all`; `--expose none` keeps the older explicit-only
+ * behavior where each tool needs its own `tools:` entry.
+ */
+function buildExposure(opts: BuildServerOptions): Pick<MCPServer, 'expose' | 'tools'> {
+  const mode = (opts.expose ?? 'all').trim().toLowerCase();
+  const names = (opts.tools ?? '')
+    .split(',')
+    .map((t) => t.trim())
+    .filter(Boolean);
+
+  if (mode === 'none') {
+    if (names.length > 0) {
+      throw new Error('--tools requires --expose except|exactly.');
+    }
+    return {};
+  }
+  if (mode === 'all') {
+    if (names.length > 0) {
+      throw new Error('--tools requires --expose except|exactly.');
+    }
+    return { expose: 'all' };
+  }
+  if (mode === 'except' || mode === 'exactly') {
+    if (names.length === 0) {
+      throw new Error(`--expose ${mode} requires --tools <name,name> (remote tool names).`);
+    }
+    return { expose: mode, tools: names };
+  }
+  throw new Error(`Unknown --expose "${opts.expose}". Use all, except, exactly, or none.`);
 }
 
 export function buildServerEntry(opts: BuildServerOptions): MCPServer {
@@ -108,6 +145,8 @@ export function buildServerEntry(opts: BuildServerOptions): MCPServer {
     fromFile: opts.headerFromFile,
   });
 
+  const exposure = buildExposure(opts);
+
   if (hasCmd) {
     const def: MCPServer['def'] = { cmd: opts.cmd!.trim() };
     if (opts.arg && opts.arg.length > 0) def.args = opts.arg;
@@ -116,6 +155,7 @@ export function buildServerEntry(opts: BuildServerOptions): MCPServer {
     return {
       id,
       type: 'mcp',
+      ...exposure,
       def,
       ...(opts.description?.trim() ? { description: opts.description.trim() } : {}),
     };
@@ -126,6 +166,7 @@ export function buildServerEntry(opts: BuildServerOptions): MCPServer {
   return {
     id,
     type: 'mcp',
+    ...exposure,
     def,
     ...(opts.description?.trim() ? { description: opts.description.trim() } : {}),
   };

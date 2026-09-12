@@ -20,7 +20,7 @@ import type {
 import {
 	getQualifiedToolName,
 	normalizeToolName,
-	resolveSubagentToolRef,
+	resolveSubagentToolRefs,
 } from "../types/capabilities";
 import { VERSION } from "../version";
 import { MCPProxy } from "./mcp-proxy";
@@ -272,8 +272,9 @@ export class CapaMCPServer {
 		if (!subAgent) return null;
 		const allowed = new Set<string>();
 		for (const ref of subAgent.tools) {
-			const tool = resolveSubagentToolRef(ref, capabilities.tools);
-			if (tool) allowed.add(getQualifiedToolName(tool));
+			for (const tool of resolveSubagentToolRefs(ref, capabilities.tools)) {
+				allowed.add(getQualifiedToolName(tool));
+			}
 		}
 		return allowed;
 	}

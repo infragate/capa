@@ -98,12 +98,34 @@ const mcpServerSchema = z
 		id: z.string(),
 		type: z.literal("mcp"),
 		def: mcpServerDefSchema,
+		expose: z.enum(["all", "except", "exactly"]).optional(),
+		tools: z.array(z.string()).optional(),
 		sourcePlugin: sourcePluginSchema.optional(),
 		sourcePluginServerKey: z.string().optional(),
 		displayName: z.string().optional(),
 		description: z.string().optional(),
 	})
-	.passthrough();
+	.passthrough()
+	.superRefine((server, ctx) => {
+		const names = server.tools ?? [];
+		if (server.expose === "except" || server.expose === "exactly") {
+			if (names.length === 0) {
+				ctx.addIssue({
+					code: z.ZodIssueCode.custom,
+					path: ["tools"],
+					message: `server "${server.id}": expose: ${server.expose} needs a "tools" list of remote tool names`,
+				});
+			}
+			return;
+		}
+		if (names.length > 0) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["tools"],
+				message: `server "${server.id}": "tools" only applies to expose: except | exactly`,
+			});
+		}
+	});
 
 const toolFormatterSchema = z
 	.object({
@@ -194,7 +216,13 @@ const pluginSchema = z
 		servers: z
 			.record(
 				z.string(),
-				z.object({ as: z.string().optional() }).passthrough(),
+				z
+					.object({
+						as: z.string().optional(),
+						expose: z.enum(["all", "except", "exactly"]).optional(),
+						tools: z.array(z.string()).optional(),
+					})
+					.passthrough(),
 			)
 			.optional(),
 	})

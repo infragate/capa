@@ -7,6 +7,10 @@ import { logger } from "../shared/logger";
 import { detectCapabilitiesFile } from "../shared/paths";
 import { trustStdioServers } from "../shared/stdio-allowlist";
 import { projectUiUrl } from "../shared/ui-urls";
+import {
+	expandServerExposedTools,
+	serversWithExposePolicy,
+} from "../shared/server-tool-exposure";
 import { extractAllVariables } from "../shared/variable-resolver";
 import type { Capabilities } from "../types/capabilities";
 import type { OAuth2Config } from "../types/oauth";
@@ -330,6 +334,35 @@ export async function runProjectConfigure(
 
 	const needsOAuth2Connection = oauth2Servers.some((s) => !s.isConnected);
 
+	// -- Server-exposed tools -------------------------------------------
+	// Servers with an `expose` policy contribute their live remote tools
+	// without one `tools:` entry each. Synthesized here (before validation
+	// and before the session sees the capabilities) so every downstream
+	// consumer — tools/list, `capa sh`, sub-agents — sees one tool list.
+	const exposeWarnings: string[] = [];
+	{
+		const mcpServer = deps.getOrCreateMCPServer(projectId);
+		if (mcpServer && serversWithExposePolicy(capabilitiesToUse).length > 0) {
+			const expanded = await expandServerExposedTools(
+				capabilitiesToUse,
+				(serverId) =>
+					mcpServer.listServerTools(serverId, capabilitiesToUse, {
+						connect: true,
+						throwOnError: true,
+						timeoutMs: 15_000,
+					}),
+			);
+			exposeWarnings.push(...expanded.warnings);
+			for (const warning of expanded.warnings) apiLogger.warn(warning);
+			apiLogger.info(
+				`Exposed ${expanded.added.length} server tool(s) via expose policy`,
+			);
+			capabilitiesToUse = expanded.capabilities;
+			// Always set — an empty list clears tools from a policy that was removed.
+			deps.sessionManager.setExposedTools(projectId, expanded.added);
+		}
+	}
+
 	// -- Tool validation (parallel per server) --------------------------
 	apiLogger.info("Validating tools...");
 	// Trust authored defs only — never resolve secrets into the allowlist fingerprint.
@@ -414,6 +447,7 @@ export async function runProjectConfigure(
 			oauth2Servers,
 			credentialsUrl,
 			toolValidation: toolValidationResults,
+			...(exposeWarnings.length > 0 ? { exposeWarnings } : {}),
 		};
 	}
 
@@ -422,6 +456,7 @@ export async function runProjectConfigure(
 		success: true,
 		needsCredentials: false,
 		toolValidation: toolValidationResults,
+		...(exposeWarnings.length > 0 ? { exposeWarnings } : {}),
 	};
 }
 

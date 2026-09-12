@@ -226,6 +226,8 @@ export async function handleGetProject(
 								sourcePlugin: s.sourcePlugin || null,
 								displayName: s.displayName || null,
 								description: s.description || null,
+								expose: s.expose ?? null,
+								exposeTools: s.tools ?? null,
 								requiresOAuth,
 								isConnected,
 								enabled,

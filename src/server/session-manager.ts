@@ -1,6 +1,7 @@
 import { nanoid } from "nanoid";
 import type { CapaDatabase } from "../db/database";
 import { logger } from "../shared/logger";
+import { exposedToolNamesForServer } from "../shared/server-tool-exposure";
 import type { Capabilities, Tool } from "../types/capabilities";
 import {
 	getQualifiedToolName,
@@ -21,6 +22,8 @@ export class SessionManager {
 	private db: CapaDatabase;
 	private sessions = new Map<string, SessionInfo>();
 	private projectCapabilities = new Map<string, Capabilities>();
+	/** Tools synthesized from servers' `expose` policies, per project. */
+	private exposedTools = new Map<string, Tool[]>();
 	private capabilitiesLoadInflight = new Map<
 		string,
 		Promise<Capabilities | null>
@@ -138,8 +141,24 @@ export class SessionManager {
 			);
 		}
 
+		// A ref can name a whole server (`@github`) when that server carries an
+		// `expose` policy — activating 40 tools without listing 40 skills.
+		const serverTools: string[] = [];
+		const skillsOnly: string[] = [];
+		for (const ref of skillIds) {
+			const serverId = ref.replace(/^@/, "");
+			const server = capabilities.servers?.find(
+				(s) => s.id === serverId && s.expose,
+			);
+			if (server) {
+				serverTools.push(...exposedToolNamesForServer(capabilities, serverId));
+				continue;
+			}
+			skillsOnly.push(ref);
+		}
+
 		// Validate skills exist
-		for (const skillId of skillIds) {
+		for (const skillId of skillsOnly) {
 			const skill = capabilities.skills.find((s) => s.id === skillId);
 			if (!skill) {
 				throw new Error(`Skill not found: ${skillId}`);
@@ -147,10 +166,12 @@ export class SessionManager {
 		}
 
 		// Merge with previously active skills so tools from earlier setup_tools calls remain available
-		const mergedSkills = [...new Set([...session.activeSkills, ...skillIds])];
+		const mergedSkills = [...new Set([...session.activeSkills, ...skillsOnly])];
 		session.activeSkills = mergedSkills;
 		const skillTools = this.getToolsForSkills(session.projectId, mergedSkills);
-		session.availableTools = [...new Set(skillTools)];
+		session.availableTools = [
+			...new Set([...session.availableTools, ...skillTools, ...serverTools]),
+		];
 		session.lastActivity = Date.now();
 
 		this.logger.debug(`Available tools: ${session.availableTools.join(", ")}`);
@@ -226,6 +247,14 @@ export class SessionManager {
 
 		const requiredTools = new Set<string>();
 
+		// Tools a server exposes through its `expose` policy are available
+		// without a per-tool `requires:` — listing them again would defeat it.
+		for (const tool of capabilities.tools) {
+			if (tool.fromServerExpose) {
+				requiredTools.add(getQualifiedToolName(tool));
+			}
+		}
+
 		// Iterate through all skills and collect their required tools (resolved to qualified names)
 		for (const skill of capabilities.skills) {
 			if (skill.def && skill.def.requires) {
@@ -246,8 +275,45 @@ export class SessionManager {
 		this.logger.debug(
 			`Skills: ${capabilities.skills.length}, Tools: ${capabilities.tools.length}, Servers: ${capabilities.servers.length}`,
 		);
-		this.projectCapabilities.set(projectId, capabilities);
-		this.db.setProjectCapabilities(projectId, JSON.stringify(capabilities));
+		const merged = this.withExposedTools(projectId, capabilities);
+		this.projectCapabilities.set(projectId, merged);
+		this.db.setProjectCapabilities(projectId, JSON.stringify(merged));
+	}
+
+	/**
+	 * Record the tools synthesized from servers' `expose` policies. Kept apart
+	 * from the authored list so the refresh paths that re-read the capabilities
+	 * file (UI polls, OAuth sync) don't drop them until the next configure.
+	 * Pass an empty array to clear a project's policy tools.
+	 */
+	setExposedTools(projectId: string, tools: Tool[]): void {
+		this.exposedTools.set(projectId, tools);
+		const current = this.projectCapabilities.get(projectId);
+		if (!current) return;
+		// Re-apply against the authored list only — feeding the merged one back
+		// in would re-learn the tools this call is meant to replace.
+		this.setProjectCapabilities(projectId, {
+			...current,
+			tools: current.tools.filter((t) => !t.fromServerExpose),
+		});
+	}
+
+	/** Authored tools plus whatever the project's servers expose. */
+	private withExposedTools(
+		projectId: string,
+		capabilities: Capabilities,
+	): Capabilities {
+		const incoming = capabilities.tools.filter((t) => t.fromServerExpose);
+		if (incoming.length > 0) this.exposedTools.set(projectId, incoming);
+		const exposed = this.exposedTools.get(projectId) ?? [];
+		if (exposed.length === 0 && incoming.length === 0) return capabilities;
+		return {
+			...capabilities,
+			tools: [
+				...capabilities.tools.filter((t) => !t.fromServerExpose),
+				...exposed,
+			],
+		};
 	}
 
 	/**
@@ -255,6 +321,7 @@ export class SessionManager {
 	 */
 	clearProjectCapabilities(projectId: string): void {
 		this.projectCapabilities.delete(projectId);
+		this.exposedTools.delete(projectId);
 		this.capabilitiesLoadInflight.delete(projectId);
 	}
 
@@ -288,8 +355,9 @@ export class SessionManager {
 			return null;
 		}
 		const capabilities = JSON.parse(raw) as Capabilities;
-		this.projectCapabilities.set(projectId, capabilities);
-		return capabilities;
+		const merged = this.withExposedTools(projectId, capabilities);
+		this.projectCapabilities.set(projectId, merged);
+		return merged;
 	}
 
 	/**

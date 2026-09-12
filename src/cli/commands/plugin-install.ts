@@ -554,6 +554,8 @@ export async function resolvePlugins(
           sourcePlugin,
           sourcePluginServerKey: serverKey,
           displayName: serverKey,
+          ...(config?.expose ? { expose: config.expose } : {}),
+          ...(config?.tools ? { tools: config.tools } : {}),
         });
       } else if (resolvedDef.cmd) {
         mergedServers.push({
@@ -568,6 +570,8 @@ export async function resolvePlugins(
           sourcePlugin,
           sourcePluginServerKey: serverKey,
           displayName: serverKey,
+          ...(config?.expose ? { expose: config.expose } : {}),
+          ...(config?.tools ? { tools: config.tools } : {}),
         });
       }
     }

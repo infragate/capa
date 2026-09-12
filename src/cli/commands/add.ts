@@ -50,6 +50,8 @@ export interface AddCommandOptions {
   headerFromFile?: string[];
   cwd?: string;
   description?: string;
+  expose?: string;
+  tools?: string;
   // Tool flags
   mcpServer?: string;
   mcpTool?: string;
@@ -326,6 +328,8 @@ async function appendTypedEntry(
       headerFromFile: options.headerFromFile,
       cwd: options.cwd,
       description: options.description,
+      expose: options.expose,
+      tools: options.tools,
     });
     if ((capabilities.servers ?? []).find((s) => s.id === entry.id)) {
       throw new Error(`Server with id "${entry.id}" already exists in capabilities file.`);

@@ -42,6 +42,8 @@ export function ServerDialog({
   const [cmd, setCmd] = useState('');
   const [args, setArgs] = useState('');
   const [description, setDescription] = useState('');
+  const [expose, setExpose] = useState<'none' | 'all' | 'except' | 'exactly'>('all');
+  const [exposeTools, setExposeTools] = useState('');
   const [headers, setHeaders] = useState<SecretValuePair[]>([]);
   const [env, setEnv] = useState<SecretValuePair[]>([]);
   const [cwd, setCwd] = useState('');
@@ -66,6 +68,8 @@ export function ServerDialog({
     setCmd('');
     setArgs('');
     setDescription('');
+    setExpose('all');
+    setExposeTools('');
     setHeaders([]);
     setEnv([]);
     setCwd('');
@@ -89,6 +93,8 @@ export function ServerDialog({
     setCmd(s.cmd || '');
     setArgs((s.args || []).join(' '));
     setDescription(s.description || '');
+    setExpose(s.expose || 'none');
+    setExposeTools((s.exposeTools || []).join(', '));
     setHeaders(recordToSecretPairs(s.headers));
     setEnv(recordToSecretPairs(s.env));
     setCwd(s.cwd || '');
@@ -164,11 +170,22 @@ export function ServerDialog({
       if (cwd.trim()) def.cwd = cwd.trim();
     }
 
+    const names = exposeTools
+      .split(',')
+      .map((n) => n.trim())
+      .filter(Boolean);
+    if ((expose === 'except' || expose === 'exactly') && names.length === 0) {
+      setError(t('actions.serverExposeNeedsTools'));
+      return null;
+    }
+
     const entry: Record<string, unknown> = {
       id: id.trim(),
       type: 'mcp',
       def,
       description: description.trim() || null,
+      expose: expose === 'none' ? null : expose,
+      tools: expose === 'except' || expose === 'exactly' ? names : null,
     };
     return entry;
   }
@@ -306,6 +323,31 @@ export function ServerDialog({
                         className="mt-1 w-full resize-y rounded-sm border border-border-tertiary bg-bg-tertiary px-2.5 py-2 text-sm text-text-primary"
                       />
                     </label>
+
+                    <label className="block text-xs text-text-secondary">
+                      {t('actions.serverExpose')}
+                      <select
+                        value={expose}
+                        onChange={(e) => setExpose(e.target.value as typeof expose)}
+                        className="mt-1 w-full rounded-sm border border-border-tertiary bg-bg-tertiary px-2.5 py-2 text-sm text-text-primary"
+                      >
+                        <option value="all">{t('actions.serverExposeAll')}</option>
+                        <option value="except">{t('actions.serverExposeExcept')}</option>
+                        <option value="exactly">{t('actions.serverExposeExactly')}</option>
+                        <option value="none">{t('actions.serverExposeNone')}</option>
+                      </select>
+                    </label>
+                    {(expose === 'except' || expose === 'exactly') && (
+                      <label className="block text-xs text-text-secondary">
+                        {t('actions.serverExposeTools')}
+                        <input
+                          value={exposeTools}
+                          onChange={(e) => setExposeTools(e.target.value)}
+                          placeholder="delete_repo, force_push"
+                          className="mt-1 w-full rounded-sm border border-border-tertiary bg-bg-tertiary px-2.5 py-2 text-sm text-text-primary"
+                        />
+                      </label>
+                    )}
 
                     {mode === 'http' ? (
                       <>
