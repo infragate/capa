@@ -1,7 +1,10 @@
 import { nanoid } from "nanoid";
 import type { CapaDatabase } from "../db/database";
 import { logger } from "../shared/logger";
-import { exposedToolNamesForServer } from "../shared/server-tool-exposure";
+import {
+	exposedToolNamesForServer,
+	mergeExposedTools,
+} from "../shared/server-tool-exposure";
 import type { Capabilities, Tool } from "../types/capabilities";
 import {
 	getQualifiedToolName,
@@ -124,7 +127,11 @@ export class SessionManager {
 	/**
 	 * Setup tools for a session (activate skills)
 	 */
-	setupTools(sessionId: string, skillIds: string[]): string[] {
+	setupTools(
+		sessionId: string,
+		skillIds: string[],
+		allowedToolIds?: Set<string> | null,
+	): string[] {
 		this.logger.info(`Setting up tools for session: ${sessionId}`);
 		this.logger.debug(`Skills to activate: ${skillIds.join(", ")}`);
 
@@ -151,7 +158,16 @@ export class SessionManager {
 				(s) => s.id === serverId && s.expose,
 			);
 			if (server) {
-				serverTools.push(...exposedToolNamesForServer(capabilities, serverId));
+				// A sub-agent endpoint activates only what its allow-list names —
+				// `call_tool` authorizes by session membership, so an unfiltered
+				// whole-server activation would hand it the tools it must not call.
+				for (const qualified of exposedToolNamesForServer(
+					capabilities,
+					serverId,
+				)) {
+					if (allowedToolIds && !allowedToolIds.has(qualified)) continue;
+					serverTools.push(qualified);
+				}
 				continue;
 			}
 			skillsOnly.push(ref);
@@ -309,10 +325,10 @@ export class SessionManager {
 		if (exposed.length === 0 && incoming.length === 0) return capabilities;
 		return {
 			...capabilities,
-			tools: [
-				...capabilities.tools.filter((t) => !t.fromServerExpose),
-				...exposed,
-			],
+			tools: mergeExposedTools(
+				capabilities.tools.filter((t) => !t.fromServerExpose),
+				exposed,
+			),
 		};
 	}
 

@@ -5,12 +5,12 @@ import {
 } from "../shared/capabilities";
 import { logger } from "../shared/logger";
 import { detectCapabilitiesFile } from "../shared/paths";
-import { trustStdioServers } from "../shared/stdio-allowlist";
-import { projectUiUrl } from "../shared/ui-urls";
 import {
 	expandServerExposedTools,
 	serversWithExposePolicy,
 } from "../shared/server-tool-exposure";
+import { trustStdioServers } from "../shared/stdio-allowlist";
+import { projectUiUrl } from "../shared/ui-urls";
 import { extractAllVariables } from "../shared/variable-resolver";
 import type { Capabilities } from "../types/capabilities";
 import type { OAuth2Config } from "../types/oauth";
@@ -128,6 +128,45 @@ async function syncManagedArtifactsForProject(
 }
 
 /**
+ * Rebuild the tools that servers expose through their `expose` policy and hand
+ * the result to the session. Always replaces the project's snapshot — dropping
+ * the last policy has to take tools away, not leave the old ones callable.
+ *
+ * Runs with stdio launches already trusted and with the enabled-state check
+ * bypassed, the same way install-time validation lists tools: on a server's
+ * first configure it is not enabled yet, and its tools would otherwise never
+ * materialize.
+ */
+async function refreshExposedTools(
+	deps: ConfigureRouteDeps,
+	projectId: string,
+	capabilities: Capabilities,
+	apiLogger: ReturnType<typeof logger.child>,
+): Promise<{ capabilities: Capabilities; warnings: string[] }> {
+	const mcpServer = deps.getOrCreateMCPServer(projectId);
+	if (!mcpServer || serversWithExposePolicy(capabilities).length === 0) {
+		deps.sessionManager.setExposedTools(projectId, []);
+		return { capabilities, warnings: [] };
+	}
+
+	trustStdioServers(projectId, capabilities.servers ?? []);
+	const expanded = await expandServerExposedTools(capabilities, (serverId) =>
+		mcpServer.listServerTools(serverId, capabilities, {
+			connect: true,
+			throwOnError: true,
+			bypassEnabledCheck: true,
+			timeoutMs: 15_000,
+		}),
+	);
+	for (const warning of expanded.warnings) apiLogger.warn(warning);
+	apiLogger.info(
+		`Exposed ${expanded.added.length} server tool(s) via expose policy`,
+	);
+	deps.sessionManager.setExposedTools(projectId, expanded.added);
+	return { capabilities: expanded.capabilities, warnings: expanded.warnings };
+}
+
+/**
  * Reload in-memory capabilities after a file write without probing OAuth or
  * validating every MCP tool. Used for reorder (and similar) so large projects
  * do not block or drop the HTTP response while re-checking 6+ servers.
@@ -175,6 +214,16 @@ export async function applyProjectCapabilitiesOnly(
 		capabilitiesToUse.servers,
 		previousCapabilities?.servers,
 	);
+
+	// Server edits land here, not in full configure — a policy added, narrowed,
+	// or removed in the UI has to take effect without a separate install.
+	const refreshed = await refreshExposedTools(
+		deps,
+		projectId,
+		capabilitiesToUse,
+		apiLogger,
+	);
+	capabilitiesToUse = refreshed.capabilities;
 
 	if (project) {
 		await syncManagedArtifactsForProject(deps, projectId, capabilitiesToUse);
@@ -339,29 +388,14 @@ export async function runProjectConfigure(
 	// without one `tools:` entry each. Synthesized here (before validation
 	// and before the session sees the capabilities) so every downstream
 	// consumer — tools/list, `capa sh`, sub-agents — sees one tool list.
-	const exposeWarnings: string[] = [];
-	{
-		const mcpServer = deps.getOrCreateMCPServer(projectId);
-		if (mcpServer && serversWithExposePolicy(capabilitiesToUse).length > 0) {
-			const expanded = await expandServerExposedTools(
-				capabilitiesToUse,
-				(serverId) =>
-					mcpServer.listServerTools(serverId, capabilitiesToUse, {
-						connect: true,
-						throwOnError: true,
-						timeoutMs: 15_000,
-					}),
-			);
-			exposeWarnings.push(...expanded.warnings);
-			for (const warning of expanded.warnings) apiLogger.warn(warning);
-			apiLogger.info(
-				`Exposed ${expanded.added.length} server tool(s) via expose policy`,
-			);
-			capabilitiesToUse = expanded.capabilities;
-			// Always set — an empty list clears tools from a policy that was removed.
-			deps.sessionManager.setExposedTools(projectId, expanded.added);
-		}
-	}
+	const exposeRefresh = await refreshExposedTools(
+		deps,
+		projectId,
+		capabilitiesToUse,
+		apiLogger,
+	);
+	capabilitiesToUse = exposeRefresh.capabilities;
+	const exposeWarnings = exposeRefresh.warnings;
 
 	// -- Tool validation (parallel per server) --------------------------
 	apiLogger.info("Validating tools...");

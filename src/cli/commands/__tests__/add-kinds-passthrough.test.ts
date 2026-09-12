@@ -29,6 +29,31 @@ describe('capa add --server (capabilities file)', () => {
     } catch {}
   });
 
+  it('writes the exposure policy the flags asked for', async () => {
+    await addCommand(undefined, {
+      server: true,
+      id: 'github',
+      url: 'https://example.com/mcp',
+      expose: 'except',
+      tools: 'delete_repo, force_push',
+    });
+    const yaml = readFileSync(join(tempDir, 'capabilities.yaml'), 'utf-8');
+    expect(yaml).toContain('expose: except');
+    expect(yaml).toContain('delete_repo');
+    expect(yaml).toContain('force_push');
+  });
+
+  it('writes no policy for --expose none', async () => {
+    await addCommand(undefined, {
+      server: true,
+      id: 'github',
+      url: 'https://example.com/mcp',
+      expose: 'none',
+    });
+    const yaml = readFileSync(join(tempDir, 'capabilities.yaml'), 'utf-8');
+    expect(yaml).not.toContain('expose:');
+  });
+
   it('appends an owl-style stdio server', async () => {
     await addCommand(undefined, {
       server: true,

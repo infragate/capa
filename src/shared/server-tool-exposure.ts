@@ -1,9 +1,5 @@
-import type {
-	Capabilities,
-	MCPServer,
-	Tool,
-} from "../types/capabilities";
-import { getQualifiedToolName } from "../types/capabilities";
+import type { Capabilities, MCPServer, Tool } from "../types/capabilities";
+import { getQualifiedToolName, normalizeToolName } from "../types/capabilities";
 
 /** One entry of a server's live `tools/list`. */
 export interface RemoteToolInfo {
@@ -46,10 +42,35 @@ export function selectExposedToolNames(
 /**
  * Local id for a synthesized tool. The remote name is kept as-is wherever it
  * can be one — an invented alias would not match the `except`/`exactly` lists
- * the user wrote, and is the id they see in `capa sh`.
+ * the user wrote, and is the id they see in `capa sh`. Dots become underscores
+ * because tool lookup collapses them, so `a.b` and `a_b` would otherwise
+ * resolve to each other.
  */
 export function synthesizedToolId(remoteName: string): string {
-	return remoteName.replace(/[^A-Za-z0-9_.-]/g, "_");
+	return remoteName.replace(/[^A-Za-z0-9_-]/g, "_");
+}
+
+/**
+ * A qualified name for this remote tool that no other tool answers to, since
+ * sanitizing is many-to-one (`foo/bar` and `foo?bar` both become `foo_bar`)
+ * and lookup compares names with dots collapsed. Suffixes on collision rather
+ * than dropping the tool — a silently missing tool is worse than an odd id.
+ */
+function uniqueToolId(
+	remoteName: string,
+	serverId: string,
+	takenQualified: Set<string>,
+): string {
+	const base = synthesizedToolId(remoteName);
+	let id = base;
+	for (
+		let n = 2;
+		takenQualified.has(normalizeToolName(`${serverId}.${id}`));
+		n++
+	) {
+		id = `${base}_${n}`;
+	}
+	return id;
 }
 
 /**
@@ -70,30 +91,43 @@ export async function expandServerExposedTools(
 	const warnings: string[] = [];
 	const synthesized: Tool[] = [];
 
-	// Remote tools already covered by an explicit entry, per server.
-	const overlaid = new Map<string, Set<string>>();
+	// The explicit entry covering each remote tool, per server — it wins over a
+	// synthesized one, and the policy still has to expose it.
+	const overlaid = new Map<string, Map<string, Tool>>();
 	const takenQualifiedNames = new Set<string>();
 	for (const tool of capabilities.tools ?? []) {
-		takenQualifiedNames.add(getQualifiedToolName(tool));
+		takenQualifiedNames.add(normalizeToolName(getQualifiedToolName(tool)));
 		if (tool.type !== "mcp") continue;
 		const serverId = tool.def.server.replace(/^@/, "");
-		const bucket = overlaid.get(serverId) ?? new Set<string>();
-		bucket.add(tool.def.tool);
+		const bucket = overlaid.get(serverId) ?? new Map<string, Tool>();
+		if (!bucket.has(tool.def.tool)) bucket.set(tool.def.tool, tool);
 		overlaid.set(serverId, bucket);
 	}
 
-	for (const server of servers) {
-		let remote: RemoteToolInfo[];
-		try {
-			remote = await listRemoteTools(server.id);
-		} catch (error) {
+	// One round-trip per server, all at once: a server that is down burns the
+	// whole timeout, and doing that serially adds it up across servers.
+	const listings = await Promise.all(
+		servers.map((server) =>
+			listRemoteTools(server.id).then(
+				(remote) => ({ remote, error: null as unknown }),
+				(error) => ({ remote: null, error }),
+			),
+		),
+	);
+
+	for (const [index, server] of servers.entries()) {
+		const listing = listings[index];
+		if (!listing.remote) {
 			warnings.push(
 				`Server "${server.id}" (expose: ${server.expose}) could not be listed: ${
-					error instanceof Error ? error.message : String(error)
+					listing.error instanceof Error
+						? listing.error.message
+						: String(listing.error)
 				}`,
 			);
 			continue;
 		}
+		const remote = listing.remote;
 
 		const { exposed, unknown } = selectExposedToolNames(
 			server,
@@ -114,17 +148,24 @@ export async function expandServerExposedTools(
 		const byName = new Map(remote.map((t) => [t.name, t]));
 		const alreadyExplicit = overlaid.get(server.id);
 		for (const name of exposed) {
-			if (alreadyExplicit?.has(name)) continue;
+			const overlay = alreadyExplicit?.get(name);
+			if (overlay) {
+				// Keep the authored entry exactly as written — alias, defaults,
+				// formatter — but let the policy expose it, or it would still need
+				// a skill `requires:` while its siblings do not.
+				synthesized.push({ ...overlay, fromServerExpose: true });
+				continue;
+			}
+			// Ids are scoped per server, so only this server's names can clash.
+			const id = uniqueToolId(name, server.id, takenQualifiedNames);
 			const tool: Tool = {
-				id: synthesizedToolId(name),
+				id,
 				type: "mcp",
 				description: byName.get(name)?.description,
 				fromServerExpose: true,
 				def: { server: `@${server.id}`, tool: name },
 			};
-			const qualified = getQualifiedToolName(tool);
-			if (takenQualifiedNames.has(qualified)) continue;
-			takenQualifiedNames.add(qualified);
+			takenQualifiedNames.add(normalizeToolName(getQualifiedToolName(tool)));
 			synthesized.push(tool);
 		}
 	}
@@ -133,11 +174,25 @@ export async function expandServerExposedTools(
 	return {
 		capabilities: {
 			...capabilities,
-			tools: [...(capabilities.tools ?? []), ...synthesized],
+			tools: mergeExposedTools(capabilities.tools ?? [], synthesized),
 		},
 		added: synthesized,
 		warnings,
 	};
+}
+
+/**
+ * Authored tools plus the ones a server policy exposes. An exposed entry
+ * replaces the authored tool it was built from (an overlay is the authored
+ * entry plus the policy marker), so neither list is duplicated.
+ */
+export function mergeExposedTools(authored: Tool[], exposed: Tool[]): Tool[] {
+	if (exposed.length === 0) return authored;
+	const exposedNames = new Set(exposed.map((t) => getQualifiedToolName(t)));
+	return [
+		...authored.filter((t) => !exposedNames.has(getQualifiedToolName(t))),
+		...exposed,
+	];
 }
 
 /**

@@ -99,11 +99,30 @@ describe("expandServerExposedTools", () => {
 			(t) => t.type === "mcp" && t.def.tool === "search",
 		);
 		expect(forSearch).toHaveLength(1);
-		expect(forSearch[0]).toBe(explicit);
-		expect(result.capabilities.tools.map((t) => t.id)).toEqual([
-			"gh_search",
+		// The authored entry, unchanged apart from the policy marker that makes
+		// it callable without a skill requiring it.
+		expect(forSearch[0]).toEqual({ ...explicit, fromServerExpose: true });
+		expect(result.capabilities.tools.map((t) => t.id).sort()).toEqual([
 			"create_issue",
 			"delete_repo",
+			"gh_search",
+		]);
+	});
+
+	it("exposes an overlaid tool without a skill requiring it", async () => {
+		const explicit = {
+			id: "gh_search",
+			type: "mcp" as const,
+			def: { server: "@github", tool: "search", defaults: { count: 5 } },
+		};
+		const result = await expandServerExposedTools(
+			caps({ servers: [server("exactly", ["search"])], tools: [explicit] }),
+			list,
+		);
+
+		expect(result.added.map((t) => t.id)).toEqual(["gh_search"]);
+		expect(exposedToolNamesForServer(result.capabilities, "github")).toEqual([
+			"github.gh_search",
 		]);
 	});
 
@@ -145,5 +164,30 @@ describe("expandServerExposedTools", () => {
 			"github.search",
 			"github.create_issue",
 		]);
+	});
+});
+
+describe("synthesized ids stay unique", () => {
+	it("suffixes instead of dropping a tool when sanitizing collides", async () => {
+		const result = await expandServerExposedTools(
+			caps({ servers: [server("all")] }),
+			async () => [
+				{ name: "foo/bar" },
+				{ name: "foo?bar" },
+				{ name: "a.b" },
+				{ name: "a_b" },
+			],
+		);
+
+		expect(result.capabilities.tools.map((t) => t.id)).toEqual([
+			"foo_bar",
+			"foo_bar_2",
+			"a_b",
+			"a_b_2",
+		]);
+		// The remote names are untouched — only the local ids are disambiguated.
+		expect(
+			result.capabilities.tools.map((t) => (t as any).def.tool),
+		).toEqual(["foo/bar", "foo?bar", "a.b", "a_b"]);
 	});
 });

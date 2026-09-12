@@ -104,6 +104,16 @@ describe('SessionManager', () => {
       expect(sessionManager.getProjectCapabilities('test-proj')?.tools).toEqual([]);
     });
 
+    it('activates only what a sub-agent allow-list names', () => {
+      const session = sessionManager.createSession('test-proj');
+      const tools = sessionManager.setupTools(
+        session.sessionId,
+        ['@github'],
+        new Set(['github.search']),
+      );
+      expect(tools).toEqual(['github.search']);
+    });
+
     it('still rejects an unknown skill id', () => {
       const session = sessionManager.createSession('test-proj');
       expect(() => sessionManager.setupTools(session.sessionId, ['nope'])).toThrow(

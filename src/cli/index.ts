@@ -177,6 +177,8 @@ if (process.argv[2] === '__server__') {
           headerFromFile: options.headerFromFile,
           cwd: options.cwd,
           description: options.description,
+          expose: options.expose,
+          tools: options.tools,
           mcpServer: options.mcpServer,
           mcpTool: options.mcpTool,
           default: options.default,

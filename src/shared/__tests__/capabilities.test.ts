@@ -193,6 +193,27 @@ describe('capabilities', () => {
       });
     });
 
+    it('validates expose/tools combinations on plugin servers too', () => {
+      const plugin = (servers: Record<string, unknown>) => ({
+        plugins: [{ type: 'github', def: { repo: 'o/r' }, servers }],
+      });
+
+      expect(() =>
+        normalizeCapabilities(plugin({ slack: { expose: 'exactly' } })),
+      ).toThrow(/needs a "tools" list/);
+      expect(() =>
+        normalizeCapabilities(plugin({ slack: { expose: 'all', tools: ['a'] } })),
+      ).toThrow(/only applies to expose/);
+      expect(() =>
+        normalizeCapabilities(plugin({ slack: { tools: ['a'] } })),
+      ).toThrow(/only applies to expose/);
+      expect(
+        normalizeCapabilities(
+          plugin({ slack: { as: 'slack', expose: 'except', tools: ['rm'] } }),
+        ).plugins?.[0]?.servers?.slack,
+      ).toEqual({ as: 'slack', expose: 'except', tools: ['rm'] });
+    });
+
     it('rejects MCP servers missing both url and cmd', () => {
       expect(() =>
         normalizeCapabilities({

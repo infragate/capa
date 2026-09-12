@@ -150,7 +150,8 @@ servers:
   `setup_tools(['@github'])`.
 - An explicit `tools:` entry whose `def.tool` matches a remote tool **overlays**
   it — that is how `defaults` / `formatter` / a friendlier `id` survive
-  `expose: all` without listing every other tool.
+  `expose: all` without listing every other tool. The overlay is what runs, and
+  the policy exposes it like any other selected tool (no `requires:` needed).
 - Synthesized tools are resolved from the live server at install/configure time
   and are never written back to the capabilities file. Names in
   `except`/`exactly` that the server does not advertise are install warnings.
