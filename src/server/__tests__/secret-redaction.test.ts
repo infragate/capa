@@ -1,5 +1,11 @@
 import { describe, expect, it } from "bun:test";
-import { mergeServerDef, redactOAuth2ConfigForApi, redactServerForApi } from "../secret-redaction";
+import {
+	mergeServerDef,
+	redactErrorDetail,
+	redactOAuth2ConfigForApi,
+	redactServerForApi,
+	resolvedSecretValues,
+} from "../secret-redaction";
 
 const ENV_SECRET = "mcp-env-secret-ABCDEFGH";
 const HEADER_SECRET = "Bearer mcp-header-secret-1234";
@@ -141,5 +147,53 @@ describe("redactServerForApi secret sources", () => {
 			Accept: "application/json",
 		});
 		expect(JSON.stringify(redacted)).not.toContain("secret-literal");
+	});
+});
+
+describe("redactErrorDetail", () => {
+	it("removes a credential capa knows about, wherever it appears", () => {
+		const detail = redactErrorDetail(
+			'Error POSTing to endpoint (HTTP 401): {"sent":"sk-live-9f3a2b7c41"}',
+			["sk-live-9f3a2b7c41"],
+		);
+		expect(detail).not.toContain("sk-live-9f3a2b7c41");
+		expect(detail).toContain("HTTP 401");
+	});
+
+	it("masks credential-shaped values that are not Bearer tokens", () => {
+		const detail = redactErrorDetail(
+			'rejected: {"api_key": "abcd1234efgh", "password": "hunter2000"}',
+		);
+		expect(detail).not.toContain("abcd1234efgh");
+		expect(detail).not.toContain("hunter2000");
+	});
+
+	it("collapses control characters and caps the length", () => {
+		const detail = redactErrorDetail(
+			"line1\n\tline2\u0000 " + "x".repeat(400),
+		);
+		expect(detail).not.toMatch(/[\u0000-\u001F]/);
+		expect(detail.length).toBeLessThanOrEqual(300);
+	});
+
+	it("leaves an ordinary transport failure readable", () => {
+		expect(redactErrorDetail("getaddrinfo ENOTFOUND mcp.example.com")).toBe(
+			"getaddrinfo ENOTFOUND mcp.example.com",
+		);
+	});
+});
+
+describe("resolvedSecretValues", () => {
+	it("collects sensitive header values and every env value", () => {
+		const values = resolvedSecretValues({
+			headers: {
+				Authorization: "Bearer tok-123456",
+				Accept: "application/json",
+			},
+			env: { API_KEY: "env-secret-1", NODE_ENV: "production" },
+		});
+		expect(values.sort()).toEqual(
+			["Bearer tok-123456", "env-secret-1", "production"].sort(),
+		);
 	});
 });

@@ -8,6 +8,7 @@ import type {
 } from "../types/capabilities";
 import { clientErrorMessage } from "./http-error";
 import { matchRoute } from "./match-route";
+import { redactErrorDetail } from "./secret-redaction";
 import type { CapaMCPServer, ShellToolInfo } from "./mcp-handler";
 import type { McpServerStateManager } from "./mcp-server-state";
 import type { SessionManager } from "./session-manager";
@@ -77,10 +78,12 @@ export async function handleGetServerTools(
 			{ headers: JSON_HEADERS },
 		);
 	} catch (error: any) {
-		const detail = error?.message ?? String(error);
-		const needsAuth = /authentication failed|reconnect oauth2/i.test(detail);
 		// The proxy's message already names the server and the transport reason
 		// (e.g. HTTP 401) — keep it, a flat "unreachable" hides a bad API key.
+		// Redact first: a listTools failure carries the remote body verbatim,
+		// which can echo the request's own credentials back.
+		const detail = redactErrorDetail(error?.message ?? String(error));
+		const needsAuth = /authentication failed|reconnect oauth2/i.test(detail);
 		const message = needsAuth
 			? `Authentication required for "${serverId}". Please reconnect this server's OAuth2 connection.`
 			: detail || `Server unreachable: "${serverId}" could not be contacted.`;
@@ -335,10 +338,13 @@ export async function handleGetShellToolSchema(
 			headers: JSON_HEADERS,
 		});
 	} catch (error: any) {
-		return new Response(JSON.stringify({ error: error.message }), {
-			status: 502,
-			headers: JSON_HEADERS,
-		});
+		return new Response(
+			JSON.stringify({ error: redactErrorDetail(error?.message ?? String(error)) }),
+			{
+				status: 502,
+				headers: JSON_HEADERS,
+			},
+		);
 	}
 }
 

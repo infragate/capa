@@ -242,6 +242,29 @@ describe('mcp-proxy', () => {
       ).rejects.toThrow(/Could not connect to MCP server "sharecube": .*HTTP 401/);
     });
 
+    it("scrubs the server's own header credential when the body echoes it", async () => {
+      const proxy = new MCPProxy(makeMockDb(), 'proj-1', '/tmp/project');
+      (proxy as any).connectWithTimeout = async () => {
+        throw new Error(
+          'Error POSTing to endpoint (HTTP 401): {"received":"key-abc123456"}',
+        );
+      };
+
+      const message = await proxy
+        .listTools(
+          'sharecube',
+          {
+            url: 'https://mcp.example.com',
+            headers: { 'X-Api-Key': 'key-abc123456' },
+          },
+          { throwOnError: true },
+        )
+        .then(() => 'no error thrown', (err: Error) => err.message);
+
+      expect(message).toContain('HTTP 401');
+      expect(message).not.toContain('key-abc123456');
+    });
+
     it('keeps a bearer token out of the surfaced message', async () => {
       const proxy = new MCPProxy(makeMockDb(), 'proj-1', '/tmp/project');
       (proxy as any).connectWithTimeout = async () => {

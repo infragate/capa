@@ -265,6 +265,14 @@ export const capabilitiesSchema = z
 	.passthrough();
 
 /**
+ * Fields whose value is arbitrary user data (`z.unknown()` in the schema): a
+ * tool's `defaults` map and an argument's `default`. A null in there is a value
+ * the tool is meant to receive, not an absent field, so the subtree is left
+ * exactly as authored.
+ */
+const ARBITRARY_VALUE_KEYS = new Set(["defaults", "default"]);
+
+/**
  * Drop null-valued object keys so an explicit `null` reads as "not set".
  * A bare `description:` in YAML and a `"description": null` written by an API
  * client both land here; the schema only allows a string or absence, so without
@@ -275,6 +283,10 @@ function stripNulls(value: unknown): unknown {
 	if (value === null || typeof value !== "object") return value;
 	const out: Record<string, unknown> = {};
 	for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+		if (ARBITRARY_VALUE_KEYS.has(key)) {
+			out[key] = val;
+			continue;
+		}
 		if (val !== null) out[key] = stripNulls(val);
 	}
 	return out;

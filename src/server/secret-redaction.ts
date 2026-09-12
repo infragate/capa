@@ -165,3 +165,56 @@ export function mergeServerDef(
 
 	return merged;
 }
+
+/**
+ * Credential-looking `key: value` pairs a server might echo back in an error
+ * body. Only the value is masked, so the message still says what went wrong.
+ */
+const CREDENTIAL_PAIR =
+	/\b(authorization|proxy-authorization|api[-_]?key|apikey|access[-_]?token|refresh[-_]?token|token|secret|password|passwd|pwd)\b["']?\s*[:=]\s*["']?([^\s"',;}\]]{4,})/gi;
+
+/** `Bearer <token>` / `Basic <token>` carry the value with no separator. */
+const AUTH_SCHEME_VALUE = /\b(bearer|basic)\s+([^\s"',;}\]]+)/gi;
+
+/**
+ * Client-safe one-liner for a transport error. Values capa knows are secret
+ * are removed outright; anything else that reads like a credential is masked,
+ * because a non-2xx body can echo the request headers straight back.
+ */
+export function redactErrorDetail(
+	message: string,
+	knownSecrets: Iterable<string> = [],
+): string {
+	let out = message;
+	for (const secret of knownSecrets) {
+		// Short values produce noisy false positives and are not worth hiding.
+		if (secret.length >= 6) out = out.split(secret).join("***");
+	}
+	return out
+		.replace(CREDENTIAL_PAIR, (_match, label: string) => `${label}: ***`)
+		.replace(AUTH_SCHEME_VALUE, (_match, scheme: string) => `${scheme} ***`)
+		.replace(/[\u0000-\u001F\u007F]+/g, " ")
+		.replace(/\s+/g, " ")
+		.trim()
+		.slice(0, 300);
+}
+
+/**
+ * Resolved secret values carried by a server def — sensitive headers and every
+ * env value. Used to scrub them out of error text before it reaches a client.
+ */
+export function resolvedSecretValues(def: {
+	headers?: Record<string, unknown>;
+	env?: Record<string, unknown>;
+}): string[] {
+	const values: string[] = [];
+	for (const [name, value] of Object.entries(def.headers ?? {})) {
+		if (typeof value === "string" && isSensitiveHeaderName(name)) {
+			values.push(value);
+		}
+	}
+	for (const value of Object.values(def.env ?? {})) {
+		if (typeof value === "string") values.push(value);
+	}
+	return values;
+}

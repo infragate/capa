@@ -2,6 +2,10 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { CapaDatabase } from "../db/database";
 import { logger } from "../shared/logger";
+import {
+	redactErrorDetail,
+	resolvedSecretValues,
+} from "./secret-redaction";
 import { isStdioTrusted } from "../shared/stdio-allowlist";
 import {
 	hasUnresolvedMcpSecrets,
@@ -43,16 +47,16 @@ export interface MCPToolResult {
 }
 
 /**
- * One-line reason a connect attempt failed, safe to show a user. Bearer values
- * are stripped in case a server echoes the request back in its error body.
+ * One-line reason a connect attempt failed, safe to show a user. The def's own
+ * resolved credentials are scrubbed, plus anything else that reads like one —
+ * a non-2xx body can echo the request headers straight back.
  */
-function connectFailureDetail(error: unknown): string {
+function connectFailureDetail(
+	error: unknown,
+	def?: MCPServerDefinition,
+): string {
 	const raw = error instanceof Error ? error.message : String(error);
-	return raw
-		.replace(/Bearer\s+\S+/gi, "Bearer ***")
-		.replace(/\s+/g, " ")
-		.trim()
-		.slice(0, 300);
+	return redactErrorDetail(raw, def ? resolvedSecretValues(def) : []);
 }
 
 export class MCPProxy {
@@ -568,7 +572,10 @@ export class MCPProxy {
 				`Failed to create HTTP client for ${serverId}:`,
 				error,
 			);
-			this.connectFailures.set(serverId, connectFailureDetail(error));
+			this.connectFailures.set(
+				serverId,
+				connectFailureDetail(error, serverDefinition),
+			);
 			return null;
 		}
 	}
@@ -639,9 +646,13 @@ export class MCPProxy {
 				`Failed to create MCP client for ${serverId}:`,
 				error,
 			);
+			// The stdio exit reason is raw stderr — scrub it like any other detail.
 			this.connectFailures.set(
 				serverId,
-				this.stdioExitReasons.get(serverId) ?? connectFailureDetail(error),
+				connectFailureDetail(
+					this.stdioExitReasons.get(serverId) ?? error,
+					serverDefinition,
+				),
 			);
 			return null;
 		}
