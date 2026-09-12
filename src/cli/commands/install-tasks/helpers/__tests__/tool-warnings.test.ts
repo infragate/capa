@@ -115,3 +115,36 @@ describe('collectSubagentRefWarnings', () => {
     expect(collectSubagentRefWarnings(cap)).toEqual([]);
   });
 });
+
+describe('collectSubagentRefWarnings with server-exposed tools', () => {
+  const caps = (servers: any[], tools: any[], subagentTools: string[]): any => ({
+    providers: [],
+    options: {},
+    skills: [],
+    servers,
+    tools,
+    subagents: [{ id: 'oncall', skills: [], tools: subagentTools }],
+  });
+
+  const exposing = { id: 'devtools', type: 'mcp', def: { url: 'https://x.test/mcp' } };
+
+  it('does not warn for a tool the server exposes at configure time', () => {
+    // `devtools.list_alerts` is never in the file — it comes from the server's
+    // own tools/list — so it must not be reported as a typo.
+    expect(collectSubagentRefWarnings(caps([exposing], [], ['@devtools.list_alerts']))).toEqual([]);
+    expect(collectSubagentRefWarnings(caps([exposing], [], ['@devtools']))).toEqual([]);
+    expect(collectSubagentRefWarnings(caps([exposing], [], ['devtools.*']))).toEqual([]);
+  });
+
+  it('still warns for a server that exposes nothing', () => {
+    const optedOut = { ...exposing, expose: 'none' };
+    expect(
+      collectSubagentRefWarnings(caps([optedOut], [], ['@devtools.list_alerts'])),
+    ).toHaveLength(1);
+  });
+
+  it('still warns for an unknown server or a plain typo', () => {
+    expect(collectSubagentRefWarnings(caps([exposing], [], ['@nope.thing']))).toHaveLength(1);
+    expect(collectSubagentRefWarnings(caps([exposing], [], ['typo_tool']))).toHaveLength(1);
+  });
+});

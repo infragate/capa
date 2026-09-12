@@ -61,6 +61,20 @@ export function collectPluginSkillWarnings(capabilities: Capabilities): string[]
 // Tool refs accept three equivalent forms (handled by resolveSubagentToolRef):
 // `@server.tool`, `server.tool`, or the bare local tool id. The warning fires
 // only when none of those resolve.
+/**
+ * True when a sub-agent tool ref points at a server whose tools capa resolves
+ * from the server itself (`@github`, `@github.*`, `@github.create_issue`).
+ */
+function referencesExposingServer(
+  toolRef: string,
+  capabilities: Capabilities,
+): boolean {
+  const stripped = toolRef.startsWith('@') ? toolRef.slice(1) : toolRef;
+  const serverId = stripped.replace(/\.(\*|[^.]+)$/, '');
+  const server = (capabilities.servers ?? []).find((s) => s.id === serverId);
+  return !!server && server.expose !== 'none';
+}
+
 export function collectSubagentRefWarnings(capabilities: Capabilities): string[] {
   const subagents = capabilities.subagents ?? [];
   if (subagents.length === 0) return [];
@@ -78,12 +92,15 @@ export function collectSubagentRefWarnings(capabilities: Capabilities): string[]
       }
     }
     for (const toolRef of sa.tools ?? []) {
-      if (resolveSubagentToolRefs(toolRef, capabilities.tools).length === 0) {
-        warnings.push(
-          `Subagent "${sa.id}" references unknown tool "${toolRef}". ` +
-          `Add it under top-level \`tools\` (accepts \`tool_id\`, \`server.tool\`, or \`@server.tool\`) or remove it from the subagent.`,
-        );
-      }
+      if (resolveSubagentToolRefs(toolRef, capabilities.tools).length > 0) continue;
+      // A server that exposes its own tools contributes them at configure time
+      // from its live `tools/list` — they are not in the file, so a ref to one
+      // cannot be resolved here and is not a typo.
+      if (referencesExposingServer(toolRef, capabilities)) continue;
+      warnings.push(
+        `Subagent "${sa.id}" references unknown tool "${toolRef}". ` +
+        `Add it under top-level \`tools\` (accepts \`tool_id\`, \`server.tool\`, or \`@server.tool\`) or remove it from the subagent.`,
+      );
     }
   }
   return warnings;
