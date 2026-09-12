@@ -230,6 +230,30 @@ describe('mcp-proxy', () => {
     });
   });
 
+  describe('connect failure detail', () => {
+    it('listTools reports why the transport failed, not a bare "could not connect"', async () => {
+      const proxy = new MCPProxy(makeMockDb(), 'proj-1', '/tmp/project');
+      (proxy as any).connectWithTimeout = async () => {
+        throw new Error('Error POSTing to endpoint (HTTP 401): Unauthorized');
+      };
+
+      await expect(
+        proxy.listTools('sharecube', { url: 'https://mcp.example.com' }, { throwOnError: true }),
+      ).rejects.toThrow(/Could not connect to MCP server "sharecube": .*HTTP 401/);
+    });
+
+    it('keeps a bearer token out of the surfaced message', async () => {
+      const proxy = new MCPProxy(makeMockDb(), 'proj-1', '/tmp/project');
+      (proxy as any).connectWithTimeout = async () => {
+        throw new Error('rejected request with Bearer sk-live-supersecret');
+      };
+
+      await expect(
+        proxy.listTools('sharecube', { url: 'https://mcp.example.com' }, { throwOnError: true }),
+      ).rejects.toThrow(/Bearer \*\*\*/);
+    });
+  });
+
   describe('stdio crash fail-fast', () => {
     let capaDir: string;
     let dirSpy: ReturnType<typeof spyOn>;

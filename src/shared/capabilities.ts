@@ -264,6 +264,22 @@ export const capabilitiesSchema = z
 	})
 	.passthrough();
 
+/**
+ * Drop null-valued object keys so an explicit `null` reads as "not set".
+ * A bare `description:` in YAML and a `"description": null` written by an API
+ * client both land here; the schema only allows a string or absence, so without
+ * this either one fails the whole file.
+ */
+function stripNulls(value: unknown): unknown {
+	if (Array.isArray(value)) return value.map(stripNulls);
+	if (value === null || typeof value !== "object") return value;
+	const out: Record<string, unknown> = {};
+	for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+		if (val !== null) out[key] = stripNulls(val);
+	}
+	return out;
+}
+
 export function normalizeCapabilities(parsed: unknown): Capabilities {
 	if (
 		parsed === null ||
@@ -274,7 +290,7 @@ export function normalizeCapabilities(parsed: unknown): Capabilities {
 		throw new Error("capabilities file is empty or not a YAML/JSON object");
 	}
 
-	const result = capabilitiesSchema.safeParse(parsed);
+	const result = capabilitiesSchema.safeParse(stripNulls(parsed));
 	if (!result.success) {
 		const detail = result.error.issues
 			.slice(0, 5)

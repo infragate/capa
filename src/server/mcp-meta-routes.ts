@@ -79,9 +79,11 @@ export async function handleGetServerTools(
 	} catch (error: any) {
 		const detail = error?.message ?? String(error);
 		const needsAuth = /authentication failed|reconnect oauth2/i.test(detail);
+		// The proxy's message already names the server and the transport reason
+		// (e.g. HTTP 401) — keep it, a flat "unreachable" hides a bad API key.
 		const message = needsAuth
 			? `Authentication required for "${serverId}". Please reconnect this server's OAuth2 connection.`
-			: `Server unreachable: "${serverId}" could not be contacted.`;
+			: detail || `Server unreachable: "${serverId}" could not be contacted.`;
 		return new Response(JSON.stringify({ error: message }), {
 			status: 502,
 			headers: JSON_HEADERS,
