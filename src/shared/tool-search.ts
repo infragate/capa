@@ -89,7 +89,7 @@ export function tokenize(text: string): string[] {
 
 /** Query terms worth scoring: tokenized, de-duplicated, stopwords removed. */
 export function queryTerms(query: string): string[] {
-	const terms = queryTerms(query);
+	const terms = [...new Set(tokenize(query))];
 	const meaningful = terms.filter((t) => !STOPWORDS.has(t));
 	// An all-stopword query ("how do I") still beats listing everything.
 	return meaningful.length > 0 ? meaningful : terms;
@@ -164,7 +164,7 @@ export function searchTools(
 		Math.max(Math.trunc(limit) || DEFAULT_LIMIT, 1),
 		MAX_LIMIT,
 	);
-	const terms = [...new Set(tokenize(query))];
+	const terms = queryTerms(query);
 
 	if (terms.length === 0) {
 		return [...tools]

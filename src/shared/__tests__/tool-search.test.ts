@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import type { Capabilities } from "../../types/capabilities";
 import {
 	type SearchableTool,
+	queryTerms,
 	searchableTools,
 	searchTools,
 	tokenize,
@@ -181,6 +182,35 @@ describe("ranking and tokenizing details", () => {
 		expect(names(searchTools(tools, "open a pull request"))[0]).toBe(
 			"github.create_pr",
 		);
+	});
+
+	it("does not match a tool on filler words alone", () => {
+		const tools: SearchableTool[] = [
+			{
+				qualifiedName: "vault.rotate_credentials",
+				id: "rotate_credentials",
+				description: "Rotate the stored database password.",
+			},
+			{
+				qualifiedName: "ops.deploy",
+				id: "deploy",
+				// Shares only "the" and "to" with the query below.
+				description: "Deploy the service to production.",
+			},
+		];
+
+		expect(names(searchTools(tools, "rotate the database password"))).toEqual([
+			"vault.rotate_credentials",
+		]);
+	});
+
+	it("exposes the same term filtering searchTools uses", () => {
+		expect(queryTerms("rotate the database password")).toEqual([
+			"rotate",
+			"database",
+			"password",
+		]);
+		expect(queryTerms("how do I")).toEqual(["how", "do", "i"]);
 	});
 
 	it("tokenizes non-ASCII words instead of dropping them", () => {
