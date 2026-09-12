@@ -124,6 +124,22 @@ export class SessionManager {
 	/**
 	 * Setup tools for a session (activate skills)
 	 */
+	/**
+	 * Make specific tools callable for a session without going through a skill.
+	 * This is how `search` mode activates what it just handed the agent.
+	 */
+	activateTools(sessionId: string, qualifiedNames: string[]): string[] {
+		const session = this.sessions.get(sessionId);
+		if (!session) {
+			throw new Error(`Session not found: ${sessionId}`);
+		}
+		session.availableTools = [
+			...new Set([...session.availableTools, ...qualifiedNames]),
+		];
+		session.lastActivity = Date.now();
+		return session.availableTools;
+	}
+
 	setupTools(
 		sessionId: string,
 		skillIds: string[],

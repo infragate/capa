@@ -734,3 +734,239 @@ describe('handleMessage > ping', () => {
     });
   });
 });
+
+// ─── search mode: discover tools by keyword, then call them ──────────────────
+
+describe('handleMessage > search mode', () => {
+  let h: Harness;
+
+  const capabilities: Capabilities = {
+    providers: ['claude-code'],
+    options: { toolExposure: 'search' },
+    skills: [],
+    servers: [],
+    tools: [
+      {
+        id: 'create_issue',
+        type: 'command',
+        group: 'github',
+        description: 'Open a new issue on a repository.',
+        def: {
+          run: {
+            cmd: 'gh issue create',
+            args: [
+              { name: 'title', type: 'string', required: true },
+              { name: 'labels', type: 'string', required: false },
+            ],
+          },
+        },
+      },
+      {
+        id: 'post_message',
+        type: 'command',
+        group: 'slack',
+        description: 'Send a message to a Slack channel.',
+        def: {
+          run: {
+            cmd: 'slack post',
+            args: [{ name: 'text', type: 'string', required: true }],
+          },
+        },
+      },
+    ],
+  } as Capabilities;
+
+  beforeEach(() => {
+    h = makeHarness(capabilities);
+  });
+
+  afterEach(() => destroyHarness(h));
+
+  async function call(name: string, args: Record<string, unknown>) {
+    await h.mcp.handleMessage({ jsonrpc: '2.0', id: 1, method: 'initialize' });
+    return await h.mcp.handleMessage({
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'tools/call',
+      params: { name, arguments: args },
+    });
+  }
+
+  it('lists only the search and call_tool meta-tools', async () => {
+    await h.mcp.handleMessage({ jsonrpc: '2.0', id: 1, method: 'initialize' });
+    const resp = await h.mcp.handleMessage({
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'tools/list',
+    });
+
+    expect(resp.result.tools.map((t: any) => t.name)).toEqual([
+      'search',
+      'call_tool',
+    ]);
+  });
+
+  it('returns matching tools as signatures with descriptions', async () => {
+    const resp = await call('search', { query: 'open an issue' });
+    const payload = parseToolText(resp.result);
+
+    expect(payload.success).toBe(true);
+    expect(payload.query).toBe('open an issue');
+    expect(payload.matches).toEqual([
+      {
+        tool: 'github.create_issue',
+        signature: 'github.create_issue(title, labels?)',
+        description: 'Open a new issue on a repository.',
+      },
+    ]);
+    expect(payload.hint).toMatch(/call_tool/);
+  });
+
+  it('makes a searched tool callable, and leaves an unsearched one inert', async () => {
+    await call('search', { query: 'issue' });
+
+    const denied = await h.mcp.handleMessage({
+      jsonrpc: '2.0',
+      id: 3,
+      method: 'tools/call',
+      params: {
+        name: 'call_tool',
+        arguments: { name: 'slack.post_message', data: { text: 'hi' } },
+      },
+    });
+    expect(parseToolText(denied.result).error).toMatch(/not activated/);
+
+    // The searched one resolves to the tool itself (execution failure here is
+    // the command not existing, not the activation gate).
+    const allowed = await h.mcp.handleMessage({
+      jsonrpc: '2.0',
+      id: 4,
+      method: 'tools/call',
+      params: {
+        name: 'call_tool',
+        arguments: { name: 'github.create_issue', data: { title: 't' } },
+      },
+    });
+    const payload = parseToolText(allowed.result);
+    if (payload.error) expect(payload.error).not.toMatch(/not activated/);
+  });
+
+  it('accumulates matches across searches', async () => {
+    await call('search', { query: 'issue' });
+    const second = await call('search', { query: 'slack message' });
+
+    expect(parseToolText(second.result).matches[0].tool).toBe(
+      'slack.post_message',
+    );
+
+    // The tool found by the earlier search is still callable — matches
+    // accumulate rather than replacing each other.
+    const earlier = await h.mcp.handleMessage({
+      jsonrpc: '2.0',
+      id: 5,
+      method: 'tools/call',
+      params: {
+        name: 'call_tool',
+        arguments: { name: 'github.create_issue', data: { title: 't' } },
+      },
+    });
+    const payload = parseToolText(earlier.result);
+    if (payload.error) expect(payload.error).not.toMatch(/not activated/);
+  });
+
+  it('says so plainly when nothing matches', async () => {
+    const payload = parseToolText((await call('search', { query: 'kubernetes' })).result);
+    expect(payload.matches).toEqual([]);
+    expect(payload.message).toMatch(/No tools matched/);
+  });
+
+  it('rejects a search call with no query instead of listing everything', async () => {
+    const resp = await call('search', {});
+    const payload = parseToolText(resp.result);
+    expect(payload.error).toMatch(/requires a string "query"/);
+
+    // Nothing was activated by the malformed call.
+    const denied = await h.mcp.handleMessage({
+      jsonrpc: '2.0',
+      id: 3,
+      method: 'tools/call',
+      params: {
+        name: 'call_tool',
+        arguments: { name: 'github.create_issue', data: { title: 't' } },
+      },
+    });
+    expect(parseToolText(denied.result).error).toMatch(/not activated/);
+  });
+
+  it('tells an unactivated call to search, not to call setup_tools', async () => {
+    await h.mcp.handleMessage({ jsonrpc: '2.0', id: 1, method: 'initialize' });
+    const denied = await h.mcp.handleMessage({
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'tools/call',
+      params: {
+        name: 'call_tool',
+        arguments: { name: 'github.create_issue', data: { title: 't' } },
+      },
+    });
+    const error = parseToolText(denied.result).error;
+    expect(error).toMatch(/search/);
+    expect(error).not.toMatch(/setup_tools/);
+  });
+
+  it('still lists everything for an explicitly empty query', async () => {
+    const payload = parseToolText((await call('search', { query: '' })).result);
+    expect(payload.matches.map((m: any) => m.tool)).toEqual([
+      'github.create_issue',
+      'slack.post_message',
+    ]);
+  });
+
+  it('leaves a direct tools/call ungated, like every other mode', async () => {
+    // `capa sh` executes tools by POSTing tools/call with the real tool name,
+    // in every exposure mode — gating that on activation would reject the
+    // shell itself. The activation gate is a discovery convention for the
+    // `call_tool` wrapper; the sub-agent allow-list is the real boundary and
+    // is enforced separately on this path.
+    await h.mcp.handleMessage({ jsonrpc: '2.0', id: 1, method: 'initialize' });
+    const resp = await h.mcp.handleMessage({
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'tools/call',
+      params: { name: 'github.create_issue', arguments: { title: 't' } },
+    });
+    expect(JSON.stringify(resp)).not.toMatch(/not activated/);
+  });
+
+  it('points setup_tools at search', async () => {
+    const resp = await call('setup_tools', { skills: ['whatever'] });
+    expect(JSON.stringify(resp)).toMatch(/search/);
+  });
+});
+
+describe('handleMessage > search meta-tool outside search mode', () => {
+  let h: Harness;
+
+  beforeEach(() => {
+    h = makeHarness({
+      providers: ['claude-code'],
+      options: { toolExposure: 'on-demand' },
+      skills: [],
+      servers: [],
+      tools: [],
+    } as Capabilities);
+  });
+
+  afterEach(() => destroyHarness(h));
+
+  it('is unavailable in on-demand mode', async () => {
+    await h.mcp.handleMessage({ jsonrpc: '2.0', id: 1, method: 'initialize' });
+    const resp = await h.mcp.handleMessage({
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'tools/call',
+      params: { name: 'search', arguments: { query: 'anything' } },
+    });
+    expect(JSON.stringify(resp)).toMatch(/only available in search mode/);
+  });
+});

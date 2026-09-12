@@ -4,6 +4,7 @@ import {
   FileText,
   MessageSquare,
   Minimize2,
+  Search,
   Server,
   Sparkles,
   Square,
@@ -58,6 +59,8 @@ export function kindIcon(kind: string): LucideIcon {
       return Square;
     case 'agent_mcp':
       return Server;
+    case 'search':
+      return Search;
     case 'setup_tools':
     case 'call_tool':
     case 'tool':

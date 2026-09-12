@@ -9,10 +9,11 @@ const SKIP_KINDS = new Set([
   'session',
   'compact',
   'setup_tools',
+  'search',
 ]);
 
-/** Capa on-demand MCP meta-tools — traced again as the real tool via `call_tool` / `tool`. */
-const CAPA_META_TOOL_NAMES = new Set(['call_tool', 'setup_tools']);
+/** Capa meta-tools (on-demand / search) — traced again as the real tool via `call_tool` / `tool`. */
+const CAPA_META_TOOL_NAMES = new Set(['call_tool', 'setup_tools', 'search']);
 
 /** Canonical labels for well-known agent tools. */
 const TOOL_ALIASES: Record<string, string> = {
@@ -111,8 +112,8 @@ export function isCapaMetaToolWrapperSpan(ev: ToolCallRecord): boolean {
   if (ev.kind === 'agent_mcp' && CAPA_META_TOOL_NAMES.has(name)) {
     return true;
   }
-  if (ev.kind === 'agent_tool' && /^MCP:(call_tool|setup_tools)$/i.test(name)) {
-    return true;
+  if (ev.kind === 'agent_tool' && /^MCP:/i.test(name)) {
+    return CAPA_META_TOOL_NAMES.has(name.slice(4).trim());
   }
   return false;
 }
@@ -160,7 +161,13 @@ export function processActivityForSpan(ev: ToolCallRecord): ProcessActivity | nu
 
   if (ev.kind === 'call_tool' || ev.kind === 'tool') {
     const toolName = ev.tool_name?.trim();
-    if (!toolName || CAPA_META_TOOL_NAMES.has(toolName)) return null;
+    if (!toolName) return null;
+    // Capa's own meta-tool span, recognised by the trace's `meta_tool` rather
+    // than by name: a project can perfectly well have a real tool called
+    // `search`, and the real tool is what belongs on the map.
+    if (ev.meta_tool === toolName && CAPA_META_TOOL_NAMES.has(toolName)) {
+      return null;
+    }
     return capaToolActivity(toolName);
   }
 

@@ -45,13 +45,17 @@ export type {
  *   `setup_tools(['<skill>'])`. `setup_tools` returns a compact signature
  *   list (`tool_name(required, optional?)`); the full input schema is only
  *   returned in `call_tool` error responses when the agent calls incorrectly.
+ * - `'search'`: Only the meta-tools `search` and `call_tool` are listed; the
+ *   agent finds tools by keyword — `search('open a pull request')` — and calls
+ *   what it finds. Same compact signatures as `on-demand`, but discovery is by
+ *   the task at hand rather than by knowing which skill to activate.
  * - `'none'`: capa does **not** write any project-local MCP config files
  *   (`.mcp.json`, `.cursor/mcp.json`, `.codex/config.toml` `mcp_servers.capa`,
  *   sub-agent `capa-<id>` entries, etc.) at install time, and the MCP
  *   endpoints return an empty `tools/list`. The agent is expected to
  *   discover and execute tools through the `capa sh` CLI fallback instead.
  */
-export type ToolExposureMode = 'expose-all' | 'on-demand' | 'none';
+export type ToolExposureMode = 'expose-all' | 'on-demand' | 'search' | 'none';
 
 /**
  * Security options for skill installation.

@@ -190,13 +190,22 @@ tools:
 
 ## Tool Exposure (`options.toolExposure`)
 
-Controls how capa exposes skill tools to the MCP client. Three modes:
+Controls how capa exposes skill tools to the MCP client. Four modes:
 
 | Mode | `tools/list` returns | Per-install MCP file writes | Agent invocation path |
 |------|----------------------|------------------------------|------------------------|
 | `'expose-all'` | Every tool required by any active skill, with full input schemas | Yes — main `capa` entry + sub-agent `capa-<id>` entries | Direct MCP `tools/call` |
 | `'on-demand'` (what `capa init` writes) | Only the meta-tools `setup_tools` and `call_tool` | Yes — same as expose-all | Agent calls `setup_tools(['<skill>'])` (returns compact `name(required, optional?)` signature list), then `call_tool(name, data)`. If the call is invalid the full schema is returned in the error so the agent can self-correct without re-running setup. |
+| `'search'` | Only the meta-tools `search` and `call_tool` | Yes — same as expose-all | Agent calls `search('<what it needs to do>')`, gets back the best-matching tools as compact signatures with descriptions, then `call_tool(name, data)`. Same error-returns-the-schema behavior. |
 | `'none'` | Empty list | **No** — capa skips all project-local MCP config files (`.mcp.json`, `.cursor/mcp.json`, `.codex/config.toml` `mcp_servers.capa`, sub-agent `capa-<id>` entries). Any previously-written entries are removed on install. | The agent must use `capa sh <group> <tool> [--args]` (see [`commands.md`](./commands.md)). Sub-agent instruction files are still installed for documentation but their tools are not reachable over MCP. |
+
+Notes on `'search'`:
+- Discovery is by task, not by skill id: `search('open a pull request')` returns the tools whose names and descriptions match those words. Plain term matching — no embeddings, no index — scored over every tool in the project, which is fast at the scale a capabilities file reaches.
+- Matches are **activated** for the session, exactly like `setup_tools` does, so a tool goes straight from a search result into `call_tool`. Searches accumulate: tools found earlier stay callable.
+- `search` takes an optional `limit` (default 10, max 50). An empty query lists tools alphabetically, which is the "what is there?" case.
+- `setup_tools` is not available in this mode — calling it returns a pointer to `search`.
+- Pairs well with a server-wide `expose: all` (see [Server tool exposure](#server-tool-exposure-serversexpose)): the whole server is reachable, and the agent pulls in only the handful of tools each task needs.
+- Searches match a tool's id, remote name, server/group, and description. Tools capa synthesized from a server's `expose` policy carry the server's own descriptions; a tool you declare by hand in `tools:` only has the `description` you write there, so write one — the id alone is thin search text.
 
 Notes on `'none'`:
 - The capa HTTP server still runs and the project endpoints stay live; `tools/list` returns empty so MCP-aware agents don't try to discover tools through capa's MCP endpoint. `tools/call` is **not** gated — that's the path `capa sh` uses to execute tools, and gating it would mean rejecting `capa sh` itself.
