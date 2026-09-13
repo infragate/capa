@@ -11,7 +11,7 @@ interface OptionsSectionProps {
   options: CapabilitiesOptions | null;
 }
 
-const EXPOSURE_MODES = ['on-demand', 'expose-all', 'none'] as const;
+const EXPOSURE_MODES = ['on-demand', 'search', 'expose-all', 'none'] as const;
 
 export function OptionsSection({ projectId, options }: OptionsSectionProps) {
   const { t } = useTranslation('projects');

@@ -111,6 +111,47 @@ export function buildSetupToolsPayload(
 	};
 }
 
+export interface SearchMatch {
+	/** Name to pass to `call_tool`. */
+	tool: string;
+	/** `tool_name(required, optional?)` — see `buildToolSignature`. */
+	signature: string;
+	description?: string;
+}
+
+export interface SearchPayload {
+	success: true;
+	query: string;
+	message: string;
+	matches: SearchMatch[];
+	hint: string;
+}
+
+/**
+ * Build the JSON payload returned by `search`. Signatures rather than full
+ * schemas, for the same reason `setup_tools` returns them: a schema per tool
+ * fills the context window, and the full schema comes back in the `call_tool`
+ * error when a call is actually wrong.
+ */
+export function buildSearchPayload(
+	query: string,
+	matches: SearchMatch[],
+): SearchPayload {
+	return {
+		success: true,
+		query,
+		message:
+			matches.length > 0
+				? `${matches.length} tool(s) matched and are now callable with call_tool.`
+				: "No tools matched. Try different words, or fewer of them.",
+		matches,
+		hint:
+			"Tools are listed as `name(required, optional?)`. " +
+			"Invoke with `call_tool`; if you pass wrong/missing args, the full input schema is returned in the error. " +
+			"Search again with different words to find more tools.",
+	};
+}
+
 /**
  * Build the error payload returned by `call_tool` when a tool invocation
  * fails. When the failure is plausibly an arg/schema problem (tool exists and

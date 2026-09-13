@@ -364,6 +364,7 @@ export interface OAuthStartResponse {
 export type ToolCallStatus = 'running' | 'ok' | 'error';
 export type ToolCallKind =
   | 'setup_tools'
+  | 'search'
   | 'call_tool'
   | 'tool'
   | 'prompt'

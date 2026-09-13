@@ -56,10 +56,11 @@ When binding tools to skills via `requires:`, mismatching the `@` prefix is the 
 
 ### Tool exposure mode shapes everything downstream
 
-`options.toolExposure` has three values and they change what `capa install` writes:
+`options.toolExposure` has four values and they change what `capa install` writes:
 
 - `expose-all`: every tool any active skill requires shows up in the MCP `tools/list`. Simplest.
 - `on-demand` (what `capa init` writes by default): only `setup_tools` and `call_tool` are exposed at startup; the agent activates skills on demand. Keeps the active toolset small for long contexts.
+- `search`: only `search` and `call_tool` are exposed. The agent finds tools by keyword — `search('open a pull request')` — and calls what comes back. Discovery is by task rather than by skill id, which suits servers exposing many tools (`expose: all`).
 - `none`: capa writes **no** project-local MCP config files at all. The agent is expected to invoke tools via `capa sh <group> <tool>` instead. Useful when policy forbids per-project `.mcp.json` edits.
 
 Pick deliberately — switching modes later cleans up old entries on the next install but the choice colours the install output.

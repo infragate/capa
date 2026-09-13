@@ -11,6 +11,7 @@ import type { CapaDatabase } from "../db/database";
 import { logger } from "../shared/logger";
 import { CAPA_SERVER_ICONS } from "../shared/mcp-icons";
 import { projectNameFromId } from "../shared/paths";
+import { searchableTools, searchTools } from "../shared/tool-search";
 import type {
 	Capabilities,
 	MCPServerDefinition,
@@ -31,9 +32,11 @@ import {
 } from "./mcp-shell-tools";
 import {
 	buildCallToolErrorPayload,
+	buildSearchPayload,
 	buildSetupToolsPayload,
 	buildToolSignature,
 	mergeDefaults,
+	type SearchMatch,
 } from "./mcp-tool-defaults";
 import { convertToolToMCP as convertToolToMCPImpl } from "./mcp-tool-schema";
 import {
@@ -92,6 +95,49 @@ const ON_DEMAND_META_TOOLS: MCPTool[] = [
 		name: "call_tool",
 		description:
 			"Call any activated tool by name. Use `setup_tools` first to discover available tools (returned as compact signatures). If you pass invalid or missing args the full input schema is returned in the error so you can retry.",
+		inputSchema: {
+			type: "object",
+			properties: {
+				name: {
+					type: "string",
+					description: "The name of the tool to call",
+				},
+				data: {
+					type: "object",
+					description: "The input data for the tool",
+				},
+			},
+			required: ["name", "data"],
+		},
+	},
+];
+
+/** Meta-tools exposed only when `toolExposure` is `search`. */
+const SEARCH_META_TOOLS: MCPTool[] = [
+	{
+		name: "search",
+		description:
+			"Find tools for the task at hand by keyword — e.g. search('open a pull request'). Returns the best matches as compact signatures (`tool_name(required, optional?)`) with their descriptions, and makes them callable with `call_tool`. Search again with different words whenever the task changes; matches accumulate.",
+		inputSchema: {
+			type: "object",
+			properties: {
+				query: {
+					type: "string",
+					description:
+						"Words describing what you need to do (tool names, verbs, the system you want to touch).",
+				},
+				limit: {
+					type: "number",
+					description: "Maximum number of tools to return (default 10).",
+				},
+			},
+			required: ["query"],
+		},
+	},
+	{
+		name: "call_tool",
+		description:
+			"Call any tool that `search` returned, by name. If you pass invalid or missing args the full input schema is returned in the error so you can retry.",
 		inputSchema: {
 			type: "object",
 			properties: {
@@ -205,7 +251,7 @@ export class CapaMCPServer {
 	}
 
 	private beginTrace(input: {
-		kind: "setup_tools" | "call_tool" | "tool";
+		kind: "setup_tools" | "search" | "call_tool" | "tool";
 		toolName: string;
 		metaTool?: string | null;
 		args?: unknown;
@@ -324,6 +370,11 @@ export class CapaMCPServer {
 			return { tools };
 		}
 
+		if (toolExposureMode === "search") {
+			// Discovery is by keyword: the agent searches, then calls.
+			return { tools: SEARCH_META_TOOLS };
+		}
+
 		// On-demand: only meta-tools
 		return { tools: ON_DEMAND_META_TOOLS };
 	}
@@ -348,6 +399,14 @@ export class CapaMCPServer {
 			capabilities?.options?.toolExposure || "expose-all";
 
 		if (name === "setup_tools") {
+			if (toolExposureMode === "search") {
+				this.logger.warn("setup_tools called in search mode");
+				return {
+					type: "unavailable",
+					message:
+						'This project discovers tools with "search". Call search("<what you need to do>") and then call_tool with a name it returns.',
+				};
+			}
 			// HTTP historically accepts setup_tools in any mode; SDK only in on-demand.
 			if (toolExposureMode === "on-demand" || style === "http") {
 				if (style === "http") {
@@ -372,8 +431,24 @@ export class CapaMCPServer {
 			// mode === 'none': fall through to direct tool lookup (SDK quirk)
 		}
 
+		if (name === "search") {
+			if (toolExposureMode === "search") {
+				return {
+					type: "ok",
+					result: await this.handleSearch(
+						cleanArgs as { query: string; limit?: number },
+					),
+				};
+			}
+			this.logger.warn(`Meta-tool search called in ${toolExposureMode} mode`);
+			return {
+				type: "unavailable",
+				message: `The meta-tool "search" is only available in search mode. Your project is configured for ${toolExposureMode} mode.`,
+			};
+		}
+
 		if (name === "call_tool") {
-			if (toolExposureMode === "on-demand") {
+			if (toolExposureMode === "on-demand" || toolExposureMode === "search") {
 				return {
 					type: "ok",
 					result: await this.handleCallTool(
@@ -382,10 +457,12 @@ export class CapaMCPServer {
 				};
 			}
 			if (style === "http") {
-				this.logger.warn("call_tool is only available in on-demand mode");
+				this.logger.warn(
+					"call_tool is only available in on-demand and search modes",
+				);
 				return {
 					type: "unavailable",
-					message: "call_tool is only available in on-demand mode",
+					message: "call_tool is only available in on-demand and search modes",
 				};
 			}
 			if (toolExposureMode === "expose-all") {
@@ -398,7 +475,7 @@ export class CapaMCPServer {
 			// mode === 'none': fall through (SDK quirk)
 		}
 
-		if (toolExposureMode === "on-demand") {
+		if (toolExposureMode === "on-demand" || toolExposureMode === "search") {
 			this.ensureSession();
 		}
 
@@ -559,6 +636,91 @@ export class CapaMCPServer {
 				}
 			}
 		});
+	}
+
+	/**
+	 * `search` meta-tool: find tools by keyword and make them callable.
+	 *
+	 * Matches are activated for the session, so the agent can go straight from
+	 * a search result to `call_tool` — the same accumulate-as-you-go contract
+	 * `setup_tools` has, keyed on the task instead of on a skill id.
+	 */
+	private async handleSearch(args: {
+		query: string;
+		limit?: number;
+	}): Promise<any> {
+		const session = this.ensureSession();
+		if (typeof args?.query !== "string") {
+			// An explicit "" is the documented list-everything request; a missing
+			// or non-string query is a malformed call, and coercing it would
+			// activate ten unrelated tools.
+			return toolTextError(
+				'search requires a string "query" — the words describing what you need to do.',
+			);
+		}
+		const query = args.query;
+		const traceId = this.beginTrace({
+			kind: "search",
+			toolName: "search",
+			metaTool: "search",
+			args,
+		});
+		try {
+			const capabilities = this.sessionManager.getProjectCapabilities(
+				this.projectId,
+			);
+			if (!capabilities) {
+				throw new Error(
+					`No capabilities configured for project: ${this.projectId}`,
+				);
+			}
+
+			const allowedToolIds = this.getAgentAllowedToolIds(capabilities);
+			const candidates = searchableTools(capabilities).filter(
+				(t) => !allowedToolIds || allowedToolIds.has(t.qualifiedName),
+			);
+			const hits = searchTools(candidates, query, args?.limit ?? undefined);
+
+			// Schema conversion lists the remote server's tools. Run the hits
+			// together so several matches on one server coalesce into a single
+			// round-trip instead of paying that server's timeout once each.
+			const converted: Array<SearchMatch | null> = await Promise.all(
+				hits.map(async (hit): Promise<SearchMatch | null> => {
+					const tool = capabilities.tools.find(
+						(t) => getQualifiedToolName(t) === hit.tool.qualifiedName,
+					);
+					if (!tool) return null;
+					const mcpTool = await this.convertToolToMCP(tool, capabilities);
+					return {
+						tool: hit.tool.qualifiedName,
+						signature: buildToolSignature(mcpTool),
+						description: mcpTool.description ?? hit.tool.description,
+					};
+				}),
+			);
+			const matches: SearchMatch[] = converted.filter(
+				(m): m is SearchMatch => m !== null,
+			);
+
+			if (matches.length > 0) {
+				this.sessionManager.activateTools(
+					session.sessionId,
+					matches.map((m) => m.tool),
+				);
+			}
+
+			const payload = buildSearchPayload(query, matches);
+			const result = {
+				content: [{ type: "text", text: JSON.stringify(payload) }],
+			};
+			this.finishTraceOk(traceId, result);
+			return result;
+		} catch (error: any) {
+			const message = error?.message || "Search failed";
+			const result = toolTextError(message);
+			this.finishTraceError(traceId, message, result);
+			return result;
+		}
 	}
 
 	private async handleSetupTools(args: { skills: string[] }): Promise<any> {
@@ -804,11 +966,17 @@ export class CapaMCPServer {
 				)
 			) {
 				this.logger.warn(`Tool not activated: ${toolName}`);
-				// The tool exists but isn't activated — `setup_tools` is the next
-				// step, so don't pre-emptively dump the schema and confuse the agent.
+				// The tool exists but isn't activated — the next step is whichever
+				// discovery meta-tool this mode exposes, so don't pre-emptively dump
+				// the schema and confuse the agent.
+				const discoveryStep =
+					this.sessionManager.getProjectCapabilities(this.projectId)?.options
+						?.toolExposure === "search"
+						? `Call search("<what you need to do>") first.`
+						: "Call setup_tools with the appropriate skills first.";
 				const result = await this.buildCallToolErrorResult(
 					toolName,
-					`Tool "${toolName}" is not activated. Call setup_tools with the appropriate skills first.`,
+					`Tool "${toolName}" is not activated. ${discoveryStep}`,
 					{ includeSchema: false },
 				);
 				this.finishTraceError(

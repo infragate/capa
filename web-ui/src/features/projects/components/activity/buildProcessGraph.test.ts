@@ -122,6 +122,57 @@ describe('buildProcessGraph', () => {
     ).toMatchObject({ id: 'Read', label: 'Read' });
   });
 
+  it('treats MCP:search as a capa meta-tool wrapper', () => {
+    expect(
+      isCapaMetaToolWrapperSpan(
+        call({ id: 's1', kind: 'agent_tool', tool_name: 'MCP:search', started_at: 1 }),
+      ),
+    ).toBe(true);
+    expect(
+      isCapaMetaToolWrapperSpan(
+        call({ id: 's2', kind: 'agent_mcp', tool_name: 'search', started_at: 2 }),
+      ),
+    ).toBe(true);
+    // A provider's own tool that happens to be called "search" is not ours.
+    expect(
+      isCapaMetaToolWrapperSpan(
+        call({ id: 's3', kind: 'agent_tool', tool_name: 'search', started_at: 3 }),
+      ),
+    ).toBe(false);
+  });
+
+  it('keeps a real tool named "search" on the map', () => {
+    const prompt = call({ id: 'p', kind: 'prompt', tool_name: 'find it', started_at: 0 });
+    const graph = buildProcessGraph([
+      run(
+        [
+          call({
+            id: '1',
+            kind: 'search',
+            tool_name: 'search',
+            meta_tool: 'search',
+            started_at: 1,
+          }),
+          call({
+            id: '2',
+            kind: 'call_tool',
+            tool_name: 'brave.search',
+            meta_tool: 'call_tool',
+            started_at: 2,
+          }),
+          call({ id: '3', kind: 'tool', tool_name: 'search', started_at: 3 }),
+        ],
+        prompt,
+      ),
+    ]);
+
+    const ids = graph.activities.map((a) => a.id);
+    // capa's own search span is dropped; both real tools survive.
+    expect(ids).toContain('capa:brave.search');
+    expect(ids).toContain('capa:search');
+    expect(ids).not.toContain('search');
+  });
+
   it('dedupes capa MCP meta-tool wrappers (MCP:call_tool, agent_mcp, setup_tools)', () => {
     expect(
       isCapaMetaToolWrapperSpan(
