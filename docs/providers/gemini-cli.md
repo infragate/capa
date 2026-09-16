@@ -48,7 +48,9 @@ Gemini read the same file. The layout depends only on `providers`:
 Capa appends to an existing `context.fileName` (string or list) without
 touching other entries or settings, and records the values it added under
 `providerConfig` in `capabilities.lock`. `capa clean` (and removing
-`gemini-cli` from `providers`) removes only those values. If the user also
+`gemini-cli` from `providers`) removes only those values. `capa install
+--passthrough` adds the same entry but records no ownership, like the rest of
+passthrough output. If the user also
 lists `AGENTS.md` while Gemini is isolated, capa leaves it and warns, since
 Gemini would read rules targeted at other providers.
 

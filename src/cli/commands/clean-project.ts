@@ -1,6 +1,6 @@
 import { existsSync } from 'fs';
 import { rm } from 'fs/promises';
-import { join, resolve } from 'path';
+import { isAbsolute, join, relative, resolve } from 'path';
 import { isCapaOwnedInstallPath } from '../../shared/install-path-guard';
 import { isUnderWrapWorkspacesDir } from '../../shared/workspaces/paths';
 import { canonicalizePath, detectCapabilitiesFile } from '../../shared/paths';
@@ -121,7 +121,9 @@ function managedFilesOnRealProject(
   return managedFiles.filter((filePath) => {
     const abs = resolve(filePath);
     if (isUnderWrapWorkspacesDir(abs)) return false;
-    return abs === root || abs.startsWith(root + '/');
+    // `relative` instead of a `/` prefix check: Windows paths use `\`.
+    const rel = relative(root, abs);
+    return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
   });
 }
 

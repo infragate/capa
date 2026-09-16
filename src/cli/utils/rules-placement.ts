@@ -173,7 +173,8 @@ export function planRulePlacement(input: PlanRulePlacementInput): RulePlacementP
         ruleId: rule.id,
         level,
         message:
-          `Rule "${rule.id}": appliesTo glob "${glob}" points outside the project and was ignored.`,
+          `Rule "${rule.id}": appliesTo glob "${glob}" points outside the project` +
+          (level === 'error' ? '; the rule was skipped.' : ' and was ignored.'),
       });
     }
 
@@ -192,9 +193,12 @@ export function planRulePlacement(input: PlanRulePlacementInput): RulePlacementP
             level,
             message:
               `Rule "${rule.id}": appliesTo ${scope.rootGlobs.map((g) => `"${g}"`).join(', ')} ` +
-              `can't be scoped natively for ${targets.join(', ')}; it is loaded for the whole project ` +
-              `with an "Applies to" note. Use directory globs (e.g. "src/**") or set ` +
-              `"scope: best-effort" on the rule to accept this.`,
+              `can't be scoped natively for ${targets.join(', ')}; ` +
+              (level === 'error'
+                ? 'the rule was skipped. '
+                : 'it is loaded for the whole project with an "Applies to" note. ') +
+              `Use directory globs (e.g. "src/**") or set "scope: best-effort" on the rule to ` +
+              `accept a project-wide fold.`,
           });
         }
       }
@@ -218,7 +222,9 @@ export function planRulePlacement(input: PlanRulePlacementInput): RulePlacementP
             level,
             message:
               `Rule "${rule.id}" is limited to ${[...allowed].sort().join(', ')}, but ${path} is also ` +
-              `read by ${leaked.join(', ')}. Adjust the rule's providers, or set ` +
+              `read by ${leaked.join(', ')}` +
+              (level === 'error' ? '; the rule was skipped. ' : '. ') +
+              `Adjust the rule's providers, or set ` +
               `"visibility: best-effort" on the rule to accept this.`,
           });
         }

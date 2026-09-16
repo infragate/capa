@@ -141,6 +141,17 @@ describe('buildProcessGraph', () => {
     ).toBe(false);
   });
 
+  it('recognizes meta-tool wrappers regardless of case', () => {
+    for (const tool_name of ['MCP:CALL_TOOL', 'mcp:Setup_Tools', 'MCP: Search']) {
+      expect(
+        isCapaMetaToolWrapperSpan(call({ id: tool_name, kind: 'agent_tool', tool_name })),
+      ).toBe(true);
+    }
+    expect(
+      isCapaMetaToolWrapperSpan(call({ id: 'm', kind: 'agent_mcp', tool_name: 'Call_Tool' })),
+    ).toBe(true);
+  });
+
   it('keeps a real tool named "search" on the map', () => {
     const prompt = call({ id: 'p', kind: 'prompt', tool_name: 'find it', started_at: 0 });
     const graph = buildProcessGraph([

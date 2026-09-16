@@ -53,6 +53,18 @@ describe("redactOAuth2ConfigForApi", () => {
 });
 
 describe("mergeServerDef", () => {
+	it("clears env and headers, including secrets, when the patch sets them to null", () => {
+		const merged = mergeServerDef(
+			{
+				url: "https://x.test/mcp",
+				env: { API_KEY: "old-key" },
+				headers: { Authorization: "Bearer old-token", Accept: "application/json" },
+			},
+			{ url: "https://x.test/mcp", env: null, headers: null },
+		);
+		expect(merged).toEqual({ url: "https://x.test/mcp" });
+	});
+
 	it("keeps existing env values, headers, and clientSecret when the patch omits or blanks them", () => {
 		const merged = mergeServerDef(
 			{

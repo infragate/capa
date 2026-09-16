@@ -11,8 +11,7 @@ import { installRules, pruneRules } from "../cli/utils/rules-installer";
 import { resolveRuleConflictMode } from "../cli/utils/rules-placement";
 import {
 	applyInstructionContextConfig,
-	newlyOwnedProviderConfig,
-	removeInstructionContextConfig,
+	revertInstructionContextConfig,
 } from "../cli/utils/instruction-context-config";
 import {
 	getLockfilePath,
@@ -431,13 +430,12 @@ async function syncInstructionContextConfig(
 				rmSync(getLockfilePath(projectPath), { force: true });
 			}
 		} catch (err: unknown) {
-			// No ownership record was saved: undo values added in this sync.
-			const added = newlyOwnedProviderConfig(before, result.owned);
-			const reverted = removeInstructionContextConfig(projectPath, added);
+			// No ownership record was saved: put settings back to match the old lockfile.
+			const reverted = revertInstructionContextConfig(projectPath, before, result.owned);
 			return [
 				...result.warnings,
 				...reverted.warnings,
-				`Failed to write capabilities.lock (reverted new instruction settings): ${err instanceof Error ? err.message : String(err)}`,
+				`Failed to write capabilities.lock (reverted instruction settings changed in this sync): ${err instanceof Error ? err.message : String(err)}`,
 			];
 		}
 		return result.warnings;

@@ -109,11 +109,11 @@ function canonicalAgentToolName(raw: string): string {
 /** Provider MCP / Cursor wrappers around capa's `call_tool` / `setup_tools` meta-tools. */
 export function isCapaMetaToolWrapperSpan(ev: ToolCallRecord): boolean {
   const name = ev.tool_name?.trim() ?? '';
-  if (ev.kind === 'agent_mcp' && CAPA_META_TOOL_NAMES.has(name)) {
+  if (ev.kind === 'agent_mcp' && CAPA_META_TOOL_NAMES.has(name.toLowerCase())) {
     return true;
   }
   if (ev.kind === 'agent_tool' && /^MCP:/i.test(name)) {
-    return CAPA_META_TOOL_NAMES.has(name.slice(4).trim());
+    return CAPA_META_TOOL_NAMES.has(name.slice(4).trim().toLowerCase());
   }
   return false;
 }

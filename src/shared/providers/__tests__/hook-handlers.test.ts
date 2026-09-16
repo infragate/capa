@@ -242,6 +242,29 @@ describe('hook-handlers — upsertHookEntry / removeHookEntryAt', () => {
     expect(removed).toBe(false);
     expect((root.PreToolUse as unknown[]).length).toBe(1);
   });
+
+  it('removes every entry when earlier removals make later locators stale', () => {
+    const root: Record<string, unknown> = {};
+    const install = (id: string, matcherPrefix?: string) =>
+      upsertHookEntry(
+        claudeIntegration,
+        root,
+        buildHookEntry(claudeIntegration, {
+          hook: { id, on: 'afterTool', command: id },
+          runReference: id,
+          mapping: { event: 'PostToolUse', matcherPrefix },
+        }),
+      );
+    // Each in its own matcher group, as capa's activity hooks are.
+    const locators = [install('a'), install('b', 'Bash'), install('c', 'Edit'), install('d', 'mcp__.*')];
+    expect(locators[3]).toEqual(['PostToolUse', 3, 'hooks', 0]);
+
+    // Removing in install order shifts the later groups down.
+    ['a', 'b', 'c', 'd'].forEach((id, i) => {
+      expect(removeHookEntryAt(claudeIntegration, root, locators[i], id)).toBe(true);
+    });
+    expect(root.PostToolUse).toBeUndefined();
+  });
 });
 
 describe('hook-handlers — name tag helpers', () => {

@@ -33,14 +33,24 @@ export function applyInstructionContextConfig(
   projectPath: string,
   providers: string[],
   previouslyOwned: LockProviderConfigEntry[],
+  options: {
+    /**
+     * Configure only these providers (the layout still uses all `providers`).
+     * Passthrough passes the providers whose instructions file it wrote.
+     */
+    onlyProviders?: string[];
+  } = {},
 ): ContextConfigResult {
   const layout = computeInstructionLayout(providers);
   const warnings: string[] = [];
   const changedFiles = new Set<string>();
   const owned: LockProviderConfigEntry[] = [];
 
+  const only = options.onlyProviders ? new Set(options.onlyProviders) : null;
   const desired = new Map<string, { config: InstructionsContextConfig; fileNames: string[] }>();
-  for (const [pid, entry] of layout.contextConfig) desired.set(pid, entry);
+  for (const [pid, entry] of layout.contextConfig) {
+    if (!only || only.has(pid)) desired.set(pid, entry);
+  }
 
   // Release entries for providers that are gone or whose setting moved.
   for (const prev of previouslyOwned) {
@@ -101,6 +111,38 @@ export function newlyOwnedProviderConfig(
     added.push({ ...entry, values, createdKey: entry.createdKey && !prev });
   }
   return added;
+}
+
+/**
+ * Undo an apply whose ownership record couldn't be saved: remove values added
+ * since `before` and put back values released since `before`.
+ */
+export function revertInstructionContextConfig(
+  projectPath: string,
+  before: LockProviderConfigEntry[],
+  after: LockProviderConfigEntry[],
+): { warnings: string[] } {
+  const warnings = removeInstructionContextConfig(
+    projectPath,
+    newlyOwnedProviderConfig(before, after),
+  ).warnings;
+  for (const entry of newlyOwnedProviderConfig(after, before)) {
+    const config = getProvider(entry.provider)?.instructions?.contextConfig;
+    const filePath = join(projectPath, entry.configPath);
+    const data = isCapaOwnedInstallPath(projectPath, filePath) ? readJsonFile(filePath) : null;
+    const current = data ? readSetting(data, entry.keyPath) : null;
+    if (!data || !current || current.kind === 'invalid') {
+      warnings.push(`Could not restore ${entry.configPath} ${entry.keyPath.join('.')}.`);
+      continue;
+    }
+    const values =
+      current.kind === 'missing' ? [...(config?.defaultValue ?? [])] : [...current.values];
+    const missing = entry.values.filter((v) => !values.includes(v));
+    if (missing.length === 0) continue;
+    writeSetting(data, entry.keyPath, [...values, ...missing]);
+    writeJsonFile(filePath, data);
+  }
+  return { warnings };
 }
 
 // ---------------------------------------------------------------------------

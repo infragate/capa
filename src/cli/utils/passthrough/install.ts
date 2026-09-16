@@ -7,6 +7,8 @@ import { getRepoSnapshot } from '../../commands/install-tasks/helpers/repo-snaps
 import { installOneSkill } from '../../commands/install-tasks/helpers/install-one-skill';
 import { resolveRuleBody } from '../../commands/install-tasks/install-rules';
 import { installRules } from '../rules-installer';
+import { computeInstructionLayout, resolveRuleConflictMode } from '../rules-placement';
+import { applyInstructionContextConfig } from '../instruction-context-config';
 import { installHooks } from '../hooks';
 import { installSubAgentInstructions } from '../agents-file/index';
 import { resolvePlugins } from '../../commands/plugin-install';
@@ -174,8 +176,41 @@ export async function passthroughInstall(opts: {
         }
       }
       if (bodies.size > 0) {
-        installRules(projectPath, rules.filter((r) => bodies.has(r.id)), providers, bodies);
-        added += bodies.size;
+        const result = installRules(
+          projectPath,
+          rules.filter((r) => bodies.has(r.id)),
+          providers,
+          bodies,
+          { conflicts: resolveRuleConflictMode(capabilities.options) },
+        );
+        warnings.push(...result.warnings, ...result.diagnostics.map((d) => d.message));
+        // Count rule outcomes once each, not once per diagnostic.
+        failed += result.skippedRuleIds.length;
+        added += bodies.size - result.skippedRuleIds.length;
+
+        // Point providers like Gemini CLI at their instructions file, but only
+        // when a rule block was actually written to it. Passthrough records no
+        // ownership, so an unneeded entry could never be cleaned up.
+        const layout = computeInstructionLayout(providers);
+        const writtenNames = new Set(
+          result.writtenInstructionFiles.map((rel) => rel.split('/').pop()!),
+        );
+        const onlyProviders = [...layout.contextConfig.keys()].filter((pid) =>
+          writtenNames.has(layout.providerFile.get(pid)!),
+        );
+        if (onlyProviders.length > 0) {
+          try {
+            const context = applyInstructionContextConfig(projectPath, providers, [], {
+              onlyProviders,
+            });
+            warnings.push(...context.warnings);
+          } catch (err) {
+            failed++;
+            warnings.push(
+              `Instruction file settings: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        }
       }
     }
 

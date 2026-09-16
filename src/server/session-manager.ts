@@ -1,7 +1,10 @@
 import { nanoid } from "nanoid";
 import type { CapaDatabase } from "../db/database";
 import { logger } from "../shared/logger";
-import { exposedToolNamesForServer } from "../shared/server-tool-exposure";
+import {
+	effectiveExpose,
+	exposedToolNamesForServer,
+} from "../shared/server-tool-exposure";
 import type { Capabilities, Tool } from "../types/capabilities";
 import {
 	getQualifiedToolName,
@@ -161,15 +164,29 @@ export class SessionManager {
 			);
 		}
 
-		// A ref can name a whole server (`@github`) when that server carries an
-		// `expose` policy — activating 40 tools without listing 40 skills.
+		// A ref can name a whole server (`@github`) when that server has an
+		// expose policy (omitted `expose` means `all`) — activating 40 tools
+		// without listing 40 skills. A bare ref that is a skill id stays a skill.
+		// Hand-declared `tools:` entries turn a server's policy off. Tools
+		// synthesized from the policy are also in `capabilities.tools`, so only
+		// authored entries count here.
+		const authoredServerIds = new Set(
+			capabilities.tools
+				.filter((t) => t.type === "mcp" && !t.fromServerExpose)
+				.map((t) => String((t.def as { server?: string }).server ?? "").replace(/^@/, "")),
+		);
+		const policyServerIds = new Set(
+			(capabilities.servers ?? [])
+				.filter((s) => effectiveExpose(s) !== "none" && !authoredServerIds.has(s.id))
+				.map((s) => s.id),
+		);
 		const serverTools: string[] = [];
 		const skillsOnly: string[] = [];
 		for (const ref of skillIds) {
 			const serverId = ref.replace(/^@/, "");
-			const server = capabilities.servers?.find(
-				(s) => s.id === serverId && s.expose,
-			);
+			const isSkill =
+				!ref.startsWith("@") && capabilities.skills.some((s) => s.id === ref);
+			const server = !isSkill && policyServerIds.has(serverId);
 			if (server) {
 				// A sub-agent endpoint activates only what its allow-list names —
 				// `call_tool` authorizes by session membership, so an unfiltered
