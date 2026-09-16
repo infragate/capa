@@ -167,9 +167,17 @@ export class SessionManager {
 		// A ref can name a whole server (`@github`) when that server has an
 		// expose policy (omitted `expose` means `all`) — activating 40 tools
 		// without listing 40 skills. A bare ref that is a skill id stays a skill.
+		// Hand-declared `tools:` entries turn a server's policy off. Tools
+		// synthesized from the policy are also in `capabilities.tools`, so only
+		// authored entries count here.
+		const authoredServerIds = new Set(
+			capabilities.tools
+				.filter((t) => t.type === "mcp" && !t.fromServerExpose)
+				.map((t) => String((t.def as { server?: string }).server ?? "").replace(/^@/, "")),
+		);
 		const policyServerIds = new Set(
 			(capabilities.servers ?? [])
-				.filter((s) => effectiveExpose(s) !== "none")
+				.filter((s) => effectiveExpose(s) !== "none" && !authoredServerIds.has(s.id))
 				.map((s) => s.id),
 		);
 		const serverTools: string[] = [];
