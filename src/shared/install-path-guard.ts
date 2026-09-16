@@ -74,6 +74,12 @@ export function collectProviderInstallRelativePaths(
 		if (p.instructions?.filename) {
 			paths.add(p.instructions.filename.replace(/\\/g, "/"));
 		}
+		if (p.instructions?.isolatedFilename) {
+			paths.add(p.instructions.isolatedFilename.replace(/\\/g, "/"));
+		}
+		if (p.instructions?.contextConfig) {
+			paths.add(p.instructions.contextConfig.configPath.replace(/\\/g, "/"));
+		}
 		if (p.mcp?.configPath) paths.add(p.mcp.configPath.replace(/\\/g, "/"));
 		if (p.mcp?.defaultMcpFallbackPath) {
 			paths.add(p.mcp.defaultMcpFallbackPath.replace(/\\/g, "/"));

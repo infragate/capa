@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { cleanCommand } from '../clean';
@@ -157,6 +157,65 @@ researcher block
     // Both files were entirely capa-managed, so they should now be gone.
     expect(existsSync(join(projectDir, 'CLAUDE.md'))).toBe(false);
     expect(existsSync(join(projectDir, 'AGENTS.md'))).toBe(false);
+  });
+
+  it('removes GEMINI.md, nested rule files, and only lockfile-owned Gemini settings', async () => {
+    writeFileSync(
+      join(projectDir, 'capabilities.yaml'),
+      `providers: [codex, gemini-cli]
+options:
+  toolExposure: on-demand
+skills: []
+servers: []
+tools: []
+rules:
+  - id: api
+    type: inline
+    appliesTo: ["api/**"]
+    content: API rule.
+`,
+      'utf-8'
+    );
+    writeFileSync(
+      join(projectDir, 'GEMINI.md'),
+      '<!-- capa:start:team -->\nTeam.\n<!-- capa:end:team -->\n',
+      'utf-8'
+    );
+    mkdirSync(join(projectDir, 'api'));
+    writeFileSync(
+      join(projectDir, 'api', 'AGENTS.md'),
+      '# API notes\n\n<!-- capa:start:rule:api -->\nAPI rule.\n<!-- capa:end:rule:api -->\n',
+      'utf-8'
+    );
+    mkdirSync(join(projectDir, '.gemini'));
+    writeFileSync(
+      join(projectDir, '.gemini', 'settings.json'),
+      JSON.stringify({ theme: 'dark', context: { fileName: ['NOTES.md', 'GEMINI.md'] } }),
+      'utf-8'
+    );
+    writeFileSync(
+      join(projectDir, 'capabilities.lock'),
+      `version: 1
+skills: []
+plugins: []
+providerConfig:
+  - provider: gemini-cli
+    configPath: .gemini/settings.json
+    keyPath: [context, fileName]
+    values: [GEMINI.md]
+    createdKey: false
+`,
+      'utf-8'
+    );
+
+    await captureOutput(() => cleanCommand());
+
+    expect(existsSync(join(projectDir, 'GEMINI.md'))).toBe(false);
+    expect(readFileSync(join(projectDir, 'api', 'AGENTS.md'), 'utf-8').trim()).toBe('# API notes');
+    expect(JSON.parse(readFileSync(join(projectDir, '.gemini', 'settings.json'), 'utf-8'))).toEqual({
+      theme: 'dark',
+      context: { fileName: ['NOTES.md'] },
+    });
   });
 
   it('leaves a pre-existing AGENTS.md alone when claude-code is the only provider', async () => {

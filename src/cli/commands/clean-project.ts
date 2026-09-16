@@ -5,7 +5,7 @@ import { isCapaOwnedInstallPath } from '../../shared/install-path-guard';
 import { isUnderWrapWorkspacesDir } from '../../shared/workspaces/paths';
 import { canonicalizePath, detectCapabilitiesFile } from '../../shared/paths';
 import { parseCapabilitiesFile } from '../../shared/capabilities';
-import { getLockfilePath } from '../../shared/lockfile';
+import { getLockfilePath, loadLockfile } from '../../shared/lockfile';
 import { resolveProvidersForClean } from '../../shared/providers/resolve';
 import { getAllProviders, getProvider } from '../../shared/providers';
 import {
@@ -21,6 +21,7 @@ import {
 } from '../utils/mcp-client-manager';
 import { cleanAgentsFile, removeSubAgentInstructions } from '../utils/agents-file/index';
 import { cleanRules } from '../utils/rules-installer';
+import { removeInstructionContextConfig } from '../utils/instruction-context-config';
 import { cleanHooks } from '../utils/hooks';
 import { stopWrapSessionsForProject } from '../utils/wrap/sessions';
 import { pruneWorkspacesForProject } from '../utils/wrap/workspace';
@@ -189,7 +190,10 @@ export async function cleanProject(opts: CleanProjectOptions): Promise<CleanProj
 
     try {
       const ruleIds = (capabilities?.rules ?? []).map((r) => r.id);
-      cleanRules(projectPath, providers, ruleIds);
+      cleanRules(projectPath, providers, ruleIds, {
+        trackedInstructionTargets: db.getManagedInstructionTargets(projectId),
+        rules: capabilities?.rules,
+      });
     } catch (err) {
       warnings.push(
         `Failed to clean rules: ${err instanceof Error ? err.message : String(err)}`,
@@ -202,6 +206,20 @@ export async function cleanProject(opts: CleanProjectOptions): Promise<CleanProj
     warnings.push(...hookWarnings);
   } else if (wrapOnlyManagedArtifacts && db.getManagedHooks(projectId).length > 0) {
     db.clearManagedHooks(projectId);
+  }
+
+  if (!wrapOnlyManagedArtifacts) {
+    try {
+      const lockfile = await loadLockfile(projectPath);
+      if (lockfile?.providerConfig?.length) {
+        const result = removeInstructionContextConfig(projectPath, lockfile.providerConfig);
+        warnings.push(...result.warnings);
+      }
+    } catch (err) {
+      warnings.push(
+        `Failed to remove capa instruction settings: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   const lockfilePath = getLockfilePath(projectPath);

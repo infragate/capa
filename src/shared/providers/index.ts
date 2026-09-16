@@ -166,6 +166,8 @@ function addProviderOwnedTopLevelNames(
 	if (p.skillsDir) names.add(topLevelName(p.skillsDir));
 	if (p.instructions?.filename)
 		names.add(topLevelName(p.instructions.filename));
+	if (p.instructions?.isolatedFilename)
+		names.add(topLevelName(p.instructions.isolatedFilename));
 	if (p.mcp?.configPath) names.add(topLevelName(p.mcp.configPath));
 	if (p.mcp?.defaultMcpFallbackPath)
 		names.add(topLevelName(p.mcp.defaultMcpFallbackPath));

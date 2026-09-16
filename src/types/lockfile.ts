@@ -97,6 +97,24 @@ export interface LockHookEntry {
 }
 
 /**
+ * Values capa merged into a provider config setting (e.g. Gemini CLI
+ * `context.fileName`). Recorded so `capa clean` removes only what capa added,
+ * even on a fresh clone without local install state.
+ */
+export interface LockProviderConfigEntry {
+  /** Provider id (e.g. `gemini-cli`). */
+  provider: string;
+  /** Config file relative to the project root. */
+  configPath: string;
+  /** Key path of the setting inside the config file. */
+  keyPath: string[];
+  /** Entries capa added to the setting. */
+  values: string[];
+  /** True when the setting didn't exist before capa created it. */
+  createdKey: boolean;
+}
+
+/**
  * Top-level lockfile schema.
  */
 export interface Lockfile {
@@ -112,4 +130,6 @@ export interface Lockfile {
   plugins: LockPluginEntry[];
   /** Locked hook source entries (only for hooks with a `source`). */
   hooks: LockHookEntry[];
+  /** Provider config values owned by capa. Omitted when empty. */
+  providerConfig?: LockProviderConfigEntry[];
 }

@@ -202,6 +202,9 @@ async function installCommandBody(opts: {
   const db = new CapaDatabase(dbPath);
   const existingLockfile = await loadLockfile(projectPath);
   const lockBuilder = new LockfileBuilder(noCache ? null : existingLockfile);
+  if (noCache && existingLockfile?.providerConfig) {
+    lockBuilder.setProviderConfig(existingLockfile.providerConfig);
+  }
   const mcpUrl = `${serverStatus.url}/${projectId}/mcp`;
 
   let resolvedProviders: string[];

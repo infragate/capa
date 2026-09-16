@@ -38,7 +38,8 @@ export function writeLockfileTask(): Task<InstallCtx> {
       if (
         lockfileToSave.skills.length === 0 &&
         lockfileToSave.plugins.length === 0 &&
-        lockfileToSave.hooks.length === 0
+        lockfileToSave.hooks.length === 0 &&
+        (lockfileToSave.providerConfig ?? []).length === 0
       ) {
         try {
           const lockPath = join(ctx.projectPath, 'capabilities.lock');

@@ -111,6 +111,19 @@ export interface CapabilitiesOptions {
    * - `stop`: abort the install run (legacy behavior)
    */
   onInstallError?: 'warn' | 'stop';
+  rules?: RulesOptions;
+}
+
+export interface RulesOptions {
+  /**
+   * How rule placement conflicts are handled: a rule visible to an excluded
+   * provider through a shared instructions file, or an `appliesTo` scope that
+   * can't be represented natively. `warn` installs the rule and reports a
+   * warning; `error` skips the rule and records an install failure.
+   * Defaults to `error` when `onInstallError: stop`, otherwise `warn`.
+   * The default will become `error` in the next major release.
+   */
+  conflicts?: 'warn' | 'error';
 }
 
 /**

@@ -3,6 +3,7 @@ import { dirname, resolve } from 'path';
 import type { Task } from '../../ui';
 import { createAuthenticatedFetch, AuthenticatedFetch } from '../../../shared/authenticated-fetch';
 import { installRules } from '../../utils/rules-installer';
+import { resolveRuleConflictMode } from '../../utils/rules-placement';
 import { fetchRepoFile, fetchTextFile, type RepoSnapshotResolver } from '../../../shared/repo-file';
 import type { Rule } from '../../../types/rules';
 import {
@@ -139,9 +140,14 @@ export function installRulesTask(): Task<InstallCtx> {
       }
 
       task.output = 'writing files…';
-      installRules(ctx.projectPath, installedRules, providers, ctx.ruleBodies!, {
+      // Placement diagnostics were already reported by the prune task.
+      const { warnings } = installRules(ctx.projectPath, installedRules, providers, ctx.ruleBodies!, {
         onFileWritten: (filePath) => ctx.db.addManagedFile(ctx.projectId, filePath),
+        onInstructionTargetWritten: (filePath) =>
+          ctx.db.addManagedInstructionTarget(ctx.projectId, filePath),
+        conflicts: resolveRuleConflictMode(ctx.capabilitiesToUse.options),
       });
+      ctx.warnings.push(...warnings);
       ctx.added += installedRules.length;
       task.title =
         failedInTask > 0
