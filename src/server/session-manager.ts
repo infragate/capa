@@ -353,8 +353,11 @@ export class SessionManager {
 		const incoming = capabilities.tools.filter((t) => t.fromServerExpose);
 		let exposed: Tool[];
 		if (incoming.length > 0) {
-			exposed = incoming;
-			this.exposedTools.set(projectId, incoming);
+			// Incoming tools may be a fresh configure result or a merged list
+			// recovered from the database after a restart; either way, only keep
+			// what the accompanying capabilities' policies allow.
+			exposed = synthesizedToolsAllowedByPolicy(capabilities, incoming);
+			this.exposedTools.set(projectId, exposed);
 		} else {
 			// A re-read of the capabilities file carries no synthesized tools.
 			// Keep the last snapshot, minus tools the current policies no longer

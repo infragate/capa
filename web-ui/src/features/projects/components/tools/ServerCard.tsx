@@ -133,15 +133,23 @@ export function ServerCard({
       return { label: t('tool.exposureNone'), hint: t('tool.exposureNoneHint'), muted: true };
     }
     const hint = t(`tool.exposureHint_${exposure.mode}`);
-    if (tools && tools.length > 0) {
-      return {
-        label: t('tool.exposureCount', { exposed: exposure.exposedToolNames.size, total: tools.length }),
-        hint,
-        muted: false,
-      };
+    const exposed = exposure.exposedToolNames.size;
+    if (exposure.totalTools === null) {
+      // Tool list unavailable (off, needs auth, discovery failed): only report
+      // what the server last synthesized, never assume "all".
+      return exposed > 0
+        ? { label: t('tool.exposureKnown', { count: exposed }), hint, muted: false }
+        : null;
     }
-    return { label: t('tool.exposureAll'), hint, muted: false };
-  }, [exposure, tools, t]);
+    if (exposure.totalTools === 0) {
+      return { label: t('tool.exposureNoTools'), hint, muted: true };
+    }
+    return {
+      label: t('tool.exposureCount', { exposed, total: exposure.totalTools }),
+      hint,
+      muted: exposed === 0,
+    };
+  }, [exposure, t]);
 
   async function handleUseTool(tool: ToolSchema) {
     if (

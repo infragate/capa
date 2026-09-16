@@ -1,4 +1,10 @@
-import type { Server, Tool } from '../types/api';
+import type { Server, Skill, Tool } from '../types/api';
+import {
+  ON_DEMAND_META_TOOLS,
+  SEARCH_META_TOOLS,
+  type MetaToolSchema,
+} from '../../../src/shared/mcp-meta-tools';
+import { refMatchesTool } from './toolRefs';
 
 /**
  * How a server's tools reach agents:
@@ -13,6 +19,8 @@ export interface ServerExposure {
   mode: ServerExposureMode;
   /** Remote tool names agents can use through capa. */
   exposedToolNames: Set<string>;
+  /** Number of tools the server advertised, or null when its tool list is unavailable. */
+  totalTools: number | null;
 }
 
 const serverIdOf = (tool: Tool) => (tool.mcpServer ?? '').replace(/^@/, '');
@@ -23,13 +31,18 @@ export function authoredTools(tools: Tool[]): Tool[] {
 }
 
 /**
- * Effective exposure for each server. Synthesized tools (resolved by the
- * server from the live tool list) are the source of truth for policy modes;
- * authored MCP entries define curated servers.
+ * Effective exposure for each server. Authored MCP entries define curated
+ * servers. For policy servers, the policy is applied to the server's live tool
+ * list when the UI has it; otherwise the tools the server synthesized at its
+ * last configure are used.
+ *
+ * @param liveToolNames - remote tool names per server id, only for servers
+ *   whose tool list loaded successfully.
  */
 export function computeServerExposure(
   servers: Server[],
   tools: Tool[],
+  liveToolNames: Record<string, string[]> = {},
 ): Record<string, ServerExposure> {
   const authored = new Map<string, Set<string>>();
   const synthesized = new Map<string, Set<string>>();
@@ -43,18 +56,37 @@ export function computeServerExposure(
 
   const result: Record<string, ServerExposure> = {};
   for (const server of servers) {
+    const live = liveToolNames[server.id];
+    const totalTools = live ? live.length : null;
     const curated = authored.get(server.id);
     if (curated) {
-      result[server.id] = { mode: 'curated', exposedToolNames: curated };
+      result[server.id] = { mode: 'curated', exposedToolNames: curated, totalTools };
       continue;
     }
     const mode = server.expose ?? 'all';
-    result[server.id] = {
-      mode,
-      exposedToolNames: mode === 'none' ? new Set() : (synthesized.get(server.id) ?? new Set()),
-    };
+    let exposedToolNames: Set<string>;
+    if (mode === 'none') {
+      exposedToolNames = new Set();
+    } else if (live) {
+      exposedToolNames = new Set(applyExposePolicy(mode, server.exposeTools ?? [], live));
+    } else {
+      exposedToolNames = synthesized.get(server.id) ?? new Set();
+    }
+    result[server.id] = { mode, exposedToolNames, totalTools };
   }
   return result;
+}
+
+/** Same selection the server makes when synthesizing tools from a policy. */
+function applyExposePolicy(
+  mode: 'all' | 'except' | 'exactly',
+  named: string[],
+  remoteNames: string[],
+): string[] {
+  const listed = new Set(named);
+  if (mode === 'except') return remoteNames.filter((n) => !listed.has(n));
+  if (mode === 'exactly') return remoteNames.filter((n) => listed.has(n));
+  return remoteNames;
 }
 
 /**
@@ -73,4 +105,41 @@ export function skillRequiresApplies(toolExposure: string | null | undefined): b
 /** The server treats an omitted `options.toolExposure` as `expose-all`. */
 export function effectiveToolExposure(toolExposure: string | null | undefined): string {
   return toolExposure || 'expose-all';
+}
+
+export interface UpfrontToolSchemas {
+  /** capa discovery meta-tools listed up front (search / on-demand). */
+  metaTools: MetaToolSchema[];
+  /** Project tools whose schemas are listed up front (expose-all). */
+  tools: Tool[];
+}
+
+/**
+ * The schemas `tools/list` returns before the agent does anything, mirroring
+ * the server's selection per exposure mode:
+ *  - `none`: nothing.
+ *  - `search` / `on-demand`: only their meta-tools.
+ *  - `expose-all`: policy-exposed tools plus authored tools a skill requires.
+ */
+export function upfrontToolSchemas(
+  toolExposure: string | null | undefined,
+  tools: Tool[],
+  skills: Skill[],
+): UpfrontToolSchemas {
+  switch (effectiveToolExposure(toolExposure)) {
+    case 'none':
+      return { metaTools: [], tools: [] };
+    case 'search':
+      return { metaTools: SEARCH_META_TOOLS, tools: [] };
+    case 'on-demand':
+      return { metaTools: ON_DEMAND_META_TOOLS, tools: [] };
+    default: {
+      const required = (tool: Tool) =>
+        skills.some((skill) => (skill.requires || []).some((ref) => refMatchesTool(ref, tool)));
+      return {
+        metaTools: [],
+        tools: tools.filter((tool) => tool.fromServerExpose || required(tool)),
+      };
+    }
+  }
 }

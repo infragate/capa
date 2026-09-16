@@ -419,7 +419,6 @@
     "hidden": "hidden",
     "exposedHint": "Agents can use this tool through capa",
     "hiddenHint": "Not exposed by this server’s tool exposure setting",
-    "exposureAll": "All tools exposed",
     "exposureCount": "{{exposed}} of {{total}} tools exposed",
     "exposureNone": "No tools exposed",
     "exposureNoneHint": "expose: none. This server contributes no tools.",
@@ -428,7 +427,9 @@
     "exposureHint_all": "expose: all. Every tool from this server is available.",
     "exposureHint_except": "expose: except. Every tool except the listed ones is available.",
     "exposureHint_exactly": "expose: exactly. Only the listed tools are available.",
-    "curateConfirm": "Adding \"{{tool}}\" to Tools switches {{name}} to a curated list: only tools listed in Tools will be exposed for this server, and its other tools will be hidden.\n\nContinue?"
+    "curateConfirm": "Adding \"{{tool}}\" to Tools switches {{name}} to a curated list: only tools listed in Tools will be exposed for this server, and its other tools will be hidden.\n\nContinue?",
+    "exposureKnown": "{{count}} tools exposed",
+    "exposureNoTools": "No tools advertised"
   },
   "skillDetail": {
     "title": "Skill details",
