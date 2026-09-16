@@ -51,6 +51,7 @@ import type { GetSnapshotResult, CachePlatform } from '../../shared/cache';
 import type { LockfileBuilder } from '../../shared/lockfile';
 import type { LockPluginEntry } from '../../types/lockfile';
 import { copySkillTree } from '../../shared/skill-copy';
+import { acquireFileLock } from '../../shared/file-lock';
 
 /** Join a plugin subpath under a snapshot, rejecting `..` / absolute escapes. */
 export function resolvePluginManifestRoot(
@@ -98,35 +99,40 @@ export function ensureStablePluginCopy(
   manifestRoot: string,
   pluginStablePath: string,
   stamp: string,
-): void {
-  const stampPath = join(pluginStablePath, PLUGIN_STAMP_FILE);
-  try {
-    if (readFileSync(stampPath, 'utf-8') === stamp) return;
-  } catch {
-    // no stamp yet — (re)copy below
-  }
+): boolean {
+  if (readPluginStamp(pluginStablePath) === stamp) return false;
 
   const unique = `${process.pid}-${Date.now()}`;
   const staging = `${pluginStablePath}.staging-${unique}`;
-  copyPluginToStable(manifestRoot, staging);
-  writeFileSync(join(staging, PLUGIN_STAMP_FILE), stamp, 'utf-8');
-
   const old = `${pluginStablePath}.old-${unique}`;
   try {
+    copyPluginToStable(manifestRoot, staging);
+    writeFileSync(join(staging, PLUGIN_STAMP_FILE), stamp, 'utf-8');
+
     if (existsSync(pluginStablePath)) renameSync(pluginStablePath, old);
-    renameSync(staging, pluginStablePath);
-  } catch (err) {
-    // Another process swapped in a copy first. Keep it if it is the same source.
-    let current: string | null = null;
     try {
-      current = readFileSync(stampPath, 'utf-8');
-    } catch {
-      // missing
+      renameSync(staging, pluginStablePath);
+    } catch (err) {
+      // Put the previous copy back rather than leaving no plugin tree at all.
+      if (!existsSync(pluginStablePath) && existsSync(old)) {
+        renameSync(old, pluginStablePath);
+      }
+      if (readPluginStamp(pluginStablePath) !== stamp) throw err;
+      return false;
     }
-    rmSync(staging, { recursive: true, force: true });
-    if (current !== stamp) throw err;
+    return true;
   } finally {
-    if (existsSync(old)) rmSync(old, { recursive: true, force: true });
+    rmSync(staging, { recursive: true, force: true });
+    rmSync(old, { recursive: true, force: true });
+  }
+}
+
+/** Source stamp of a stable plugin copy, or null when missing/unstamped. */
+export function readPluginStamp(pluginStablePath: string): string | null {
+  try {
+    return readFileSync(join(pluginStablePath, PLUGIN_STAMP_FILE), 'utf-8');
+  } catch {
+    return null;
   }
 }
 
@@ -263,6 +269,9 @@ export async function resolvePlugins(
   // Same unpack root for install, wrap, and passthrough: ~/.capa/plugins/<projectId>/
   const pluginsBase = options.pluginsBaseDir ?? getProjectPluginsDir(projectId);
   const currentPluginIds = new Set<string>();
+  // Declared plugins that failed this run: keep their existing copies for the
+  // next successful resolve instead of sweeping them as undeclared.
+  const failedPluginIds = new Set<string>();
   const warnings: string[] = [];
 
   const registeredServerIds = new Set(mergedServers.map(s => s.id));
@@ -356,6 +365,9 @@ export async function resolvePlugins(
     // Isolate per-plugin failures so one bad entry (marketplace repo root,
     // missing manifest, clone error, …) cannot wipe expansions from the rest.
     let pluginInstallId: string | undefined;
+    let releasePluginLock: (() => void) | undefined;
+    /** Stamp of a copy this resolver swapped in during this run (for failure cleanup). */
+    let publishedStamp: string | undefined;
     const mergeSnap = {
       skills: mergedSkills.length,
       servers: mergedServers.length,
@@ -469,12 +481,16 @@ export async function resolvePlugins(
     currentPluginIds.add(pluginInstallId);
 
     const pluginStablePath = resolve(join(pluginsBase, pluginInstallId));
+    // Serialize resolvers of this plugin across processes (CLI install, the
+    // server's background re-resolve, wrap). Everything below that reads the
+    // stable copy is synchronous and runs while the lock is held.
+    mkdirSync(pluginsBase, { recursive: true });
+    releasePluginLock = await acquireFileLock(join(pluginsBase, `.${pluginInstallId}.lock`));
+    const stamp = `${platform}:${repoPath}@${snapshot.resolvedSha}:${resolvedSubpath || ''}`;
     try {
-      ensureStablePluginCopy(
-        manifestRoot,
-        pluginStablePath,
-        `${platform}:${repoPath}@${snapshot.resolvedSha}:${resolvedSubpath || ''}`,
-      );
+      if (ensureStablePluginCopy(manifestRoot, pluginStablePath, stamp)) {
+        publishedStamp = stamp;
+      }
     } catch (err: any) {
       throw new Error(
         `Failed to copy plugin ${pluginInstallId} to ${pluginStablePath}: ${err.message}`
@@ -795,6 +811,7 @@ export async function resolvePlugins(
       const message = err instanceof Error ? err.message : String(err);
       if (pluginInstallId) {
         currentPluginIds.delete(pluginInstallId);
+        failedPluginIds.add(pluginInstallId);
         lockBuilder.removePlugin(pluginInstallId);
         mergedSkills.length = mergeSnap.skills;
         mergedServers.length = mergeSnap.servers;
@@ -816,18 +833,23 @@ export async function resolvePlugins(
         for (const hook of mergedHooks) registeredHookIds.add(hook.id);
         registeredRuleIds.clear();
         for (const rule of mergedRules) registeredRuleIds.add(rule.id);
+        // Only remove a copy this resolver published and still owns (it holds
+        // the plugin lock). A copy from another resolver, or one that was
+        // already there before this failure, must survive.
         const partialDir = resolve(join(pluginsBase, pluginInstallId));
-        if (existsSync(partialDir)) {
+        if (publishedStamp && readPluginStamp(partialDir) === publishedStamp) {
           try {
             rmSync(partialDir, { recursive: true, force: true });
           } catch {
-            // best-effort cleanup of a partially copied plugin tree
+            // best-effort cleanup of a plugin tree this resolver published
           }
         }
       }
       warnings.push(
         `Plugin "${pluginLabel}" failed to resolve and was skipped: ${message}`,
       );
+    } finally {
+      releasePluginLock?.();
     }
   }
 
@@ -844,7 +866,7 @@ export async function resolvePlugins(
       const toRemove = join(pluginsDirFull, d.name);
       // Another process may be mid-swap; only sweep swap dirs it abandoned.
       if (PLUGIN_SWAP_DIR.test(d.name) && isActiveSwapDir(toRemove)) continue;
-      if (!currentPluginIds.has(d.name)) {
+      if (!currentPluginIds.has(d.name) && !failedPluginIds.has(d.name)) {
         try {
           rmSync(toRemove, { recursive: true, force: true });
         } catch (err) {
