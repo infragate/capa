@@ -168,6 +168,20 @@ describe('rules in shared instruction files', () => {
     expect(read('AGENTS.md')).toContain('Team snippet.');
   });
 
+  it('re-installing snippets after rules leaves the file unchanged', async () => {
+    const config = { additional: [{ id: 'team', type: 'inline' as const, content: 'Team snippet.' }] };
+    const rules: Rule[] = [{ id: 'style', type: 'inline', content: 'Style rule.' }];
+    // Install order: snippets, then rules (same as the install pipeline).
+    await installAgentsFile(projectPath, config, ['codex']);
+    sync(rules, ['codex']);
+    const first = read('AGENTS.md');
+
+    await installAgentsFile(projectPath, config, ['codex']);
+    sync(rules, ['codex']);
+    expect(read('AGENTS.md')).toBe(first);
+    expect(first.startsWith('<!-- capa:start:team -->')).toBe(true);
+  });
+
   it('cleanAgentsFile removes an isolated GEMINI.md', async () => {
     const config = { additional: [{ id: 'team', type: 'inline' as const, content: 'Team snippet.' }] };
     await installAgentsFile(projectPath, config, ['codex', 'gemini-cli']);

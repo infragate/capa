@@ -110,13 +110,24 @@ export function renderAgentInstructionSnippets(
   content: string,
   snippets: Array<{ id: string; body: string }>,
 ): string {
-  const prefix = clearAgentInstructionSnippets(content);
-  if (snippets.length === 0) {
-    return prefix.length > 0 ? `${prefix}\n` : '';
+  // Re-insert the snippets where the first existing agent block sits, so a
+  // re-install doesn't move them below rule / sub-agent blocks added later.
+  const at = firstAgentSnippetOffset(content);
+  const before = clearAgentInstructionSnippets(at === -1 ? content : content.slice(0, at));
+  const after = at === -1 ? '' : clearAgentInstructionSnippets(content.slice(at)).trimStart();
+  const rendered = snippets.map(({ id, body }) => buildBlock(id, body)).join('\n\n');
+  const parts = [before, rendered, after].filter((part) => part.length > 0);
+  return parts.length > 0 ? `${parts.join('\n\n')}\n` : '';
+}
+
+/** Offset of the first agent-instruction start marker, or -1. */
+function firstAgentSnippetOffset(content: string): number {
+  const re = /<!-- capa:start:([^>]+?) -->/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(content)) !== null) {
+    if (isAgentInstructionSnippetId(match[1])) return match.index;
   }
-  const blocks = snippets.map(({ id, body }) => buildBlock(id, body));
-  const rendered = blocks.join('\n\n');
-  return prefix.length > 0 ? `${prefix}\n\n${rendered}\n` : `${rendered}\n`;
+  return -1;
 }
 
 export function listCapaSnippetIds(content: string): string[] {
