@@ -249,7 +249,7 @@ Then **wait for the user** to confirm. When they do, re-fetch and proceed. Don't
 
 **After tool inspection is complete**, ensure any skill that declares a `requires:` list points to real `@<server-id>.<tool-id>` entries that now exist in `tools:`. If a discovered local skill required a tool that doesn't show up in any server's tool list, flag it — the skill may have been written against a different version of the server, or the user may need to add a different MCP server.
 
-**Watch for the "declared but unused" trap.** With `options.toolExposure: on-demand` (the default `capa init` writes), capa only exposes tools the agent will see after a skill calls `setup_tools(['<skill>'])`. The exposure list is computed from each skill's `requires:` field — so a tool that's declared in `tools:` but not in any skill's `requires:` ends up invisible to the agent. `capa install` warns about this:
+**Watch for the "declared but unused" trap.** With `options.toolExposure: on-demand`, capa only exposes tools the agent will see after a skill calls `setup_tools(['<skill>'])`. The exposure list is computed from each skill's `requires:` field — so a tool that's declared in `tools:` but not in any skill's `requires:` ends up invisible to the agent. `capa install` warns about this:
 
 > 13 tool(s) are not exposed to MCP clients (not required by any skill): gitlab.search_projects, gitlab.get_mr, ... Add them to a skill's `requires` list to expose.
 

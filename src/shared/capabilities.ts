@@ -392,7 +392,9 @@ export async function parseCapabilitiesFile(
 export function createDefaultCapabilities(): Capabilities {
 	return {
 		options: {
-			toolExposure: "on-demand",
+			// Agents discover tools by task with `search`, which scales to servers
+			// that expose many tools (the default `expose: all`).
+			toolExposure: "search",
 		},
 		skills: [
 			{
