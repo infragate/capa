@@ -109,6 +109,10 @@ export async function handleGetProject(
 					previous,
 				);
 				deps.sessionManager.setProjectCapabilities(projectId, capabilities);
+				// Read back the merged view: the session manager adds the tools
+				// synthesized from servers' expose policies to the authored list.
+				capabilities =
+					deps.sessionManager.getProjectCapabilities(projectId) ?? capabilities;
 				void deps.capsWatcher.watchProject(projectId, project.path);
 			}
 		} catch {
@@ -168,6 +172,8 @@ export async function handleGetProject(
 								type: t.type,
 								description: t.description || null,
 								sourcePlugin: t.sourcePlugin || null,
+								// Synthesized from a server's expose policy, not authored in `tools:`.
+								fromServerExpose: t.fromServerExpose === true,
 							};
 							if (t.type === "mcp") {
 								base.mcpServer = t.def.server;
