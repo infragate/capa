@@ -1,4 +1,10 @@
-import type { Server, Tool } from '../types/api';
+import type { Server, Skill, Tool } from '../types/api';
+import {
+  ON_DEMAND_META_TOOLS,
+  SEARCH_META_TOOLS,
+  type MetaToolSchema,
+} from '../../../src/shared/mcp-meta-tools';
+import { refMatchesTool } from './toolRefs';
 
 /**
  * How a server's tools reach agents:
@@ -101,11 +107,39 @@ export function effectiveToolExposure(toolExposure: string | null | undefined): 
   return toolExposure || 'expose-all';
 }
 
+export interface UpfrontToolSchemas {
+  /** capa discovery meta-tools listed up front (search / on-demand). */
+  metaTools: MetaToolSchema[];
+  /** Project tools whose schemas are listed up front (expose-all). */
+  tools: Tool[];
+}
+
 /**
- * Tools whose schemas count toward the token-savings "with capa" cost. Only
- * `expose-all` lists policy-exposed tools up front; `search` and `on-demand`
- * keep them behind meta-tools, so only authored entries are counted there.
+ * The schemas `tools/list` returns before the agent does anything, mirroring
+ * the server's selection per exposure mode:
+ *  - `none`: nothing.
+ *  - `search` / `on-demand`: only their meta-tools.
+ *  - `expose-all`: policy-exposed tools plus authored tools a skill requires.
  */
-export function toolsForTokenSavings(toolExposure: string | null | undefined, tools: Tool[]): Tool[] {
-  return effectiveToolExposure(toolExposure) === 'expose-all' ? tools : authoredTools(tools);
+export function upfrontToolSchemas(
+  toolExposure: string | null | undefined,
+  tools: Tool[],
+  skills: Skill[],
+): UpfrontToolSchemas {
+  switch (effectiveToolExposure(toolExposure)) {
+    case 'none':
+      return { metaTools: [], tools: [] };
+    case 'search':
+      return { metaTools: SEARCH_META_TOOLS, tools: [] };
+    case 'on-demand':
+      return { metaTools: ON_DEMAND_META_TOOLS, tools: [] };
+    default: {
+      const required = (tool: Tool) =>
+        skills.some((skill) => (skill.requires || []).some((ref) => refMatchesTool(ref, tool)));
+      return {
+        metaTools: [],
+        tools: tools.filter((tool) => tool.fromServerExpose || required(tool)),
+      };
+    }
+  }
 }

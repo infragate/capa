@@ -6,8 +6,10 @@ import {
   computeServerExposure,
   effectiveToolExposure,
   skillRequiresApplies,
-  toolsForTokenSavings,
+  upfrontToolSchemas,
 } from './serverExposure';
+import { computeTokenSavings } from '../features/projects/components/tokenStats';
+import type { Skill, ToolSchema } from '../types/api';
 
 const server = (id: string, expose?: Server['expose'], exposeTools?: string[]): Server =>
   ({ id, type: 'mcp', expose: expose ?? null, exposeTools: exposeTools ?? null }) as Server;
@@ -90,12 +92,31 @@ describe('helpers', () => {
     expect(addingToolCuratesServer(undefined)).toBe(false);
   });
 
-  it('counts policy-exposed tools toward token cost only in expose-all', () => {
-    const all = [mcp('a', 'x'), mcp('a', 'y', true)];
-    expect(toolsForTokenSavings('expose-all', all)).toHaveLength(2);
-    expect(toolsForTokenSavings(null, all)).toHaveLength(2);
-    expect(toolsForTokenSavings('search', all).map((t) => t.mcpTool)).toEqual(['x']);
-    expect(toolsForTokenSavings('on-demand', all).map((t) => t.mcpTool)).toEqual(['x']);
+  it('mirrors tools/list for the up-front token cost in each mode', () => {
+    const tools = [mcp('a', 'required'), mcp('a', 'unrequired'), mcp('a', 'policy', true)];
+    const skills = [{ id: 's', requires: ['@a.a-required'] }] as unknown as Skill[];
+    const names = (mode: string | null) => {
+      const up = upfrontToolSchemas(mode, tools, skills);
+      return { meta: up.metaTools.map((m) => m.name), tools: up.tools.map((t) => t.mcpTool) };
+    };
+    expect(names('none')).toEqual({ meta: [], tools: [] });
+    expect(names('search')).toEqual({ meta: ['search', 'call_tool'], tools: [] });
+    expect(names('on-demand')).toEqual({ meta: ['setup_tools', 'call_tool'], tools: [] });
+    expect(names('expose-all')).toEqual({ meta: [], tools: ['required', 'policy'] });
+    expect(names(null)).toEqual(names('expose-all'));
+  });
+
+  it('computes savings from meta-tool schemas in search mode', () => {
+    const remote: ToolSchema[] = Array.from({ length: 30 }, (_, i) => ({
+      name: `tool_${i}`,
+      description: 'A fairly descriptive remote tool description that costs tokens',
+      inputSchema: { type: 'object', properties: { query: { type: 'string', description: 'q' } } },
+    })) as ToolSchema[];
+    const up = upfrontToolSchemas('search', [], []);
+    const stats = computeTokenSavings({ metaTools: up.metaTools, tools: [] }, { a: remote }, 1)!;
+    expect(stats.tokensWith).toBeGreaterThan(0);
+    expect(stats.tokensWith).toBeLessThan(stats.tokensWithout);
+    expect(stats.proxiedCount).toBe(0);
   });
 
   it('requires only applies outside search mode; omitted mode is expose-all', () => {

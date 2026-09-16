@@ -30,7 +30,7 @@ import {
   authoredTools,
   computeServerExposure,
   skillRequiresApplies,
-  toolsForTokenSavings,
+  upfrontToolSchemas,
 } from '../../../../lib/serverExposure';
 
 function serverToolsFetchEnabled(server: Server): boolean {
@@ -263,9 +263,13 @@ export function ToolsSection({
     });
   const tokenSavings = useMemo(() => {
     if (servers.length === 0) return null;
-    const counted = toolsForTokenSavings(toolExposure, allTools);
-    return computeTokenSavings(counted as EnrichedTool[], serverToolsMap, servers.length);
-  }, [allTools, toolExposure, servers, serverToolsMap, serverToolsDataKey]);
+    const upfront = upfrontToolSchemas(toolExposure, allTools, skills);
+    return computeTokenSavings(
+      { metaTools: upfront.metaTools, tools: upfront.tools as EnrichedTool[] },
+      serverToolsMap,
+      servers.length,
+    );
+  }, [allTools, skills, toolExposure, servers, serverToolsMap, serverToolsDataKey]);
 
   return (
     <div

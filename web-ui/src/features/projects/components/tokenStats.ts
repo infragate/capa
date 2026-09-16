@@ -1,4 +1,5 @@
 import type { ToolSchema, EnrichedTool } from '../../../types/api';
+import type { MetaToolSchema } from '../../../../../src/shared/mcp-meta-tools';
 
 export function estimateToolTokens(tool: {
   name?: string;
@@ -24,8 +25,12 @@ export interface TokenSavingsResult {
   serverCount: number;
 }
 
+/**
+ * @param upfront - schemas `tools/list` returns up front for the project's
+ *   exposure mode (see `upfrontToolSchemas`).
+ */
 export function computeTokenSavings(
-  tools: EnrichedTool[],
+  upfront: { metaTools: MetaToolSchema[]; tools: EnrichedTool[] },
   serverToolsMap: Record<string, ToolSchema[]>,
   serverCount: number,
 ): TokenSavingsResult | null {
@@ -41,11 +46,14 @@ export function computeTokenSavings(
 
   if (tokensWithout === 0) return null;
 
-  const mcpTools = tools.filter(
+  const mcpTools = upfront.tools.filter(
     (t) => t.type === 'mcp' && t.mcpServer && t.mcpTool,
   );
 
   let tokensWith = 0;
+  for (const meta of upfront.metaTools) {
+    tokensWith += estimateToolTokens(meta);
+  }
   for (const tool of mcpTools) {
     const serverId = (tool.mcpServer || '').replace(/^@/, '');
     const serverTools = serverToolsMap[serverId] || [];
