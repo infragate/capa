@@ -29,6 +29,16 @@ describe('resolveCliSpawn', () => {
     expect(spawn.command).toBe('C:\\tools\\agent.cmd ^"-p^" ^"fix^ the^ bug^" ^"--flag^"');
   });
 
+  it('refuses multi-line arguments for .cmd shims but not for executables', () => {
+    expect(() =>
+      resolveCliSpawn('agent', ['-p', 'line one\nline two'], 'win32', () => 'C:\\tools\\agent.cmd'),
+    ).toThrow(/line breaks/);
+    expect(
+      resolveCliSpawn('claude', ['-p', 'line one\r\nline two'], 'win32', () => 'C:\\bin\\claude.exe')
+        .args,
+    ).toEqual(['-p', 'line one\r\nline two']);
+  });
+
   it('escapes quotes, backslashes and cmd metacharacters', () => {
     expect(escapeCmdArgument('a "b" & c')).toBe('^"a^ \\^"b\\^"^ ^&^ c^"');
     expect(escapeCmdArgument('C:\\dir\\')).toBe('^"C:\\dir\\\\^"');
@@ -47,6 +57,12 @@ describe('resolveCliSpawn', () => {
       const shim = join(dir, 'print args.cmd');
       writeFileSync(shim, `@"${process.execPath}" "${script}" %*\r\n`);
       const tricky = ['-p', 'fix the bug', 'say "hi" & exit', '100%', 'a^b', 'path\\', ''];
+
+      // Executables keep multi-line arguments intact.
+      const multiline = ['-p', 'line one\nline two'];
+      const exe = resolveCliSpawn(process.execPath, [script, ...multiline], 'win32', (b) => b);
+      expect(spawnSync(exe.command, exe.args, { shell: exe.shell, stdio: 'ignore' }).status).toBe(0);
+      expect(JSON.parse(readFileSync(out, 'utf8'))).toEqual(multiline);
 
       for (const binary of [shim, process.execPath]) {
         const argv = binary === process.execPath ? [script, ...tricky] : tricky;

@@ -49,6 +49,16 @@ export function resolveCliSpawn(
     return { command: resolved, args, shell: false };
   }
 
+  // cmd.exe ends the command at a line break, so a multi-line argument would
+  // be run as shell input instead of reaching the provider. Refuse it.
+  const multiline = args.find((arg) => /[\r\n]/.test(arg));
+  if (multiline !== undefined) {
+    throw new Error(
+      `Can't pass an argument containing line breaks to ${resolved} (a .cmd/.bat shim runs through cmd.exe). ` +
+        'Pass multi-line prompts on stdin instead.',
+    );
+  }
+
   // npm-style shims under node_modules/.bin re-parse their arguments once more.
   const doubleEscape = /node_modules[\\/]\.bin[\\/][^\\/]+\.cmd$/i.test(resolved);
   const line = [
