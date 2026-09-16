@@ -6,12 +6,14 @@ import { ReorderableList } from '../../../../components/common/ReorderableList';
 import { isPluginSourced, serverReorderKey } from '../../lib/reorderKeys';
 import { toolMatchesSearch } from './anchors';
 import { ServerCard } from './ServerCard';
+import type { ServerExposure } from '../../../../lib/serverExposure';
 
 export function ServersPanel({
   projectId,
   servers,
   search,
   serverToolsMap,
+  serverExposure,
   configuredMcpKeys,
   expandedServers,
   onToggleServer,
@@ -24,6 +26,7 @@ export function ServersPanel({
   servers: Server[];
   search: string;
   serverToolsMap: Record<string, ToolSchema[]>;
+  serverExposure: Record<string, ServerExposure>;
   configuredMcpKeys: Set<string>;
   expandedServers: Set<string>;
   onToggleServer: (id: string) => void;
@@ -79,6 +82,7 @@ export function ServersPanel({
               server={server}
               search={search}
               tools={serverToolsMap[server.id]}
+              exposure={serverExposure[server.id]}
               configuredMcpKeys={configuredMcpKeys}
               expanded={expandedServers.has(server.id)}
               onToggle={() => onToggleServer(server.id)}

@@ -11,6 +11,7 @@ export function ConfiguredToolsPanel({
   tools,
   skills,
   search,
+  showSkillRequires,
   toolRequiredByMap,
   serverToolSchemaCache,
   focusedAnchor,
@@ -21,6 +22,8 @@ export function ConfiguredToolsPanel({
   tools: EnrichedTool[];
   skills: Skill[];
   search: string;
+  /** False in `search` mode, where skill `requires:` has no effect. */
+  showSkillRequires: boolean;
   toolRequiredByMap: Record<string, string[]>;
   serverToolSchemaCache: Record<string, Record<string, ToolSchema>>;
   focusedAnchor: string | null;
@@ -48,7 +51,7 @@ export function ConfiguredToolsPanel({
     const paramTexts = Object.entries(tool._inputSchema?.properties || {}).flatMap(
       ([name, s]) => [name, s.description || ''],
     );
-    const requiredBy = toolRequiredByMap[tool.id] || [];
+    const requiredBy = showSkillRequires ? toolRequiredByMap[tool.id] || [] : [];
     return matchesSearch(
       [
         tool.id,
@@ -67,7 +70,7 @@ export function ConfiguredToolsPanel({
   if (visible.length === 0) {
     return (
       <div className="py-6 text-center text-xs text-text-tertiary">
-        {search ? t('detail.noToolsMatch') : t('actions.emptyTools')}
+        {search ? t('detail.noToolsMatch') : t('actions.emptyToolsExposed')}
       </div>
     );
   }
@@ -92,6 +95,7 @@ export function ConfiguredToolsPanel({
               skills={skills}
               search={search}
               requiredBy={toolRequiredByMap[tool.id] || []}
+              showSkillRequires={showSkillRequires}
               focused={isToolFocused(tool, focusedAnchor)}
               onSelect={() => onSelectAnchor(configuredToolAnchor(tool))}
               onEditCommand={

@@ -12,7 +12,7 @@ providers:
   - claude-code
 
 options:
-  toolExposure: on-demand  # 'expose-all' | 'on-demand' | 'none' (see notes below)
+  toolExposure: search  # 'expose-all' | 'on-demand' | 'search' | 'none' (see notes below)
   # agentActivity: true     # default on — inject system hooks for the Activity feed; set false to opt out
   # security: { blockedPhrases, allowedCharacters }
   # requiresCommands: [ { cli, description? } ]
@@ -195,8 +195,8 @@ Controls how capa exposes skill tools to the MCP client. Four modes:
 | Mode | `tools/list` returns | Per-install MCP file writes | Agent invocation path |
 |------|----------------------|------------------------------|------------------------|
 | `'expose-all'` | Every tool required by any active skill, with full input schemas | Yes — main `capa` entry + sub-agent `capa-<id>` entries | Direct MCP `tools/call` |
-| `'on-demand'` (what `capa init` writes) | Only the meta-tools `setup_tools` and `call_tool` | Yes — same as expose-all | Agent calls `setup_tools(['<skill>'])` (returns compact `name(required, optional?)` signature list), then `call_tool(name, data)`. If the call is invalid the full schema is returned in the error so the agent can self-correct without re-running setup. |
-| `'search'` | Only the meta-tools `search` and `call_tool` | Yes — same as expose-all | Agent calls `search('<what it needs to do>')`, gets back the best-matching tools as compact signatures with descriptions, then `call_tool(name, data)`. Same error-returns-the-schema behavior. |
+| `'on-demand'` | Only the meta-tools `setup_tools` and `call_tool` | Yes — same as expose-all | Agent calls `setup_tools(['<skill>'])` (returns compact `name(required, optional?)` signature list), then `call_tool(name, data)`. If the call is invalid the full schema is returned in the error so the agent can self-correct without re-running setup. |
+| `'search'` (what `capa init` writes) | Only the meta-tools `search` and `call_tool` | Yes — same as expose-all | Agent calls `search('<what it needs to do>')`, gets back the best-matching tools as compact signatures with descriptions, then `call_tool(name, data)`. Same error-returns-the-schema behavior. |
 | `'none'` | Empty list | **No** — capa skips all project-local MCP config files (`.mcp.json`, `.cursor/mcp.json`, `.codex/config.toml` `mcp_servers.capa`, sub-agent `capa-<id>` entries). Any previously-written entries are removed on install. | The agent must use `capa sh <group> <tool> [--args]` (see [`commands.md`](./commands.md)). Sub-agent instruction files are still installed for documentation but their tools are not reachable over MCP. |
 
 Notes on `'search'`:

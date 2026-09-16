@@ -99,6 +99,49 @@ describe('SessionManager', () => {
       ).toEqual(['create_issue', 'search']);
     });
 
+    it('drops cached policy tools a narrowed policy no longer allows on refresh', () => {
+      const refresh = (patch: Partial<Capabilities>) =>
+        sessionManager.setProjectCapabilities('test-proj', {
+          ...exposed,
+          tools: [],
+          ...patch,
+        } as Capabilities);
+      const toolIds = () =>
+        sessionManager.getProjectCapabilities('test-proj')?.tools.map((t) => t.id).sort();
+
+      // all -> exactly [search]: create_issue must disappear before any reconfigure.
+      refresh({
+        servers: [
+          { id: 'github', type: 'mcp', expose: 'exactly', tools: ['search'], def: { url: 'https://x.test/mcp' } },
+        ],
+      } as Partial<Capabilities>);
+      expect(toolIds()).toEqual(['search']);
+
+      // A later refresh with a wider policy can't resurrect what was dropped.
+      refresh({});
+      expect(toolIds()).toEqual(['search']);
+
+      // none -> nothing.
+      refresh({
+        servers: [{ id: 'github', type: 'mcp', expose: 'none', def: { url: 'https://x.test/mcp' } }],
+      } as Partial<Capabilities>);
+      expect(toolIds()).toEqual([]);
+    });
+
+    it('drops cached policy tools when the server becomes curated or is removed', () => {
+      sessionManager.setProjectCapabilities('test-proj', {
+        ...exposed,
+        tools: [{ id: 'pick', type: 'mcp', def: { server: '@github', tool: 'search' } }],
+      } as Capabilities);
+      expect(
+        sessionManager.getProjectCapabilities('test-proj')?.tools.map((t) => t.id),
+      ).toEqual(['pick']);
+
+      sessionManager.setProjectCapabilities('test-proj', exposed);
+      sessionManager.setProjectCapabilities('test-proj', { ...exposed, servers: [], tools: [] } as Capabilities);
+      expect(sessionManager.getProjectCapabilities('test-proj')?.tools).toEqual([]);
+    });
+
     it('clears policy tools when the policy is gone', () => {
       sessionManager.setExposedTools('test-proj', []);
       expect(sessionManager.getProjectCapabilities('test-proj')?.tools).toEqual([]);

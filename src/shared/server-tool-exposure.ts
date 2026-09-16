@@ -262,3 +262,28 @@ export function needsCapaMcpEntry(capabilities: Capabilities): boolean {
 		serversWithExposePolicy(capabilities).length > 0
 	);
 }
+
+/**
+ * Drop previously synthesized tools that the servers' current policies no
+ * longer allow: the server was removed, curated by `tools:` entries, set to
+ * `none`, or narrowed with `except` / `exactly`. Needs no live tool list, so
+ * a narrowed policy takes effect as soon as the capabilities file is read.
+ * Tools a widened policy would add still wait for the next configure.
+ */
+export function synthesizedToolsAllowedByPolicy(
+	capabilities: Capabilities,
+	synthesized: Tool[],
+): Tool[] {
+	const authored: Capabilities = {
+		...capabilities,
+		tools: (capabilities.tools ?? []).filter((t) => !t.fromServerExpose),
+	};
+	const policyServers = new Map(
+		serversWithExposePolicy(authored).map((s) => [s.id, s]),
+	);
+	return synthesized.filter((tool) => {
+		if (tool.type !== "mcp") return false;
+		const server = policyServers.get(tool.def.server.replace(/^@/, ""));
+		return !!server && selectExposedToolNames(server, [tool.def.tool]).exposed.length > 0;
+	});
+}

@@ -26,6 +26,7 @@ import { matchesSearch } from '../../../lib/utils';
 import { CapabilityCollapsible } from './CapabilityCollapsible';
 import { SkillsList } from './SkillsList';
 import { ToolsSection } from './ToolsSection';
+import { authoredTools } from '../../../lib/serverExposure';
 import { RulesList } from './RulesList';
 import { HooksList } from './HooksList';
 import { SubagentsList } from './SubagentsList';
@@ -106,6 +107,8 @@ interface CapabilitiesSectionProps {
   providers: string[];
   plugins: AuthoredPlugin[];
   resolvedPlugins: ResolvedPlugin[];
+  /** `options.toolExposure` from the capabilities file (null when omitted). */
+  toolExposure: string | null;
   projectId: string;
 }
 
@@ -120,6 +123,7 @@ export function CapabilitiesSection({
   providers,
   plugins,
   resolvedPlugins,
+  toolExposure,
   projectId,
 }: CapabilitiesSectionProps) {
   const { t } = useTranslation('projects');
@@ -242,7 +246,7 @@ export function CapabilitiesSection({
       <CapabilityCollapsible
         title={t('detail.toolsSection')}
         icon={Wrench}
-        count={servers.length + tools.length}
+        count={servers.length + authoredTools(tools).length}
         forceOpen={forceOpen.tools}
         suggestOpen={needsOAuthCount > 0}
         keepMounted={addServerOpen || editServerOpen || addCommandToolOpen}
@@ -267,6 +271,7 @@ export function CapabilitiesSection({
           skills={skills}
           tools={tools}
           servers={servers}
+          toolExposure={toolExposure}
           search={search}
           addServerOpen={addServerOpen}
           addCommandToolOpen={addCommandToolOpen}
