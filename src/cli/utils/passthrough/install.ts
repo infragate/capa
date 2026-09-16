@@ -7,6 +7,8 @@ import { getRepoSnapshot } from '../../commands/install-tasks/helpers/repo-snaps
 import { installOneSkill } from '../../commands/install-tasks/helpers/install-one-skill';
 import { resolveRuleBody } from '../../commands/install-tasks/install-rules';
 import { installRules } from '../rules-installer';
+import { resolveRuleConflictMode } from '../rules-placement';
+import { applyInstructionContextConfig } from '../instruction-context-config';
 import { installHooks } from '../hooks';
 import { installSubAgentInstructions } from '../agents-file/index';
 import { resolvePlugins } from '../../commands/plugin-install';
@@ -174,8 +176,24 @@ export async function passthroughInstall(opts: {
         }
       }
       if (bodies.size > 0) {
-        installRules(projectPath, rules.filter((r) => bodies.has(r.id)), providers, bodies);
+        const result = installRules(
+          projectPath,
+          rules.filter((r) => bodies.has(r.id)),
+          providers,
+          bodies,
+          { conflicts: resolveRuleConflictMode(capabilities.options) },
+        );
+        warnings.push(...result.warnings);
+        for (const d of result.diagnostics) {
+          if (d.level === 'error') failed++;
+          warnings.push(d.message);
+        }
         added += bodies.size;
+
+        // Point providers like Gemini CLI at the instructions file just written.
+        // Passthrough records no ownership, so nothing is claimed for clean.
+        const context = applyInstructionContextConfig(projectPath, providers, []);
+        warnings.push(...context.warnings);
       }
     }
 
