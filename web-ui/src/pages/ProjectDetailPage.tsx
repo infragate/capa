@@ -148,6 +148,7 @@ export function ProjectDetailPage() {
                 providers={caps?.providers ?? []}
                 plugins={caps?.plugins ?? []}
                 resolvedPlugins={caps?.resolvedPlugins ?? []}
+                toolExposure={caps?.options?.toolExposure ?? null}
                 projectId={projectId}
               />
             </div>

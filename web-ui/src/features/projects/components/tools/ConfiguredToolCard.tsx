@@ -17,6 +17,7 @@ export function ConfiguredToolCard({
   skills,
   search,
   requiredBy,
+  showSkillRequires,
   focused,
   onSelect,
   onEditCommand,
@@ -29,6 +30,8 @@ export function ConfiguredToolCard({
   skills: Skill[];
   search: string;
   requiredBy: string[];
+  /** Hide skill `requires:` wiring in `search` mode, where it has no effect. */
+  showSkillRequires: boolean;
   focused: boolean;
   onSelect: () => void;
   onEditCommand?: () => void;
@@ -412,6 +415,7 @@ export function ConfiguredToolCard({
         </div>
       )}
 
+      {showSkillRequires && (
       <div className="mt-1 border-t border-border-secondary pt-1">
         <button
           type="button"
@@ -466,6 +470,7 @@ export function ConfiguredToolCard({
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }

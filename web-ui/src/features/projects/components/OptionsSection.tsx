@@ -4,6 +4,7 @@ import { Settings, Plus, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { CapabilitiesOptions, RequiredCommand } from '../../../types/api';
 import { projectDisplayName } from '../../../lib/utils';
+import { effectiveToolExposure } from '../../../lib/serverExposure';
 import { useDeleteProject, usePatchOptions, useProject, useSyncActivityHooks } from '../hooks';
 
 interface OptionsSectionProps {
@@ -23,7 +24,7 @@ export function OptionsSection({ projectId, options }: OptionsSectionProps) {
   const [cli, setCli] = useState('');
   const [cliDesc, setCliDesc] = useState('');
 
-  const toolExposure = options?.toolExposure || 'on-demand';
+  const toolExposure = effectiveToolExposure(options?.toolExposure);
   const agentActivity = options?.agentActivity !== false;
   const requiresCommands: RequiredCommand[] = options?.requiresCommands || [];
   const displayName = projectDisplayName(project?.path, projectId);

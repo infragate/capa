@@ -23,12 +23,14 @@ import {
   useStartOAuth,
 } from '../../hooks';
 import { remoteToolAnchor, serverAnchor, suggestConfiguredToolId, toolMatchesSearch } from './anchors';
+import { addingToolCuratesServer, type ServerExposure } from '../../../../lib/serverExposure';
 
 export function ServerCard({
   projectId,
   server,
   search,
   tools,
+  exposure,
   configuredMcpKeys,
   expanded,
   onToggle,
@@ -42,6 +44,7 @@ export function ServerCard({
   server: Server;
   search: string;
   tools?: ToolSchema[];
+  exposure?: ServerExposure;
   configuredMcpKeys: Set<string>;
   expanded: boolean;
   onToggle: () => void;
@@ -117,7 +120,36 @@ export function ServerCard({
     }
   }
 
+  const exposureBadge = useMemo(() => {
+    if (!exposure) return null;
+    if (exposure.mode === 'curated') {
+      return {
+        label: t('tool.exposureCurated', { count: exposure.exposedToolNames.size }),
+        hint: t('tool.exposureCuratedHint'),
+        muted: false,
+      };
+    }
+    if (exposure.mode === 'none') {
+      return { label: t('tool.exposureNone'), hint: t('tool.exposureNoneHint'), muted: true };
+    }
+    const hint = t(`tool.exposureHint_${exposure.mode}`);
+    if (tools && tools.length > 0) {
+      return {
+        label: t('tool.exposureCount', { exposed: exposure.exposedToolNames.size, total: tools.length }),
+        hint,
+        muted: false,
+      };
+    }
+    return { label: t('tool.exposureAll'), hint, muted: false };
+  }, [exposure, tools, t]);
+
   async function handleUseTool(tool: ToolSchema) {
+    if (
+      addingToolCuratesServer(exposure) &&
+      !confirm(t('tool.curateConfirm', { name: label, tool: tool.name }))
+    ) {
+      return;
+    }
     setPendingToolName(tool.name);
     try {
       const toolId = suggestConfiguredToolId(server.id, tool.name, existingToolIds);
@@ -185,6 +217,18 @@ export function ServerCard({
                 }`}
               >
                 {server.isConnected ? t('actions.authenticated') : t('actions.needsOAuth')}
+              </span>
+            )}
+            {isOn && exposureBadge && (
+              <span
+                title={exposureBadge.hint}
+                className={`rounded-sm px-1.5 py-0.5 text-[10px] ${
+                  exposureBadge.muted
+                    ? 'bg-bg-secondary text-text-tertiary'
+                    : 'bg-accent-primary/15 text-accent-primary'
+                }`}
+              >
+                {exposureBadge.label}
               </span>
             )}
           </div>
@@ -319,6 +363,8 @@ export function ServerCard({
               {visibleTools.map((tool) => {
                 const key = `${server.id}::${tool.name}`;
                 const inUse = configuredMcpKeys.has(key);
+                const exposed = exposure ? exposure.exposedToolNames.has(tool.name) : inUse;
+                const curates = addingToolCuratesServer(exposure);
                 const anchor = remoteToolAnchor(server.id, tool.name);
                 const focused = focusedRemoteAnchor === anchor;
                 const adding = pendingToolName === tool.name;
@@ -346,13 +392,27 @@ export function ServerCard({
                       focused
                         ? 'border-accent-primary ring-1 ring-accent-primary'
                         : 'border-border-secondary'
-                    } ${adding ? 'opacity-80' : ''}`}
+                    } ${adding ? 'opacity-80' : ''} ${exposed ? '' : 'opacity-60'}`}
                   >
                     <div className="min-w-0 flex-1">
-                      <div
-                        className="font-mono text-[11px] font-medium text-text-primary"
-                        dangerouslySetInnerHTML={{ __html: highlightText(tool.name, search) }}
-                      />
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span
+                          className="font-mono text-[11px] font-medium text-text-primary"
+                          dangerouslySetInnerHTML={{ __html: highlightText(tool.name, search) }}
+                        />
+                        {exposure && (
+                          <span
+                            title={exposed ? t('tool.exposedHint') : t('tool.hiddenHint')}
+                            className={`rounded-sm px-1 py-px text-[9px] uppercase tracking-wide ${
+                              exposed
+                                ? 'bg-success-bg text-success-text'
+                                : 'bg-bg-tertiary text-text-tertiary'
+                            }`}
+                          >
+                            {exposed ? t('tool.exposed') : t('tool.hidden')}
+                          </span>
+                        )}
+                      </div>
                       {tool.description && (
                         <div
                           className={`mt-0.5 text-[10px] text-text-secondary ${
@@ -367,7 +427,13 @@ export function ServerCard({
                     <button
                       type="button"
                       disabled={inUse || mutating}
-                      title={inUse ? t('actions.toolInUse') : t('actions.useTool')}
+                      title={
+                        inUse
+                          ? t('actions.toolInUse')
+                          : curates
+                            ? t('actions.useToolCurates')
+                            : t('actions.useTool')
+                      }
                       onClick={(e) => {
                         e.stopPropagation();
                         void handleUseTool(tool);
