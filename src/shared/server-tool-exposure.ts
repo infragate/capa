@@ -246,3 +246,19 @@ export function exposedToolNamesForServer(
 		)
 		.map((t) => getQualifiedToolName(t));
 }
+
+/**
+ * Whether the project needs capa's own MCP entry in provider configs.
+ *
+ * Tools synthesized from a server's `expose` policy are resolved at configure
+ * time and never appear in `capabilities.tools`, so a project whose tools all
+ * come from servers (or plugin servers) must still be wired up.
+ */
+export function needsCapaMcpEntry(capabilities: Capabilities): boolean {
+	if (capabilities.options?.toolExposure === "none") return false;
+	return (
+		(capabilities.tools ?? []).length > 0 ||
+		(capabilities.subagents ?? []).length > 0 ||
+		serversWithExposePolicy(capabilities).length > 0
+	);
+}

@@ -3,6 +3,7 @@ import type { Capabilities, MCPServer } from "../../types/capabilities";
 import {
 	expandServerExposedTools,
 	exposedToolNamesForServer,
+	needsCapaMcpEntry,
 	selectExposedToolNames,
 } from "../server-tool-exposure";
 
@@ -231,3 +232,33 @@ function getQualified(tool: { id: string; def: unknown }): string {
 	const def = tool.def as { server: string };
 	return `${def.server.replace(/^@/, "")}.${tool.id}`;
 }
+
+describe("needsCapaMcpEntry", () => {
+	it("is true for a project whose tools all come from a server expose policy", () => {
+		expect(needsCapaMcpEntry(caps({ servers: [server()], tools: [] }))).toBe(true);
+	});
+
+	it("is false when nothing can produce tools", () => {
+		expect(needsCapaMcpEntry(caps({ servers: [server("none")], tools: [] }))).toBe(false);
+		expect(needsCapaMcpEntry(caps({ servers: [], tools: [] }))).toBe(false);
+	});
+
+	it("is false under toolExposure: none even with tools", () => {
+		expect(
+			needsCapaMcpEntry(
+				caps({ servers: [server()], tools: [], options: { toolExposure: "none" } }),
+			),
+		).toBe(false);
+	});
+
+	it("still counts authored tools and sub-agents", () => {
+		expect(
+			needsCapaMcpEntry(
+				caps({
+					servers: [],
+					tools: [{ id: "t", type: "command", def: { run: { cmd: "echo" } } }] as never,
+				}),
+			),
+		).toBe(true);
+	});
+});
