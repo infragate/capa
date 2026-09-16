@@ -152,6 +152,21 @@ describe('Provider registry', () => {
       }
     });
 
+    it('isolated instruction filenames are unique and not any provider default', () => {
+      const all = getAllProviders();
+      const defaults = new Set(all.map((p) => p.instructions?.filename).filter(Boolean));
+      const isolated = all.map((p) => p.instructions?.isolatedFilename).filter(Boolean);
+      expect(new Set(isolated).size).toBe(isolated.length);
+      for (const name of isolated) expect(defaults.has(name)).toBe(false);
+    });
+
+    it('gemini-cli context config lives in its MCP settings file', () => {
+      const p = getProvider('gemini-cli');
+      expect(p?.instructions?.isolatedFilename).toBe('GEMINI.md');
+      expect(p?.instructions?.contextConfig?.configPath).toBe(p?.mcp?.configPath);
+      expect(p?.instructions?.contextConfig?.keyPath).toEqual(['context', 'fileName']);
+    });
+
     it('gemini-cli uses inline-config json with gemini shape', () => {
       const p = getProvider('gemini-cli');
       expect(p?.hooks?.shape).toBe('gemini');

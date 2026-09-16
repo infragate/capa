@@ -18,6 +18,7 @@ import type {
 import { GitIntegrationsRepo } from "./git-integrations";
 import { ManagedFilesRepo } from "./managed-files";
 import { type ManagedHookRow, ManagedHooksRepo } from "./managed-hooks";
+import { ManagedInstructionTargetsRepo } from "./managed-instruction-targets";
 import { MCPSubprocessesRepo } from "./mcp-subprocesses";
 import { OAuthFlowStateRepo } from "./oauth-flow-state";
 import { OAuthTokensRepo } from "./oauth-tokens";
@@ -50,6 +51,7 @@ export class CapaDatabase {
 	private variables: VariablesRepo;
 	private managedFiles: ManagedFilesRepo;
 	private managedHooks: ManagedHooksRepo;
+	private managedInstructionTargets: ManagedInstructionTargetsRepo;
 	private oauthTokens: OAuthTokensRepo;
 	private oauthFlowState: OAuthFlowStateRepo;
 	private gitIntegrations: GitIntegrationsRepo;
@@ -74,6 +76,7 @@ export class CapaDatabase {
 		this.variables = new VariablesRepo(this.db);
 		this.managedFiles = new ManagedFilesRepo(this.db);
 		this.managedHooks = new ManagedHooksRepo(this.db);
+		this.managedInstructionTargets = new ManagedInstructionTargetsRepo(this.db);
 		this.oauthTokens = new OAuthTokensRepo(this.db);
 		this.oauthFlowState = new OAuthFlowStateRepo(this.db);
 		this.gitIntegrations = new GitIntegrationsRepo(this.db);
@@ -179,6 +182,19 @@ export class CapaDatabase {
 
 	clearManagedFiles(projectId: string): void {
 		return this.managedFiles.clear(projectId);
+	}
+
+	// Managed instruction targets (nested / isolated instruction files)
+	addManagedInstructionTarget(projectId: string, filePath: string): void {
+		return this.managedInstructionTargets.add(projectId, filePath);
+	}
+
+	getManagedInstructionTargets(projectId: string): string[] {
+		return this.managedInstructionTargets.getAll(projectId);
+	}
+
+	removeManagedInstructionTarget(projectId: string, filePath: string): void {
+		return this.managedInstructionTargets.remove(projectId, filePath);
 	}
 
 	// Managed hooks operations

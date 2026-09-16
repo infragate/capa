@@ -30,8 +30,12 @@ caveats.
 - `MCP` is the project-local server config (when a provider only supports
   global / IDE-only MCP, it's marked `—`).
 - `Instructions` is the markdown file capa writes managed marker blocks
-  into (in addition to the universal `AGENTS.md` that every project always
-  gets).
+  into. When several active providers read the same file (most read
+  `AGENTS.md`), a provider-restricted rule in that file is visible to all
+  of them; capa reports this as a visibility conflict
+  (`options.rules.conflicts`). Gemini CLI avoids it by moving onto a
+  generated `GEMINI.md` whenever it shares `AGENTS.md`. See
+  [Gemini CLI](./gemini-cli.md#shared-instruction-files).
 - `Rules` and `Sub-agents` are the per-feature directories (or "folded"
   if rules go into the instructions file).
 

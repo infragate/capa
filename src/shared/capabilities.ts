@@ -273,6 +273,10 @@ const optionsSchema = z
 			)
 			.optional(),
 		onInstallError: z.enum(["warn", "stop"]).optional(),
+		rules: z
+			.object({ conflicts: z.enum(["warn", "error"]).optional() })
+			.passthrough()
+			.optional(),
 	})
 	.passthrough();
 

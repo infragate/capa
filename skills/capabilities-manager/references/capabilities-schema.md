@@ -36,7 +36,7 @@ tools:
     type: mcp|command
     def: { ... }
 
-# rules: [ { id, type, content?, url?, path?, def?, providers?, appliesTo?, alwaysApply?, description? } ]
+# rules: [ { id, type, content?, url?, path?, def?, providers?, appliesTo?, alwaysApply?, description?, visibility?, scope? } ]
 
 # plugins: [ { id?, type: github|gitlab, def: { repo, subpath?, version?, ref?, description? }, servers?: { <manifestKey>: { as?: <serverId>, expose?: all|except|exactly|none, tools?: [<remoteName>] } } } ]
 # Plugins unpack into skills + servers + rules + sub-agents + hooks (Claude/Cursor manifests).
@@ -233,6 +233,10 @@ options:
 
 Only present properties are applied. Same checks apply to agent snippet content.
 
+## Rule Conflicts (`options.rules.conflicts`)
+
+`warn` or `error`. Controls how rule placement conflicts (a provider-restricted rule visible to an excluded provider through a shared instructions file, or an `appliesTo` scope that can't be represented natively) are handled. See [Rules Section](#rules-section).
+
 ## CLI Prerequisites (`options.requiresCommands`)
 
 List of `{ cli: "executable", description?: "hint" }`. Install fails if any command is missing (`which`/`where`).
@@ -307,13 +311,23 @@ subagents:
 Defines rules installed into each provider's rules directory or instructions file.
 
 - **Providers with a rules directory** (e.g. Cursor → `.cursor/rules/`): each rule is written as a separate file with optional YAML frontmatter (`description`, `globs`, `alwaysApply`).
-- **Providers without a rules directory** (e.g. Claude Code, Codex): rule content is folded into the provider's instructions file as a capa marker block.
+- **Providers without a rules directory** (e.g. Codex, Gemini CLI): rule content is folded into the provider's instructions file as a capa marker block.
+
+**Shared instruction files.** Several providers read `AGENTS.md` (Codex, Cursor, OpenCode, Gemini CLI, …). Which file each provider reads depends only on the `providers` list:
+- Gemini CLI reads `AGENTS.md` when it is the only `AGENTS.md` reader. Otherwise capa gives it its own generated `GEMINI.md` (agent snippets plus the rules Gemini may see). Capa makes sure `.gemini/settings.json` → `context.fileName` includes that file (keeping Gemini's `GEMINI.md` default), records what it added in `capabilities.lock`, and `capa clean` removes only those entries.
+- A rule restricted with `providers` that would still be visible to another reader of the same file (e.g. a Codex-only rule while Cursor also reads `AGENTS.md`) is a **visibility conflict**.
+
+**`appliesTo` for folded rules.** Directory globs (`src/**`, `packages/api/**/*`) become marker blocks in nested files (`src/AGENTS.md`, `src/GEMINI.md`) for providers that read nested instruction files (Codex, Gemini CLI). The directory must already exist. Other globs (`**/*.py`) can't be scoped natively, so they are folded at the project root with an `> Applies to:` note; this is a **scope conflict**.
+
+Conflicts are reported by `capa install` according to `options.rules.conflicts`: `warn` installs the rule and prints a warning; `error` skips the rule and records an install failure (aborting under `onInstallError: stop`). The default is `warn`, or `error` when `onInstallError: stop`; it will become `error` in the next major release. To accept a conflict for one rule, set `visibility: best-effort` or `scope: best-effort` on it.
 
 **Fields:**
 - `id` (required): Unique identifier, used as filename stem and capa marker id.
 - `type` (required): `inline`, `remote`, `github`, `gitlab`, or `local`.
 - `providers` (optional): Restrict this rule to specific providers. When omitted, applies to all.
-- `appliesTo` (optional): Glob patterns for auto-attached rules (maps to Cursor `globs`).
+- `appliesTo` (optional): Glob patterns for auto-attached rules (maps to Cursor `globs`, Claude `paths`, Copilot `applyTo`; nested instruction files for folded providers, see above).
+- `visibility` (optional): `strict` (default) or `best-effort` — accept that other readers of a shared instructions file see this rule.
+- `scope` (optional): `strict` (default) or `best-effort` — accept a root-level fold with an "Applies to" note when `appliesTo` can't be represented natively.
 - `alwaysApply` (optional): When `true`, the rule is always loaded regardless of file context.
 - `description` (optional): Human-readable description used in frontmatter.
 - `content` (inline only): Literal rule content.

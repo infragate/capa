@@ -20,7 +20,20 @@ export const geminiCli: ProviderIntegration = {
 		entryUrlKey: "httpUrl",
 		supportsSubAgentEntries: true,
 	},
-	instructions: { filename: "AGENTS.md" },
+	instructions: {
+		filename: "AGENTS.md",
+		// Gemini reads GEMINI.md by default, plus any filenames listed under
+		// `context.fileName`. When another active provider shares AGENTS.md,
+		// Gemini is isolated onto GEMINI.md so provider-targeted rules don't leak.
+		isolatedFilename: "GEMINI.md",
+		hierarchical: true,
+		contextConfig: {
+			configPath: ".gemini/settings.json",
+			format: "json",
+			keyPath: ["context", "fileName"],
+			defaultValue: ["GEMINI.md"],
+		},
+	},
 	subagents: {
 		dir: ".gemini/agents",
 		extension: ".md",

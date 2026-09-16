@@ -5,7 +5,13 @@ import { isCapaOwnedInstallPath } from '../../shared/install-path-guard';
 import { isUnderWrapWorkspacesDir } from '../../shared/workspaces/paths';
 import { canonicalizePath, detectCapabilitiesFile } from '../../shared/paths';
 import { parseCapabilitiesFile } from '../../shared/capabilities';
-import { getLockfilePath } from '../../shared/lockfile';
+import {
+  getLockfilePath,
+  LockfileBuilder,
+  loadLockfile,
+  saveLockfile,
+} from '../../shared/lockfile';
+import type { LockProviderConfigEntry } from '../../types/lockfile';
 import { resolveProvidersForClean } from '../../shared/providers/resolve';
 import { getAllProviders, getProvider } from '../../shared/providers';
 import {
@@ -21,6 +27,7 @@ import {
 } from '../utils/mcp-client-manager';
 import { cleanAgentsFile, removeSubAgentInstructions } from '../utils/agents-file/index';
 import { cleanRules } from '../utils/rules-installer';
+import { removeInstructionContextConfig } from '../utils/instruction-context-config';
 import { cleanHooks } from '../utils/hooks';
 import { stopWrapSessionsForProject } from '../utils/wrap/sessions';
 import { pruneWorkspacesForProject } from '../utils/wrap/workspace';
@@ -189,7 +196,10 @@ export async function cleanProject(opts: CleanProjectOptions): Promise<CleanProj
 
     try {
       const ruleIds = (capabilities?.rules ?? []).map((r) => r.id);
-      cleanRules(projectPath, providers, ruleIds);
+      cleanRules(projectPath, providers, ruleIds, {
+        trackedInstructionTargets: db.getManagedInstructionTargets(projectId),
+        rules: capabilities?.rules,
+      });
     } catch (err) {
       warnings.push(
         `Failed to clean rules: ${err instanceof Error ? err.message : String(err)}`,
@@ -204,8 +214,39 @@ export async function cleanProject(opts: CleanProjectOptions): Promise<CleanProj
     db.clearManagedHooks(projectId);
   }
 
+  let unreleasedProviderConfig: LockProviderConfigEntry[] = [];
+  if (!wrapOnlyManagedArtifacts) {
+    try {
+      const lockfile = await loadLockfile(projectPath);
+      if (lockfile?.providerConfig?.length) {
+        const result = removeInstructionContextConfig(projectPath, lockfile.providerConfig);
+        warnings.push(...result.warnings);
+        unreleasedProviderConfig = result.owned;
+      }
+    } catch (err) {
+      warnings.push(
+        `Failed to remove capa instruction settings: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
   const lockfilePath = getLockfilePath(projectPath);
-  if (existsSync(lockfilePath)) {
+  if (unreleasedProviderConfig.length > 0) {
+    // Keep only the ownership records that couldn't be released, so a later
+    // `capa clean` can retry once the settings file is fixed.
+    try {
+      const builder = new LockfileBuilder(null);
+      builder.setProviderConfig(unreleasedProviderConfig);
+      await saveLockfile(projectPath, builder.build());
+      warnings.push(
+        `Kept ${lockfilePath} with capa-owned provider settings that couldn't be removed; ` +
+          `fix the files above and run capa clean again.`,
+      );
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      warnings.push(`Failed to update lockfile ${lockfilePath}: ${message}`);
+    }
+  } else if (existsSync(lockfilePath)) {
     try {
       await rm(lockfilePath, { force: true });
     } catch (err: unknown) {

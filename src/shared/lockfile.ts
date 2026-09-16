@@ -14,6 +14,7 @@ import type {
 	LockfileFormat,
 	LockHookEntry,
 	LockPluginEntry,
+	LockProviderConfigEntry,
 	LockSkillEntry,
 	LockSource,
 } from "../types/lockfile";
@@ -117,6 +118,24 @@ export function isValidPluginLockEntry(x: unknown): x is LockPluginEntry {
 	);
 }
 
+export function isValidProviderConfigLockEntry(
+	x: unknown,
+): x is LockProviderConfigEntry {
+	if (!x || typeof x !== "object") return false;
+	const e = x as Record<string, unknown>;
+	return (
+		typeof e.provider === "string" &&
+		e.provider.length > 0 &&
+		typeof e.configPath === "string" &&
+		Array.isArray(e.keyPath) &&
+		e.keyPath.length > 0 &&
+		e.keyPath.every((k) => typeof k === "string") &&
+		Array.isArray(e.values) &&
+		e.values.every((v) => typeof v === "string") &&
+		typeof e.createdKey === "boolean"
+	);
+}
+
 function filterLockEntries<T>(
 	entries: unknown[],
 	isValid: (entry: unknown) => entry is T,
@@ -157,6 +176,13 @@ function validateLockfile(parsed: unknown): Lockfile {
 	// Older lockfiles predate the hooks section — treat a missing field as [].
 	const hooksValue = obj.hooks;
 	const hooksArray = Array.isArray(hooksValue) ? hooksValue : [];
+	const providerConfig = Array.isArray(obj.providerConfig)
+		? filterLockEntries(
+				obj.providerConfig,
+				isValidProviderConfigLockEntry,
+				"providerConfig",
+			)
+		: [];
 	return {
 		version: 1,
 		generator:
@@ -168,6 +194,7 @@ function validateLockfile(parsed: unknown): Lockfile {
 		skills: filterLockEntries(obj.skills, isValidSkillLockEntry, "skill"),
 		plugins: filterLockEntries(obj.plugins, isValidPluginLockEntry, "plugin"),
 		hooks: filterLockEntries(hooksArray, isValidHookLockEntry, "hook"),
+		...(providerConfig.length > 0 ? { providerConfig } : {}),
 	};
 }
 
@@ -207,6 +234,7 @@ export function lockfileSemanticPayload(lockfile: Lockfile): unknown {
 		skills: lockfile.skills,
 		plugins: lockfile.plugins,
 		hooks: lockfile.hooks ?? [],
+		providerConfig: lockfile.providerConfig ?? [],
 	};
 }
 
@@ -271,6 +299,7 @@ export class LockfileBuilder {
 	private skills: Map<string, LockSkillEntry> = new Map();
 	private plugins: Map<string, LockPluginEntry> = new Map();
 	private hooks: Map<string, LockHookEntry> = new Map();
+	private providerConfig: LockProviderConfigEntry[] = [];
 	private generator: string;
 	private generatedAt: string;
 	/** Semantic key of the lockfile this builder was hydrated from (if any). */
@@ -284,6 +313,7 @@ export class LockfileBuilder {
 			for (const skill of initial.skills) this.skills.set(skill.id, skill);
 			for (const plugin of initial.plugins) this.plugins.set(plugin.id, plugin);
 			for (const hook of initial.hooks ?? []) this.hooks.set(hook.id, hook);
+			this.providerConfig = [...(initial.providerConfig ?? [])];
 		}
 	}
 
@@ -359,6 +389,19 @@ export class LockfileBuilder {
 		this.hooks.set(entry.id, entry);
 	}
 
+	getProviderConfig(): LockProviderConfigEntry[] {
+		return [...this.providerConfig];
+	}
+
+	/**
+	 * Replace capa-owned provider config entries. Ownership records aren't
+	 * resolution pins, so `--no-cache` installs seed these from the existing
+	 * lockfile instead of dropping them.
+	 */
+	setProviderConfig(entries: LockProviderConfigEntry[]): void {
+		this.providerConfig = sortProviderConfig(entries);
+	}
+
 	/**
 	 * Look up a hook entry by id. Returns the entry only if its requested
 	 * version/ref still matches what the capabilities file is asking for —
@@ -416,6 +459,9 @@ export class LockfileBuilder {
 			skills,
 			plugins,
 			hooks,
+			...(this.providerConfig.length > 0
+				? { providerConfig: sortProviderConfig(this.providerConfig) }
+				: {}),
 		};
 		// Only bump generatedAt when pins/generator actually changed.
 		if (
@@ -428,10 +474,19 @@ export class LockfileBuilder {
 	}
 }
 
+function sortProviderConfig(
+	entries: LockProviderConfigEntry[],
+): LockProviderConfigEntry[] {
+	const key = (e: LockProviderConfigEntry) =>
+		`${e.provider}|${e.configPath}|${e.keyPath.join(".")}`;
+	return [...entries].sort((a, b) => key(a).localeCompare(key(b)));
+}
+
 export type {
 	Lockfile,
 	LockHookEntry,
 	LockPluginEntry,
+	LockProviderConfigEntry,
 	LockSkillEntry,
 	LockSource,
 };
