@@ -545,6 +545,9 @@ export async function appendCapabilityEntry<S extends ArrayCapabilitySection>(
 	const doc = parseDocument(content);
 	const existing = doc.get(section);
 	if (isSeq(existing)) {
+		// `servers: []` parses as a flow sequence; appending to it would render
+		// the whole entry inline (`[ { id: … } ]`). Switch an empty one to block style.
+		if (existing.flow && existing.items.length === 0) existing.flow = false;
 		existing.add(doc.createNode(node));
 	} else {
 		doc.set(section, doc.createNode([node]));

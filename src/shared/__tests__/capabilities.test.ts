@@ -484,6 +484,21 @@ servers:
   });
 
   describe('appendCapabilityEntry', () => {
+    it('appends to an empty `[]` section in block style, not inline', async () => {
+      const filePath = join(tempDir, 'capabilities.yaml');
+      await writeFile(filePath, 'servers: []\ntools: [ existing ]\n');
+      await appendCapabilityEntry(filePath, 'yaml', 'servers', {
+        id: 'fx',
+        type: 'mcp',
+        def: { cmd: 'bun', args: ['server.ts'] },
+      } as never);
+      const text = await Bun.file(filePath).text();
+      expect(text).toContain('servers:\n  - id: fx\n');
+      expect(text).not.toContain('[ {');
+      // A non-empty flow list the user wrote stays as they wrote it.
+      expect(text).toContain('tools: [ existing ]');
+    });
+
     it('preserves comments and key order when appending to YAML (#93)', async () => {
       const filePath = join(tempDir, 'capabilities.yaml');
       const original = [
