@@ -126,6 +126,21 @@ describe('rules in shared instruction files', () => {
     expect(exists('AGENTS.md')).toBe(false);
   });
 
+  it('reports written instruction files and unique skipped rules', () => {
+    const rules: Rule[] = [
+      { id: 'codex-only', type: 'inline', providers: ['codex'], appliesTo: ['**/*.py'], content: 'C' },
+      { id: 'gemini-only', type: 'inline', providers: ['gemini-cli'], content: 'G' },
+    ];
+    const bodies = new Map(rules.map((r) => [r.id, r.content!]));
+    const result = installRules(projectPath, rules, ['codex', 'gemini-cli', 'cursor'], bodies, {
+      conflicts: 'error',
+    });
+    // codex-only has two error diagnostics (scope + visibility) but is one skipped rule.
+    expect(result.diagnostics.filter((d) => d.ruleId === 'codex-only').length).toBe(2);
+    expect(result.skippedRuleIds).toEqual(['codex-only']);
+    expect(result.writtenInstructionFiles).toEqual(['GEMINI.md']);
+  });
+
   it('skips an error-conflict rule for native rules directories too', () => {
     const rule: Rule = { id: 'py', type: 'inline', appliesTo: ['**/*.py'], content: 'Py.' };
     const bodies = new Map([['py', 'Py.']]);
@@ -166,6 +181,20 @@ describe('rules in shared instruction files', () => {
     await installAgentsFile(projectPath, config, ['gemini-cli']);
     expect(exists('GEMINI.md')).toBe(false);
     expect(read('AGENTS.md')).toContain('Team snippet.');
+  });
+
+  it('re-installing snippets after rules leaves the file unchanged', async () => {
+    const config = { additional: [{ id: 'team', type: 'inline' as const, content: 'Team snippet.' }] };
+    const rules: Rule[] = [{ id: 'style', type: 'inline', content: 'Style rule.' }];
+    // Install order: snippets, then rules (same as the install pipeline).
+    await installAgentsFile(projectPath, config, ['codex']);
+    sync(rules, ['codex']);
+    const first = read('AGENTS.md');
+
+    await installAgentsFile(projectPath, config, ['codex']);
+    sync(rules, ['codex']);
+    expect(read('AGENTS.md')).toBe(first);
+    expect(first.startsWith('<!-- capa:start:team -->')).toBe(true);
   });
 
   it('cleanAgentsFile removes an isolated GEMINI.md', async () => {

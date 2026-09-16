@@ -33,14 +33,24 @@ export function applyInstructionContextConfig(
   projectPath: string,
   providers: string[],
   previouslyOwned: LockProviderConfigEntry[],
+  options: {
+    /**
+     * Configure only these providers (the layout still uses all `providers`).
+     * Passthrough passes the providers whose instructions file it wrote.
+     */
+    onlyProviders?: string[];
+  } = {},
 ): ContextConfigResult {
   const layout = computeInstructionLayout(providers);
   const warnings: string[] = [];
   const changedFiles = new Set<string>();
   const owned: LockProviderConfigEntry[] = [];
 
+  const only = options.onlyProviders ? new Set(options.onlyProviders) : null;
   const desired = new Map<string, { config: InstructionsContextConfig; fileNames: string[] }>();
-  for (const [pid, entry] of layout.contextConfig) desired.set(pid, entry);
+  for (const [pid, entry] of layout.contextConfig) {
+    if (!only || only.has(pid)) desired.set(pid, entry);
+  }
 
   // Release entries for providers that are gone or whose setting moved.
   for (const prev of previouslyOwned) {

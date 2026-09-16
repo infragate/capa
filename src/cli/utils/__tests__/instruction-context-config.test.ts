@@ -152,6 +152,14 @@ describe('instruction context config (Gemini context.fileName)', () => {
     expect(readSettings().context.fileName).toEqual(['NOTES.md', 'AGENTS.md']);
   });
 
+  it('onlyProviders leaves providers outside the list untouched', () => {
+    const result = applyInstructionContextConfig(projectPath, ['gemini-cli'], [], {
+      onlyProviders: ['codex'],
+    });
+    expect(result.owned).toEqual([]);
+    expect(result.changedFiles).toEqual([]);
+  });
+
   it('skips a setting with an unexpected shape', () => {
     writeSettings({ context: { fileName: 42 } });
     const result = applyInstructionContextConfig(projectPath, ['gemini-cli'], []);

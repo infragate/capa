@@ -232,6 +232,10 @@ export interface InstallRulesResult {
   diagnostics: RuleDiagnostic[];
   /** Non-fatal write problems (e.g. a nested target directory is missing). */
   warnings: string[];
+  /** Project-relative POSIX paths of instruction files that received rule blocks. */
+  writtenInstructionFiles: string[];
+  /** Rules not installed because of error-level placement conflicts (unique ids). */
+  skippedRuleIds: string[];
 }
 
 /**
@@ -264,6 +268,7 @@ export function installRules(
   // A rule with an error-level conflict is skipped for every provider, native
   // rules directories included.
   const skipped = skippedRuleIds(plan.diagnostics);
+  const writtenInstructionFiles: string[] = [];
 
   for (const pid of providers) {
     const provider = getProvider(pid);
@@ -362,6 +367,7 @@ export function installRules(
       mdContent = upsertBlock(mdContent, ruleMarkerId(block.ruleId), body);
     }
     writeMd(projectPath, relPath, mdContent);
+    writtenInstructionFiles.push(relPath);
     if (!isDefaultInstructionsFilename(relPath)) {
       options.onInstructionTargetWritten?.(filePath);
     }
@@ -373,7 +379,12 @@ export function installRules(
     }
   }
 
-  return { diagnostics: plan.diagnostics, warnings };
+  return {
+    diagnostics: plan.diagnostics,
+    warnings,
+    writtenInstructionFiles,
+    skippedRuleIds: [...skipped],
+  };
 }
 
 export interface PruneRulesOptions {

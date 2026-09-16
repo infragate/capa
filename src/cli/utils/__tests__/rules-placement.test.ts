@@ -87,6 +87,7 @@ describe('planRulePlacement', () => {
     });
     expect(paths(plan)).toEqual({ 'AGENTS.md': ['ok'] });
     expect(plan.diagnostics.map((d) => d.level)).toEqual(['error']);
+    expect(plan.diagnostics[0].message).toContain('the rule was skipped');
   });
 
   it('accepts widened visibility with visibility: best-effort', () => {
