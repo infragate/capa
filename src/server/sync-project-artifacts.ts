@@ -9,7 +9,11 @@ import {
 } from "../cli/utils/hooks";
 import { installRules, pruneRules } from "../cli/utils/rules-installer";
 import { resolveRuleConflictMode } from "../cli/utils/rules-placement";
-import { applyInstructionContextConfig } from "../cli/utils/instruction-context-config";
+import {
+	applyInstructionContextConfig,
+	newlyOwnedProviderConfig,
+	removeInstructionContextConfig,
+} from "../cli/utils/instruction-context-config";
 import {
 	getLockfilePath,
 	LockfileBuilder,
@@ -314,7 +318,11 @@ async function syncProjectRules(opts: {
 		for (const file of removedInstructionTargets) {
 			opts.db.removeManagedInstructionTarget(opts.projectId, file);
 		}
-		warnings.push(...diagnostics.map((d) => d.message));
+		warnings.push(
+			...diagnostics.map((d) =>
+				d.level === "error" ? `Rule "${d.ruleId}" skipped: ${d.message}` : d.message,
+			),
+		);
 		removed += removedFiles.length + removedMarkers.length;
 	} catch (err: unknown) {
 		warnings.push(
@@ -384,7 +392,11 @@ async function syncProjectRules(opts: {
 				},
 			);
 			warnings.push(...result.warnings);
-			installed += installedRules.length;
+			// Rules with error-level conflicts were skipped (already reported by prune).
+			const skipped = new Set(
+				result.diagnostics.filter((d) => d.level === "error").map((d) => d.ruleId),
+			);
+			installed += installedRules.filter((r) => !skipped.has(r.id)).length;
 		} catch (err: unknown) {
 			warnings.push(
 				`Failed to install rules: ${err instanceof Error ? err.message : String(err)}`,
@@ -403,11 +415,8 @@ async function syncInstructionContextConfig(
 	try {
 		const lockfile = await loadLockfile(projectPath);
 		const builder = new LockfileBuilder(lockfile);
-		const result = applyInstructionContextConfig(
-			projectPath,
-			providers,
-			builder.getProviderConfig(),
-		);
+		const before = builder.getProviderConfig();
+		const result = applyInstructionContextConfig(projectPath, providers, before);
 		builder.setProviderConfig(result.owned);
 		const next = builder.build();
 		const empty =
@@ -415,10 +424,21 @@ async function syncInstructionContextConfig(
 			next.plugins.length === 0 &&
 			next.hooks.length === 0 &&
 			(next.providerConfig ?? []).length === 0;
-		if (!empty) {
-			await saveLockfile(projectPath, next);
-		} else if (lockfile) {
-			rmSync(getLockfilePath(projectPath), { force: true });
+		try {
+			if (!empty) {
+				await saveLockfile(projectPath, next);
+			} else if (lockfile) {
+				rmSync(getLockfilePath(projectPath), { force: true });
+			}
+		} catch (err: unknown) {
+			// No ownership record was saved: undo values added in this sync.
+			const added = newlyOwnedProviderConfig(before, result.owned);
+			const reverted = removeInstructionContextConfig(projectPath, added);
+			return [
+				...result.warnings,
+				...reverted.warnings,
+				`Failed to write capabilities.lock (reverted new instruction settings): ${err instanceof Error ? err.message : String(err)}`,
+			];
 		}
 		return result.warnings;
 	} catch (err: unknown) {

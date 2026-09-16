@@ -255,12 +255,22 @@ export function installRules(
   options: InstallRulesOptions = {}
 ): InstallRulesResult {
   const warnings: string[] = [];
+  const plan = planRulePlacement({
+    rules,
+    readerProviders: options.readerProviders ?? providers,
+    targetProviders: providers,
+    conflicts: options.conflicts,
+  });
+  // A rule with an error-level conflict is skipped for every provider, native
+  // rules directories included.
+  const skipped = skippedRuleIds(plan.diagnostics);
 
   for (const pid of providers) {
     const provider = getProvider(pid);
     if (!provider?.rules) continue;
 
     const applicableRules = rules.filter((r) => {
+      if (skipped.has(r.id)) return false;
       if (!r.providers || r.providers.length === 0) return true;
       return r.providers.includes(pid);
     });
@@ -319,13 +329,6 @@ export function installRules(
       options.onFileWritten?.(filePath);
     }
   }
-
-  const plan = planRulePlacement({
-    rules,
-    readerProviders: options.readerProviders ?? providers,
-    targetProviders: providers,
-    conflicts: options.conflicts,
-  });
 
   for (const [relPath, planned] of sortedEntries(plan.blocks)) {
     const blocks = planned.filter((block) => {
@@ -427,6 +430,12 @@ export function pruneRules(
   const removedFiles: string[] = [];
   const removedMarkers: string[] = [];
   const removedInstructionTargets: string[] = [];
+  const plan = planRulePlacement({
+    rules: currentRules,
+    readerProviders: providers,
+    conflicts: options.conflicts,
+  });
+  const skipped = skippedRuleIds(plan.diagnostics);
 
   for (const pid of providers) {
     const provider = getProvider(pid);
@@ -434,6 +443,7 @@ export function pruneRules(
 
     const desiredForProvider = new Set<string>();
     for (const r of currentRules) {
+      if (skipped.has(r.id)) continue;
       if (!r.providers || r.providers.length === 0 || r.providers.includes(pid)) {
         desiredForProvider.add(r.id);
       }
@@ -464,11 +474,6 @@ export function pruneRules(
     }
   }
 
-  const plan = planRulePlacement({
-    rules: currentRules,
-    readerProviders: providers,
-    conflicts: options.conflicts,
-  });
   const tracked = new Map<string, string>();
   for (const abs of options.trackedInstructionTargets ?? []) {
     const rel = projectRelativePath(projectPath, abs);
@@ -627,6 +632,10 @@ function writeOrDeleteMd(projectPath: string, relPath: string, content: string):
     return;
   }
   writeMd(projectPath, relPath, content);
+}
+
+function skippedRuleIds(diagnostics: RuleDiagnostic[]): Set<string> {
+  return new Set(diagnostics.filter((d) => d.level === 'error').map((d) => d.ruleId));
 }
 
 function sortedEntries<V>(map: Map<string, V>): Array<[string, V]> {

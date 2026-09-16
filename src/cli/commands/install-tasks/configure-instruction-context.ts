@@ -16,10 +16,11 @@ export function configureInstructionContextTask(): Task<InstallCtx> {
       ctx.lockBuilder.getProviderConfig().length > 0,
     task: async (ctx) => {
       try {
+        ctx.providerConfigBefore = ctx.lockBuilder.getProviderConfig();
         const { owned, warnings } = applyInstructionContextConfig(
           ctx.projectPath,
           materialInstallProviders(ctx),
-          ctx.lockBuilder.getProviderConfig(),
+          ctx.providerConfigBefore,
         );
         ctx.lockBuilder.setProviderConfig(owned);
         ctx.warnings.push(...warnings);

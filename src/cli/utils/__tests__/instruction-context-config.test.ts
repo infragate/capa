@@ -4,6 +4,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import {
   applyInstructionContextConfig,
+  newlyOwnedProviderConfig,
   removeInstructionContextConfig,
 } from '../instruction-context-config';
 
@@ -121,6 +122,20 @@ describe('instruction context config (Gemini context.fileName)', () => {
     ];
     const removed = removeInstructionContextConfig(projectPath, prev);
     expect(removed.owned).toEqual(prev);
+  });
+
+  it('newlyOwnedProviderConfig undoes only values added since the previous record', () => {
+    writeSettings({ context: { fileName: ['NOTES.md'] } });
+    const before = applyInstructionContextConfig(projectPath, ['gemini-cli'], []).owned;
+    const after = [{ ...before[0], values: [...before[0].values, 'EXTRA.md'] }];
+    const added = newlyOwnedProviderConfig(before, after);
+    expect(added).toEqual([{ ...before[0], values: ['EXTRA.md'], createdKey: false }]);
+
+    // A fresh install's additions roll back to the original settings.
+    rmSync(settingsPath());
+    const fresh = applyInstructionContextConfig(projectPath, ['gemini-cli'], []).owned;
+    removeInstructionContextConfig(projectPath, newlyOwnedProviderConfig([], fresh));
+    expect(readSettings()).toEqual({});
   });
 
   it('skips a setting with an unexpected shape', () => {

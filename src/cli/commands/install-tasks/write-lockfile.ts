@@ -3,6 +3,10 @@ import { join } from 'path';
 import type { Task } from '../../ui';
 import { saveLockfile } from '../../../shared/lockfile';
 import { validateHooks } from '../../../shared/hooks-validate';
+import {
+  newlyOwnedProviderConfig,
+  removeInstructionContextConfig,
+} from '../../utils/instruction-context-config';
 import type { InstallCtx } from './context';
 
 export function writeLockfileTask(): Task<InstallCtx> {
@@ -53,6 +57,19 @@ export function writeLockfileTask(): Task<InstallCtx> {
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : String(err);
           ctx.warnings.push(`Failed to write capabilities.lock: ${message}`);
+          // Without the lockfile there's no ownership record for settings values
+          // added in this install, so undo them rather than leave them untracked.
+          const added = newlyOwnedProviderConfig(
+            ctx.providerConfigBefore ?? [],
+            lockfileToSave.providerConfig ?? [],
+          );
+          if (added.length > 0) {
+            const { warnings } = removeInstructionContextConfig(ctx.projectPath, added);
+            ctx.warnings.push(
+              ...warnings,
+              'Reverted provider instruction settings added in this install; re-run capa install once capabilities.lock is writable.',
+            );
+          }
         }
       }
     },

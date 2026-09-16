@@ -204,6 +204,10 @@ export function planRulePlacement(input: PlanRulePlacementInput): RulePlacementP
     for (const { dir, preamble } of locations) {
       const files = [...new Set(targets.map((pid) => layout.providerFile.get(pid)!))].sort();
       for (const file of files) {
+        // Nested files count every reader of the filename, not only providers
+        // flagged `hierarchical`. That flag says where capa may *write* a
+        // scoped rule; other providers can still *read* nested files (Cursor
+        // loads nested AGENTS.md), so this errs toward reporting a conflict.
         const readers = layout.files.get(file) ?? [];
         const leaked = readers.filter((pid) => !allowed.has(pid));
         const path = dir ? `${dir}/${file}` : file;

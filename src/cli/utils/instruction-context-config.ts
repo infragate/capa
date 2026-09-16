@@ -80,6 +80,29 @@ export function removeInstructionContextConfig(
   return { owned, warnings, changedFiles: [...changedFiles].sort() };
 }
 
+/**
+ * Values owned in `after` that weren't owned in `before`, as entries that can
+ * be passed to {@link removeInstructionContextConfig} to undo them.
+ */
+export function newlyOwnedProviderConfig(
+  before: LockProviderConfigEntry[],
+  after: LockProviderConfigEntry[],
+): LockProviderConfigEntry[] {
+  const added: LockProviderConfigEntry[] = [];
+  for (const entry of after) {
+    const prev = before.find(
+      (e) =>
+        e.provider === entry.provider &&
+        e.configPath === entry.configPath &&
+        sameList(e.keyPath, entry.keyPath),
+    );
+    const values = entry.values.filter((v) => !prev?.values.includes(v));
+    if (values.length === 0) continue;
+    added.push({ ...entry, values, createdKey: entry.createdKey && !prev });
+  }
+  return added;
+}
+
 // ---------------------------------------------------------------------------
 
 function applyEntry(

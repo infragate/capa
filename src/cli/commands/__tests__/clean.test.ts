@@ -159,6 +159,52 @@ researcher block
     expect(existsSync(join(projectDir, 'AGENTS.md'))).toBe(false);
   });
 
+  it('keeps unreleased Gemini ownership in the lockfile so clean can retry', async () => {
+    writeFileSync(
+      join(projectDir, 'capabilities.yaml'),
+      `providers: [gemini-cli]
+options:
+  toolExposure: on-demand
+skills: []
+servers: []
+tools: []
+`,
+      'utf-8'
+    );
+    mkdirSync(join(projectDir, '.gemini'));
+    writeFileSync(join(projectDir, '.gemini', 'settings.json'), '{ not json', 'utf-8');
+    writeFileSync(
+      join(projectDir, 'capabilities.lock'),
+      `version: 1
+skills: []
+plugins: []
+providerConfig:
+  - provider: gemini-cli
+    configPath: .gemini/settings.json
+    keyPath: [context, fileName]
+    values: [AGENTS.md]
+    createdKey: true
+`,
+      'utf-8'
+    );
+
+    await captureOutput(() => cleanCommand());
+
+    const lock = readFileSync(join(projectDir, 'capabilities.lock'), 'utf-8');
+    expect(lock).toContain('providerConfig');
+    expect(lock).toContain('AGENTS.md');
+
+    writeFileSync(
+      join(projectDir, '.gemini', 'settings.json'),
+      JSON.stringify({ context: { fileName: ['GEMINI.md', 'AGENTS.md'] } }),
+      'utf-8'
+    );
+    await captureOutput(() => cleanCommand());
+
+    expect(existsSync(join(projectDir, 'capabilities.lock'))).toBe(false);
+    expect(JSON.parse(readFileSync(join(projectDir, '.gemini', 'settings.json'), 'utf-8'))).toEqual({});
+  });
+
   it('removes GEMINI.md, nested rule files, and only lockfile-owned Gemini settings', async () => {
     writeFileSync(
       join(projectDir, 'capabilities.yaml'),

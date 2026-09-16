@@ -126,6 +126,28 @@ describe('rules in shared instruction files', () => {
     expect(exists('AGENTS.md')).toBe(false);
   });
 
+  it('skips an error-conflict rule for native rules directories too', () => {
+    const rule: Rule = { id: 'py', type: 'inline', appliesTo: ['**/*.py'], content: 'Py.' };
+    const bodies = new Map([['py', 'Py.']]);
+    const cursorFile = join(projectPath, '.cursor', 'rules', 'py.mdc');
+
+    // Installed earlier under warn mode: both providers have it.
+    installRules(projectPath, [rule], ['codex', 'cursor'], bodies);
+    expect(existsSync(cursorFile)).toBe(true);
+
+    const prune = pruneRules(projectPath, ['codex', 'cursor'], [rule], [cursorFile], {
+      conflicts: 'error',
+    });
+    const install = installRules(projectPath, [rule], ['codex', 'cursor'], bodies, {
+      conflicts: 'error',
+    });
+
+    expect(prune.diagnostics.map((d) => d.level)).toEqual(['error']);
+    expect(install.diagnostics.map((d) => d.level)).toEqual(['error']);
+    expect(existsSync(cursorFile)).toBe(false);
+    expect(read('AGENTS.md')).not.toContain('Py.');
+  });
+
   it('cleanRules finds nested targets from the rules when the DB has no record', () => {
     mkdirSync(join(projectPath, 'src'));
     const scoped: Rule = { id: 'src-rule', type: 'inline', appliesTo: ['src/**'], content: 'Src.' };
