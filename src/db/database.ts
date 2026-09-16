@@ -44,6 +44,9 @@ import {
 import { ToolInitStateRepo } from "./tool-init-state";
 import { VariablesRepo } from "./variables";
 
+/** How long a write waits for another process's lock before failing. */
+export const DATABASE_BUSY_TIMEOUT_MS = 5000;
+
 export class CapaDatabase {
 	private db: Database;
 	private projects: ProjectsRepo;
@@ -67,6 +70,10 @@ export class CapaDatabase {
 		mkdirSync(dbDir, { recursive: true });
 
 		this.db = new Database(dbPath, { create: true });
+		// The CLI, the server, and hook processes (activity-ingest) open this
+		// file concurrently. Without a busy timeout SQLite fails immediately
+		// with "database is locked" when another process holds the write lock.
+		this.db.run(`PRAGMA busy_timeout = ${DATABASE_BUSY_TIMEOUT_MS}`);
 		restrictDatabaseFileMode(dbPath);
 		initSchema(this.db);
 		migrateSecretsAtRest(this.db);
