@@ -11,8 +11,8 @@ export const partialIntegrationProviders: Record<string, ProviderIntegration> =
 		antigravity: {
 			id: "antigravity",
 			displayName: "Antigravity",
-			skillsDir: ".agent/skills",
-			globalSkillsDir: join(home, ".gemini/antigravity/skills"),
+			skillsDir: ".agents/skills",
+			globalSkillsDir: join(home, ".gemini/config/skills"),
 			detectInstalled: async () =>
 				existsSync(join(process.cwd(), ".agent")) ||
 				existsSync(join(home, ".gemini/antigravity")),

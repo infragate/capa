@@ -56,7 +56,7 @@ included for completeness but lack any project-local write paths.
 | --- | --- | --- | --- | --- | --- |
 | [AdaL (`adal`)](./adal.md) | `.adal/skills/` | — *(CLI-managed)* | `AGENTS.md` | — | — |
 | [Amp (`amp`)](./amp.md) | `.agents/skills/` | — *(needs nested-key support)* | — | — | — |
-| [Antigravity (`antigravity`)](./antigravity.md) | `.agent/skills/` | — *(IDE has none; CLI uses `serverUrl`)* | `AGENTS.md` | `.agents/rules/*.md` | — |
+| [Antigravity (`antigravity`)](./antigravity.md) | `.agents/skills/` | — *(needs `serverUrl` support)* | `AGENTS.md` | `.agents/rules/*.md` | — |
 | [Augment (`augment`)](./augment.md) | `.augment/skills/` | — *(global only)* | `AGENTS.md` | — | `.augment/agents/*.md` |
 | **[Claude Code (`claude-code`)](./claude-code.md)** | `.claude/skills/` | `.mcp.json` → `mcpServers.capa.url` | `CLAUDE.md` | `.claude/rules/*.md` (yaml: `paths`) | `.claude/agents/*.md` *(+ snippet in `CLAUDE.md`)* |
 | [Cline (`cline`)](./cline.md) | `.cline/skills/` | — *(global only)* | `AGENTS.md` | — | — |
