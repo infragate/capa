@@ -1,6 +1,10 @@
 import { createHash } from "crypto";
-import { existsSync, readFileSync } from "fs";
-import { dirname, join } from "path";
+// Text imports embed adapter bytes in the compiled binary; release builds ship
+// no registries/ folder next to the executable (#248). tsc types these as the
+// adapter modules, hence the casts below.
+import claudePluginsSource from "../../../registries/claude-plugins/adapter" with { type: "text" };
+import cursorMarketplaceSource from "../../../registries/cursor-marketplace/adapter" with { type: "text" };
+import skillsShSource from "../../../registries/skills-sh/adapter" with { type: "text" };
 
 export const BUNDLED_ADAPTER_SLUGS = [
 	"skills-sh",
@@ -24,20 +28,11 @@ export const BUNDLED_ADAPTER_PINS: Record<BundledAdapterSlug, string> = {
 		"93fb72fc4c66381f28e7893e9af6b54f270d1fdfdab318838121e802967c0dfd",
 };
 
-/** Resolve vendored adapter source — compiled binaries have no source tree on disk. */
-export function resolveBundledAdapterPath(slug: BundledAdapterSlug): string {
-	const filename = "adapter.ts";
-	const candidates = [
-		// `bun build --compile` output: dist/capa with dist/registries/ copied at build time
-		join(dirname(process.execPath), "registries", slug, filename),
-		// `bun run src/cli/index.ts` / tests: repo registries/ next to src/
-		join(import.meta.dir, "../../../registries", slug, filename),
-	];
-	for (const path of candidates) {
-		if (existsSync(path)) return path;
-	}
-	return candidates[1]!;
-}
+const BUNDLED_ADAPTER_SOURCES: Record<BundledAdapterSlug, string> = {
+	"skills-sh": skillsShSource as unknown as string,
+	"claude-plugins": claudePluginsSource as unknown as string,
+	"cursor-marketplace": cursorMarketplaceSource as unknown as string,
+};
 
 export function isBundledAdapterSlug(slug: string): slug is BundledAdapterSlug {
 	return (BUNDLED_ADAPTER_SLUGS as readonly string[]).includes(slug);
@@ -57,8 +52,7 @@ function sha256Utf8(content: string): string {
 }
 
 export function readBundledAdapterSource(slug: BundledAdapterSlug): string {
-	const file = resolveBundledAdapterPath(slug);
-	return normalizeAdapterSource(readFileSync(file, "utf-8"));
+	return normalizeAdapterSource(BUNDLED_ADAPTER_SOURCES[slug]);
 }
 
 export function bundledAdapterPin(slug: BundledAdapterSlug): string {
