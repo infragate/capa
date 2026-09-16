@@ -301,8 +301,52 @@ export function upsertHookEntry(
  * Returns true when something was removed. Empty matcher groups and empty
  * event arrays are pruned so re-installing a different set of hooks does
  * not leave stale skeletons behind.
+ *
+ * Locators are positional, so they go stale once an earlier entry or group
+ * in the same file is removed. When the entry at the locator isn't the
+ * expected capa-tagged one, the entry is found by its unique name tag instead.
  */
 export function removeHookEntryAt(
+	integration: HooksIntegration,
+	hooksRoot: Record<string, unknown>,
+	locator: HookLocator,
+	expectedHookId: string,
+): boolean {
+	if (removeAtLocator(integration, hooksRoot, locator, expectedHookId)) {
+		return true;
+	}
+	return removeByNameTag(integration, hooksRoot, expectedHookId);
+}
+
+function removeByNameTag(
+	integration: HooksIntegration,
+	hooksRoot: Record<string, unknown>,
+	expectedHookId: string,
+): boolean {
+	for (const [eventName, events] of Object.entries(hooksRoot)) {
+		if (!Array.isArray(events)) continue;
+		for (let i = 0; i < events.length; i++) {
+			const item = events[i];
+			if (integration.shape === "cursor") {
+				if (!isPlainObject(item) || !isCapaNameTag(item.name, expectedHookId)) continue;
+				events.splice(i, 1);
+			} else {
+				if (!isPlainObject(item) || !Array.isArray(item.hooks)) continue;
+				const j = item.hooks.findIndex(
+					(h) => isPlainObject(h) && isCapaNameTag(h.name, expectedHookId),
+				);
+				if (j === -1) continue;
+				item.hooks.splice(j, 1);
+				if (item.hooks.length === 0) events.splice(i, 1);
+			}
+			if (events.length === 0) delete hooksRoot[eventName];
+			return true;
+		}
+	}
+	return false;
+}
+
+function removeAtLocator(
 	integration: HooksIntegration,
 	hooksRoot: Record<string, unknown>,
 	locator: HookLocator,
