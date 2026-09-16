@@ -29,7 +29,7 @@ When you (the agent) need to know the exact shape of a `skills:` entry, a `hooks
 4. **Migrate** — move provider-specific items into shared top-level dirs.
 5. **Synthesize** — write `capabilities.yaml` and update `.gitignore`.
 6. **Verify** — run `capa install` and surface anything that didn't take.
-7. **Inspect tools** — for each registered MCP server, ask capa what tools it exposes and add the relevant ones to `tools:`. Servers with zero tools usually mean unfinished auth — tell the user and wait.
+7. **Inspect tools** — for each registered MCP server, ask capa what tools it exposes. Servers expose all their tools by default (`expose: all`), and with the default `search` mode the agent finds them by task, so usually nothing needs to be added; narrow with `except` / `exactly` or curate `tools:` only when the project needs it. Servers with zero tools usually mean unfinished auth — tell the user and wait.
 
 Each phase is described below. Don't skip a phase; each one's output is the next one's input.
 
@@ -138,7 +138,7 @@ Compose `capabilities.yaml` at the project root. The skeleton:
 providers:
   # only the ones actually present in the project
 options:
-  toolExposure: on-demand
+  toolExposure: search
 skills:
   - id: capabilities-manager
     type: github
@@ -189,7 +189,7 @@ If install fails, **don't auto-rollback** — the user is on a branch, and the p
 
 ## Phase 7 — Inspect tools and populate `tools:`
 
-Discovered MCP servers are now registered with capa, but the synthesized file has `tools: []`. Capa's server can introspect what each MCP server actually exposes — fill in the `tools:` section from that introspection so the agent has named entries it can require, group, or pre-default.
+Discovered MCP servers are now registered with capa, and the synthesized file has `tools: []`. Capa's server can introspect what each MCP server actually exposes. Use that to confirm each server is reachable and authenticated, and to decide whether its default `expose: all` should be narrowed. With the default `search` mode, agents discover exposed tools by task, so an empty `tools:` section is normal.
 
 **Look up the project id.** Capa assigns each project a stable id like `<basename>-<hash>`. `GET http://127.0.0.1:5912/api/projects` returns a `projects` array; match by `path == $(pwd)` and read `.id`.
 
@@ -223,7 +223,7 @@ of named tools with friendly ids, `defaults`, or a `formatter`; leave the server
 alone when the agent should just have everything it offers. See
 `capabilities-manager` → `references/capabilities-schema.md`.
 
-**If the tools array is populated:** add relevant entries to the `tools:` section of `capabilities.yaml`. "Relevant" means: tools the project actually needs based on what the README/AGENTS.md says the project does. Don't dump every tool — a server with 37 tools probably only has 4–8 the project will use. Group related tools by setting a shared `group:` on command-style tools, or just let them sit at the top level for MCP tools. Use the FastMCP `_meta.fastmcp.tags` (when present) as a hint for grouping.
+**If the tools array is populated and the project needs curated entries** (friendly ids, `defaults`, a `formatter`, or `requires:` wiring under `on-demand` / `expose-all`): add relevant entries to the `tools:` section of `capabilities.yaml`, remembering that this turns the server's expose policy off. Otherwise leave the server alone, optionally narrowing it with `except` / `exactly`. "Relevant" means: tools the project actually needs based on what the README/AGENTS.md says the project does. Don't dump every tool — a server with 37 tools probably only has 4–8 the project will use. Group related tools by setting a shared `group:` on command-style tools, or just let them sit at the top level for MCP tools. Use the FastMCP `_meta.fastmcp.tags` (when present) as a hint for grouping.
 
 Capa entry shape for an MCP tool:
 
@@ -243,13 +243,13 @@ The `id` is the local-friendly name the agent uses; `def.tool` is the remote MCP
 
 **If the tools array is empty (`[]`):** assume the server needs authentication that hasn't been completed yet. Tell the user explicitly:
 
-> The `<server-id>` MCP server returned 0 tools, which usually means authentication isn't done. Complete the auth flow (open the server's web UI, paste an API key, finish OAuth — whatever its README says) and let me know when you're done. I'll re-fetch the tool list and add the relevant ones to `capabilities.yaml`.
+> The `<server-id>` MCP server returned 0 tools, which usually means authentication isn't done. Complete the auth flow (open the server's web UI, paste an API key, finish OAuth — whatever its README says) and let me know when you're done. I'll re-fetch the tool list and confirm the server is exposing its tools.
 
 Then **wait for the user** to confirm. When they do, re-fetch and proceed. Don't guess at tool names from documentation — the live tool list is the source of truth, and the names sometimes differ from docs.
 
 **After tool inspection is complete**, ensure any skill that declares a `requires:` list points to real `@<server-id>.<tool-id>` entries that now exist in `tools:`. If a discovered local skill required a tool that doesn't show up in any server's tool list, flag it — the skill may have been written against a different version of the server, or the user may need to add a different MCP server.
 
-**Watch for the "declared but unused" trap.** With `options.toolExposure: on-demand`, capa only exposes tools the agent will see after a skill calls `setup_tools(['<skill>'])`. The exposure list is computed from each skill's `requires:` field — so a tool that's declared in `tools:` but not in any skill's `requires:` ends up invisible to the agent. `capa install` warns about this:
+**Watch for the "declared but unused" trap** (only when the project uses `on-demand` or `expose-all`; the default `search` mode ignores `requires:` and needs no action here). With `options.toolExposure: on-demand`, capa only exposes tools the agent will see after a skill calls `setup_tools(['<skill>'])`. The exposure list is computed from each skill's `requires:` field — so a tool that's declared in `tools:` but not in any skill's `requires:` ends up invisible to the agent. `capa install` warns about this:
 
 > 13 tool(s) are not exposed to MCP clients (not required by any skill): gitlab.search_projects, gitlab.get_mr, ... Add them to a skill's `requires` list to expose.
 
