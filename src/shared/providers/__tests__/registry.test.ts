@@ -57,7 +57,7 @@ describe('Provider registry', () => {
   describe('skills-package parity: skillsDir and displayName match verbatim', () => {
     const expected: Record<string, { displayName: string; skillsDir: string }> = {
       amp: { displayName: 'Amp', skillsDir: '.agents/skills' },
-      antigravity: { displayName: 'Antigravity', skillsDir: '.agent/skills' },
+      antigravity: { displayName: 'Antigravity', skillsDir: '.agents/skills' },
       augment: { displayName: 'Augment', skillsDir: '.augment/skills' },
       'claude-code': { displayName: 'Claude Code', skillsDir: '.claude/skills' },
       openclaw: { displayName: 'OpenClaw', skillsDir: 'skills' },

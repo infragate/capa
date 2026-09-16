@@ -1,8 +1,8 @@
 # Antigravity (`antigravity`)
 
 > **Status:** Partial integration  
-> **Skills dir:** `.agent/skills/` (global: `~/.gemini/antigravity/skills`)  
-> **Docs root:** <https://docs.antigravity.google/>
+> **Skills dir:** `.agents/skills/` (global: `~/.gemini/config/skills`)  
+> **Docs root:** <https://antigravity.google/docs/>
 
 Source-of-truth definition: [`src/shared/providers/registry.ts → antigravity`](../../src/shared/providers/registry.ts).
 
@@ -10,21 +10,21 @@ Source-of-truth definition: [`src/shared/providers/registry.ts → antigravity`]
 
 | Feature | Path | Notes |
 | --- | --- | --- |
-| Skills | `.agent/skills/<id>/` | — |
-| MCP | — *(held back)* | The Antigravity **IDE** has no project-local MCP file (global only at `~/.gemini/antigravity/mcp_config.json`). The **CLI** does expose `.agents/mcp_config.json`, but uses `serverUrl` (not `url`). Capa declines to write either path until we split off `antigravity-cli` or extend `McpIntegration` to support `entryUrlKey: 'serverUrl'`. |
+| Skills | `.agents/skills/<id>/` | — |
+| MCP | — *(held back)* | Antigravity reads `.agents/mcp_config.json` (global: `~/.gemini/config/mcp_config.json`), but remote servers must use `serverUrl` — `url` is not supported. Capa declines to write it until `McpIntegration` supports `entryUrlKey: 'serverUrl'`. |
 | Instructions | `AGENTS.md` | Antigravity also reads `GEMINI.md`. |
-| Rules | `.agents/rules/<id>.md` | Plain markdown, no frontmatter. |
+| Rules | `.agents/rules/<id>.md` | Plain markdown, no frontmatter. The legacy `.agent/rules/` is still read. |
 | Sub-agents | — | Not wired up. |
 | Plugin manifests | — | Not declared. |
 
 ## Caveats
 
-- IDE vs CLI build divergence on MCP. If we add `entryUrlKey: 'serverUrl'`
-  support, surface that the CLI is what reads `.agents/mcp_config.json`
-  — the IDE never will.
+- MCP needs `serverUrl` support before capa can register itself.
 
 ## Sources
 
-- Antigravity docs: <https://docs.antigravity.google/>
+- Skills: <https://antigravity.google/docs/skills/>
+- Rules & workflows: <https://antigravity.google/docs/rules-workflows/>
+- MCP: <https://antigravity.google/docs/mcp/>
 
-Last verified: 2026-05-23
+Last verified: 2026-09-17
