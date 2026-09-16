@@ -35,6 +35,32 @@ function getServerMap(config: McpJsonConfig, serversKey: string): Record<string,
   return config[serversKey] as Record<string, McpServerEntry>;
 }
 
+function isCapaSubAgentMcpEntry(
+  entry: unknown,
+  mcp: McpIntegration,
+  agentId: string,
+  projectId?: string,
+): boolean {
+  if (!isPlainObject(entry)) return false;
+  const rawUrl = entry[mcp.entryUrlKey];
+  if (typeof rawUrl !== 'string') return false;
+
+  try {
+    const url = new URL(rawUrl);
+    const segments = url.pathname.split('/').filter(Boolean).map(decodeURIComponent);
+    return (
+      (url.protocol === 'http:' || url.protocol === 'https:') &&
+      segments.length === 4 &&
+      (!projectId || segments[0] === projectId) &&
+      segments.at(-3) === 'agents' &&
+      segments.at(-2) === agentId &&
+      segments.at(-1) === 'mcp'
+    );
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Apply the provider's optional sub-agent scope-fence at the top level of
  * the MCP config. For OpenCode this writes
@@ -163,7 +189,8 @@ export async function registerSubAgentMCPServer(
 export async function unregisterSubAgentMCPServer(
   projectPath: string,
   agentId: string,
-  clients: string[]
+  clients: string[],
+  projectId?: string,
 ): Promise<void> {
   for (const clientName of clients) {
     const provider = getProvider(clientName);
@@ -182,10 +209,29 @@ export async function unregisterSubAgentMCPServer(
         if (config === null) continue;
         const servers = config[mcp.serversKey];
         if (!isPlainObject(servers) || !(serverKey in servers)) continue;
+        if (!isCapaSubAgentMcpEntry(servers[serverKey], mcp, agentId, projectId)) {
+          taskLog(
+            `  - Preserved ${provider.displayName} MCP entry "${serverKey}" ` +
+              '(not recognizably Capa-owned)',
+          );
+          continue;
+        }
         delete (servers as Record<string, McpServerEntry>)[serverKey];
         writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
       } else if (mcp.format === 'toml') {
         const config = readTomlFile(configPath);
+        const servers = config[mcp.serversKey];
+        const entry = isPlainObject(servers) ? servers[serverKey] : undefined;
+        if (
+          entry !== undefined &&
+          !isCapaSubAgentMcpEntry(entry, mcp, agentId, projectId)
+        ) {
+          taskLog(
+            `  - Preserved ${provider.displayName} MCP entry "${serverKey}" ` +
+              '(not recognizably Capa-owned)',
+          );
+          continue;
+        }
         if (!deleteNestedKey(config, [mcp.serversKey, serverKey])) continue;
         writeTomlFile(configPath, config);
       }
@@ -201,7 +247,10 @@ export async function unregisterSubAgentMCPServer(
  * Remove stale capa-{agentId} sub-agent entries from MCP configs for providers
  * that opt in via `purgeStaleSubAgentMcp`.
  */
-export async function purgeCursorSubAgentMCPEntries(projectPath: string): Promise<void> {
+export async function purgeCursorSubAgentMCPEntries(
+  projectPath: string,
+  projectId?: string,
+): Promise<void> {
   for (const provider of getAllProviders()) {
     if (!provider.purgeStaleSubAgentMcp || !provider.mcp) continue;
 
@@ -215,8 +264,12 @@ export async function purgeCursorSubAgentMCPEntries(projectPath: string): Promis
     const serversObj = config[provider.mcp.serversKey];
     if (!isPlainObject(serversObj)) continue;
 
+    const mcp = provider.mcp;
     const servers = serversObj as Record<string, McpServerEntry>;
-    const staleKeys = Object.keys(servers).filter((k) => k.startsWith('capa-'));
+    const staleKeys = Object.keys(servers).filter((key) => {
+      if (!key.startsWith('capa-')) return false;
+      return isCapaSubAgentMcpEntry(servers[key], mcp, key.slice(5), projectId);
+    });
     if (staleKeys.length === 0) continue;
 
     for (const key of staleKeys) {

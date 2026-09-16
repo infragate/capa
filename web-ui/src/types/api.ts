@@ -108,6 +108,10 @@ export interface Server {
   /** Whether the user has turned this MCP server on in the UI. */
   enabled: boolean;
   description?: string | null;
+  /** Which remote tools become capa tools: all | except | exactly (null = explicit `tools:` only). */
+  expose?: 'all' | 'except' | 'exactly' | null;
+  /** Remote tool names for except / exactly. */
+  exposeTools?: string[] | null;
 }
 
 export interface ResolvedPlugin {
@@ -127,6 +131,7 @@ export interface ResolvedPlugin {
 export interface SubAgent {
   id: string;
   description: string | null;
+  providers: string[];
   skills: string[];
   tools: string[];
   instructions: string | null;
@@ -359,6 +364,7 @@ export interface OAuthStartResponse {
 export type ToolCallStatus = 'running' | 'ok' | 'error';
 export type ToolCallKind =
   | 'setup_tools'
+  | 'search'
   | 'call_tool'
   | 'tool'
   | 'prompt'

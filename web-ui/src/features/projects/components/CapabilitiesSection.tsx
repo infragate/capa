@@ -103,6 +103,7 @@ interface CapabilitiesSectionProps {
   rules: Rule[];
   hooks: Hook[];
   agents: AgentFileConfig | null;
+  providers: string[];
   plugins: AuthoredPlugin[];
   resolvedPlugins: ResolvedPlugin[];
   projectId: string;
@@ -116,6 +117,7 @@ export function CapabilitiesSection({
   rules,
   hooks,
   agents,
+  providers,
   plugins,
   resolvedPlugins,
   projectId,
@@ -332,6 +334,7 @@ export function CapabilitiesSection({
           subagents={subagents}
           skills={skills}
           tools={tools}
+          providers={providers}
           search={search}
           projectId={projectId}
           addOpen={addSubagentOpen}

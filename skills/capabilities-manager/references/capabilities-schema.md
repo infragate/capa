@@ -27,6 +27,8 @@ skills:
 servers:
   - id: server-id
     type: mcp
+    expose: all | except | exactly | none   # optional, default all
+    tools: [remote_name]              # only with except / exactly
     def: { ... }
 
 tools:
@@ -34,16 +36,16 @@ tools:
     type: mcp|command
     def: { ... }
 
-# rules: [ { id, type, content?, url?, path?, def?, providers?, appliesTo?, alwaysApply?, description? } ]
+# rules: [ { id, type, content?, url?, path?, def?, providers?, appliesTo?, alwaysApply?, description?, visibility?, scope? } ]
 
-# plugins: [ { id?, type: github|gitlab, def: { repo, subpath?, version?, ref?, description? }, servers?: { <manifestKey>: { as?: <serverId> } } } ]
+# plugins: [ { id?, type: github|gitlab, def: { repo, subpath?, version?, ref?, description? }, servers?: { <manifestKey>: { as?: <serverId>, expose?: all|except|exactly|none, tools?: [<remoteName>] } } } ]
 # Plugins unpack into skills + servers + rules + sub-agents + hooks (Claude/Cursor manifests).
 # `def.repo` mirrors the skill grammar:
 #   - `owner/repo`                    — manifest at the repo root
 #   - `owner/repo@plugin-name`        — recursive search by basename / manifest name
 #   - `owner/repo::path/inside/repo`  — exact subpath
 
-# subagents: [ { id, description?, skills, tools, instructions? } ]
+# subagents: [ { id, providers?, description?, skills, tools, instructions? } ]
 ```
 
 ## Skills Section (seven types)
@@ -120,15 +122,90 @@ CLI equivalents: `--env-var`, `--env-from-env`, `--env-from-command`, `--env-fro
 
 Optional top-level `description` is shown in `capa sh`.
 
+### Server tool exposure (`servers[].expose`)
+
+Which of a server's live remote tools become capa tools, without writing one
+`tools:` entry per tool. Orthogonal to `options.toolExposure`, which controls how
+capa presents tools it already has to the MCP client.
+
+**Declaring tools yourself turns the policy off.** Once any `tools:` entry
+points at a server, those entries are the complete tool list for it — exactly
+how capa behaved before `expose` existed, so no existing file changes meaning.
+`expose` only decides what happens for servers you have *not* curated by hand,
+and install warns if a written `expose` is being ignored for this reason.
+
+| `expose` | Tools that exist (server has no `tools:` entries) | `tools` list |
+|---|---|---|
+| omitted (**default**) | Same as `all` | must be absent |
+| `all` | Every tool from the server's live `tools/list` | must be absent |
+| `except` | Every remote tool minus the denylist | required — remote names |
+| `exactly` | Only the named remote tools | required — remote names |
+| `none` | Nothing — the server contributes no tools at all | must be absent |
+
+```yaml
+servers:
+  - id: github          # no tools: entries point at @github, so the policy runs
+    type: mcp
+    expose: except
+    tools: [delete_repo, force_push]   # remote names, not capa ids
+    def:
+      url: https://example.com/mcp
+
+  - id: brave           # curated by hand below: expose would be ignored here
+    type: mcp
+    def:
+      cmd: npx
+      args: [-y, "@modelcontextprotocol/server-brave-search"]
+
+tools:
+  - id: search
+    type: mcp
+    def:
+      server: "@brave"
+      tool: brave_web_search
+      defaults: { count: 5 }
+```
+
+- Tools a policy exposes are callable without a skill `requires:` entry. Under
+  `toolExposure: on-demand`, activate the whole server with
+  `setup_tools(['@github'])`. Tools you declare under `tools:` keep the old
+  behavior — a skill has to require them.
+- Use `expose: none` when a server should contribute nothing on its own and you
+  have not declared entries for it either.
+- Synthesized tools are resolved from the live server at install/configure time
+  and are never written back to the capabilities file. Names in
+  `except`/`exactly` that the server does not advertise are install warnings.
+- `capa add --server` writes no `expose` (so: `all`); pass
+  `--expose except --tools a,b`, `--expose exactly --tools a,b`, or
+  `--expose none`. `capa add --tool` prints a note when it turns a server's
+  policy off.
+- Plugin servers take the same policy and the same rule:
+  `plugins[].servers.<key>.expose` (with `tools`), alongside `as`.
+- `--passthrough` writes the whole native server, so `except` / `exactly` are
+  not applied there — the provider gets every tool the server offers.
+- A 50-tool server under `toolExposure: expose-all` puts a lot of schema in
+  context, and exposes everything an untrusted server offers; pair it with
+  `on-demand`, or narrow it with `exactly` / `except` / `none` / explicit
+  `tools:` entries.
+
 ## Tool Exposure (`options.toolExposure`)
 
-Controls how capa exposes skill tools to the MCP client. Three modes:
+Controls how capa exposes skill tools to the MCP client. Four modes:
 
 | Mode | `tools/list` returns | Per-install MCP file writes | Agent invocation path |
 |------|----------------------|------------------------------|------------------------|
 | `'expose-all'` | Every tool required by any active skill, with full input schemas | Yes — main `capa` entry + sub-agent `capa-<id>` entries | Direct MCP `tools/call` |
 | `'on-demand'` (what `capa init` writes) | Only the meta-tools `setup_tools` and `call_tool` | Yes — same as expose-all | Agent calls `setup_tools(['<skill>'])` (returns compact `name(required, optional?)` signature list), then `call_tool(name, data)`. If the call is invalid the full schema is returned in the error so the agent can self-correct without re-running setup. |
+| `'search'` | Only the meta-tools `search` and `call_tool` | Yes — same as expose-all | Agent calls `search('<what it needs to do>')`, gets back the best-matching tools as compact signatures with descriptions, then `call_tool(name, data)`. Same error-returns-the-schema behavior. |
 | `'none'` | Empty list | **No** — capa skips all project-local MCP config files (`.mcp.json`, `.cursor/mcp.json`, `.codex/config.toml` `mcp_servers.capa`, sub-agent `capa-<id>` entries). Any previously-written entries are removed on install. | The agent must use `capa sh <group> <tool> [--args]` (see [`commands.md`](./commands.md)). Sub-agent instruction files are still installed for documentation but their tools are not reachable over MCP. |
+
+Notes on `'search'`:
+- Discovery is by task, not by skill id: `search('open a pull request')` returns the tools whose names and descriptions match those words. Plain term matching — no embeddings, no index — scored over every tool in the project, which is fast at the scale a capabilities file reaches.
+- Matches are **activated** for the session, exactly like `setup_tools` does, so a tool goes straight from a search result into `call_tool`. Searches accumulate: tools found earlier stay callable.
+- `search` takes an optional `limit` (default 10, max 50). An empty query lists tools alphabetically, which is the "what is there?" case.
+- `setup_tools` is not available in this mode — calling it returns a pointer to `search`.
+- Pairs well with a server-wide `expose: all` (see [Server tool exposure](#server-tool-exposure-serversexpose)): the whole server is reachable, and the agent pulls in only the handful of tools each task needs.
+- Searches match a tool's id, remote name, server/group, and description. Tools capa synthesized from a server's `expose` policy carry the server's own descriptions; a tool you declare by hand in `tools:` only has the `description` you write there, so write one — the id alone is thin search text.
 
 Notes on `'none'`:
 - The capa HTTP server still runs and the project endpoints stay live; `tools/list` returns empty so MCP-aware agents don't try to discover tools through capa's MCP endpoint. `tools/call` is **not** gated — that's the path `capa sh` uses to execute tools, and gating it would mean rejecting `capa sh` itself.
@@ -155,6 +232,10 @@ options:
 - **allowedCharacters**: Extra regex character class beyond baseline (printable ASCII + tab/LF/CR). `""` = baseline only; `"[\\u00A0-\\uFFFF]"` = allow all Unicode. Omit to disable sanitization.
 
 Only present properties are applied. Same checks apply to agent snippet content.
+
+## Rule Conflicts (`options.rules.conflicts`)
+
+`warn` or `error`. Controls how rule placement conflicts (a provider-restricted rule visible to an excluded provider through a shared instructions file, or an `appliesTo` scope that can't be represented natively) are handled. See [Rules Section](#rules-section).
 
 ## CLI Prerequisites (`options.requiresCommands`)
 
@@ -192,6 +273,7 @@ The **filtered MCP endpoint** at `/{projectId}/agents/{id}/mcp` exposes only the
 subagents:
   - id: infra-agent
     description: AWS CDK and Terraform specialist. Use when working in backend-infra/ or user-infra/.
+    providers: [claude-code, cursor]
     skills:
       - my-iac-skill          # skill IDs from the top-level skills array
     tools:
@@ -214,6 +296,7 @@ subagents:
 
 **Fields:**
 - `id` (required): Unique identifier. Used as the MCP key (`capa-{id}`) and agent file name.
+- `providers` (optional): Provider allow-list for this subagent. Omit it or use `[]` to generate an adapter for every active top-level provider. Unknown provider IDs fail validation; known providers that are not active are ignored; active providers without a subagent integration produce a warning. Retargeting and clean remove only adapters and MCP entries that retain Capa's generated ownership signature, preserving same-name files or entries that were replaced manually.
 - `description` (optional): Role description. For Cursor this drives automatic delegation — be specific.
 - `skills` (required): List of skill IDs from the top-level `skills` array.
 - `tools` (required): List of tools the subagent may call. Each entry references a tool in the top-level `tools` array using any of three equivalent forms — `tool_id` (bare local id), `server.tool` (qualified), or `@server.tool` (same dialect `skills.requires` uses). All three resolve to the same tool; pick whichever reads best. Only the resolved tools are exposed on the filtered MCP endpoint.
@@ -228,13 +311,23 @@ subagents:
 Defines rules installed into each provider's rules directory or instructions file.
 
 - **Providers with a rules directory** (e.g. Cursor → `.cursor/rules/`): each rule is written as a separate file with optional YAML frontmatter (`description`, `globs`, `alwaysApply`).
-- **Providers without a rules directory** (e.g. Claude Code, Codex): rule content is folded into the provider's instructions file as a capa marker block.
+- **Providers without a rules directory** (e.g. Codex, Gemini CLI): rule content is folded into the provider's instructions file as a capa marker block.
+
+**Shared instruction files.** Several providers read `AGENTS.md` (Codex, Cursor, OpenCode, Gemini CLI, …). Which file each provider reads depends only on the `providers` list:
+- Gemini CLI reads `AGENTS.md` when it is the only `AGENTS.md` reader. Otherwise capa gives it its own generated `GEMINI.md` (agent snippets plus the rules Gemini may see). Capa makes sure `.gemini/settings.json` → `context.fileName` includes that file (keeping Gemini's `GEMINI.md` default), records what it added in `capabilities.lock`, and `capa clean` removes only those entries.
+- A rule restricted with `providers` that would still be visible to another reader of the same file (e.g. a Codex-only rule while Cursor also reads `AGENTS.md`) is a **visibility conflict**.
+
+**`appliesTo` for folded rules.** Directory globs (`src/**`, `packages/api/**/*`) become marker blocks in nested files (`src/AGENTS.md`, `src/GEMINI.md`) for providers that read nested instruction files (Codex, Gemini CLI). The directory must already exist. Other globs (`**/*.py`) can't be scoped natively, so they are folded at the project root with an `> Applies to:` note; this is a **scope conflict**.
+
+Conflicts are reported by `capa install` according to `options.rules.conflicts`: `warn` installs the rule and prints a warning; `error` skips the rule and records an install failure (aborting under `onInstallError: stop`). The default is `warn`, or `error` when `onInstallError: stop`; it will become `error` in the next major release. To accept a conflict for one rule, set `visibility: best-effort` or `scope: best-effort` on it.
 
 **Fields:**
 - `id` (required): Unique identifier, used as filename stem and capa marker id.
 - `type` (required): `inline`, `remote`, `github`, `gitlab`, or `local`.
 - `providers` (optional): Restrict this rule to specific providers. When omitted, applies to all.
-- `appliesTo` (optional): Glob patterns for auto-attached rules (maps to Cursor `globs`).
+- `appliesTo` (optional): Glob patterns for auto-attached rules (maps to Cursor `globs`, Claude `paths`, Copilot `applyTo`; nested instruction files for folded providers, see above).
+- `visibility` (optional): `strict` (default) or `best-effort` — accept that other readers of a shared instructions file see this rule.
+- `scope` (optional): `strict` (default) or `best-effort` — accept a root-level fold with an "Applies to" note when `appliesTo` can't be represented natively.
 - `alwaysApply` (optional): When `true`, the rule is always loaded regardless of file context.
 - `description` (optional): Human-readable description used in frontmatter.
 - `content` (inline only): Literal rule content.

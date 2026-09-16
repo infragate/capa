@@ -399,7 +399,10 @@ describe('mcp-client-manager', () => {
         JSON.stringify({
           mcpServers: {
             capa: { url: 'http://x/mcp' },
-            'capa-old-agent': { url: 'http://x/agent/mcp' },
+            'capa-old-agent': {
+              url: 'http://localhost:5912/project/agents/old-agent/mcp',
+            },
+            'capa-manual': { url: 'https://example.com/manual' },
           },
         }, null, 2),
         'utf-8'
@@ -410,6 +413,9 @@ describe('mcp-client-manager', () => {
       const config = JSON.parse(readFileSync(join(projectPath, '.cursor', 'mcp.json'), 'utf-8'));
       expect(config.mcpServers['capa']).toBeDefined();
       expect(config.mcpServers['capa-old-agent']).toBeUndefined();
+      expect(config.mcpServers['capa-manual']).toEqual({
+        url: 'https://example.com/manual',
+      });
     });
   });
 

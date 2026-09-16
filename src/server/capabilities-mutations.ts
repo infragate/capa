@@ -20,6 +20,17 @@ import {
 import { mergeServerDef } from "./secret-redaction";
 import { clientErrorMessage } from "./http-error";
 
+/**
+ * A `null` field means "clear it" (same convention `mergeServerDef` uses inside
+ * `def`) — write the key out as absent rather than an explicit null, which no
+ * capability schema accepts.
+ */
+function withoutNulls(entry: Record<string, unknown>): Record<string, unknown> {
+	return Object.fromEntries(
+		Object.entries(entry).filter(([, value]) => value !== null),
+	);
+}
+
 export async function handleAppend(
 	deps: CapabilitiesRouteDeps,
 	projectId: string,
@@ -32,6 +43,8 @@ export async function handleAppend(
 	} catch {
 		return jsonError("Invalid JSON body", 400);
 	}
+
+	body = withoutNulls(body);
 
 	const id = entryId(body);
 	if (!id) {
@@ -147,10 +160,11 @@ export async function handleUpdate(
 			section,
 			(e) => e.id === id,
 			(e) => {
-				const merged = { ...e, ...body, id: nextId } as Record<
-					string,
-					unknown
-				> & {
+				const merged = withoutNulls({
+					...e,
+					...body,
+					id: nextId,
+				}) as Record<string, unknown> & {
 					id: string;
 				};
 				if (asObj(body.def)) {

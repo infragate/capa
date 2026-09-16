@@ -3,6 +3,8 @@ import { CapaDatabase } from '../database';
 import { mkdtempSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { canonicalizePath } from '../../shared/paths';
+import { Database } from 'bun:sqlite';
 
 describe('CapaDatabase — sub-agent operations', () => {
   let db: CapaDatabase;
@@ -32,6 +34,88 @@ describe('CapaDatabase — sub-agent operations', () => {
     const agents = db.getSubAgents('proj-1');
     expect(agents).toHaveLength(1);
     expect(agents[0].agent_id).toBe('infra-agent');
+    expect(agents[0].legacy_unscoped).toBe(true);
+    expect(agents[0].installations).toEqual([]);
+  });
+
+  it('records provider ownership separately for each install path', () => {
+    const rootPath = join(tempDir, 'root');
+    const shadowPath = join(tempDir, 'shadow');
+    db.upsertSubAgent(
+      'proj-1',
+      'infra-agent',
+      {
+        installPath: rootPath,
+        providerIds: ['claude-code', 'codex'],
+        migrateLegacy: true,
+      },
+    );
+    db.upsertSubAgent(
+      'proj-1',
+      'infra-agent',
+      {
+        installPath: shadowPath,
+        providerIds: ['cursor'],
+        migrateLegacy: false,
+      },
+    );
+
+    let agent = db.getSubAgents('proj-1')[0];
+    expect(agent.legacy_unscoped).toBe(false);
+    expect(agent.installations).toEqual([
+      {
+        install_path: canonicalizePath(rootPath),
+        provider_ids: ['claude-code', 'codex'],
+      },
+      {
+        install_path: canonicalizePath(shadowPath),
+        provider_ids: ['cursor'],
+      },
+    ]);
+
+    db.upsertSubAgent('proj-1', 'infra-agent', {
+      installPath: rootPath,
+      providerIds: ['gemini-cli'],
+      migrateLegacy: true,
+    });
+    agent = db.getSubAgents('proj-1')[0];
+    expect(agent.installations).toEqual([
+      {
+        install_path: canonicalizePath(rootPath),
+        provider_ids: ['gemini-cli'],
+      },
+      {
+        install_path: canonicalizePath(shadowPath),
+        provider_ids: ['cursor'],
+      },
+    ]);
+  });
+
+  it('keeps an agent until its final scoped installation is removed', () => {
+    const rootPath = join(tempDir, 'root');
+    const shadowPath = join(tempDir, 'shadow');
+    db.upsertSubAgent('proj-1', 'infra-agent', {
+      installPath: rootPath,
+      providerIds: ['claude-code'],
+      migrateLegacy: true,
+    });
+    db.upsertSubAgent('proj-1', 'infra-agent', {
+      installPath: shadowPath,
+      providerIds: ['cursor'],
+      migrateLegacy: false,
+    });
+
+    db.removeSubAgentInstallation('proj-1', 'infra-agent', {
+      installPath: shadowPath,
+      removeLegacy: false,
+    });
+    expect(db.getSubAgents('proj-1')).toHaveLength(1);
+
+    db.removeSubAgentInstallation('proj-1', 'infra-agent', {
+      installPath: rootPath,
+      removeLegacy: true,
+    });
+    expect(db.getSubAgents('proj-1')).toEqual([]);
   });
 
   it('upsert is idempotent — no duplicate rows', () => {
@@ -78,5 +162,34 @@ describe('CapaDatabase — sub-agent operations', () => {
     // After project deletion the project is gone; re-create to check table is empty
     db.upsertProject({ id: 'proj-1', path: '/test/project' });
     expect(db.getSubAgents('proj-1')).toHaveLength(0);
+  });
+
+  it('migrates pre-scoped sub-agent rows as legacy ownership', () => {
+    const legacyPath = join(tempDir, 'legacy.db');
+    const raw = new Database(legacyPath, { create: true });
+    raw.run(`
+      CREATE TABLE sub_agents (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id TEXT NOT NULL,
+        agent_id TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        UNIQUE(project_id, agent_id)
+      )
+    `);
+    raw.run(
+      'INSERT INTO sub_agents (project_id, agent_id, created_at) VALUES (?, ?, ?)',
+      ['legacy-project', 'reviewer', Date.now()],
+    );
+    raw.close();
+
+    const migrated = new CapaDatabase(legacyPath);
+    expect(migrated.getSubAgents('legacy-project')).toEqual([
+      {
+        agent_id: 'reviewer',
+        legacy_unscoped: true,
+        installations: [],
+      },
+    ]);
+    migrated.close();
   });
 });

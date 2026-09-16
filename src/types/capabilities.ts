@@ -45,13 +45,17 @@ export type {
  *   `setup_tools(['<skill>'])`. `setup_tools` returns a compact signature
  *   list (`tool_name(required, optional?)`); the full input schema is only
  *   returned in `call_tool` error responses when the agent calls incorrectly.
+ * - `'search'`: Only the meta-tools `search` and `call_tool` are listed; the
+ *   agent finds tools by keyword — `search('open a pull request')` — and calls
+ *   what it finds. Same compact signatures as `on-demand`, but discovery is by
+ *   the task at hand rather than by knowing which skill to activate.
  * - `'none'`: capa does **not** write any project-local MCP config files
  *   (`.mcp.json`, `.cursor/mcp.json`, `.codex/config.toml` `mcp_servers.capa`,
  *   sub-agent `capa-<id>` entries, etc.) at install time, and the MCP
  *   endpoints return an empty `tools/list`. The agent is expected to
  *   discover and execute tools through the `capa sh` CLI fallback instead.
  */
-export type ToolExposureMode = 'expose-all' | 'on-demand' | 'none';
+export type ToolExposureMode = 'expose-all' | 'on-demand' | 'search' | 'none';
 
 /**
  * Security options for skill installation.
@@ -107,6 +111,19 @@ export interface CapabilitiesOptions {
    * - `stop`: abort the install run (legacy behavior)
    */
   onInstallError?: 'warn' | 'stop';
+  rules?: RulesOptions;
+}
+
+export interface RulesOptions {
+  /**
+   * How rule placement conflicts are handled: a rule visible to an excluded
+   * provider through a shared instructions file, or an `appliesTo` scope that
+   * can't be represented natively. `warn` installs the rule and reports a
+   * warning; `error` skips the rule and records an install failure.
+   * Defaults to `error` when `onInstallError: stop`, otherwise `warn`.
+   * The default will become `error` in the next major release.
+   */
+  conflicts?: 'warn' | 'error';
 }
 
 /**
@@ -234,6 +251,8 @@ export interface RequiredCommand {
 export interface SubAgent {
   /** Unique identifier. Used as the MCP server key (`capa-{id}`) and agent file name. */
   id: string;
+  /** Restrict this sub-agent to active provider ids. Empty/omitted installs for all. */
+  providers?: string[];
   /**
    * Human-readable description of this agent's role.
    * For Cursor: written into the `description` frontmatter field which drives
@@ -318,10 +337,21 @@ export interface SkillDefinition {
   ref?: string;
 }
 
+/**
+ * Which of a server's live remote tools become capa tools. Omitted means
+ * `all` — a server nobody can call is not a useful default. `none` opts out
+ * and leaves only the explicit `tools:` entries, as capa behaved before.
+ */
+export type ServerToolExposure = 'all' | 'except' | 'exactly' | 'none';
+
 export interface MCPServer {
   id: string;
   type: 'mcp';
   def: MCPServerDefinition;
+  /** Expose remote tools without writing one `tools:` entry per tool (default `all`). */
+  expose?: ServerToolExposure;
+  /** Remote tool names: denylist for `except`, allowlist for `exactly`. */
+  tools?: string[];
   sourcePlugin?: SourcePlugin;
   /** Original mcpServers key from the plugin manifest. Used to look up per-server config (alias, tool filter). */
   sourcePluginServerKey?: string;
@@ -365,6 +395,11 @@ export interface MCPServerDefinition {
 type ToolCommon = {
   id: string;
   sourcePlugin?: SourcePlugin;
+  /**
+   * Set on tools synthesized from a server's `expose` policy. Never written to
+   * the capabilities file, and exposed without a skill `requires:` entry.
+   */
+  fromServerExpose?: true;
   /** Human-readable description shown in capa sh */
   description?: string;
   /**
@@ -467,6 +502,25 @@ export function normalizeToolReference(ref: string): string {
  *
  * Returns `undefined` if no tool matches.
  */
+/**
+ * Tools a sub-agent reference allows. Same forms as resolveSubagentToolRef,
+ * plus a whole server: `@github` or `@github.*` allows every tool of that
+ * server — needed once a server exposes its tools without per-tool entries.
+ */
+export function resolveSubagentToolRefs(ref: string, tools: Tool[]): Tool[] {
+  const stripped = ref.startsWith('@') ? ref.slice(1) : ref;
+  const wildcard = stripped.endsWith('.*');
+  const serverId = wildcard ? stripped.slice(0, -2) : stripped;
+
+  if (!wildcard) {
+    const one = resolveSubagentToolRef(ref, tools);
+    if (one) return [one];
+  }
+  return tools.filter(
+    (t) => t.type === 'mcp' && t.def.server.replace(/^@/, '') === serverId,
+  );
+}
+
 export function resolveSubagentToolRef(ref: string, tools: Tool[]): Tool | undefined {
   const stripped = ref.startsWith('@') ? ref.slice(1) : ref;
   // Qualified-name match handles "@server.tool", "server.tool", and the

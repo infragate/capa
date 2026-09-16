@@ -12,8 +12,24 @@ import {
 import { installSubAgentInstructions, removeSubAgentInstructions } from '../../utils/agents-file/index';
 import { parseSkillMd } from '../../../shared/skill-md';
 import type { Capabilities } from '../../../types/capabilities';
+import {
+  getSubAgentProviderWarnings,
+  resolvePreviousSubAgentProviders,
+  resolveSubAgentProviders,
+} from '../../../shared/subagent-providers';
+import { canonicalizePath } from '../../../shared/paths';
+import type { InstalledSubAgent } from '../../../db/sub-agents';
 import type { InstallCtx } from './context';
 import { materialInstallProviders } from './helpers/install-providers';
+
+function providersInstalledAt(
+  agent: InstalledSubAgent,
+  installPath: string,
+): string[] | undefined {
+  return agent.installations.find(
+    (installation) => installation.install_path === installPath,
+  )?.provider_ids;
+}
 
 /**
  * Strip a single pair of matching surrounding quotes (either `"` or `'`).
@@ -84,28 +100,47 @@ export function installSubagentsTask(): Task<InstallCtx> {
     title: 'Installing sub-agents',
     enabled: (ctx) => {
       const installedAgents = ctx.db.getSubAgents(ctx.projectId);
+      const installPath = canonicalizePath(ctx.projectPath);
       const currentSubagents = ctx.capabilitiesToUse.subagents ?? [];
       const currentAgentIds = new Set(currentSubagents.map((a) => a.id));
       const removedSubAgentIds = installedAgents
-        .filter(({ agent_id }) => !currentAgentIds.has(agent_id))
+        .filter(
+          (agent) =>
+            !currentAgentIds.has(agent.agent_id) &&
+            (agent.legacy_unscoped || providersInstalledAt(agent, installPath)),
+        )
         .map(({ agent_id }) => agent_id);
       return removedSubAgentIds.length > 0 || currentSubagents.length > 0;
     },
     task: async (ctx, task) => {
       const providers = materialInstallProviders(ctx);
+      const installPath = canonicalizePath(ctx.projectPath);
       const toolExposure = ctx.capabilitiesToUse.options?.toolExposure;
       const skipMcpWrites = toolExposure === 'none';
       const installedAgents = ctx.db.getSubAgents(ctx.projectId);
       const currentSubagents = ctx.capabilitiesToUse.subagents ?? [];
       const currentAgentIds = new Set(currentSubagents.map((a) => a.id));
-      const removedAgents = installedAgents.filter(({ agent_id }) => !currentAgentIds.has(agent_id));
-
-      // Under `toolExposure: 'none'` we also strip *previously-installed*
-      // sub-agent MCP entries — having a `capa-<id>` entry pointing at a
-      // capa endpoint we said we wouldn't expose is a footgun.
-      const agentsNeedingMcpCleanup = skipMcpWrites
-        ? installedAgents.map(({ agent_id }) => agent_id)
-        : removedAgents.map(({ agent_id }) => agent_id);
+      const removedAgents = installedAgents.filter(
+        (agent) =>
+          !currentAgentIds.has(agent.agent_id) &&
+          (agent.legacy_unscoped || providersInstalledAt(agent, installPath)),
+      );
+      const installedById = new Map(installedAgents.map((agent) => [agent.agent_id, agent]));
+      const lifecycleProviders = [
+        ...new Set([
+          ...providers,
+          ...installedAgents.flatMap(
+            (installedAgent) =>
+              resolvePreviousSubAgentProviders({
+                installedAgent,
+                installPath,
+                activeProviders: providers,
+                previousProjectProviders: ctx.previousProviders,
+                isWrapInstall: ctx.isWrapInstall,
+              }),
+          ),
+        ]),
+      ];
 
       // Purge stale sub-agent MCP entries for providers that need a sweep
       // (Cursor doesn't model per-sub-agent entries — its `capa-<id>` entries
@@ -115,7 +150,7 @@ export function installSubagentsTask(): Task<InstallCtx> {
       // contradicts the "no .mcp writes" contract. The per-sub-agent
       // unregister loop below is a no-op for those providers, so without
       // this purge their entries would linger forever.
-      const needsPurge = providers.some((id) => {
+      const needsPurge = lifecycleProviders.some((id) => {
         const provider = getProvider(id);
         return (
           provider &&
@@ -138,48 +173,106 @@ export function installSubagentsTask(): Task<InstallCtx> {
       if (needsPurge) {
         step++;
         task.output = `[${step}/${total}] purging stale sub-agent MCP entries`;
-        await purgeCursorSubAgentMCPEntries(ctx.projectPath);
+        await purgeCursorSubAgentMCPEntries(ctx.projectPath, ctx.projectId);
       }
 
-      // Drop MCP entries for any sub-agent that needs them gone — either
-      // because the agent itself was removed from the capabilities file, or
-      // because `toolExposure: 'none'` rescinds MCP wiring entirely.
-      const cleanupSet = new Set(agentsNeedingMcpCleanup);
-      for (const { agent_id } of removedAgents) {
+      for (const installedAgent of removedAgents) {
+        const { agent_id } = installedAgent;
+        const previousProviders = resolvePreviousSubAgentProviders({
+          installedAgent,
+          installPath,
+          activeProviders: providers,
+          previousProjectProviders: ctx.previousProviders,
+          isWrapInstall: ctx.isWrapInstall,
+        });
         step++;
         task.output = `[${step}/${total}] removing ${agent_id}`;
-        await unregisterSubAgentMCPServer(ctx.projectPath, agent_id, providers);
-        removeSubAgentInstructions(ctx.projectPath, agent_id, providers);
-        ctx.db.removeSubAgent(ctx.projectId, agent_id);
-        cleanupSet.delete(agent_id);
-      }
-      for (const agent_id of cleanupSet) {
-        await unregisterSubAgentMCPServer(ctx.projectPath, agent_id, providers);
+        await unregisterSubAgentMCPServer(
+          ctx.projectPath,
+          agent_id,
+          previousProviders,
+          ctx.projectId,
+        );
+        removeSubAgentInstructions(ctx.projectPath, agent_id, previousProviders);
+        ctx.db.removeSubAgentInstallation(
+          ctx.projectId,
+          agent_id,
+          {
+            installPath,
+            removeLegacy: !ctx.isWrapInstall,
+          },
+        );
       }
 
+      let installed = 0;
       for (const subAgent of currentSubagents) {
         step++;
         task.output = `[${step}/${total}] ${subAgent.id}`;
-        if (!skipMcpWrites) {
-          const agentMcpUrl = `${ctx.serverStatus.url}/${ctx.projectId}/agents/${subAgent.id}/mcp`;
-          await registerSubAgentMCPServer(ctx.projectPath, subAgent.id, agentMcpUrl, providers);
+        const targets = resolveSubAgentProviders(
+          subAgent,
+          providers,
+        );
+        const { supported } = targets;
+        ctx.warnings.push(...getSubAgentProviderWarnings(subAgent, targets));
+
+        const previous = installedById.get(subAgent.id);
+        const previousProviders = previous
+          ? resolvePreviousSubAgentProviders({
+              installedAgent: previous,
+              installPath,
+              activeProviders: providers,
+              previousProjectProviders: ctx.previousProviders,
+              isWrapInstall: ctx.isWrapInstall,
+            })
+          : [];
+        const staleProviders = previousProviders.filter(
+          (providerId) => !supported.includes(providerId),
+        );
+        if (staleProviders.length > 0) {
+          await unregisterSubAgentMCPServer(
+            ctx.projectPath,
+            subAgent.id,
+            staleProviders,
+            ctx.projectId,
+          );
+          removeSubAgentInstructions(ctx.projectPath, subAgent.id, staleProviders);
         }
-        // Instructions are still informative even without MCP wiring — they
-        // describe the agent's purpose. The agent file itself encodes the
-        // expected MCP server key, but missing entries simply mean those
-        // tools won't be available to that sub-agent (an explicit choice).
+
+        if (skipMcpWrites) {
+          await unregisterSubAgentMCPServer(
+            ctx.projectPath,
+            subAgent.id,
+            supported,
+            ctx.projectId,
+          );
+        } else {
+          const agentMcpUrl = `${ctx.serverStatus.url}/${ctx.projectId}/agents/${subAgent.id}/mcp`;
+          await registerSubAgentMCPServer(ctx.projectPath, subAgent.id, agentMcpUrl, supported);
+        }
         installSubAgentInstructions(
           ctx.projectPath,
           subAgent,
           ctx.capabilitiesToUse,
-          providers,
+          supported,
           skillDescriptions
         );
-        ctx.db.upsertSubAgent(ctx.projectId, subAgent.id);
-        ctx.added++;
+        ctx.db.upsertSubAgent(
+          ctx.projectId,
+          subAgent.id,
+          {
+            installPath,
+            providerIds: supported,
+            migrateLegacy: !ctx.isWrapInstall,
+          },
+        );
+        if (supported.length > 0) {
+          installed++;
+          ctx.added++;
+        } else {
+          ctx.skipped++;
+        }
       }
 
-      const installed = currentSubagents.length;
       if (skipMcpWrites && installed > 0) {
         task.title = `Installed ${installed} sub-agent${installed === 1 ? '' : 's'} (no MCP wiring — toolExposure: none)`;
       } else {

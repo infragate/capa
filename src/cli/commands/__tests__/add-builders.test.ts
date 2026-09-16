@@ -28,11 +28,45 @@ describe('buildServerEntry', () => {
     expect(entry).toEqual({
       id: 'owl',
       type: 'mcp',
+      // No `expose` written: omitting it already means `all`.
       def: {
         cmd: 'npx',
         args: ['-y', 'owl-mcp@1.0.14', 'serve'],
       },
     });
+  });
+
+  it('takes an except/exactly denylist from --tools', () => {
+    const entry = buildServerEntry({
+      id: 'github',
+      url: 'https://example.com/mcp',
+      expose: 'except',
+      tools: 'delete_repo, force_push',
+    });
+    expect(entry.expose).toBe('except');
+    expect(entry.tools).toEqual(['delete_repo', 'force_push']);
+  });
+
+  it('writes the none opt-out explicitly (omitting would mean all)', () => {
+    const entry = buildServerEntry({
+      id: 'github',
+      url: 'https://example.com/mcp',
+      expose: 'none',
+    });
+    expect(entry.expose).toBe('none');
+    expect(entry.tools).toBeUndefined();
+  });
+
+  it('rejects except/exactly without tool names, and names without a mode', () => {
+    expect(() =>
+      buildServerEntry({ id: 'x', url: 'https://x', expose: 'exactly' }),
+    ).toThrow(/requires --tools/);
+    expect(() =>
+      buildServerEntry({ id: 'x', url: 'https://x', tools: 'a,b' }),
+    ).toThrow(/--tools requires --expose/);
+    expect(() =>
+      buildServerEntry({ id: 'x', url: 'https://x', expose: 'some' }),
+    ).toThrow(/Unknown --expose/);
   });
 
   it('builds remote URL server', () => {

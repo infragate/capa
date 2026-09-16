@@ -18,6 +18,7 @@ import type {
 import { GitIntegrationsRepo } from "./git-integrations";
 import { ManagedFilesRepo } from "./managed-files";
 import { type ManagedHookRow, ManagedHooksRepo } from "./managed-hooks";
+import { ManagedInstructionTargetsRepo } from "./managed-instruction-targets";
 import { MCPSubprocessesRepo } from "./mcp-subprocesses";
 import { OAuthFlowStateRepo } from "./oauth-flow-state";
 import { OAuthTokensRepo } from "./oauth-tokens";
@@ -26,7 +27,12 @@ import { RegistriesRepo, type RegistryUpsertInput } from "./registries";
 import { migrateSecretsAtRest } from "./migrate-secrets";
 import { initSchema } from "./schema";
 import { SessionsRepo } from "./sessions";
-import { SubAgentsRepo } from "./sub-agents";
+import {
+	type InstalledSubAgent,
+	type SubAgentInstallationInput,
+	type SubAgentInstallationRemoval,
+	SubAgentsRepo,
+} from "./sub-agents";
 import {
 	type ActivityCorrelationLookup,
 	type ToolCallFinish,
@@ -38,6 +44,9 @@ import {
 import { ToolInitStateRepo } from "./tool-init-state";
 import { VariablesRepo } from "./variables";
 
+/** How long a write waits for another process's lock before failing. */
+export const DATABASE_BUSY_TIMEOUT_MS = 5000;
+
 export class CapaDatabase {
 	private db: Database;
 	private projects: ProjectsRepo;
@@ -45,6 +54,7 @@ export class CapaDatabase {
 	private variables: VariablesRepo;
 	private managedFiles: ManagedFilesRepo;
 	private managedHooks: ManagedHooksRepo;
+	private managedInstructionTargets: ManagedInstructionTargetsRepo;
 	private oauthTokens: OAuthTokensRepo;
 	private oauthFlowState: OAuthFlowStateRepo;
 	private gitIntegrations: GitIntegrationsRepo;
@@ -60,6 +70,10 @@ export class CapaDatabase {
 		mkdirSync(dbDir, { recursive: true });
 
 		this.db = new Database(dbPath, { create: true });
+		// The CLI, the server, and hook processes (activity-ingest) open this
+		// file concurrently. Without a busy timeout SQLite fails immediately
+		// with "database is locked" when another process holds the write lock.
+		this.db.run(`PRAGMA busy_timeout = ${DATABASE_BUSY_TIMEOUT_MS}`);
 		restrictDatabaseFileMode(dbPath);
 		initSchema(this.db);
 		migrateSecretsAtRest(this.db);
@@ -69,6 +83,7 @@ export class CapaDatabase {
 		this.variables = new VariablesRepo(this.db);
 		this.managedFiles = new ManagedFilesRepo(this.db);
 		this.managedHooks = new ManagedHooksRepo(this.db);
+		this.managedInstructionTargets = new ManagedInstructionTargetsRepo(this.db);
 		this.oauthTokens = new OAuthTokensRepo(this.db);
 		this.oauthFlowState = new OAuthFlowStateRepo(this.db);
 		this.gitIntegrations = new GitIntegrationsRepo(this.db);
@@ -110,16 +125,28 @@ export class CapaDatabase {
 	}
 
 	// Sub-agent operations
-	upsertSubAgent(projectId: string, agentId: string): void {
-		return this.subAgents.upsert(projectId, agentId);
+	upsertSubAgent(
+		projectId: string,
+		agentId: string,
+		installation?: SubAgentInstallationInput,
+	): void {
+		return this.subAgents.upsert(projectId, agentId, installation);
 	}
 
-	getSubAgents(projectId: string): Array<{ agent_id: string }> {
+	getSubAgents(projectId: string): InstalledSubAgent[] {
 		return this.subAgents.getAll(projectId);
 	}
 
 	removeSubAgent(projectId: string, agentId: string): void {
 		return this.subAgents.remove(projectId, agentId);
+	}
+
+	removeSubAgentInstallation(
+		projectId: string,
+		agentId: string,
+		removal: SubAgentInstallationRemoval,
+	): void {
+		return this.subAgents.removeInstallation(projectId, agentId, removal);
 	}
 
 	setProjectCapabilities(projectId: string, capabilitiesJson: string): void {
@@ -162,6 +189,19 @@ export class CapaDatabase {
 
 	clearManagedFiles(projectId: string): void {
 		return this.managedFiles.clear(projectId);
+	}
+
+	// Managed instruction targets (nested / isolated instruction files)
+	addManagedInstructionTarget(projectId: string, filePath: string): void {
+		return this.managedInstructionTargets.add(projectId, filePath);
+	}
+
+	getManagedInstructionTargets(projectId: string): string[] {
+		return this.managedInstructionTargets.getAll(projectId);
+	}
+
+	removeManagedInstructionTarget(projectId: string, filePath: string): void {
+		return this.managedInstructionTargets.remove(projectId, filePath);
 	}
 
 	// Managed hooks operations

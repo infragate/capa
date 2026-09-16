@@ -2,6 +2,7 @@ import type { Capabilities } from '../../../types/capabilities';
 import type { CapaDatabase } from '../../../db/database';
 import type { loadSettings } from '../../../shared/config';
 import type { LockfileBuilder } from '../../../shared/lockfile';
+import type { LockProviderConfigEntry } from '../../../types/lockfile';
 import type { GetSnapshotResult, CachePlatform } from '../../../shared/cache';
 import type { AuthenticatedFetch } from '../../../shared/authenticated-fetch';
 import type { InstallErrorMode } from './install-error-policy';
@@ -21,6 +22,8 @@ export interface InstallCtx {
   settings: Awaited<ReturnType<typeof loadSettings>>;
   serverStatus: { running: boolean; url: string };
   resolvedProviders: string[];
+  /** Provider selection stored before this install updates project ownership. */
+  previousProviders: string[];
   /**
    * Providers sent to POST /configure (identity / real project session).
    * For wrap installs this stays the authored capabilities.providers list so
@@ -39,6 +42,8 @@ export interface InstallCtx {
   configureResult?: Record<string, unknown>;
   mcpUrl: string;
   ruleBodies?: Map<string, string>;
+  /** capa-owned provider settings before this install changed them (rollback on lockfile failure). */
+  providerConfigBefore?: LockProviderConfigEntry[];
   resolvedRepos: Map<string, GetSnapshotResult>;
   added: number;
   failed: number;

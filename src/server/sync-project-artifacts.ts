@@ -1,3 +1,4 @@
+import { rmSync } from "fs";
 import { getRepoSnapshot } from "../cli/commands/install-tasks/helpers/repo-snapshot";
 import { resolveRuleBody } from "../cli/commands/install-tasks/install-rules";
 import { installAgentsFile, cleanAgentInstructionSnippets } from "../cli/utils/agents-file/index";
@@ -7,6 +8,17 @@ import {
 	type PruneOrphanHooksOptions,
 } from "../cli/utils/hooks";
 import { installRules, pruneRules } from "../cli/utils/rules-installer";
+import { resolveRuleConflictMode } from "../cli/utils/rules-placement";
+import {
+	applyInstructionContextConfig,
+	revertInstructionContextConfig,
+} from "../cli/utils/instruction-context-config";
+import {
+	getLockfilePath,
+	LockfileBuilder,
+	loadLockfile,
+	saveLockfile,
+} from "../shared/lockfile";
 import { listWrapWorkspacesForProject } from "../cli/utils/wrap/workspace";
 import type { CapaDatabase } from "../db/database";
 import { syncSystemActivityHooks } from "../shared/agent-activity-sync";
@@ -106,6 +118,7 @@ export async function syncProjectManagedArtifacts(opts: {
 		providers,
 		db: opts.db,
 		serverOrigin: opts.serverOrigin,
+		materializeShadow: opts.materializeShadow,
 	});
 
 	return { hooks, rules, agents, subagents, skipped: false };
@@ -285,26 +298,38 @@ async function syncProjectRules(opts: {
 }): Promise<SyncSectionResult> {
 	const warnings: string[] = [];
 	const currentRules = opts.capabilities.rules ?? [];
+	const conflicts = resolveRuleConflictMode(opts.capabilities.options);
 	let removed = 0;
 	let installed = 0;
 
 	try {
 		const previouslyManaged = opts.db.getManagedFiles(opts.projectId);
-		const { removedFiles, removedMarkers } = pruneRules(
-			opts.projectPath,
-			opts.providers,
-			currentRules,
-			previouslyManaged,
-		);
+		const { removedFiles, removedMarkers, removedInstructionTargets, diagnostics } =
+			pruneRules(opts.projectPath, opts.providers, currentRules, previouslyManaged, {
+				trackedInstructionTargets: opts.db.getManagedInstructionTargets(
+					opts.projectId,
+				),
+				conflicts,
+			});
 		for (const file of removedFiles) {
 			opts.db.removeManagedFile(opts.projectId, file);
 		}
+		for (const file of removedInstructionTargets) {
+			opts.db.removeManagedInstructionTarget(opts.projectId, file);
+		}
+		warnings.push(
+			...diagnostics.map((d) =>
+				d.level === "error" ? `Rule "${d.ruleId}" skipped: ${d.message}` : d.message,
+			),
+		);
 		removed += removedFiles.length + removedMarkers.length;
 	} catch (err: unknown) {
 		warnings.push(
 			`Failed to prune orphan rules: ${err instanceof Error ? err.message : String(err)}`,
 		);
 	}
+
+	warnings.push(...(await syncInstructionContextConfig(opts.projectPath, opts.providers)));
 
 	if (currentRules.length === 0) {
 		return { installed, removed, warnings };
@@ -353,14 +378,24 @@ async function syncProjectRules(opts: {
 
 	if (installedRules.length > 0) {
 		try {
-			installRules(
+			const result = installRules(
 				opts.projectPath,
 				installedRules,
 				opts.providers,
 				ruleBodies,
-				{ quiet: true },
+				{
+					quiet: true,
+					conflicts,
+					onInstructionTargetWritten: (filePath) =>
+						opts.db.addManagedInstructionTarget(opts.projectId, filePath),
+				},
 			);
-			installed += installedRules.length;
+			warnings.push(...result.warnings);
+			// Rules with error-level conflicts were skipped (already reported by prune).
+			const skipped = new Set(
+				result.diagnostics.filter((d) => d.level === "error").map((d) => d.ruleId),
+			);
+			installed += installedRules.filter((r) => !skipped.has(r.id)).length;
 		} catch (err: unknown) {
 			warnings.push(
 				`Failed to install rules: ${err instanceof Error ? err.message : String(err)}`,
@@ -369,6 +404,46 @@ async function syncProjectRules(opts: {
 	}
 
 	return { installed, removed, warnings };
+}
+
+/** Server-side mirror of the install task that wires `context.fileName`-style settings. */
+async function syncInstructionContextConfig(
+	projectPath: string,
+	providers: string[],
+): Promise<string[]> {
+	try {
+		const lockfile = await loadLockfile(projectPath);
+		const builder = new LockfileBuilder(lockfile);
+		const before = builder.getProviderConfig();
+		const result = applyInstructionContextConfig(projectPath, providers, before);
+		builder.setProviderConfig(result.owned);
+		const next = builder.build();
+		const empty =
+			next.skills.length === 0 &&
+			next.plugins.length === 0 &&
+			next.hooks.length === 0 &&
+			(next.providerConfig ?? []).length === 0;
+		try {
+			if (!empty) {
+				await saveLockfile(projectPath, next);
+			} else if (lockfile) {
+				rmSync(getLockfilePath(projectPath), { force: true });
+			}
+		} catch (err: unknown) {
+			// No ownership record was saved: put settings back to match the old lockfile.
+			const reverted = revertInstructionContextConfig(projectPath, before, result.owned);
+			return [
+				...result.warnings,
+				...reverted.warnings,
+				`Failed to write capabilities.lock (reverted instruction settings changed in this sync): ${err instanceof Error ? err.message : String(err)}`,
+			];
+		}
+		return result.warnings;
+	} catch (err: unknown) {
+		return [
+			`Failed to configure instruction files: ${err instanceof Error ? err.message : String(err)}`,
+		];
+	}
 }
 
 async function syncProjectAgentInstructions(opts: {

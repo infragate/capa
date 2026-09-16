@@ -129,6 +129,42 @@ describe('capabilities', () => {
       const result = normalizeCapabilities(capabilities);
       expect(result).toEqual(capabilities);
     });
+
+    it('validates and preserves sub-agent provider allow-lists', () => {
+      const result = normalizeCapabilities({
+        subagents: [
+          {
+            id: 'reviewer',
+            providers: ['claude-code', 'codex'],
+            skills: [],
+            tools: [],
+          },
+        ],
+      });
+
+      expect(result.subagents?.[0].providers).toEqual(['claude-code', 'codex']);
+      expect(
+        normalizeCapabilities({
+          subagents: [{ id: 'reviewer', providers: ['CLAUDE-CODE'] }],
+        }).subagents?.[0].providers,
+      ).toEqual(['claude-code']);
+      expect(() =>
+        normalizeCapabilities({
+          subagents: [{ id: 'reviewer', providers: 'claude-code' }],
+        }),
+      ).toThrow(/subagents\.0\.providers/);
+      expect(() =>
+        normalizeCapabilities({
+          subagents: [{ id: 'reviewer', providers: [''] }],
+        }),
+      ).toThrow(/subagents\.0\.providers\.0/);
+      expect(() =>
+        normalizeCapabilities({
+          subagents: [{ id: 'reviewer', providers: ['not-a-provider'] }],
+        }),
+      ).toThrow(/subagents\.0\.providers\.0: Unknown provider: not-a-provider/);
+    });
+
     it('normalizes legacy oauth2 aliases on servers at load', () => {
       const result = normalizeCapabilities({
         skills: [],
@@ -157,12 +193,117 @@ describe('capabilities', () => {
       });
     });
 
+    it('accepts the none opt-out and keeps tools tied to except/exactly', () => {
+      const withExtra = (extra: Record<string, unknown>) => ({
+        servers: [
+          { id: 's', type: 'mcp', def: { url: 'https://example.test/mcp' }, ...extra },
+        ],
+      });
+
+      expect(
+        normalizeCapabilities(withExtra({ expose: 'none' })).servers[0].expose,
+      ).toBe('none');
+      // Omitted stays omitted — `all` is the default, not something capa writes.
+      expect(normalizeCapabilities(withExtra({})).servers[0].expose).toBeUndefined();
+      expect(() =>
+        normalizeCapabilities(withExtra({ expose: 'none', tools: ['a'] })),
+      ).toThrow(/only applies to expose/);
+    });
+
+    it('validates expose/tools combinations on plugin servers too', () => {
+      const plugin = (servers: Record<string, unknown>) => ({
+        plugins: [{ type: 'github', def: { repo: 'o/r' }, servers }],
+      });
+
+      expect(() =>
+        normalizeCapabilities(plugin({ slack: { expose: 'exactly' } })),
+      ).toThrow(/needs a "tools" list/);
+      expect(() =>
+        normalizeCapabilities(plugin({ slack: { expose: 'all', tools: ['a'] } })),
+      ).toThrow(/only applies to expose/);
+      expect(() =>
+        normalizeCapabilities(plugin({ slack: { tools: ['a'] } })),
+      ).toThrow(/only applies to expose/);
+      expect(
+        normalizeCapabilities(
+          plugin({ slack: { as: 'slack', expose: 'except', tools: ['rm'] } }),
+        ).plugins?.[0]?.servers?.slack,
+      ).toEqual({ as: 'slack', expose: 'except', tools: ['rm'] });
+    });
+
     it('rejects MCP servers missing both url and cmd', () => {
       expect(() =>
         normalizeCapabilities({
           servers: [{ id: 'bad', type: 'mcp', def: {} }],
         }),
       ).toThrow(/url or cmd/);
+    });
+  });
+
+  describe('null fields read as absent', () => {
+    it('accepts a server whose description is an explicit null', () => {
+      const caps = normalizeCapabilities({
+        providers: ['claude-code'],
+        servers: [
+          {
+            id: 'sharecube',
+            type: 'mcp',
+            def: { url: 'https://example.test/mcp' },
+            description: null,
+          },
+        ],
+      });
+
+      expect(caps.servers[0].id).toBe('sharecube');
+      expect(caps.servers[0].description).toBeUndefined();
+    });
+
+    it('keeps a null that is a tool default, not an absent field', () => {
+      const caps = normalizeCapabilities({
+        providers: ['claude-code'],
+        servers: [{ id: 's', type: 'mcp', def: { url: 'https://example.test/mcp' } }],
+        tools: [
+          {
+            id: 'search',
+            type: 'mcp',
+            def: { server: '@s', tool: 'search', defaults: { filter: null } },
+          },
+          {
+            id: 'run',
+            type: 'command',
+            def: {
+              run: {
+                cmd: 'echo',
+                args: [{ name: 'mode', type: 'string', default: null }],
+              },
+            },
+          },
+        ],
+      });
+
+      expect((caps.tools[0].def as any).defaults).toEqual({ filter: null });
+      expect((caps.tools[1].def as any).run.args[0].default).toBeNull();
+    });
+
+    it('accepts a bare "description:" key in YAML (parses as null)', async () => {
+      const file = join(tempDir, 'capabilities.yaml');
+      await writeFile(
+        file,
+        [
+          'providers:',
+          '  - claude-code',
+          'servers:',
+          '  - id: sharecube',
+          '    type: mcp',
+          '    description:',
+          '    def:',
+          '      url: https://example.test/mcp',
+          '',
+        ].join('\n'),
+      );
+
+      const caps = await parseCapabilitiesFile(file, 'yaml');
+      expect(caps.servers[0].description).toBeUndefined();
     });
   });
 
@@ -343,6 +484,21 @@ servers:
   });
 
   describe('appendCapabilityEntry', () => {
+    it('appends to an empty `[]` section in block style, not inline', async () => {
+      const filePath = join(tempDir, 'capabilities.yaml');
+      await writeFile(filePath, 'servers: []\ntools: [ existing ]\n');
+      await appendCapabilityEntry(filePath, 'yaml', 'servers', {
+        id: 'fx',
+        type: 'mcp',
+        def: { cmd: 'bun', args: ['server.ts'] },
+      } as never);
+      const text = await Bun.file(filePath).text();
+      expect(text).toContain('servers:\n  - id: fx\n');
+      expect(text).not.toContain('[ {');
+      // A non-empty flow list the user wrote stays as they wrote it.
+      expect(text).toContain('tools: [ existing ]');
+    });
+
     it('preserves comments and key order when appending to YAML (#93)', async () => {
       const filePath = join(tempDir, 'capabilities.yaml');
       const original = [

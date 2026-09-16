@@ -3,6 +3,10 @@ import { join } from 'path';
 import type { Task } from '../../ui';
 import { saveLockfile } from '../../../shared/lockfile';
 import { validateHooks } from '../../../shared/hooks-validate';
+import {
+  newlyOwnedProviderConfig,
+  revertInstructionContextConfig,
+} from '../../utils/instruction-context-config';
 import type { InstallCtx } from './context';
 
 export function writeLockfileTask(): Task<InstallCtx> {
@@ -38,7 +42,8 @@ export function writeLockfileTask(): Task<InstallCtx> {
       if (
         lockfileToSave.skills.length === 0 &&
         lockfileToSave.plugins.length === 0 &&
-        lockfileToSave.hooks.length === 0
+        lockfileToSave.hooks.length === 0 &&
+        (lockfileToSave.providerConfig ?? []).length === 0
       ) {
         try {
           const lockPath = join(ctx.projectPath, 'capabilities.lock');
@@ -52,6 +57,20 @@ export function writeLockfileTask(): Task<InstallCtx> {
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : String(err);
           ctx.warnings.push(`Failed to write capabilities.lock: ${message}`);
+          // The on-disk lockfile still describes the previous settings, so put
+          // provider settings back to match it rather than leave them untracked.
+          const before = ctx.providerConfigBefore ?? [];
+          const after = lockfileToSave.providerConfig ?? [];
+          if (
+            newlyOwnedProviderConfig(before, after).length > 0 ||
+            newlyOwnedProviderConfig(after, before).length > 0
+          ) {
+            const { warnings } = revertInstructionContextConfig(ctx.projectPath, before, after);
+            ctx.warnings.push(
+              ...warnings,
+              'Reverted provider instruction settings changed in this install; re-run capa install once capabilities.lock is writable.',
+            );
+          }
         }
       }
     },

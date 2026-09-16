@@ -292,12 +292,15 @@ function buildTomlSubAgent(
 		description: subAgent.description || subAgent.id,
 		...fields,
 		[bodyField]: body,
-		mcp_servers: {
+	};
+
+	if (capabilities.options?.toolExposure !== "none") {
+		data.mcp_servers = {
 			[mcpServerKey]: {
 				url: "",
 			},
-		},
-	};
+		};
+	}
 
 	return TOML.stringify(data as any);
 }

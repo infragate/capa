@@ -18,7 +18,8 @@ export const codex: ProviderIntegration = {
 		entryUrlKey: "url",
 		supportsSubAgentEntries: true,
 	},
-	instructions: { filename: "AGENTS.md" },
+	// Codex concatenates AGENTS.md files from the repo root down to the cwd.
+	instructions: { filename: "AGENTS.md", hierarchical: true },
 	subagents: {
 		dir: ".codex/agents",
 		extension: ".toml",

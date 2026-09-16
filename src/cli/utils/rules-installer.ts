@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, unlinkSync } from 'fs';
-import { join, dirname, basename, sep } from 'path';
+import { join, dirname, basename, sep, relative, resolve, isAbsolute } from 'path';
 import * as yaml from 'js-yaml';
 import type { Rule } from '../../types/rules';
 import { getAllProviders, getProvider } from '../../shared/providers';
@@ -14,6 +14,13 @@ import {
   isSafeCapabilityId,
 } from '../../shared/safe-id';
 import { taskLog } from '../ui';
+import {
+  allIsolatedInstructionFilenames,
+  planRulePlacement,
+  renderPlannedRuleBody,
+  type RuleConflictMode,
+  type RuleDiagnostic,
+} from './rules-placement';
 
 const RULE_MARKER_PREFIX = 'rule:';
 
@@ -204,8 +211,33 @@ export interface InstallRulesOptions {
    * callback — they're tracked via the inline marker pattern instead.
    */
   onFileWritten?: (filePath: string) => void;
+  /**
+   * Invoked with the absolute path of each nested or isolated instructions
+   * file (e.g. `src/AGENTS.md`, `GEMINI.md`) that received rule blocks, so
+   * prune/clean can find it after the rule's scope changes.
+   */
+  onInstructionTargetWritten?: (filePath: string) => void;
+  /**
+   * Every active provider. Decides who reads a shared instructions file.
+   * Defaults to `providers`; pass the full set when installing for a subset.
+   */
+  readerProviders?: string[];
+  conflicts?: RuleConflictMode;
   /** Suppress per-file success logs (e.g. wrap warm refresh). */
   quiet?: boolean;
+}
+
+export interface InstallRulesResult {
+  /** Placement conflicts from the plan. Callers decide how to surface them. */
+  diagnostics: RuleDiagnostic[];
+  /** Non-fatal write problems (e.g. a nested target directory is missing). */
+  warnings: string[];
+  /** Project-relative POSIX paths of instruction files that received rule blocks. */
+  writtenInstructionFiles: string[];
+  /** Rules not installed because of error-level placement conflicts (unique ids). */
+  skippedRuleIds: string[];
+  /** Rules written to at least one provider file (unique ids). */
+  installedRuleIds: string[];
 }
 
 /**
@@ -215,7 +247,9 @@ export interface InstallRulesOptions {
  *   writes each rule as a separate file with optional YAML frontmatter.
  *
  * For providers without a `rules` integration but with `instructions`:
- *   folds each rule into the instructions file as a capa marker block.
+ *   folds each rule into the instructions file(s) chosen by
+ *   {@link planRulePlacement} — root, nested `dir/<file>` for directory
+ *   globs, or a provider's isolated file.
  *
  * @param resolvedContent - Map from rule.id to the already-fetched rule body text.
  */
@@ -225,90 +259,144 @@ export function installRules(
   providers: string[],
   resolvedContent: Map<string, string>,
   options: InstallRulesOptions = {}
-): void {
+): InstallRulesResult {
+  const warnings: string[] = [];
+  const plan = planRulePlacement({
+    rules,
+    readerProviders: options.readerProviders ?? providers,
+    targetProviders: providers,
+    conflicts: options.conflicts,
+  });
+  // A rule with an error-level conflict is skipped for every provider, native
+  // rules directories included.
+  const skipped = skippedRuleIds(plan.diagnostics);
+  const writtenInstructionFiles: string[] = [];
+  const installedRuleIds = new Set<string>();
+
   for (const pid of providers) {
     const provider = getProvider(pid);
-    if (!provider) continue;
+    if (!provider?.rules) continue;
 
     const applicableRules = rules.filter((r) => {
+      if (skipped.has(r.id)) return false;
       if (!r.providers || r.providers.length === 0) return true;
       return r.providers.includes(pid);
     });
 
     if (applicableRules.length === 0) continue;
 
-    if (provider.rules) {
-      const rulesDir = join(projectPath, provider.rules.dir);
-      assertCapaOwnedInstallPath(projectPath, rulesDir);
-      mkdirSync(rulesDir, { recursive: true });
+    const rulesDir = join(projectPath, provider.rules.dir);
+    assertCapaOwnedInstallPath(projectPath, rulesDir);
+    mkdirSync(rulesDir, { recursive: true });
 
-      for (const rule of applicableRules) {
-        if (!isSafeCapabilityId(rule.id)) {
-          taskLog(`  ⚠ Skipping rule "${rule.id}": ${describeUnsafeCapabilityId('Rule', rule.id)}`);
-          continue;
-        }
-
-        const content = resolvedContent.get(rule.id);
-        if (!content) continue;
-
-        let fileContent = '';
-        let body = content;
-        if (provider.rules.frontmatter === 'yaml' && provider.rules.fieldMap) {
-          const fm = buildRuleFrontmatter(provider.rules, rule);
-          const parsed = parseLeadingFrontmatter(body);
-          if (parsed) {
-            body = parsed.rest;
-            // Merge source extras after capa's fields: capa wins on literal-key
-            // collisions, and any source synonym for an `appliesTo` field capa
-            // already emitted (e.g. source `globs:` when capa wrote `paths:`)
-            // is dropped so the same concept isn't duplicated.
-            const appliesToKey = provider.rules.fieldMap.appliesTo;
-            const capaEmitsAppliesTo = !!appliesToKey && appliesToKey in fm;
-            const synonyms = capaEmitsAppliesTo ? appliesToSynonyms() : null;
-            for (const [k, v] of Object.entries(parsed.data)) {
-              if (k in fm) continue;
-              if (synonyms?.has(k)) continue;
-              fm[k] = v;
-            }
-          }
-          if (Object.keys(fm).length > 0) {
-            fileContent = buildYamlFrontmatter(fm) + '\n';
-          }
-        }
-        fileContent += body;
-        if (!fileContent.endsWith('\n')) fileContent += '\n';
-
-        const filePath = assertSafeRepoPath(
-          rulesDir,
-          `${rule.id}${provider.rules.extension}`,
-        );
-        assertCapaOwnedInstallPath(projectPath, filePath);
-        writeFileSync(filePath, fileContent, 'utf-8');
-        if (!options.quiet) {
-          taskLog(`  ✓ ${provider.rules.dir}/${rule.id}${provider.rules.extension} written (${provider.displayName})`);
-        }
-        options.onFileWritten?.(filePath);
-      }
-    } else if (provider.instructions) {
-      const filename = provider.instructions.filename;
-      let mdContent = readMd(projectPath, filename);
-
-      for (const rule of applicableRules) {
-        if (!isSafeCapabilityId(rule.id)) {
-          taskLog(`  ⚠ Skipping rule "${rule.id}": ${describeUnsafeCapabilityId('Rule', rule.id)}`);
-          continue;
-        }
-        const content = resolvedContent.get(rule.id);
-        if (!content) continue;
-        mdContent = upsertBlock(mdContent, ruleMarkerId(rule.id), content);
+    for (const rule of applicableRules) {
+      if (!isSafeCapabilityId(rule.id)) {
+        taskLog(`  ⚠ Skipping rule "${rule.id}": ${describeUnsafeCapabilityId('Rule', rule.id)}`);
+        continue;
       }
 
-      writeMd(projectPath, filename, mdContent);
+      const content = resolvedContent.get(rule.id);
+      if (!content) continue;
+
+      let fileContent = '';
+      let body = content;
+      if (provider.rules.frontmatter === 'yaml' && provider.rules.fieldMap) {
+        const fm = buildRuleFrontmatter(provider.rules, rule);
+        const parsed = parseLeadingFrontmatter(body);
+        if (parsed) {
+          body = parsed.rest;
+          // Merge source extras after capa's fields: capa wins on literal-key
+          // collisions, and any source synonym for an `appliesTo` field capa
+          // already emitted (e.g. source `globs:` when capa wrote `paths:`)
+          // is dropped so the same concept isn't duplicated.
+          const appliesToKey = provider.rules.fieldMap.appliesTo;
+          const capaEmitsAppliesTo = !!appliesToKey && appliesToKey in fm;
+          const synonyms = capaEmitsAppliesTo ? appliesToSynonyms() : null;
+          for (const [k, v] of Object.entries(parsed.data)) {
+            if (k in fm) continue;
+            if (synonyms?.has(k)) continue;
+            fm[k] = v;
+          }
+        }
+        if (Object.keys(fm).length > 0) {
+          fileContent = buildYamlFrontmatter(fm) + '\n';
+        }
+      }
+      fileContent += body;
+      if (!fileContent.endsWith('\n')) fileContent += '\n';
+
+      const filePath = assertSafeRepoPath(
+        rulesDir,
+        `${rule.id}${provider.rules.extension}`,
+      );
+      assertCapaOwnedInstallPath(projectPath, filePath);
+      writeFileSync(filePath, fileContent, 'utf-8');
+      installedRuleIds.add(rule.id);
       if (!options.quiet) {
-        taskLog(`  ✓ ${filename} updated with ${applicableRules.length} rule(s) (${provider.displayName})`);
+        taskLog(`  ✓ ${provider.rules.dir}/${rule.id}${provider.rules.extension} written (${provider.displayName})`);
       }
+      options.onFileWritten?.(filePath);
     }
   }
+
+  for (const [relPath, planned] of sortedEntries(plan.blocks)) {
+    const blocks = planned.filter((block) => {
+      if (isSafeCapabilityId(block.ruleId)) return resolvedContent.has(block.ruleId);
+      taskLog(`  ⚠ Skipping rule "${block.ruleId}": ${describeUnsafeCapabilityId('Rule', block.ruleId)}`);
+      return false;
+    });
+    if (blocks.length === 0) continue;
+
+    const filePath = join(projectPath, relPath);
+    const nested = !plan.layout.files.has(relPath);
+    if (nested) {
+      if (!existsSync(dirname(filePath))) {
+        warnings.push(
+          `Skipped ${relPath}: directory ${dirname(relPath)} does not exist ` +
+            `(rules ${blocks.map((b) => `"${b.ruleId}"`).join(', ')}).`,
+        );
+        continue;
+      }
+      try {
+        assertCapaOwnedInstallPath(projectPath, filePath);
+      } catch (err: unknown) {
+        warnings.push(`Skipped ${relPath}: ${err instanceof Error ? err.message : String(err)}`);
+        continue;
+      }
+    }
+
+    let mdContent = readMd(projectPath, relPath);
+    for (const block of blocks) {
+      const body = renderPlannedRuleBody(block, resolvedContent.get(block.ruleId)!);
+      mdContent = upsertBlock(mdContent, ruleMarkerId(block.ruleId), body);
+    }
+    writeMd(projectPath, relPath, mdContent);
+    writtenInstructionFiles.push(relPath);
+    for (const block of blocks) installedRuleIds.add(block.ruleId);
+    if (!isDefaultInstructionsFilename(relPath)) {
+      options.onInstructionTargetWritten?.(filePath);
+    }
+    if (!options.quiet) {
+      const readers = (plan.layout.files.get(basename(relPath)) ?? [])
+        .map((pid) => getProvider(pid)?.displayName ?? pid)
+        .join(', ');
+      taskLog(`  ✓ ${relPath} updated with ${blocks.length} rule(s) (${readers})`);
+    }
+  }
+
+  return {
+    diagnostics: plan.diagnostics,
+    warnings,
+    writtenInstructionFiles,
+    skippedRuleIds: [...skipped],
+    installedRuleIds: [...installedRuleIds],
+  };
+}
+
+export interface PruneRulesOptions {
+  /** Absolute paths from {@link InstallRulesOptions.onInstructionTargetWritten}. */
+  trackedInstructionTargets?: string[];
+  conflicts?: RuleConflictMode;
 }
 
 export interface PruneRulesResult {
@@ -319,6 +407,13 @@ export interface PruneRulesResult {
   removedFiles: string[];
   /** Rule IDs whose marker blocks were stripped from instruction files. */
   removedMarkers: string[];
+  /**
+   * Tracked instruction targets that no longer hold rule blocks. Callers
+   * should drop these from the managed-instruction-targets DB.
+   */
+  removedInstructionTargets: string[];
+  /** Placement conflicts for the current rules (same plan install uses). */
+  diagnostics: RuleDiagnostic[];
 }
 
 /**
@@ -331,15 +426,12 @@ export interface PruneRulesResult {
  *   rule for that provider is deleted. User-authored files are never touched
  *   because we only consider files capa explicitly registered.
  *
- * For instruction-folded providers (`provider.instructions` only):
- *   Scans the instruction file for `<!-- capa:start:rule:<id> -->` blocks.
- *   Any block whose id does not correspond to a current rule for that
- *   provider is removed. Inline markers are self-tracking, so no DB lookup
- *   is needed.
- *
- * Per-rule `providers:` filtering is honored — a rule restricted to
- * `providers: ['cursor']` is treated as "absent" when pruning the windsurf
- * provider, which matches install-time behavior.
+ * For instruction-folded providers:
+ *   Builds one placement plan for all providers and scans every candidate
+ *   file (root instruction files, isolated files, tracked nested targets).
+ *   Any `<!-- capa:start:rule:<id> -->` block not planned for that exact path
+ *   is removed, and a file left empty is deleted. Because the plan covers all
+ *   providers at once, the result doesn't depend on provider order.
  *
  * Safe to call when `currentRules` is empty — every previously-installed
  * rule artifact will be removed in that case (which is exactly what `capa
@@ -349,76 +441,105 @@ export function pruneRules(
   projectPath: string,
   providers: string[],
   currentRules: Rule[],
-  previouslyManagedFiles: string[]
+  previouslyManagedFiles: string[],
+  options: PruneRulesOptions = {}
 ): PruneRulesResult {
   const removedFiles: string[] = [];
   const removedMarkers: string[] = [];
+  const removedInstructionTargets: string[] = [];
+  const plan = planRulePlacement({
+    rules: currentRules,
+    readerProviders: providers,
+    conflicts: options.conflicts,
+  });
+  const skipped = skippedRuleIds(plan.diagnostics);
 
   for (const pid of providers) {
     const provider = getProvider(pid);
-    if (!provider) continue;
+    if (!provider?.rules) continue;
 
     const desiredForProvider = new Set<string>();
     for (const r of currentRules) {
+      if (skipped.has(r.id)) continue;
       if (!r.providers || r.providers.length === 0 || r.providers.includes(pid)) {
         desiredForProvider.add(r.id);
       }
     }
 
-    if (provider.rules) {
-      const rulesDir = join(projectPath, provider.rules.dir);
-      const ext = provider.rules.extension;
-      // `+ sep` so `.cursor/rules/foo` doesn't match `.cursor/rules-old/foo`.
-      const dirPrefix = rulesDir.endsWith(sep) ? rulesDir : rulesDir + sep;
+    const rulesDir = join(projectPath, provider.rules.dir);
+    const ext = provider.rules.extension;
+    // `+ sep` so `.cursor/rules/foo` doesn't match `.cursor/rules-old/foo`.
+    const dirPrefix = rulesDir.endsWith(sep) ? rulesDir : rulesDir + sep;
 
-      for (const file of previouslyManagedFiles) {
-        if (!file.startsWith(dirPrefix)) continue;
-        if (!file.endsWith(ext)) continue;
-        const ruleId = basename(file).slice(0, -ext.length);
-        if (desiredForProvider.has(ruleId)) continue;
+    for (const file of previouslyManagedFiles) {
+      if (!file.startsWith(dirPrefix)) continue;
+      if (!file.endsWith(ext)) continue;
+      const ruleId = basename(file).slice(0, -ext.length);
+      if (desiredForProvider.has(ruleId)) continue;
 
-        if (existsSync(file)) {
-          try {
-            unlinkSync(file);
-            taskLog(`  ✓ Removed orphan rule ${provider.rules.dir}/${basename(file)} (${provider.displayName})`);
-          } catch (err: any) {
-            console.error(`  ✗ Failed to remove orphan rule ${file}: ${err.message}`);
-            // Skip DB cleanup if the file still exists on disk so we'll retry next install.
-            continue;
-          }
+      if (existsSync(file)) {
+        try {
+          unlinkSync(file);
+          taskLog(`  ✓ Removed orphan rule ${provider.rules.dir}/${basename(file)} (${provider.displayName})`);
+        } catch (err: any) {
+          console.error(`  ✗ Failed to remove orphan rule ${file}: ${err.message}`);
+          // Skip DB cleanup if the file still exists on disk so we'll retry next install.
+          continue;
         }
-        removedFiles.push(file);
       }
-      continue;
-    }
-
-    if (provider.instructions) {
-      const filename = provider.instructions.filename;
-      const mdContent = readMd(projectPath, filename);
-      if (!mdContent) continue;
-
-      const markers = listMarkerIds(mdContent).filter((id) =>
-        id.startsWith(RULE_MARKER_PREFIX)
-      );
-      let updated = mdContent;
-      let removedHere = 0;
-      for (const markerId of markers) {
-        const ruleId = markerId.slice(RULE_MARKER_PREFIX.length);
-        if (desiredForProvider.has(ruleId)) continue;
-        updated = removeBlock(updated, markerId);
-        removedHere++;
-        removedMarkers.push(ruleId);
-      }
-      if (removedHere > 0) {
-        writeMd(projectPath, filename, updated);
-        taskLog(
-          `  ✓ Removed ${removedHere} orphan rule block(s) from ${filename} (${provider.displayName})`
-        );
-      }
+      removedFiles.push(file);
     }
   }
 
-  return { removedFiles, removedMarkers };
+  const tracked = new Map<string, string>();
+  for (const abs of options.trackedInstructionTargets ?? []) {
+    const rel = projectRelativePath(projectPath, abs);
+    if (rel) tracked.set(rel, abs);
+  }
+
+  for (const relPath of instructionCandidates(providers, [...tracked.keys()])) {
+    const desired = new Set((plan.blocks.get(relPath) ?? []).map((b) => b.ruleId));
+    const filePath = join(projectPath, relPath);
+    if (!existsSync(filePath)) continue;
+    if (!isDefaultInstructionsFilename(relPath) && !isCapaOwnedInstallPath(projectPath, filePath)) {
+      continue;
+    }
+
+    const mdContent = readMd(projectPath, relPath);
+    let updated = mdContent;
+    let removedHere = 0;
+    for (const markerId of listMarkerIds(mdContent)) {
+      if (!markerId.startsWith(RULE_MARKER_PREFIX)) continue;
+      const ruleId = markerId.slice(RULE_MARKER_PREFIX.length);
+      if (desired.has(ruleId)) continue;
+      updated = removeBlock(updated, markerId);
+      removedHere++;
+      removedMarkers.push(ruleId);
+    }
+    if (removedHere > 0) {
+      writeOrDeleteMd(projectPath, relPath, updated);
+      taskLog(`  ✓ Removed ${removedHere} orphan rule block(s) from ${relPath}`);
+    }
+  }
+
+  for (const [relPath, abs] of tracked) {
+    const content = readMd(projectPath, relPath);
+    if (!listMarkerIds(content).some((id) => id.startsWith(RULE_MARKER_PREFIX))) {
+      removedInstructionTargets.push(abs);
+    }
+  }
+
+  return { removedFiles, removedMarkers, removedInstructionTargets, diagnostics: plan.diagnostics };
+}
+
+export interface CleanRulesOptions {
+  /** Absolute paths from {@link InstallRulesOptions.onInstructionTargetWritten}. */
+  trackedInstructionTargets?: string[];
+  /**
+   * Rules from the capabilities file. Their planned nested targets are
+   * cleaned too, so a clean works even when the DB has no record.
+   */
+  rules?: Rule[];
 }
 
 /**
@@ -428,46 +549,112 @@ export function pruneRules(
  *   `{ruleId}{extension}` are deleted. When omitted / empty, nothing is deleted
  *   from directory-based providers (avoiding accidental removal of user-authored files).
  */
-export function cleanRules(projectPath: string, providers: string[], ruleIds?: string[]): void {
+export function cleanRules(
+  projectPath: string,
+  providers: string[],
+  ruleIds?: string[],
+  options: CleanRulesOptions = {}
+): void {
   for (const pid of providers) {
     const provider = getProvider(pid);
-    if (!provider) continue;
+    if (!provider?.rules) continue;
 
-    if (provider.rules) {
-      const rulesDir = join(projectPath, provider.rules.dir);
-      if (!existsSync(rulesDir)) continue;
-      if (!isCapaOwnedInstallPath(projectPath, rulesDir)) continue;
+    const rulesDir = join(projectPath, provider.rules.dir);
+    if (!existsSync(rulesDir)) continue;
+    if (!isCapaOwnedInstallPath(projectPath, rulesDir)) continue;
 
-      const managedNames = new Set(
-        (ruleIds ?? [])
-          .filter((id) => isSafeCapabilityId(id))
-          .map((id) => `${id}${provider.rules!.extension}`)
-      );
-      const files = readdirSync(rulesDir)
-        .filter((f) => f.endsWith(provider.rules!.extension))
-        .filter((f) => managedNames.size === 0 ? false : managedNames.has(f));
-      for (const file of files) {
-        unlinkSync(join(rulesDir, file));
-      }
-      if (files.length > 0) {
-        taskLog(`  ✓ Removed ${files.length} rule file(s) from ${provider.rules.dir} (${provider.displayName})`);
-      }
+    const managedNames = new Set(
+      (ruleIds ?? [])
+        .filter((id) => isSafeCapabilityId(id))
+        .map((id) => `${id}${provider.rules!.extension}`)
+    );
+    const files = readdirSync(rulesDir)
+      .filter((f) => f.endsWith(provider.rules!.extension))
+      .filter((f) => managedNames.size === 0 ? false : managedNames.has(f));
+    for (const file of files) {
+      unlinkSync(join(rulesDir, file));
     }
-
-    if (provider.instructions) {
-      const filename = provider.instructions.filename;
-      let mdContent = readMd(projectPath, filename);
-      if (!mdContent) continue;
-
-      const ids = listMarkerIds(mdContent);
-      const ruleIds = ids.filter((id) => id.startsWith(RULE_MARKER_PREFIX));
-      if (ruleIds.length === 0) continue;
-
-      for (const id of ruleIds) {
-        mdContent = removeBlock(mdContent, id);
-      }
-      writeMd(projectPath, filename, mdContent);
-      taskLog(`  ✓ Removed ${ruleIds.length} rule marker(s) from ${filename} (${provider.displayName})`);
+    if (files.length > 0) {
+      taskLog(`  ✓ Removed ${files.length} rule file(s) from ${provider.rules.dir} (${provider.displayName})`);
     }
   }
+
+  const extra = (options.trackedInstructionTargets ?? [])
+    .map((abs) => projectRelativePath(projectPath, abs))
+    .filter((rel): rel is string => rel !== null);
+  if (options.rules && options.rules.length > 0) {
+    const plan = planRulePlacement({ rules: options.rules, readerProviders: providers });
+    extra.push(...plan.blocks.keys());
+  }
+
+  for (const relPath of instructionCandidates(providers, extra)) {
+    const filePath = join(projectPath, relPath);
+    if (!existsSync(filePath)) continue;
+    if (!isDefaultInstructionsFilename(relPath) && !isCapaOwnedInstallPath(projectPath, filePath)) {
+      continue;
+    }
+
+    let mdContent = readMd(projectPath, relPath);
+    const markerIds = listMarkerIds(mdContent).filter((id) => id.startsWith(RULE_MARKER_PREFIX));
+    if (markerIds.length === 0) continue;
+
+    for (const id of markerIds) {
+      mdContent = removeBlock(mdContent, id);
+    }
+    writeOrDeleteMd(projectPath, relPath, mdContent);
+    taskLog(`  ✓ Removed ${markerIds.length} rule marker(s) from ${relPath}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Instruction-target helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Files that may hold folded rule blocks: root instruction files of the given
+ * providers, every isolated filename in the registry (isolation may have been
+ * switched off since the last install), and extra project-relative paths.
+ */
+function instructionCandidates(providers: string[], extra: string[]): string[] {
+  const candidates = new Set<string>();
+  for (const pid of providers) {
+    const filename = getProvider(pid)?.instructions?.filename;
+    if (filename) candidates.add(filename);
+  }
+  for (const name of allIsolatedInstructionFilenames()) candidates.add(name);
+  for (const rel of extra) candidates.add(rel);
+  return [...candidates].sort();
+}
+
+/** True for a provider's default root instructions filename (e.g. `AGENTS.md`). */
+function isDefaultInstructionsFilename(relPath: string): boolean {
+  return getAllProviders().some((p) => p.instructions?.filename === relPath);
+}
+
+/** Project-relative POSIX path, or null when `absPath` is outside the project. */
+function projectRelativePath(projectPath: string, absPath: string): string | null {
+  const rel = relative(resolve(projectPath), resolve(absPath));
+  if (!rel || rel.startsWith('..') || isAbsolute(rel)) return null;
+  return rel.split(sep).join('/');
+}
+
+/**
+ * Write the updated file. A nested or isolated file left empty only ever held
+ * capa blocks, so it is deleted; root instruction files keep their existing
+ * lifecycle (removed by `cleanAgentsFile`).
+ */
+function writeOrDeleteMd(projectPath: string, relPath: string, content: string): void {
+  if (content.trim() === '' && !isDefaultInstructionsFilename(relPath)) {
+    unlinkSync(join(projectPath, relPath));
+    return;
+  }
+  writeMd(projectPath, relPath, content);
+}
+
+function skippedRuleIds(diagnostics: RuleDiagnostic[]): Set<string> {
+  return new Set(diagnostics.filter((d) => d.level === 'error').map((d) => d.ruleId));
+}
+
+function sortedEntries<V>(map: Map<string, V>): Array<[string, V]> {
+  return [...map.entries()].sort(([a], [b]) => a.localeCompare(b));
 }

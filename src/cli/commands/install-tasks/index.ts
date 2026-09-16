@@ -10,6 +10,7 @@ import { loadEnvTask } from './load-env';
 import { checkRemovedSkillsTask } from './check-removed-skills';
 import { installSkillsTask } from './install-skills';
 import { writeLockfileTask } from './write-lockfile';
+import { configureInstructionContextTask } from './configure-instruction-context';
 import { installAgentInstructionsTask } from './install-agent-instructions';
 import { pruneOrphanRulesTask } from './prune-orphan-rules';
 import { installRulesTask } from './install-rules';
@@ -41,6 +42,7 @@ export function buildInstallTasks(
     loadEnvTask(),
     checkRemovedSkillsTask(),
     installSkillsTask(),
+    configureInstructionContextTask(),
     writeLockfileTask(),
     installAgentInstructionsTask(),
     pruneOrphanRulesTask(),

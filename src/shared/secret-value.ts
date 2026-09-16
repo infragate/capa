@@ -228,6 +228,31 @@ export function hasUnresolvedMcpSecrets(def: MCPServerDefinition): boolean {
 	);
 }
 
+/**
+ * Server ids that cannot be credentialed right now: a secret source that fails
+ * to resolve, or a `${placeholder}` with no value for this project. Judged on
+ * the *resolved* def — a working `fromEnv`/`fromFile`/`fromCommand` source is
+ * not pending, so genuine validation failures still surface. Each def is
+ * inspected on its own, so plugin-contributed servers are covered too.
+ * Used at install time so those tools are pending rather than failed.
+ */
+export async function mcpServerIdsPendingCredentials(
+	servers: Array<{ id: string; def: MCPServerDefinition }>,
+	ctx: ResolveMcpServerDefContext,
+): Promise<string[]> {
+	const ids: string[] = [];
+	for (const server of servers) {
+		try {
+			const resolved = await resolveMcpServerDef(server.def, ctx);
+			if (hasUnresolvedMcpSecrets(resolved)) ids.push(server.id);
+		} catch (error) {
+			if (!(error instanceof SecretValueResolveError)) throw error;
+			ids.push(server.id);
+		}
+	}
+	return ids;
+}
+
 /** Normalize fingerprint maps that may still contain SecretValue objects. */
 export function secretValueMapForFingerprint(
 	record: Record<string, SecretValue> | undefined,

@@ -181,6 +181,43 @@ describe('lockfile', () => {
       expect(loaded!.plugins[0].manifestName).toBe('my-plugin');
     });
 
+    it('round-trips providerConfig ownership and omits it when empty', async () => {
+      const entry = {
+        provider: 'gemini-cli',
+        configPath: '.gemini/settings.json',
+        keyPath: ['context', 'fileName'],
+        values: ['GEMINI.md'],
+        createdKey: true,
+      };
+      const builder = new LockfileBuilder(null);
+      builder.setProviderConfig([entry]);
+      await saveLockfile(projectDir, builder.build(), 'yaml');
+
+      const loaded = await loadLockfile(projectDir);
+      expect(loaded!.providerConfig).toEqual([entry]);
+      expect(new LockfileBuilder(loaded).getProviderConfig()).toEqual([entry]);
+
+      const empty = new LockfileBuilder(null).build();
+      expect('providerConfig' in empty).toBe(false);
+      expect(serializeLockfile(empty, 'yaml')).not.toContain('providerConfig');
+    });
+
+    it('drops invalid providerConfig entries', async () => {
+      const warnSpy = spyOn(logger, 'warn').mockImplementation(() => {});
+      writeFileSync(
+        join(projectDir, LOCKFILE_NAME),
+        yaml.dump({
+          version: 1,
+          skills: [],
+          plugins: [],
+          providerConfig: [{ provider: 'gemini-cli', values: 'nope' }],
+        }),
+      );
+      const loaded = await loadLockfile(projectDir);
+      expect(loaded!.providerConfig).toBeUndefined();
+      warnSpy.mockRestore();
+    });
+
     it('throws on a malformed lockfile (wrong version)', async () => {
       writeFileSync(join(projectDir, LOCKFILE_NAME), 'version: 99\nskills: []\nplugins: []\n');
       await expect(loadLockfile(projectDir)).rejects.toThrow(/Unsupported lockfile version/);

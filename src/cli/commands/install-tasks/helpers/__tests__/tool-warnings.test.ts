@@ -115,3 +115,84 @@ describe('collectSubagentRefWarnings', () => {
     expect(collectSubagentRefWarnings(cap)).toEqual([]);
   });
 });
+
+describe('collectSubagentRefWarnings with server-exposed tools', () => {
+  const caps = (servers: any[], tools: any[], subagentTools: string[]): any => ({
+    providers: [],
+    options: {},
+    skills: [],
+    servers,
+    tools,
+    subagents: [{ id: 'oncall', skills: [], tools: subagentTools }],
+  });
+
+  const server = (extra: Record<string, unknown> = {}): any => ({
+    id: 'devtools',
+    type: 'mcp',
+    def: { url: 'https://x.test/mcp' },
+    ...extra,
+  });
+
+  it('does not warn for a tool the server exposes at configure time', () => {
+    // `devtools.list_alerts` is never in the file — it comes from the server's
+    // own tools/list — so it must not be reported as a typo.
+    expect(collectSubagentRefWarnings(caps([server()], [], ['@devtools.list_alerts']))).toEqual([]);
+    expect(collectSubagentRefWarnings(caps([server()], [], ['@devtools']))).toEqual([]);
+    expect(collectSubagentRefWarnings(caps([server()], [], ['devtools.*']))).toEqual([]);
+  });
+
+  it('still warns for a server that exposes nothing', () => {
+    expect(
+      collectSubagentRefWarnings(caps([server({ expose: 'none' })], [], ['@devtools.list_alerts'])),
+    ).toHaveLength(1);
+  });
+
+  it('still warns once the server has a declared tool (policy off)', () => {
+    // One `tools:` entry turns the whole policy off, so nothing else on that
+    // server can appear — an undeclared ref is a typo again.
+    const declared = {
+      id: 'alerts',
+      type: 'mcp',
+      def: { server: '@devtools', tool: 'list_alerts' },
+    };
+    expect(
+      collectSubagentRefWarnings(caps([server()], [declared], ['@devtools.rotate_credentials'])),
+    ).toHaveLength(1);
+    // The declared one still resolves normally.
+    expect(collectSubagentRefWarnings(caps([server()], [declared], ['@devtools.alerts']))).toEqual([]);
+  });
+
+  it('applies except / exactly before suppressing', () => {
+    const except = server({ expose: 'except', tools: ['rotate_credentials'] });
+    expect(
+      collectSubagentRefWarnings(caps([except], [], ['@devtools.rotate_credentials'])),
+    ).toHaveLength(1);
+    expect(collectSubagentRefWarnings(caps([except], [], ['@devtools.list_alerts']))).toEqual([]);
+
+    const exactly = server({ expose: 'exactly', tools: ['list_alerts'] });
+    expect(collectSubagentRefWarnings(caps([exactly], [], ['@devtools.list_alerts']))).toEqual([]);
+    expect(
+      collectSubagentRefWarnings(caps([exactly], [], ['@devtools.rotate_credentials'])),
+    ).toHaveLength(1);
+  });
+
+  it('handles a server id that contains dots', () => {
+    const dotted = server({ id: 'foo.bar' });
+    expect(collectSubagentRefWarnings(caps([dotted], [], ['@foo.bar']))).toEqual([]);
+    expect(collectSubagentRefWarnings(caps([dotted], [], ['foo.bar.*']))).toEqual([]);
+    expect(collectSubagentRefWarnings(caps([dotted], [], ['@foo.bar.list_alerts']))).toEqual([]);
+    expect(collectSubagentRefWarnings(caps([dotted], [], ['@foo.list_alerts']))).toHaveLength(1);
+  });
+
+  it('matches the sanitized id of a remote name under exactly', () => {
+    // A remote tool called `a.b` is synthesized as `a_b`, which is the name a
+    // sub-agent would reference.
+    const exactly = server({ expose: 'exactly', tools: ['a.b'] });
+    expect(collectSubagentRefWarnings(caps([exactly], [], ['@devtools.a_b']))).toEqual([]);
+  });
+
+  it('still warns for an unknown server or a plain typo', () => {
+    expect(collectSubagentRefWarnings(caps([server()], [], ['@nope.thing']))).toHaveLength(1);
+    expect(collectSubagentRefWarnings(caps([server()], [], ['typo_tool']))).toHaveLength(1);
+  });
+});

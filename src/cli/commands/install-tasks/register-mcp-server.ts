@@ -1,5 +1,6 @@
 import type { Task } from '../../ui';
 import { registerMCPServer, unregisterMCPServer } from '../../utils/mcp-client-manager';
+import { needsCapaMcpEntry } from '../../../shared/server-tool-exposure';
 import type { InstallCtx } from './context';
 
 export function registerMcpServerTask(): Task<InstallCtx> {
@@ -8,8 +9,6 @@ export function registerMcpServerTask(): Task<InstallCtx> {
     task: async (ctx, task) => {
       const providers = ctx.capabilitiesToUse.providers ?? ctx.resolvedProviders;
       const toolExposure = ctx.capabilitiesToUse.options?.toolExposure;
-      const hasTools = ctx.capabilitiesToUse.tools.length > 0;
-      const hasSubagents = (ctx.capabilitiesToUse.subagents ?? []).length > 0;
 
       // `toolExposure: 'none'` is an explicit opt-out from MCP wiring — the
       // agent is expected to discover/run tools via `capa sh` instead. We
@@ -21,7 +20,7 @@ export function registerMcpServerTask(): Task<InstallCtx> {
         return;
       }
 
-      if (hasTools || hasSubagents) {
+      if (needsCapaMcpEntry(ctx.capabilitiesToUse)) {
         await registerMCPServer(ctx.projectPath, ctx.projectId, ctx.mcpUrl, providers);
       } else {
         await unregisterMCPServer(ctx.projectPath, ctx.projectId, providers);

@@ -17,6 +17,7 @@ import type {
 } from "../types/capabilities";
 import { logger } from "./logger";
 import { normalizeOAuth2Block } from "./plugin-manifest/mcp-parser";
+import { getProvider } from "./providers";
 import { secretValueRecordSchema } from "./secret-value";
 
 const KNOWN_CAPABILITY_KEYS = new Set([
@@ -92,17 +93,55 @@ const mcpServerDefSchema = z
 		message: "MCP server def requires url or cmd",
 	});
 
+const exposePolicyFields = {
+	expose: z.enum(["all", "except", "exactly", "none"]).optional(),
+	tools: z.array(z.string()).optional(),
+};
+
+/**
+ * `tools` is the name list for `except` / `exactly` and means nothing without
+ * one — silently ignoring it, or reading a missing list as an empty denylist,
+ * exposes a different set than the author asked for. Plugin server entries get
+ * the same check: their policy is copied onto the resolved server verbatim.
+ */
+function refineExposePolicy(
+	server: { id?: string; expose?: string; tools?: string[] },
+	ctx: z.RefinementCtx,
+): void {
+	const label = server.id ? `server "${server.id}"` : "plugin server";
+	const names = server.tools ?? [];
+	if (server.expose === "except" || server.expose === "exactly") {
+		if (names.length === 0) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["tools"],
+				message: `${label}: expose: ${server.expose} needs a "tools" list of remote tool names`,
+			});
+		}
+		return;
+	}
+	if (names.length > 0) {
+		ctx.addIssue({
+			code: z.ZodIssueCode.custom,
+			path: ["tools"],
+			message: `${label}: "tools" only applies to expose: except | exactly`,
+		});
+	}
+}
+
 const mcpServerSchema = z
 	.object({
 		id: z.string(),
 		type: z.literal("mcp"),
 		def: mcpServerDefSchema,
+		...exposePolicyFields,
 		sourcePlugin: sourcePluginSchema.optional(),
 		sourcePluginServerKey: z.string().optional(),
 		displayName: z.string().optional(),
 		description: z.string().optional(),
 	})
-	.passthrough();
+	.passthrough()
+	.superRefine(refineExposePolicy);
 
 const toolFormatterSchema = z
 	.object({
@@ -193,7 +232,13 @@ const pluginSchema = z
 		servers: z
 			.record(
 				z.string(),
-				z.object({ as: z.string().optional() }).passthrough(),
+				z
+					.object({
+						as: z.string().optional(),
+						...exposePolicyFields,
+					})
+					.passthrough()
+					.superRefine(refineExposePolicy),
 			)
 			.optional(),
 	})
@@ -201,7 +246,9 @@ const pluginSchema = z
 
 const optionsSchema = z
 	.object({
-		toolExposure: z.enum(["expose-all", "on-demand", "none"]).optional(),
+		toolExposure: z
+			.enum(["expose-all", "on-demand", "search", "none"])
+			.optional(),
 		agentActivity: z.boolean().optional(),
 		security: z
 			.object({
@@ -226,11 +273,31 @@ const optionsSchema = z
 			)
 			.optional(),
 		onInstallError: z.enum(["warn", "stop"]).optional(),
+		rules: z
+			.object({ conflicts: z.enum(["warn", "error"]).optional() })
+			.passthrough()
+			.optional(),
 	})
 	.passthrough();
 
 /** Loose entries for sections Wave 2d will tighten (hooks) or lower priority. */
 const looseEntrySchema = z.record(z.string(), z.unknown());
+const providerIdSchema = z.string().min(1).transform((id, ctx) => {
+	const provider = getProvider(id);
+	if (!provider) {
+		ctx.addIssue({
+			code: "custom",
+			message: `Unknown provider: ${id}`,
+		});
+		return z.NEVER;
+	}
+	return provider.id;
+});
+const subAgentSchema = z
+	.object({
+		providers: z.array(providerIdSchema).optional(),
+	})
+	.passthrough();
 
 export const capabilitiesSchema = z
 	.object({
@@ -241,11 +308,39 @@ export const capabilitiesSchema = z
 		plugins: z.preprocess((val) => val ?? [], z.array(pluginSchema)),
 		options: z.preprocess((val) => val ?? {}, optionsSchema),
 		agents: z.record(z.string(), z.unknown()).optional(),
-		subagents: z.preprocess((val) => val ?? [], z.array(looseEntrySchema)),
+		subagents: z.preprocess((val) => val ?? [], z.array(subAgentSchema)),
 		rules: z.preprocess((val) => val ?? [], z.array(looseEntrySchema)),
 		hooks: z.preprocess((val) => val ?? [], z.array(looseEntrySchema)),
 	})
 	.passthrough();
+
+/**
+ * Fields whose value is arbitrary user data (`z.unknown()` in the schema): a
+ * tool's `defaults` map and an argument's `default`. A null in there is a value
+ * the tool is meant to receive, not an absent field, so the subtree is left
+ * exactly as authored.
+ */
+const ARBITRARY_VALUE_KEYS = new Set(["defaults", "default"]);
+
+/**
+ * Drop null-valued object keys so an explicit `null` reads as "not set".
+ * A bare `description:` in YAML and a `"description": null` written by an API
+ * client both land here; the schema only allows a string or absence, so without
+ * this either one fails the whole file.
+ */
+function stripNulls(value: unknown): unknown {
+	if (Array.isArray(value)) return value.map(stripNulls);
+	if (value === null || typeof value !== "object") return value;
+	const out: Record<string, unknown> = {};
+	for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+		if (ARBITRARY_VALUE_KEYS.has(key)) {
+			out[key] = val;
+			continue;
+		}
+		if (val !== null) out[key] = stripNulls(val);
+	}
+	return out;
+}
 
 export function normalizeCapabilities(parsed: unknown): Capabilities {
 	if (
@@ -257,7 +352,7 @@ export function normalizeCapabilities(parsed: unknown): Capabilities {
 		throw new Error("capabilities file is empty or not a YAML/JSON object");
 	}
 
-	const result = capabilitiesSchema.safeParse(parsed);
+	const result = capabilitiesSchema.safeParse(stripNulls(parsed));
 	if (!result.success) {
 		const detail = result.error.issues
 			.slice(0, 5)
@@ -450,6 +545,9 @@ export async function appendCapabilityEntry<S extends ArrayCapabilitySection>(
 	const doc = parseDocument(content);
 	const existing = doc.get(section);
 	if (isSeq(existing)) {
+		// `servers: []` parses as a flow sequence; appending to it would render
+		// the whole entry inline (`[ { id: … } ]`). Switch an empty one to block style.
+		if (existing.flow && existing.items.length === 0) existing.flow = false;
 		existing.add(doc.createNode(node));
 	} else {
 		doc.set(section, doc.createNode([node]));

@@ -53,6 +53,7 @@ export type ToolCallStatus = 'running' | 'ok' | 'error';
 /** Activity row kind — capa MCP tools plus provider-hook agent events. */
 export const TOOL_CALL_KINDS = [
   'setup_tools',
+  'search',
   'call_tool',
   'tool',
   'prompt',

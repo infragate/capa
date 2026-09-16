@@ -201,6 +201,28 @@ GET http://127.0.0.1:5912/api/projects/<project-id>/servers/<server-id>/tools
 
 The response is always `{"tools": [...]}`. Each tool has `name`, `description`, `inputSchema` (and sometimes `outputSchema`, `_meta` with FastMCP tags).
 
+**A server you leave alone already exposes its own tools.** A server entry with
+no `tools:` entries pointing at it defaults to `expose: all`, so its live tools
+are callable with no YAML per tool:
+
+```yaml
+servers:
+  - id: github
+    type: mcp
+    # expose: all is the default; narrow with except / exactly, or turn it off
+    # with none
+    expose: except
+    tools: [delete_repo]             # remote names
+    def: { url: https://example.com/mcp }
+```
+
+Those tools need no skill `requires:` entry. **Writing `tools:` entries for a
+server turns its policy off** — that list then *is* the server's tool list, the
+way capa has always worked. So curate `tools:` when the project needs a handful
+of named tools with friendly ids, `defaults`, or a `formatter`; leave the server
+alone when the agent should just have everything it offers. See
+`capabilities-manager` → `references/capabilities-schema.md`.
+
 **If the tools array is populated:** add relevant entries to the `tools:` section of `capabilities.yaml`. "Relevant" means: tools the project actually needs based on what the README/AGENTS.md says the project does. Don't dump every tool — a server with 37 tools probably only has 4–8 the project will use. Group related tools by setting a shared `group:` on command-style tools, or just let them sit at the top level for MCP tools. Use the FastMCP `_meta.fastmcp.tags` (when present) as a hint for grouping.
 
 Capa entry shape for an MCP tool:

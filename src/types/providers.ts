@@ -82,6 +82,42 @@ export interface WrapIntegration extends WrapLaunchConfig {
 export interface InstructionsIntegration {
   /** Filename relative to project root. */
   filename: string;
+  /**
+   * Provider-private instructions file (e.g. Gemini CLI's `GEMINI.md`). When
+   * another active provider reads the same `filename`, this provider is
+   * isolated onto `isolatedFilename` so rules and snippets meant for the
+   * other readers never reach it. The choice depends only on the active
+   * provider set, never on rule contents.
+   */
+  isolatedFilename?: string;
+  /**
+   * True when the provider also reads `<dir>/<filename>` in subdirectories,
+   * so directory-scoped rules (`appliesTo: ["dir/**"]`) can be written as
+   * nested instruction files instead of widening to the project root.
+   */
+  hierarchical?: boolean;
+  /**
+   * Provider setting that selects which instruction filenames are loaded
+   * (e.g. Gemini CLI `context.fileName` in `.gemini/settings.json`). capa
+   * merges the selected filename into it and records ownership in the
+   * lockfile so `capa clean` removes only what capa added.
+   */
+  contextConfig?: InstructionsContextConfig;
+}
+
+/** Location of a provider's instruction-filename setting. */
+export interface InstructionsContextConfig {
+  /** Config file relative to project root. */
+  configPath: string;
+  format: 'json';
+  /** Path of keys to the filename list (e.g. `['context', 'fileName']`). */
+  keyPath: string[];
+  /**
+   * Filenames the provider loads when the setting is absent (Gemini:
+   * `['GEMINI.md']`). capa keeps them when it creates the setting, so
+   * existing default files aren't dropped.
+   */
+  defaultValue: string[];
 }
 
 /**

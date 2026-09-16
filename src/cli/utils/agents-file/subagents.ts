@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync, unlinkSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import type { SubAgent, Capabilities } from '../../../types/capabilities';
 import { getProvider } from '../../../shared/providers';
@@ -124,6 +124,19 @@ function removeSubAgentFile(projectPath: string, providerId: string, agentId: st
   }
   if (existsSync(filePath)) {
     assertCapaOwnedInstallPath(projectPath, filePath);
+    const content = readFileSync(filePath, 'utf8');
+    // Generated adapters carry one of these provider-format-specific lines.
+    // Its absence means the same-name file may have been replaced by the user.
+    const signatures = [
+      `MCP server key: capa-${agentId}`,
+      `**MCP server key:** \`capa-${agentId}\``,
+    ];
+    if (!signatures.some((signature) => content.includes(signature))) {
+      taskLog(
+        `  - Preserved ${sa.dir}/${agentId}${sa.extension} (not recognizably Capa-owned)`,
+      );
+      return;
+    }
     unlinkSync(filePath);
     taskLog(`  ✓ Removed ${sa.dir}/${agentId}${sa.extension}`);
   }

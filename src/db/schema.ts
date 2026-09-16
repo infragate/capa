@@ -33,6 +33,20 @@ export function initSchema(db: Database): void {
       )
     `);
 
+	// Nested / isolated instruction files (e.g. `src/AGENTS.md`, `GEMINI.md`)
+	// that received capa rule blocks. Kept apart from `managed_files`: clean
+	// only strips capa markers from these, and never deletes user content.
+	db.run(`
+      CREATE TABLE IF NOT EXISTS managed_instruction_targets (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id TEXT NOT NULL,
+        file_path TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        FOREIGN KEY (project_id) REFERENCES projects(id),
+        UNIQUE(project_id, file_path)
+      )
+    `);
+
 	db.run(`
       CREATE TABLE IF NOT EXISTS tool_init_state (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -127,9 +141,28 @@ export function initSchema(db: Database): void {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         project_id TEXT NOT NULL,
         agent_id TEXT NOT NULL,
+        ownership_scoped INTEGER NOT NULL DEFAULT 0,
         created_at INTEGER NOT NULL,
         FOREIGN KEY (project_id) REFERENCES projects(id),
         UNIQUE(project_id, agent_id)
+      )
+    `);
+	ensureColumn(
+		db,
+		"sub_agents",
+		"ownership_scoped",
+		"INTEGER NOT NULL DEFAULT 0",
+	);
+
+	db.run(`
+      CREATE TABLE IF NOT EXISTS sub_agent_installations (
+        project_id TEXT NOT NULL,
+        agent_id TEXT NOT NULL,
+        install_path TEXT NOT NULL,
+        provider_ids TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (project_id, agent_id, install_path),
+        FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
       )
     `);
 

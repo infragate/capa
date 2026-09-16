@@ -13,9 +13,13 @@ Source-of-truth definition: [`src/shared/providers/registry.ts → codex`](../..
 | Skills | `.agents/skills/<id>/` | Universal `.agents/skills/` layout. |
 | MCP | `.codex/config.toml` → `mcp_servers.capa.url` | **TOML** map. Supports per-sub-agent entries. |
 | Instructions | `AGENTS.md` | — |
-| Rules | folded into `AGENTS.md` | No project-local rules directory; capa writes marker blocks into the instructions file. |
+| Rules | folded into `AGENTS.md` | No project-local rules directory; capa writes marker blocks into the instructions file. Directory `appliesTo` globs (`src/**`) go to nested `src/AGENTS.md`, which Codex loads when working at or below that directory. Other globs are folded at the root with an "Applies to" note and a scope conflict. |
 | Sub-agents | `.codex/agents/<id>.toml` | TOML format; body goes into the `developer_instructions` field. |
 | Hooks | `.codex/config.toml` → `[hooks]` | Matcher-grouped Claude-style layout (`[[hooks.<Event>]]` + nested `[[hooks.<Event>.hooks]]`), serialised as TOML. Capa appends an opaque `name = "capa:<hookId>"` field on entries it owns; Codex's TOML deserialiser ignores unknown fields, so the tag round-trips cleanly and capa uses it for surgical updates without disturbing user-authored entries. |
+
+With `options.toolExposure: none`, generated custom-agent TOML omits
+`mcp_servers` so Codex inherits normal parent configuration without an invalid
+empty server URL.
 | Plugin manifests | — | Not declared; Codex consumes plugins via the same Claude/Cursor manifest paths handled elsewhere. |
 
 ## Hooks event mapping

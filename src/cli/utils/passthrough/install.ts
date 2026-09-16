@@ -7,6 +7,8 @@ import { getRepoSnapshot } from '../../commands/install-tasks/helpers/repo-snaps
 import { installOneSkill } from '../../commands/install-tasks/helpers/install-one-skill';
 import { resolveRuleBody } from '../../commands/install-tasks/install-rules';
 import { installRules } from '../rules-installer';
+import { computeInstructionLayout, resolveRuleConflictMode } from '../rules-placement';
+import { applyInstructionContextConfig } from '../instruction-context-config';
 import { installHooks } from '../hooks';
 import { installSubAgentInstructions } from '../agents-file/index';
 import { resolvePlugins } from '../../commands/plugin-install';
@@ -15,6 +17,10 @@ import { expandSecretRecord, loadEnvFileOptional, openAuthDb } from './env';
 import type { MCPServer } from '../../../types/capabilities';
 import type { GetSnapshotResult } from '../../../shared/cache';
 import { getInstallErrorMode } from '../../commands/install-tasks/install-error-policy';
+import {
+  getSubAgentProviderWarnings,
+  resolveSubAgentProviders,
+} from '../../../shared/subagent-providers';
 
 export async function passthroughInstall(opts: {
   envFile?: string | boolean;
@@ -170,8 +176,43 @@ export async function passthroughInstall(opts: {
         }
       }
       if (bodies.size > 0) {
-        installRules(projectPath, rules.filter((r) => bodies.has(r.id)), providers, bodies);
-        added += bodies.size;
+        const result = installRules(
+          projectPath,
+          rules.filter((r) => bodies.has(r.id)),
+          providers,
+          bodies,
+          { conflicts: resolveRuleConflictMode(capabilities.options) },
+        );
+        warnings.push(...result.warnings, ...result.diagnostics.map((d) => d.message));
+        // Count rule outcomes once each, not once per diagnostic.
+        failed += result.skippedRuleIds.length;
+        added += result.installedRuleIds.length;
+        // Resolved but not applicable to any active provider.
+        skipped += bodies.size - result.installedRuleIds.length - result.skippedRuleIds.length;
+
+        // Point providers like Gemini CLI at their instructions file, but only
+        // when a rule block was actually written to it. Passthrough records no
+        // ownership, so an unneeded entry could never be cleaned up.
+        const layout = computeInstructionLayout(providers);
+        const writtenNames = new Set(
+          result.writtenInstructionFiles.map((rel) => rel.split('/').pop()!),
+        );
+        const onlyProviders = [...layout.contextConfig.keys()].filter((pid) =>
+          writtenNames.has(layout.providerFile.get(pid)!),
+        );
+        if (onlyProviders.length > 0) {
+          try {
+            const context = applyInstructionContextConfig(projectPath, providers, [], {
+              onlyProviders,
+            });
+            warnings.push(...context.warnings);
+          } catch (err) {
+            failed++;
+            warnings.push(
+              `Instruction file settings: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        }
       }
     }
 
@@ -204,8 +245,15 @@ export async function passthroughInstall(opts: {
     const subagents = capabilities.subagents ?? [];
     if (subagents.length > 0) {
       for (const agent of subagents) {
-        installSubAgentInstructions(projectPath, agent, capabilities, providers);
-        added++;
+        const targets = resolveSubAgentProviders(
+          agent,
+          providers,
+        );
+        const { supported } = targets;
+        warnings.push(...getSubAgentProviderWarnings(agent, targets));
+        installSubAgentInstructions(projectPath, agent, capabilities, supported);
+        if (supported.length > 0) added++;
+        else skipped++;
       }
     }
 
@@ -222,6 +270,12 @@ export async function passthroughInstall(opts: {
       const mcpResult = await upsertNativeMcpServer(projectPath, server.id, def, providers);
       warnings.push(...mcpResult.warnings);
       added += mcpResult.written.length;
+      if (server.expose === 'except' || server.expose === 'exactly') {
+        warnings.push(
+          `Server "${server.id}": expose: ${server.expose} is not applied in passthrough — ` +
+            'the provider gets every tool the server offers.',
+        );
+      }
       if (server.def.url) {
         warnings.push(
           `Server "${server.id}": complete OAuth/auth in your provider if required.`,

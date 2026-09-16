@@ -10,7 +10,8 @@ import {
   isCharacterSanitizationEnabled,
   reportBlockedPhraseAndExit,
 } from '../../../shared/skill-security';
-import { getProvider, getAllProviders } from '../../../shared/providers';
+import { getAllProviders } from '../../../shared/providers';
+import { allIsolatedInstructionFilenames, computeInstructionLayout } from '../rules-placement';
 import { fetchRepoFile, assertSafeRepoPath } from '../../../shared/repo-file';
 import { taskLog } from '../../ui';
 import {
@@ -41,24 +42,39 @@ const BASE_BLOCK_ID = '__base__';
  * Determine which agent instruction filenames to manage based on the active providers.
  * Each provider declares the instructions filename it reads (e.g. `AGENTS.md` for
  * most universal-spec providers, `CLAUDE.md` for Claude Code, `replit.md` for Replit).
+ * A provider with an `isolatedFilename` (Gemini CLI → `GEMINI.md`) reads that file
+ * instead whenever another active provider shares its default filename.
  *
- * Only filenames declared by an active provider are returned — capa never writes a
+ * Only filenames read by an active provider are returned — capa never writes a
  * file that no configured provider will read. When no providers are passed (e.g. a
  * fresh `capa clean` with no record of a previous install), we fall back to the
  * union across the entire registry so legacy artefacts can still be cleaned up.
  */
 export function getTargetFilenames(providers: string[]): string[] {
   const filenames = new Set<string>();
-  const list = providers.length > 0 ? providers.map(getProvider).filter(Boolean) : getAllProviders();
-  for (const p of list) {
-    if (p?.instructions) {
-      filenames.add(p.instructions.filename);
+  if (providers.length > 0) {
+    for (const filename of computeInstructionLayout(providers).files.keys()) {
+      filenames.add(filename);
     }
+  } else {
+    for (const p of getAllProviders()) {
+      if (p.instructions) filenames.add(p.instructions.filename);
+    }
+    for (const name of allIsolatedInstructionFilenames()) filenames.add(name);
   }
   if (filenames.size === 0) {
     filenames.add(UNIVERSAL_AGENTS_FILENAME);
   }
   return [...filenames];
+}
+
+/**
+ * Filenames capa may have written for the given providers under any layout:
+ * the current targets plus every isolated filename, which stops being a
+ * target when isolation switches off.
+ */
+function getCleanupFilenames(providers: string[]): string[] {
+  return [...new Set([...getTargetFilenames(providers), ...allIsolatedInstructionFilenames()])];
 }
 
 function applyConfigToFile(
@@ -104,13 +120,34 @@ function applyConfigToFile(
   return true;
 }
 
+/**
+ * Strip agent snippets from isolated files that are no longer targets (e.g.
+ * `GEMINI.md` after Gemini stops sharing `AGENTS.md`), deleting files left empty.
+ */
+function removeStaleIsolatedSnippets(projectPath: string, targetFiles: string[]): void {
+  const targets = new Set(targetFiles);
+  for (const filename of allIsolatedInstructionFilenames()) {
+    if (targets.has(filename)) continue;
+    const existing = readMdFile(projectPath, filename);
+    if (existing === '' || !fileHasManagedAgentInstructions(existing)) continue;
+    const cleaned = stripAgentInstructionSnippetsFromContent(existing);
+    if (cleaned.trim() === '') {
+      deleteMdFile(projectPath, filename);
+      taskLog(`  ✓ Removed ${filename} (no longer read by an active provider)`);
+    } else {
+      writeMdFile(projectPath, filename, cleaned + '\n');
+      taskLog(`  ✓ Cleared agent instruction snippets from ${filename}`);
+    }
+  }
+}
+
 /** Remove agent instruction blocks from target files (rules / sub-agent blocks stay). */
 export function cleanAgentInstructionSnippets(
   projectPath: string,
   providers: string[],
 ): number {
   let removed = 0;
-  for (const filename of getTargetFilenames(providers)) {
+  for (const filename of getCleanupFilenames(providers)) {
     const existing = readMdFile(projectPath, filename);
     if (existing === '') continue;
     if (!fileHasManagedAgentInstructions(existing)) continue;
@@ -335,6 +372,7 @@ export async function installAgentsFile(
 
   const hasBase = !!config.base;
   const forceMaterialize = ctx.forceMaterialize === true;
+  const isolatedNames = new Set(allIsolatedInstructionFilenames());
   let updatedAny = false;
   for (const filename of targetFiles) {
     if (
@@ -348,8 +386,14 @@ export async function installAgentsFile(
     ) {
       updatedAny = true;
       taskLog(`  ✓ ${filename} updated`);
+    } else if (isolatedNames.has(filename)) {
+      taskLog(
+        `  ⚠ Skipped ${filename}: it has user content without capa markers, so its readers ` +
+          'will not receive agent instructions. Add a capa marker or move the content.',
+      );
     }
   }
+  removeStaleIsolatedSnippets(projectPath, targetFiles);
   if (!updatedAny && !ctx.quiet) {
     taskLog(
       '  · Skipped agent instruction files (existing user-owned content, no capa markers)',
@@ -362,7 +406,7 @@ export async function installAgentsFile(
  * Deletes a file entirely if it becomes empty after cleaning.
  */
 export function cleanAgentsFile(projectPath: string, providers: string[]): void {
-  const targetFiles = getTargetFilenames(providers);
+  const targetFiles = getCleanupFilenames(providers);
 
   for (const filename of targetFiles) {
     const content = readMdFile(projectPath, filename);

@@ -10,6 +10,10 @@ import { expandSecretRecord, emptyCapabilities } from './env';
 import { installRules } from '../rules-installer';
 import { installHooks } from '../hooks';
 import { installSubAgentInstructions } from '../agents-file/index';
+import {
+  getSubAgentProviderWarnings,
+  resolveSubAgentProviders,
+} from '../../../shared/subagent-providers';
 import type { CapaDatabase } from '../../../db/database';
 import type { Plugin } from '../../../types/capabilities';
 
@@ -132,8 +136,14 @@ export async function passthroughInstallPlugin(opts: {
 
   const pluginSubagents = (merged.subagents ?? []).filter((a) => a.sourcePlugin);
   for (const agent of pluginSubagents) {
-    installSubAgentInstructions(projectPath, agent, merged, unpackProviders);
-    written.push(`subagent:${agent.id}`);
+    const targets = resolveSubAgentProviders(
+      agent,
+      unpackProviders,
+    );
+    const { supported } = targets;
+    warnings.push(...getSubAgentProviderWarnings(agent, targets));
+    installSubAgentInstructions(projectPath, agent, merged, supported);
+    if (supported.length > 0) written.push(`subagent:${agent.id}`);
   }
 
   console.log(`✓ Passthrough: installed plugin "${plugin.id}"`);

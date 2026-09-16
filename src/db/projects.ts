@@ -46,11 +46,18 @@ export class ProjectsRepo {
 		const tx = this.db.transaction((id: string) => {
 			this.db.run("DELETE FROM variables WHERE project_id = ?", [id]);
 			this.db.run("DELETE FROM managed_files WHERE project_id = ?", [id]);
+			this.db.run(
+				"DELETE FROM managed_instruction_targets WHERE project_id = ?",
+				[id],
+			);
 			this.db.run("DELETE FROM tool_init_state WHERE project_id = ?", [id]);
 			this.db.run("DELETE FROM sessions WHERE project_id = ?", [id]);
 			this.db.run("DELETE FROM oauth_tokens WHERE project_id = ?", [id]);
 			this.db.run("DELETE FROM oauth_flow_state WHERE project_id = ?", [id]);
 			this.db.run("DELETE FROM project_capabilities WHERE project_id = ?", [
+				id,
+			]);
+			this.db.run("DELETE FROM sub_agent_installations WHERE project_id = ?", [
 				id,
 			]);
 			this.db.run("DELETE FROM sub_agents WHERE project_id = ?", [id]);

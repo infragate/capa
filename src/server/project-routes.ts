@@ -226,6 +226,8 @@ export async function handleGetProject(
 								sourcePlugin: s.sourcePlugin || null,
 								displayName: s.displayName || null,
 								description: s.description || null,
+								expose: s.expose ?? null,
+								exposeTools: s.tools ?? null,
 								requiresOAuth,
 								isConnected,
 								enabled,
@@ -236,6 +238,7 @@ export async function handleGetProject(
 						subagents: (capabilities.subagents || []).map((sa) => ({
 							id: sa.id,
 							description: sa.description || null,
+							providers: sa.providers || [],
 							skills: sa.skills,
 							tools: sa.tools,
 							instructions: sa.instructions || null,

@@ -80,6 +80,7 @@ export function configureToolsTask(): Task<InstallCtx> {
       }
 
       const result = ctx.configureResult as {
+        exposeWarnings?: string[];
         toolValidation?: Array<{
           toolId: string;
           success: boolean;
@@ -89,6 +90,12 @@ export function configureToolsTask(): Task<InstallCtx> {
           error?: string;
         }>;
       };
+
+      // Servers with an `expose` policy: a typo'd tool name or an empty
+      // tool list is a warning, not a failed install.
+      for (const warning of result.exposeWarnings ?? []) {
+        ctx.warnings.push(warning);
+      }
 
       if (result.toolValidation && result.toolValidation.length > 0) {
         const successful = result.toolValidation.filter((t) => t.success && !t.pendingAuth);
@@ -106,7 +113,7 @@ export function configureToolsTask(): Task<InstallCtx> {
           }
           const suffix =
             pendingServers.size > 0 ? ` (${[...pendingServers].sort().join(', ')})` : '';
-          breakdown.push(`⏳ ${pendingAuth.length} pending OAuth2${suffix}`);
+          breakdown.push(`⏳ ${pendingAuth.length} pending credentials${suffix}`);
         }
         if (failed.length > 0) {
           breakdown.push(`✗ ${failed.length} failed`);
@@ -136,7 +143,7 @@ export function configureToolsTask(): Task<InstallCtx> {
           }
           task.title = `Configuring tools — ${failed.length} of ${result.toolValidation.length} tool(s) failed validation`;
         } else if (pendingAuth.length > 0 && pendingAuth.length < result.toolValidation.length) {
-          task.title = `Configuring tools — ${successful.length} validated, ${pendingAuth.length} pending OAuth2`;
+          task.title = `Configuring tools — ${successful.length} validated, ${pendingAuth.length} pending credentials`;
         } else if (pendingAuth.length === 0) {
           task.title = `Configuring tools — ${result.toolValidation.length} validated`;
         }
@@ -144,11 +151,12 @@ export function configureToolsTask(): Task<InstallCtx> {
 
       // The "tool is not required by any skill" check is meaningless under
       // `toolExposure: 'none'` — capa never exposes any tools to MCP clients
-      // in that mode by design (the agent invokes them via `capa sh`), so
-      // `requires` lists don't gate anything. Suppress the warning to avoid
-      // noise that would push users to "fix" a non-issue.
+      // in that mode by design (the agent invokes them via `capa sh`) — and
+      // under `'search'`, where the agent finds tools by keyword and `requires`
+      // gates nothing either. Suppress the warning to avoid noise that would
+      // push users to "fix" a non-issue.
       const toolExposure = ctx.capabilitiesToUse.options?.toolExposure;
-      if (toolExposure !== 'none') {
+      if (toolExposure !== 'none' && toolExposure !== 'search') {
         const unexposed = getUnexposedToolIds(ctx.capabilitiesToUse);
         if (unexposed.length > 0) {
           ctx.warnings.push(

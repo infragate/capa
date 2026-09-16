@@ -1,6 +1,8 @@
 import type { AgentSnippetDef } from './capabilities';
 import type { SourcePlugin } from './plugin';
 
+export type RulePlacementPolicy = 'strict' | 'best-effort';
+
 /**
  * A rule to install across providers.
  *
@@ -22,6 +24,19 @@ export interface Rule {
   description?: string;
   /** When true, the rule is always loaded regardless of file context (Cursor `alwaysApply`). */
   alwaysApply?: boolean;
+  /**
+   * `strict` (default): report a conflict when a shared instructions file
+   * would expose this rule to a provider excluded by `providers`.
+   * `best-effort`: accept that other readers of the shared file see it.
+   */
+  visibility?: RulePlacementPolicy;
+  /**
+   * `strict` (default): report a conflict when `appliesTo` can't be
+   * represented natively for a provider that folds rules into its
+   * instructions file. `best-effort`: fold at the root with an
+   * "Applies to" preamble.
+   */
+  scope?: RulePlacementPolicy;
   /** Literal content (required when type is 'inline'). */
   content?: string;
   /** Raw URL to fetch content from (required when type is 'remote'). */
