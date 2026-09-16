@@ -236,6 +236,8 @@ export interface InstallRulesResult {
   writtenInstructionFiles: string[];
   /** Rules not installed because of error-level placement conflicts (unique ids). */
   skippedRuleIds: string[];
+  /** Rules written to at least one provider file (unique ids). */
+  installedRuleIds: string[];
 }
 
 /**
@@ -269,6 +271,7 @@ export function installRules(
   // rules directories included.
   const skipped = skippedRuleIds(plan.diagnostics);
   const writtenInstructionFiles: string[] = [];
+  const installedRuleIds = new Set<string>();
 
   for (const pid of providers) {
     const provider = getProvider(pid);
@@ -328,6 +331,7 @@ export function installRules(
       );
       assertCapaOwnedInstallPath(projectPath, filePath);
       writeFileSync(filePath, fileContent, 'utf-8');
+      installedRuleIds.add(rule.id);
       if (!options.quiet) {
         taskLog(`  ✓ ${provider.rules.dir}/${rule.id}${provider.rules.extension} written (${provider.displayName})`);
       }
@@ -368,6 +372,7 @@ export function installRules(
     }
     writeMd(projectPath, relPath, mdContent);
     writtenInstructionFiles.push(relPath);
+    for (const block of blocks) installedRuleIds.add(block.ruleId);
     if (!isDefaultInstructionsFilename(relPath)) {
       options.onInstructionTargetWritten?.(filePath);
     }
@@ -384,6 +389,7 @@ export function installRules(
     warnings,
     writtenInstructionFiles,
     skippedRuleIds: [...skipped],
+    installedRuleIds: [...installedRuleIds],
   };
 }
 

@@ -186,7 +186,9 @@ export async function passthroughInstall(opts: {
         warnings.push(...result.warnings, ...result.diagnostics.map((d) => d.message));
         // Count rule outcomes once each, not once per diagnostic.
         failed += result.skippedRuleIds.length;
-        added += bodies.size - result.skippedRuleIds.length;
+        added += result.installedRuleIds.length;
+        // Resolved but not applicable to any active provider.
+        skipped += bodies.size - result.installedRuleIds.length - result.skippedRuleIds.length;
 
         // Point providers like Gemini CLI at their instructions file, but only
         // when a rule block was actually written to it. Passthrough records no
