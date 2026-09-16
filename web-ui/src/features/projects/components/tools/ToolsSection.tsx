@@ -30,6 +30,7 @@ import {
   authoredTools,
   computeServerExposure,
   skillRequiresApplies,
+  toolsForTokenSavings,
 } from '../../../../lib/serverExposure';
 
 function serverToolsFetchEnabled(server: Server): boolean {
@@ -69,10 +70,6 @@ export function ToolsSection({
   // The Tools panel, links and skill wiring are about authored `tools:` entries;
   // tools a server exposes through its policy are shown on the server card.
   const tools = useMemo(() => authoredTools(allTools), [allTools]);
-  const serverExposure = useMemo(
-    () => computeServerExposure(servers, allTools),
-    [servers, allTools],
-  );
   const showSkillRequires = skillRequiresApplies(toolExposure);
   const containerRef = useRef<HTMLDivElement>(null);
   const [expandedServers, setExpandedServers] = useState<Set<string>>(new Set());
@@ -167,6 +164,14 @@ export function ToolsSection({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed by serverToolsDataKey
   }, [servers, serverToolsDataKey]);
 
+  const serverExposure = useMemo(() => {
+    const liveToolNames: Record<string, string[]> = {};
+    for (const [serverId, list] of Object.entries(serverToolsMap)) {
+      liveToolNames[serverId] = list.map((tool) => tool.name);
+    }
+    return computeServerExposure(servers, allTools, liveToolNames);
+  }, [servers, allTools, serverToolsMap]);
+
   const serverToolSchemaCache = useMemo(() => {
     const cache: Record<string, Record<string, ToolSchema>> = {};
     for (const [serverId, list] of Object.entries(serverToolsMap)) {
@@ -258,9 +263,9 @@ export function ToolsSection({
     });
   const tokenSavings = useMemo(() => {
     if (servers.length === 0) return null;
-    // Count every tool agents can reach, including policy-exposed ones.
-    return computeTokenSavings(allTools as EnrichedTool[], serverToolsMap, servers.length);
-  }, [allTools, servers, serverToolsMap, serverToolsDataKey]);
+    const counted = toolsForTokenSavings(toolExposure, allTools);
+    return computeTokenSavings(counted as EnrichedTool[], serverToolsMap, servers.length);
+  }, [allTools, toolExposure, servers, serverToolsMap, serverToolsDataKey]);
 
   return (
     <div
