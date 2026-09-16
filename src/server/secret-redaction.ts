@@ -105,7 +105,11 @@ export function mergeServerDef(
 	const prev = existing ?? {};
 	const merged: Record<string, unknown> = { ...prev, ...incoming };
 
-	if (incoming.env !== undefined) {
+	// `null` is an explicit clear. Checked before the merges below, which would
+	// otherwise read it as an empty patch and restore the previous secrets.
+	if (incoming.env === null) {
+		delete merged.env;
+	} else if (incoming.env !== undefined) {
 		const prevEnv = asSecretValueMap(prev.env);
 		const nextEnv = asSecretValueMap(incoming.env);
 		const env: Record<string, SecretValue> = {};
@@ -116,7 +120,9 @@ export function mergeServerDef(
 		merged.env = env;
 	}
 
-	if (incoming.headers !== undefined) {
+	if (incoming.headers === null) {
+		delete merged.headers;
+	} else if (incoming.headers !== undefined) {
 		const prevHeaders = asSecretValueMap(prev.headers);
 		const nextHeaders = asSecretValueMap(incoming.headers);
 		const headers: Record<string, SecretValue> = { ...nextHeaders };

@@ -103,6 +103,38 @@ export function newlyOwnedProviderConfig(
   return added;
 }
 
+/**
+ * Undo an apply whose ownership record couldn't be saved: remove values added
+ * since `before` and put back values released since `before`.
+ */
+export function revertInstructionContextConfig(
+  projectPath: string,
+  before: LockProviderConfigEntry[],
+  after: LockProviderConfigEntry[],
+): { warnings: string[] } {
+  const warnings = removeInstructionContextConfig(
+    projectPath,
+    newlyOwnedProviderConfig(before, after),
+  ).warnings;
+  for (const entry of newlyOwnedProviderConfig(after, before)) {
+    const config = getProvider(entry.provider)?.instructions?.contextConfig;
+    const filePath = join(projectPath, entry.configPath);
+    const data = isCapaOwnedInstallPath(projectPath, filePath) ? readJsonFile(filePath) : null;
+    const current = data ? readSetting(data, entry.keyPath) : null;
+    if (!data || !current || current.kind === 'invalid') {
+      warnings.push(`Could not restore ${entry.configPath} ${entry.keyPath.join('.')}.`);
+      continue;
+    }
+    const values =
+      current.kind === 'missing' ? [...(config?.defaultValue ?? [])] : [...current.values];
+    const missing = entry.values.filter((v) => !values.includes(v));
+    if (missing.length === 0) continue;
+    writeSetting(data, entry.keyPath, [...values, ...missing]);
+    writeJsonFile(filePath, data);
+  }
+  return { warnings };
+}
+
 // ---------------------------------------------------------------------------
 
 function applyEntry(

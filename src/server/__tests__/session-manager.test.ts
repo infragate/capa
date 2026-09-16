@@ -114,6 +114,17 @@ describe('SessionManager', () => {
       expect(tools).toEqual(['github.search']);
     });
 
+    it('activates a whole server whose expose is omitted (defaults to all)', () => {
+      const defaults = {
+        ...exposed,
+        servers: [{ id: 'github', type: 'mcp', def: { url: 'https://x.test/mcp' } }],
+      } as Capabilities;
+      sessionManager.setProjectCapabilities('test-proj', defaults);
+      const session = sessionManager.createSession('test-proj');
+      const tools = sessionManager.setupTools(session.sessionId, ['@github']);
+      expect(tools.sort()).toEqual(['github.create_issue', 'github.search']);
+    });
+
     it('still rejects an unknown skill id', () => {
       const session = sessionManager.createSession('test-proj');
       expect(() => sessionManager.setupTools(session.sessionId, ['nope'])).toThrow(

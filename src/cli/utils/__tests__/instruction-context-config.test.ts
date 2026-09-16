@@ -6,6 +6,7 @@ import {
   applyInstructionContextConfig,
   newlyOwnedProviderConfig,
   removeInstructionContextConfig,
+  revertInstructionContextConfig,
 } from '../instruction-context-config';
 
 describe('instruction context config (Gemini context.fileName)', () => {
@@ -136,6 +137,19 @@ describe('instruction context config (Gemini context.fileName)', () => {
     const fresh = applyInstructionContextConfig(projectPath, ['gemini-cli'], []).owned;
     removeInstructionContextConfig(projectPath, newlyOwnedProviderConfig([], fresh));
     expect(readSettings()).toEqual({});
+  });
+
+  it('revert restores values released by a layout switch', () => {
+    writeSettings({ context: { fileName: ['NOTES.md'] } });
+    const shared = applyInstructionContextConfig(projectPath, ['gemini-cli'], []).owned;
+    expect(readSettings().context.fileName).toEqual(['NOTES.md', 'AGENTS.md']);
+
+    // Switch to isolated (AGENTS.md released, GEMINI.md added), then the lockfile save fails.
+    const isolated = applyInstructionContextConfig(projectPath, ['codex', 'gemini-cli'], shared).owned;
+    expect(readSettings().context.fileName).toEqual(['NOTES.md', 'GEMINI.md']);
+
+    revertInstructionContextConfig(projectPath, shared, isolated);
+    expect(readSettings().context.fileName).toEqual(['NOTES.md', 'AGENTS.md']);
   });
 
   it('skips a setting with an unexpected shape', () => {
