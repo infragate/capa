@@ -142,6 +142,27 @@ describe('SessionManager', () => {
       expect(sessionManager.getProjectCapabilities('test-proj')?.tools).toEqual([]);
     });
 
+    it('filters synthesized tools recovered from the database by the stored policies', () => {
+      // A merged record persisted before the policy was narrowed to exactly [search].
+      db.setProjectCapabilities(
+        'test-proj',
+        JSON.stringify({
+          ...exposed,
+          servers: [
+            { id: 'github', type: 'mcp', expose: 'exactly', tools: ['search'], def: { url: 'https://x.test/mcp' } },
+          ],
+        }),
+      );
+      const restarted = new SessionManager(db);
+      try {
+        expect(
+          restarted.getProjectCapabilities('test-proj')?.tools.map((t) => t.id).sort(),
+        ).toEqual(['search']);
+      } finally {
+        restarted.dispose();
+      }
+    });
+
     it('clears policy tools when the policy is gone', () => {
       sessionManager.setExposedTools('test-proj', []);
       expect(sessionManager.getProjectCapabilities('test-proj')?.tools).toEqual([]);
