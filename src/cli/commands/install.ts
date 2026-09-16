@@ -17,6 +17,7 @@ import { refuseIfWrapWorkspace } from '../utils/wrap/marker';
 import { isUnderWrapWorkspacesDir } from '../../shared/workspaces/paths';
 import { confirmInstallExecution } from './install-confirm';
 import { getInstallErrorMode } from './install-tasks/install-error-policy';
+import { needsCapaMcpEntry } from '../../shared/server-tool-exposure';
 
 export type { InstallOptions, GetRepoSnapshotFn } from './install-tasks';
 
@@ -299,11 +300,7 @@ async function installCommandBody(opts: {
     for (const e of ctx.errors) error(e);
     for (const w of ctx.warnings) warn(w);
     // Match register-mcp-server: only surface the endpoint when MCP wiring is active.
-    const toolExposure = ctx.capabilitiesToUse.options?.toolExposure;
-    const mcpRegistered =
-      toolExposure !== 'none' &&
-      (ctx.capabilitiesToUse.tools.length > 0 ||
-        (ctx.capabilitiesToUse.subagents ?? []).length > 0);
+    const mcpRegistered = needsCapaMcpEntry(ctx.capabilitiesToUse);
     if (mcpRegistered) {
       info(`MCP Endpoint: ${ctx.mcpUrl}`);
     }
