@@ -26,6 +26,12 @@ import { ServersPanel } from './ServersPanel';
 import { ConfiguredToolsPanel } from './ConfiguredToolsPanel';
 import { ServerDialog } from './ServerDialog';
 import { CommandToolDialog } from './CommandToolDialog';
+import {
+  authoredTools,
+  computeServerExposure,
+  skillRequiresApplies,
+  upfrontToolSchemas,
+} from '../../../../lib/serverExposure';
 
 function serverToolsFetchEnabled(server: Server): boolean {
   return !!server.enabled && !(server.requiresOAuth && !server.isConnected);
@@ -34,8 +40,11 @@ function serverToolsFetchEnabled(server: Server): boolean {
 interface ToolsSectionProps {
   projectId: string;
   skills: Skill[];
+  /** Authored tools plus tools synthesized from server expose policies. */
   tools: Tool[];
   servers: Server[];
+  /** `options.toolExposure` (null when omitted). */
+  toolExposure: string | null;
   search: string;
   addServerOpen: boolean;
   addCommandToolOpen: boolean;
@@ -47,8 +56,9 @@ interface ToolsSectionProps {
 export function ToolsSection({
   projectId,
   skills,
-  tools,
+  tools: allTools,
   servers,
+  toolExposure,
   search,
   addServerOpen,
   addCommandToolOpen,
@@ -57,6 +67,10 @@ export function ToolsSection({
   onEditServerOpenChange,
 }: ToolsSectionProps) {
   const { t } = useTranslation('projects');
+  // The Tools panel, links and skill wiring are about authored `tools:` entries;
+  // tools a server exposes through its policy are shown on the server card.
+  const tools = useMemo(() => authoredTools(allTools), [allTools]);
+  const showSkillRequires = skillRequiresApplies(toolExposure);
   const containerRef = useRef<HTMLDivElement>(null);
   const [expandedServers, setExpandedServers] = useState<Set<string>>(new Set());
   const [focusedAnchor, setFocusedAnchor] = useState<string | null>(null);
@@ -150,6 +164,14 @@ export function ToolsSection({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed by serverToolsDataKey
   }, [servers, serverToolsDataKey]);
 
+  const serverExposure = useMemo(() => {
+    const liveToolNames: Record<string, string[]> = {};
+    for (const [serverId, list] of Object.entries(serverToolsMap)) {
+      liveToolNames[serverId] = list.map((tool) => tool.name);
+    }
+    return computeServerExposure(servers, allTools, liveToolNames);
+  }, [servers, allTools, serverToolsMap]);
+
   const serverToolSchemaCache = useMemo(() => {
     const cache: Record<string, Record<string, ToolSchema>> = {};
     for (const [serverId, list] of Object.entries(serverToolsMap)) {
@@ -227,7 +249,7 @@ export function ToolsSection({
     return null;
   }, [focusedAnchor, tools]);
 
-  const existingToolIds = useMemo(() => new Set(tools.map((t) => t.id)), [tools]);
+  const existingToolIds = useMemo(() => new Set(allTools.map((t) => t.id)), [allTools]);
 
   // Only block the bar on the very first load (no cached tool lists yet).
   // Server toggles refetch one server at a time — keep showing last stats.
@@ -241,8 +263,13 @@ export function ToolsSection({
     });
   const tokenSavings = useMemo(() => {
     if (servers.length === 0) return null;
-    return computeTokenSavings(tools as EnrichedTool[], serverToolsMap, servers.length);
-  }, [tools, servers, serverToolsMap, serverToolsDataKey]);
+    const upfront = upfrontToolSchemas(toolExposure, allTools, skills);
+    return computeTokenSavings(
+      { metaTools: upfront.metaTools, tools: upfront.tools as EnrichedTool[] },
+      serverToolsMap,
+      servers.length,
+    );
+  }, [allTools, skills, toolExposure, servers, serverToolsMap, serverToolsDataKey]);
 
   return (
     <div
@@ -272,6 +299,7 @@ export function ToolsSection({
           servers={servers}
           search={search}
           serverToolsMap={serverToolsMap}
+          serverExposure={serverExposure}
           configuredMcpKeys={configuredMcpKeys}
           expandedServers={expandedServers}
           onToggleServer={toggleServer}
@@ -296,6 +324,7 @@ export function ToolsSection({
           tools={tools as EnrichedTool[]}
           skills={skills}
           search={search}
+          showSkillRequires={showSkillRequires}
           toolRequiredByMap={toolRequiredByMap}
           serverToolSchemaCache={serverToolSchemaCache}
           focusedAnchor={focusedAnchor}

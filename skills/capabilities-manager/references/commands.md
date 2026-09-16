@@ -12,7 +12,7 @@
 capa init [--format json|yaml]
 ```
 
-Creates a new capabilities file with default configuration (includes the `capabilities-manager` and `bootstrap` skills, `options.toolExposure: on-demand`). Defaults to YAML format if not specified.
+Creates a new capabilities file with default configuration (includes the `capabilities-manager` and `bootstrap` skills, `options.toolExposure: search`). Defaults to YAML format if not specified.
 
 Also **registers the project** with the local CAPA server so it appears in the Web UI (`http://localhost:5912`). The server is started if it isn't already running.
 

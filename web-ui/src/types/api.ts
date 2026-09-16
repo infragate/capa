@@ -46,6 +46,11 @@ export interface Tool {
   commandArgs?: CommandArg[];
   /** Optional group name for command-type tools. */
   group?: string;
+  /**
+   * True for tools capa derived from a server's `expose` policy. They are not
+   * part of the `tools:` section; the server card shows them instead.
+   */
+  fromServerExpose?: boolean;
 }
 
 export interface SkillContentResponse {
@@ -108,8 +113,11 @@ export interface Server {
   /** Whether the user has turned this MCP server on in the UI. */
   enabled: boolean;
   description?: string | null;
-  /** Which remote tools become capa tools: all | except | exactly (null = explicit `tools:` only). */
-  expose?: 'all' | 'except' | 'exactly' | null;
+  /**
+   * Which remote tools become capa tools. `null` (omitted) means `all`. Ignored
+   * while the `tools:` section declares entries for this server.
+   */
+  expose?: 'all' | 'except' | 'exactly' | 'none' | null;
   /** Remote tool names for except / exactly. */
   exposeTools?: string[] | null;
 }

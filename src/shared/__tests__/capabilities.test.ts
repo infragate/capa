@@ -341,9 +341,9 @@ describe('capabilities', () => {
       expect(capabilities.tools.length).toBe(0);
     });
 
-    it('should set toolExposure to on-demand', () => {
+    it('should set toolExposure to search', () => {
       const capabilities = createDefaultCapabilities();
-      expect(capabilities.options?.toolExposure).toBe('on-demand');
+      expect(capabilities.options?.toolExposure).toBe('search');
     });
   });
 

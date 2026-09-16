@@ -4,6 +4,7 @@ import { logger } from "../shared/logger";
 import {
 	effectiveExpose,
 	exposedToolNamesForServer,
+	synthesizedToolsAllowedByPolicy,
 } from "../shared/server-tool-exposure";
 import type { Capabilities, Tool } from "../types/capabilities";
 import {
@@ -350,9 +351,24 @@ export class SessionManager {
 		capabilities: Capabilities,
 	): Capabilities {
 		const incoming = capabilities.tools.filter((t) => t.fromServerExpose);
-		if (incoming.length > 0) this.exposedTools.set(projectId, incoming);
-		const exposed = this.exposedTools.get(projectId) ?? [];
-		if (exposed.length === 0 && incoming.length === 0) return capabilities;
+		let exposed: Tool[];
+		if (incoming.length > 0) {
+			// Incoming tools may be a fresh configure result or a merged list
+			// recovered from the database after a restart; either way, only keep
+			// what the accompanying capabilities' policies allow.
+			exposed = synthesizedToolsAllowedByPolicy(capabilities, incoming);
+			this.exposedTools.set(projectId, exposed);
+		} else {
+			// A re-read of the capabilities file carries no synthesized tools.
+			// Keep the last snapshot, minus tools the current policies no longer
+			// allow, so narrowing a server's expose policy applies immediately.
+			const cached = this.exposedTools.get(projectId) ?? [];
+			exposed = synthesizedToolsAllowedByPolicy(capabilities, cached);
+			if (exposed.length !== cached.length) this.exposedTools.set(projectId, exposed);
+		}
+		if (exposed.length === 0 && incoming.length === 0) {
+			return { ...capabilities, tools: capabilities.tools.filter((t) => !t.fromServerExpose) };
+		}
 		return {
 			...capabilities,
 			tools: [
