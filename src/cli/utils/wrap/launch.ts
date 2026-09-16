@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import type { WrapLaunchConfig } from '../../../types/providers';
+import { resolveCliSpawn } from './cli-spawn';
 
 export interface LaunchResult {
   /** Exit code for CLI providers after they exit. */
@@ -109,15 +110,16 @@ export async function launchProvider(
   const restoreSigint = ignoreParentSigint();
 
   try {
-    // Windows CLI shims are often `.cmd`/`.ps1` (e.g. Cursor's `agent`).
-    // spawnSync without a shell only resolves real executables, so enable
-    // shell on win32 — same pattern as native plugin install.
-    const result = spawnSync(wrap.binary, [...wrapArgs, ...args], {
+    // Windows CLI shims are often `.cmd` (e.g. Cursor's `agent`) and need a
+    // shell; real executables must not go through one, or arguments with
+    // spaces get split. See resolveCliSpawn.
+    const spawn = resolveCliSpawn(wrap.binary, [...wrapArgs, ...args]);
+    const result = spawnSync(spawn.command, spawn.args, {
       cwd: workspacePath,
       env: process.env,
       stdio: 'inherit',
       windowsHide: false,
-      shell: process.platform === 'win32',
+      shell: spawn.shell,
     });
 
     if (result.error) {

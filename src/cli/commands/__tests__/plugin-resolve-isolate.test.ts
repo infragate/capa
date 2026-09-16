@@ -272,6 +272,41 @@ describe('resolvePlugins isolates per-plugin failures', () => {
     expect(built.plugins.some((p) => p.id === 'fail-late')).toBe(false);
   });
 
+  it('keeps a stable copy it did not publish when the plugin fails, and releases the lock', async () => {
+    // A copy from the same source already exists (e.g. written by the server).
+    const existing = join(pluginsBase, 'fail-late');
+    writeMinimalClaudePlugin(existing, 'fail-late');
+    writeFileSync(join(existing, '.capa-plugin-stamp'), `github:owner/fail-late@${'a'.repeat(40)}:`);
+
+    const lockBuilder = new LockfileBuilder(null);
+    lockBuilder.upsertPlugin = () => {
+      throw new Error('simulated late lock failure');
+    };
+    const caps: Capabilities = {
+      providers: ['claude-code'],
+      skills: [],
+      servers: [],
+      tools: [],
+      plugins: [{ id: 'fail-late', type: 'github', def: { repo: 'owner/fail-late' } }],
+    };
+
+    const result = await resolvePlugins(
+      caps,
+      projectPath,
+      'proj-isolate',
+      (async () => new Response()) as never,
+      db,
+      async () => ({ snapshotDir: goodSnapshot, resolvedSha: 'a'.repeat(40), resolvedVersion: null }),
+      join(projectPath, 'capabilities.yaml'),
+      lockBuilder,
+      { materializeProjectSkills: false, pluginsBaseDir: pluginsBase, trackManaged: false },
+    );
+
+    expect(result.warnings.some((w) => w.includes('simulated late lock failure'))).toBe(true);
+    expect(existsSync(join(existing, 'skills', 'hello-skill', 'SKILL.md'))).toBe(true);
+    expect(existsSync(join(pluginsBase, '.fail-late.lock'))).toBe(false);
+  });
+
   it('returns warnings when every declared plugin fails (caller may treat as fatal)', async () => {
     const caps: Capabilities = {
       providers: ['claude-code'],

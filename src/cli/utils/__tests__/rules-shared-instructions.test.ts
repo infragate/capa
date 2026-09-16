@@ -139,6 +139,14 @@ describe('rules in shared instruction files', () => {
     expect(result.diagnostics.filter((d) => d.ruleId === 'codex-only').length).toBe(2);
     expect(result.skippedRuleIds).toEqual(['codex-only']);
     expect(result.writtenInstructionFiles).toEqual(['GEMINI.md']);
+    expect(result.installedRuleIds).toEqual(['gemini-only']);
+  });
+
+  it('does not count a rule for inactive providers as installed', () => {
+    const rules: Rule[] = [{ id: 'cursor-only', type: 'inline', providers: ['cursor'], content: 'C' }];
+    const result = installRules(projectPath, rules, ['codex'], new Map([['cursor-only', 'C']]));
+    expect(result.installedRuleIds).toEqual([]);
+    expect(result.skippedRuleIds).toEqual([]);
   });
 
   it('skips an error-conflict rule for native rules directories too', () => {
