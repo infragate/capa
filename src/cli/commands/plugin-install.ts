@@ -1,4 +1,14 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync, cpSync } from 'fs';
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+  cpSync,
+} from 'fs';
 import { join, resolve } from 'path';
 import type { Capabilities, Skill, MCPServer, SourcePlugin, ResolvedPluginInfo, OAuth2Config, SubAgent } from '../../types/capabilities';
 import type { UnifiedPluginManifest } from '../../types/plugin';
@@ -62,6 +72,69 @@ function copyPluginToStable(tempDir: string, pluginStablePath: string): void {
     cpSync(tempDir, pluginStablePath, { recursive: true });
   } catch {
     copySkillTree({ src: tempDir, dst: pluginStablePath });
+  }
+}
+
+/** Records which source a stable plugin copy was made from. */
+export const PLUGIN_STAMP_FILE = '.capa-plugin-stamp';
+
+/** Transient sibling dirs used while swapping a plugin copy (`<id>.staging-…`, `<id>.old-…`). */
+const PLUGIN_SWAP_DIR = /\.(staging|old)-\d+-\d+$/;
+
+/** Leftover swap dirs older than this are treated as crashed and removed. */
+const STALE_SWAP_DIR_MS = 60 * 60 * 1000;
+
+/**
+ * Materialize `manifestRoot` at `pluginStablePath` without exposing a
+ * half-written tree. The capa server and the CLI both resolve plugins into the
+ * same directory (e.g. a background re-resolve while `capa install` copies
+ * plugin skills from it), so:
+ *
+ *  - A copy already made from the same source (`stamp`) is left untouched.
+ *  - Otherwise the new tree is copied to a staging sibling and renamed into
+ *    place, so readers see either the old or the new tree, never a partial one.
+ */
+export function ensureStablePluginCopy(
+  manifestRoot: string,
+  pluginStablePath: string,
+  stamp: string,
+): void {
+  const stampPath = join(pluginStablePath, PLUGIN_STAMP_FILE);
+  try {
+    if (readFileSync(stampPath, 'utf-8') === stamp) return;
+  } catch {
+    // no stamp yet — (re)copy below
+  }
+
+  const unique = `${process.pid}-${Date.now()}`;
+  const staging = `${pluginStablePath}.staging-${unique}`;
+  copyPluginToStable(manifestRoot, staging);
+  writeFileSync(join(staging, PLUGIN_STAMP_FILE), stamp, 'utf-8');
+
+  const old = `${pluginStablePath}.old-${unique}`;
+  try {
+    if (existsSync(pluginStablePath)) renameSync(pluginStablePath, old);
+    renameSync(staging, pluginStablePath);
+  } catch (err) {
+    // Another process swapped in a copy first. Keep it if it is the same source.
+    let current: string | null = null;
+    try {
+      current = readFileSync(stampPath, 'utf-8');
+    } catch {
+      // missing
+    }
+    rmSync(staging, { recursive: true, force: true });
+    if (current !== stamp) throw err;
+  } finally {
+    if (existsSync(old)) rmSync(old, { recursive: true, force: true });
+  }
+}
+
+function isActiveSwapDir(dir: string): boolean {
+  try {
+    return Date.now() - statSync(dir).mtimeMs < STALE_SWAP_DIR_MS;
+  } catch {
+    return false;
   }
 }
 
@@ -397,8 +470,11 @@ export async function resolvePlugins(
 
     const pluginStablePath = resolve(join(pluginsBase, pluginInstallId));
     try {
-      if (existsSync(pluginStablePath)) rmSync(pluginStablePath, { recursive: true, force: true });
-      copyPluginToStable(manifestRoot, pluginStablePath);
+      ensureStablePluginCopy(
+        manifestRoot,
+        pluginStablePath,
+        `${platform}:${repoPath}@${snapshot.resolvedSha}:${resolvedSubpath || ''}`,
+      );
     } catch (err: any) {
       throw new Error(
         `Failed to copy plugin ${pluginInstallId} to ${pluginStablePath}: ${err.message}`
@@ -765,8 +841,10 @@ export async function resolvePlugins(
     const dirs = readdirSync(pluginsDirFull, { withFileTypes: true });
     for (const d of dirs) {
       if (!d.isDirectory()) continue;
+      const toRemove = join(pluginsDirFull, d.name);
+      // Another process may be mid-swap; only sweep swap dirs it abandoned.
+      if (PLUGIN_SWAP_DIR.test(d.name) && isActiveSwapDir(toRemove)) continue;
       if (!currentPluginIds.has(d.name)) {
-        const toRemove = join(pluginsDirFull, d.name);
         try {
           rmSync(toRemove, { recursive: true, force: true });
         } catch (err) {
