@@ -126,6 +126,21 @@ describe('rules in shared instruction files', () => {
     expect(exists('AGENTS.md')).toBe(false);
   });
 
+  it('reports written instruction files and unique skipped rules', () => {
+    const rules: Rule[] = [
+      { id: 'codex-only', type: 'inline', providers: ['codex'], appliesTo: ['**/*.py'], content: 'C' },
+      { id: 'gemini-only', type: 'inline', providers: ['gemini-cli'], content: 'G' },
+    ];
+    const bodies = new Map(rules.map((r) => [r.id, r.content!]));
+    const result = installRules(projectPath, rules, ['codex', 'gemini-cli', 'cursor'], bodies, {
+      conflicts: 'error',
+    });
+    // codex-only has two error diagnostics (scope + visibility) but is one skipped rule.
+    expect(result.diagnostics.filter((d) => d.ruleId === 'codex-only').length).toBe(2);
+    expect(result.skippedRuleIds).toEqual(['codex-only']);
+    expect(result.writtenInstructionFiles).toEqual(['GEMINI.md']);
+  });
+
   it('skips an error-conflict rule for native rules directories too', () => {
     const rule: Rule = { id: 'py', type: 'inline', appliesTo: ['**/*.py'], content: 'Py.' };
     const bodies = new Map([['py', 'Py.']]);
