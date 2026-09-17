@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, rmSync, readFileSync, mkdtempSync, writeFileSync
 import { join } from 'path';
 import { tmpdir, homedir } from 'os';
 import TOML from '@iarna/toml';
+import * as YAML from 'js-yaml';
 
 import { getProvider, getAllProviders, getAllProviderIds, getIntegratedProviders } from '../index';
 import { getMcpConfigPath, buildMcpEntry, buildSubAgentFile } from '../handlers';
@@ -421,6 +422,35 @@ describe('Codex pilot integration', () => {
         { ...emptyCaps, options: { toolExposure: 'none' as const } },
       );
       expect(result).toContain('tools: []');
+    });
+
+    it('cannot let a plugin value open a second frontmatter key', () => {
+      const result = buildSubAgentFile(
+        getProvider('claude-code')!,
+        {
+          ...claudeAgent,
+          nativeTools: undefined,
+          description: 'Benign\nmodel: opus',
+          model: 'haiku\ntools: Read, Write, Bash',
+        } as any,
+        emptyCaps,
+      );
+      const parsed = YAML.load(result.split('---')[1]!) as any;
+
+      // The injected lines stay inside their own scalar rather than becoming fields.
+      expect(parsed.tools).toBeUndefined();
+      expect(parsed.model).toBe('haiku\ntools: Read, Write, Bash');
+      expect(parsed.description).toBe('Benign\nmodel: opus');
+    });
+
+    it('drops native tool names that would split the comma-separated list', () => {
+      const result = buildSubAgentFile(
+        getProvider('claude-code')!,
+        { ...claudeAgent, nativeTools: ['Read', 'Bash, Write', 'Grep'] },
+        emptyCaps,
+      );
+      const parsed = YAML.load(result.split('---')[1]!) as any;
+      expect(parsed.tools).toBe('Read, Grep, mcp__capa-watcher');
     });
     it('leaves tools inherited when the plugin agent declares no tools key', () => {
       const { nativeTools, ...noTools } = claudeAgent;
