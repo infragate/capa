@@ -32,7 +32,10 @@ jobs:
         run: bun run build:web
       
       - name: Run tests
-        run: bun test --timeout 20000
+        # Windows runners are several times slower than local: suites that finish
+        # in 1-5s locally have been measured at 20-44s here, so this needs real
+        # headroom rather than a value just above the last failure.
+        run: bun test --timeout 60000
         if: matrix.os == 'windows-latest'
 
       - name: Run tests
