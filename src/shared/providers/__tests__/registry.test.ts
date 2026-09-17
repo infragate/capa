@@ -360,6 +360,59 @@ describe('Codex pilot integration', () => {
     );
   });
 
+
+  describe('native sub-agent frontmatter', () => {
+    const claudeAgent = {
+      id: 'watcher',
+      description: 'Watches CI',
+      skills: [],
+      tools: [],
+      nativeTools: ['Read', 'Grep', 'Bash'],
+      model: 'haiku',
+      sourcePlugin: { id: 'megalinter-1', name: 'megalinter', provider: 'claude' as const },
+    };
+    const emptyCaps = { providers: [], skills: [], servers: [], tools: [] };
+
+    it('writes the plugin tool allow-list and model into the matching provider', () => {
+      const result = buildSubAgentFile(getProvider('claude-code')!, claudeAgent, emptyCaps);
+      expect(result).toContain('model: haiku');
+      expect(result).not.toContain('model: inherit');
+      expect(result).toContain('tools: Read, Grep, Bash, mcp__capa-watcher');
+    });
+
+    it('keeps the agent reachable on its own MCP endpoint, which an allow-list would exclude', () => {
+      const result = buildSubAgentFile(getProvider('claude-code')!, claudeAgent, {
+        ...emptyCaps,
+        options: { toolExposure: 'none' as const },
+      });
+      // No endpoint is registered under `none`, so nothing to re-allow.
+      expect(result).toContain('tools: Read, Grep, Bash\n');
+    });
+
+    it('does not carry Claude vocabulary into another provider', () => {
+      const result = buildSubAgentFile(getProvider('cursor')!, claudeAgent, emptyCaps);
+      expect(result).toContain('model: inherit');
+      expect(result).not.toContain('haiku');
+      expect(result).not.toContain('tools:');
+    });
+
+    it('trusts values authored in the capabilities file, which have no source provider', () => {
+      const { sourcePlugin, ...authored } = claudeAgent;
+      const result = buildSubAgentFile(getProvider('claude-code')!, authored, emptyCaps);
+      expect(result).toContain('model: haiku');
+      expect(result).toContain('tools: Read, Grep, Bash, mcp__capa-watcher');
+    });
+
+    it('leaves tools inherited when the plugin agent declares none', () => {
+      const result = buildSubAgentFile(
+        getProvider('claude-code')!,
+        { ...claudeAgent, nativeTools: [] },
+        emptyCaps,
+      );
+      expect(result).not.toContain('tools:');
+      expect(result).toContain('model: haiku');
+    });
+  });
   it('omits Codex MCP declarations when tool exposure is disabled', () => {
     const codex = getProvider('codex')!;
     const result = buildSubAgentFile(

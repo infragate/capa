@@ -295,6 +295,19 @@ export interface SubagentsIntegration {
   /** For TOML format: the key name used for the body text (e.g. 'developer_instructions'). */
   bodyField?: string;
   /**
+   * Frontmatter key holding a provider-native tool allow-list, for providers
+   * whose agent format has one. Set only when the provider documents it —
+   * an allow-list capa invents would silently narrow the agent's tools.
+   *
+   * `mcpPattern` ({id} → sub-agent id) is appended to the list so the agent
+   * keeps reaching its own `capa-{id}` MCP endpoint, which an allow-list
+   * would otherwise exclude.
+   */
+  nativeTools?: {
+    key: string;
+    mcpPattern: string;
+  };
+  /**
    * Per-sub-agent re-allow rule, paired with `mcp.subAgentScopeFence`.
    * When set, capa emits a nested `<key>: { <pattern>: <value> }` block in
    * each sub-agent's frontmatter so the agent can reach its own MCP tools

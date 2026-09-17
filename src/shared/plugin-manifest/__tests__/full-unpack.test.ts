@@ -51,7 +51,7 @@ describe("plugin full unpack parsers", () => {
 			mkdirSync(join(root, "agents"), { recursive: true });
 			writeFileSync(
 				join(root, "agents", "reviewer.md"),
-				"---\nname: reviewer\ndescription: Reviews code\nmodel: sonnet\nskills: hello\n---\n\nBe thorough.\n",
+				"---\nname: reviewer\ndescription: Reviews code\nmodel: sonnet\ntools: Read, Grep\ncolor: blue\nskills: hello\n---\n\nBe thorough.\n",
 			);
 		}
 		if (opts.hooks) {
@@ -100,7 +100,9 @@ describe("plugin full unpack parsers", () => {
 		expect(agent.description).toBe("Reviews code");
 		expect(agent.instructions).toContain("Be thorough");
 		expect(agent.skillIds).toEqual(["hello"]);
-		expect(agent.droppedFrontmatterKeys).toContain("model");
+		expect(agent.model).toBe("sonnet");
+		expect(agent.nativeTools).toEqual(["Read", "Grep"]);
+		expect(agent.droppedFrontmatterKeys).toEqual(["color"]);
 		expect(manifest.hookEntries).toHaveLength(1);
 		const hook = manifest.hookEntries![0]!;
 		expect(hook.event).toBe("PreToolUse");

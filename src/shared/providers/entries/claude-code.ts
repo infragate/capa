@@ -31,6 +31,9 @@ export const claudeCode: ProviderIntegration = {
 		extension: ".md",
 		format: "markdown-frontmatter",
 		fields: { model: "inherit" },
+		// `tools:` is an allow-list; omitting it inherits everything.
+		// Docs: https://code.claude.com/docs/en/sub-agents
+		nativeTools: { key: "tools", mcpPattern: "mcp__capa-{id}" },
 	},
 	pluginManifestPaths: [".claude-plugin/plugin.json"],
 	pluginProviderId: "claude",

@@ -10,7 +10,13 @@ import { collectFiles, resolveComponentPaths } from "./path-field";
 import { safePluginEntryId } from "./safe-id";
 
 /** Frontmatter keys we map into capa SubAgent fields. */
-const MAPPED_KEYS = new Set(["name", "description", "skills"]);
+const MAPPED_KEYS = new Set([
+	"name",
+	"description",
+	"skills",
+	"tools",
+	"model",
+]);
 
 /**
  * Parse agent markdown files from default `agents/` or manifest `agents` paths.
@@ -63,6 +69,10 @@ export function parseAgentEntries(
 			description: asOptionalString(fm.description),
 			instructions: body,
 			skillIds,
+			// Agent `tools:` are the provider's own tool names (`Read`, `Bash`),
+			// a different namespace from capa tool ids — see SubAgent.nativeTools.
+			nativeTools: asStringArray(fm.tools),
+			model: asOptionalString(fm.model),
 			droppedFrontmatterKeys,
 		});
 	}
