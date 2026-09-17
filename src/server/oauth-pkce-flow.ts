@@ -128,6 +128,10 @@ export async function generateAuthorizationUrl(
 		}
 	}
 
+	if (oauth2Config.resourceServer) {
+		authUrl.searchParams.set("resource", oauth2Config.resourceServer);
+	}
+
 	log.info(`Generated authorization URL for ${serverId}`);
 	return { url: authUrl.toString(), state };
 }
@@ -211,6 +215,10 @@ export async function handleCallback(
 			client_id: client_id,
 			code_verifier: code_verifier,
 		};
+
+		if (oauth2Config.resourceServer) {
+			tokenParams.resource = oauth2Config.resourceServer;
+		}
 
 		if (clientSecret) {
 			tokenParams.client_secret = clientSecret;

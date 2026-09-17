@@ -217,37 +217,53 @@ export async function detectOAuth2Requirement(
 			if (resourceMetadataMatch) {
 				resourceMetadataUrl = resourceMetadataMatch[1];
 				log.debug(`Resource metadata URL: ${resourceMetadataUrl}`);
-			} else {
-				log.debug(
-					"No resource_metadata in WWW-Authenticate, trying standard location",
+				resourceMetadata = await fetchProtectedResourceMetadata(
+					resourceMetadataUrl,
+					tlsSkipVerify,
 				);
-				resourceMetadataUrl = `${baseUrl}/.well-known/oauth-protected-resource`;
-				log.debug(`Trying: ${resourceMetadataUrl}`);
 			}
-
-			resourceMetadata = await fetchProtectedResourceMetadata(
-				resourceMetadataUrl,
-				tlsSkipVerify,
-			);
-
-			log.debug(`Trying direct OAuth discovery at: ${baseUrl}`);
-			authMetadata = await fetchAuthServerMetadata(baseUrl, tlsSkipVerify, log);
-
-			if (!authMetadata) {
-				log.debug("Direct discovery failed, trying RFC 9728...");
-				if (
-					resourceMetadata &&
-					resourceMetadata.authorization_servers &&
-					resourceMetadata.authorization_servers.length > 0
-				) {
-					const authServerUrl = resourceMetadata.authorization_servers[0];
-					log.debug(`Authorization server: ${authServerUrl}`);
-					authMetadata = await fetchAuthServerMetadata(
-						authServerUrl,
+			if (!resourceMetadata) {
+				// Path-aware PRM first (RFC 9728 + MCP SDK), then origin root.
+				const path = serverUrlObj.pathname.replace(/\/$/, "");
+				if (path && path !== "/") {
+					resourceMetadataUrl = `${baseUrl}/.well-known/oauth-protected-resource${path}`;
+					log.debug(`Trying path-aware PRM: ${resourceMetadataUrl}`);
+					resourceMetadata = await fetchProtectedResourceMetadata(
+						resourceMetadataUrl,
 						tlsSkipVerify,
-						log,
 					);
 				}
+				if (!resourceMetadata) {
+					resourceMetadataUrl = `${baseUrl}/.well-known/oauth-protected-resource`;
+					log.debug(`Trying origin PRM: ${resourceMetadataUrl}`);
+					resourceMetadata = await fetchProtectedResourceMetadata(
+						resourceMetadataUrl,
+						tlsSkipVerify,
+					);
+				}
+			}
+
+			// Prefer RFC 9728 authorization_servers over origin AS metadata.
+			// Gateways often publish a local AS that is not the resource's Identity AS.
+			if (
+				resourceMetadata?.authorization_servers &&
+				resourceMetadata.authorization_servers.length > 0
+			) {
+				const authServerUrl = resourceMetadata.authorization_servers[0];
+				log.debug(`Authorization server from PRM: ${authServerUrl}`);
+				authMetadata = await fetchAuthServerMetadata(
+					authServerUrl,
+					tlsSkipVerify,
+					log,
+				);
+			}
+			if (!authMetadata) {
+				log.debug(`Trying direct OAuth discovery at: ${baseUrl}`);
+				authMetadata = await fetchAuthServerMetadata(
+					baseUrl,
+					tlsSkipVerify,
+					log,
+				);
 			}
 		} else {
 			log.debug(
@@ -287,7 +303,7 @@ export async function detectOAuth2Requirement(
 		const config: OAuth2Config = {
 			authorizationEndpoint: authMetadata.authorization_endpoint,
 			tokenEndpoint: authMetadata.token_endpoint,
-			resourceServer: serverUrl,
+			resourceServer: resourceMetadata?.resource || serverUrl,
 			registrationEndpoint: authMetadata.registration_endpoint,
 			...(scope ? { scope } : {}),
 		};
