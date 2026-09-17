@@ -125,8 +125,9 @@ describe("handleOAuth2Start", () => {
 		expect(authUrl.searchParams.get("resource")).toBe(
 			"https://mcp-gateway.example.test/v2/mcp",
 		);
-		// The gateway-issued client id cannot be replayed at the identity server.
-		expect(authUrl.searchParams.get("client_id")).toBe("identity-issued-client");
+		// The configured client id is the plugin's application identity, not one
+		// dynamic registration issued, so moving auth server does not discard it.
+		expect(authUrl.searchParams.get("client_id")).toBe("gateway-issued-client");
 
 		const saved = capabilities.servers[0]?.def.oauth2;
 		expect(saved?.authorizationEndpoint).toBe(
