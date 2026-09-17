@@ -360,6 +360,75 @@ describe('Codex pilot integration', () => {
     );
   });
 
+
+  describe('native sub-agent frontmatter', () => {
+    const claudeAgent = {
+      id: 'watcher',
+      description: 'Watches CI',
+      skills: [],
+      tools: [],
+      nativeTools: ['Read', 'Grep', 'Bash'],
+      model: 'haiku',
+      sourcePlugin: { id: 'megalinter-1', name: 'megalinter', provider: 'claude' as const },
+    };
+    const emptyCaps = { providers: [], skills: [], servers: [], tools: [] };
+
+    it('writes the plugin tool allow-list and model into the matching provider', () => {
+      const result = buildSubAgentFile(getProvider('claude-code')!, claudeAgent, emptyCaps);
+      expect(result).toContain('model: haiku');
+      expect(result).not.toContain('model: inherit');
+      expect(result).toContain('tools: Read, Grep, Bash, mcp__capa-watcher');
+    });
+
+    it('keeps the agent reachable on its own MCP endpoint, which an allow-list would exclude', () => {
+      const result = buildSubAgentFile(getProvider('claude-code')!, claudeAgent, {
+        ...emptyCaps,
+        options: { toolExposure: 'none' as const },
+      });
+      // No endpoint is registered under `none`, so nothing to re-allow.
+      expect(result).toContain('tools: Read, Grep, Bash\n');
+    });
+
+    it('does not carry Claude vocabulary into another provider', () => {
+      const result = buildSubAgentFile(getProvider('cursor')!, claudeAgent, emptyCaps);
+      expect(result).toContain('model: inherit');
+      expect(result).not.toContain('haiku');
+      expect(result).not.toContain('tools:');
+    });
+
+    it('trusts values authored in the capabilities file, which have no source provider', () => {
+      const { sourcePlugin, ...authored } = claudeAgent;
+      const result = buildSubAgentFile(getProvider('claude-code')!, authored, emptyCaps);
+      expect(result).toContain('model: haiku');
+      expect(result).toContain('tools: Read, Grep, Bash, mcp__capa-watcher');
+    });
+
+
+    it('keeps an explicitly empty allow-list a restriction, not an inherit', () => {
+      const result = buildSubAgentFile(
+        getProvider('claude-code')!,
+        { ...claudeAgent, nativeTools: [] },
+        emptyCaps,
+      );
+      // Only its own capa endpoint — not every native tool.
+      expect(result).toContain('tools: mcp__capa-watcher');
+    });
+
+    it('writes an empty YAML list when there is no endpoint to fall back on', () => {
+      const result = buildSubAgentFile(
+        getProvider('claude-code')!,
+        { ...claudeAgent, nativeTools: [] },
+        { ...emptyCaps, options: { toolExposure: 'none' as const } },
+      );
+      expect(result).toContain('tools: []');
+    });
+    it('leaves tools inherited when the plugin agent declares no tools key', () => {
+      const { nativeTools, ...noTools } = claudeAgent;
+      const result = buildSubAgentFile(getProvider('claude-code')!, noTools, emptyCaps);
+      expect(result).not.toContain('tools:');
+      expect(result).toContain('model: haiku');
+    });
+  });
   it('omits Codex MCP declarations when tool exposure is disabled', () => {
     const codex = getProvider('codex')!;
     const result = buildSubAgentFile(

@@ -9,7 +9,6 @@ import type {
 	McpIntegration,
 	ProviderIntegration,
 	RulesIntegration,
-	SubagentsIntegration,
 } from "../../types/providers";
 import type { Rule } from "../../types/rules";
 import { slugify } from "../slug";
@@ -89,8 +88,7 @@ export function buildSubAgentFile(
 
 	if (sa.format === "markdown-frontmatter") {
 		return buildMarkdownSubAgent(
-			sa.fields ?? {},
-			sa.perAgentToolScope,
+			provider,
 			subAgent,
 			capabilities,
 			mcpServerKey,
@@ -229,14 +227,32 @@ function buildPlainBody(
 	return lines.join("\n");
 }
 
+/**
+ * `nativeTools` and `model` are written in one provider's vocabulary — Claude
+ * aliases like `haiku`, Cursor ids like `composer-2` — so they only travel to
+ * the provider they came from. Values authored directly in the capabilities
+ * file carry no origin, so the author's choice is taken at face value.
+ */
+function acceptsNativeFields(
+	provider: ProviderIntegration,
+	subAgent: SubAgent,
+): boolean {
+	const origin = subAgent.sourcePlugin?.provider;
+	if (!origin) return true;
+	return provider.pluginProviderId === origin;
+}
+
 function buildMarkdownSubAgent(
-	fields: Record<string, string | boolean | number>,
-	perAgentToolScope: SubagentsIntegration["perAgentToolScope"] | undefined,
+	provider: ProviderIntegration,
 	subAgent: SubAgent,
 	capabilities: Capabilities,
 	mcpServerKey: string,
 	skillDescriptions: Map<string, string>,
 ): string {
+	const sa = provider.subagents!;
+	const fields = sa.fields ?? {};
+	const perAgentToolScope = sa.perAgentToolScope;
+	const nativeOk = acceptsNativeFields(provider, subAgent);
 	const body = buildMarkdownBody(
 		subAgent,
 		capabilities,
@@ -252,7 +268,22 @@ function buildMarkdownSubAgent(
 	];
 
 	for (const [key, value] of Object.entries(fields)) {
-		fmLines.push(`${key}: ${value}`);
+		const override = key === "model" && nativeOk && subAgent.model;
+		fmLines.push(`${key}: ${override ? subAgent.model : value}`);
+	}
+
+	// An absent list means "inherit the provider's tools"; an empty one is an
+	// explicit restriction, so it still has to be written out.
+	if (sa.nativeTools && nativeOk && subAgent.nativeTools) {
+		const allowed = [...subAgent.nativeTools];
+		// An allow-list excludes everything unlisted, including the agent's own
+		// filtered endpoint — but there is no endpoint to re-allow under `none`.
+		if (capabilities.options?.toolExposure !== "none") {
+			allowed.push(sa.nativeTools.mcpPattern.replace("{id}", subAgent.id));
+		}
+		fmLines.push(
+			`${sa.nativeTools.key}: ${allowed.length > 0 ? allowed.join(", ") : "[]"}`,
+		);
 	}
 
 	if (perAgentToolScope) {

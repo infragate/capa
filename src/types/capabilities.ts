@@ -270,6 +270,20 @@ export interface SubAgent {
    */
   tools: string[];
   /**
+   * Provider-native tool names this agent may use (e.g. `Read`, `Bash`), in the
+   * target provider's own vocabulary — not capa tool ids, which live in `tools`.
+   * Written into the agent file as an allow-list where the provider supports
+   * one; capa appends the agent's own `capa-{id}` MCP server so the filtered
+   * endpoint stays reachable. Omitted means "inherit whatever the provider gives".
+   */
+  nativeTools?: string[];
+  /**
+   * Model this agent should run on, in the target provider's vocabulary
+   * (`haiku`/`sonnet`/`inherit` for Claude Code, `composer-2` for Cursor).
+   * Overrides the provider's default. Only emitted for providers with a model field.
+   */
+  model?: string;
+  /**
    * Optional markdown content appended to the agent file body.
    * Use this for role-specific instructions, scope constraints, or rules.
    */

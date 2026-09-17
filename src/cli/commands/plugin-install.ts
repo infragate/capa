@@ -697,6 +697,8 @@ export async function resolvePlugins(
         description: agent.description,
         skills: skillIds,
         tools: [],
+        ...(agent.nativeTools ? { nativeTools: agent.nativeTools } : {}),
+        ...(agent.model ? { model: agent.model } : {}),
         instructions: agent.instructions || undefined,
         sourcePlugin,
       });

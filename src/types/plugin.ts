@@ -141,7 +141,14 @@ export interface UnifiedAgentEntry {
   instructions: string;
   /** Skill ids listed in agent frontmatter that exist in this plugin. */
   skillIds: string[];
-  /** Frontmatter keys beyond name/description/skills that were not mapped. */
+  /**
+   * Provider-native tool allow-list from `tools:` — becomes `SubAgent.nativeTools`.
+   * `undefined` when the key is absent (inherit); `[]` when explicitly empty.
+   */
+  nativeTools?: string[];
+  /** Model alias or id from `model:` — becomes `SubAgent.model`. */
+  model?: string;
+  /** Frontmatter keys capa has no field for and therefore dropped. */
   droppedFrontmatterKeys: string[];
 }
 
