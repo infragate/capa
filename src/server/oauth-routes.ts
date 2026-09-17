@@ -8,7 +8,10 @@ import type { MCPServer } from "../types/capabilities";
 import type { OAuth2Config } from "../types/oauth";
 import { matchRoute } from "./match-route";
 import { OAuth2DetectionStatus, type OAuth2Manager } from "./oauth-manager";
-import { syncAllServersOAuth2Requirements } from "./oauth-server-sync";
+import {
+	mergeDetectedOAuth2,
+	syncAllServersOAuth2Requirements,
+} from "./oauth-server-sync";
 import {
 	type EffectiveCapsCacheEntry,
 	enrichCapabilitiesOAuthFromPlugins,
@@ -393,21 +396,9 @@ export async function handleOAuth2Start(
 				);
 			}
 			if (detected.status === OAuth2DetectionStatus.REQUIRED) {
-				configForFlow = {
-					...configForFlow,
-					...detected.config,
-					authorizationEndpoint:
-						configForFlow.authorizationEndpoint ||
-						detected.config.authorizationEndpoint,
-					tokenEndpoint:
-						configForFlow.tokenEndpoint || detected.config.tokenEndpoint,
-					resourceServer:
-						configForFlow.resourceServer ||
-						detected.config.resourceServer ||
-						server.def.url,
-					scope: detected.config.scope ?? configForFlow.scope,
-					...(effectiveClientId ? { clientId: effectiveClientId } : {}),
-				};
+				// Same merge as the page-load sync: fresh discovery owns the endpoints
+				// and the RFC 8707 resource, client-specific fields survive from disk.
+				configForFlow = mergeDetectedOAuth2(configForFlow, detected.config);
 				server.def.oauth2 = configForFlow;
 				deps.sessionManager.setProjectCapabilities(projectId, capabilities);
 			} else if (detected.status === OAuth2DetectionStatus.INCONCLUSIVE) {

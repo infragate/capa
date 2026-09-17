@@ -45,7 +45,10 @@ export function asStringArray(value: unknown): string[] {
 			.filter(Boolean);
 	}
 	if (Array.isArray(value)) {
-		return value.filter((v): v is string => typeof v === "string" && v.length > 0);
+		return value
+			.filter((v): v is string => typeof v === "string")
+			.map((v) => v.trim())
+			.filter(Boolean);
 	}
 	return [];
 }

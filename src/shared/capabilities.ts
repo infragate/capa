@@ -296,6 +296,10 @@ const providerIdSchema = z.string().min(1).transform((id, ctx) => {
 const subAgentSchema = z
 	.object({
 		providers: z.array(providerIdSchema).optional(),
+		// Rendered straight into provider agent frontmatter, so a malformed value
+		// would otherwise surface as a crash mid-install rather than a file error.
+		nativeTools: z.array(z.string()).optional(),
+		model: z.string().optional(),
 	})
 	.passthrough();
 

@@ -139,6 +139,84 @@ describe("mergeDetectedOAuth2", () => {
 		expect(merged.callbackPort).toBe(3111);
 		expect(merged.authorizationEndpoint).toBe("https://auth.example/authorize");
 	});
+
+	it("replaces persisted gateway endpoints and resource with freshly discovered ones", () => {
+		const merged = mergeDetectedOAuth2(
+			{
+				authorizationEndpoint: "https://gateway.example/v1/authorize",
+				tokenEndpoint: "https://gateway.example/v1/token",
+				resourceServer: "https://gateway.example/mcp",
+				scope: "read:me",
+			},
+			{
+				authorizationEndpoint: "https://identity.example/authorize",
+				tokenEndpoint: "https://identity.example/token",
+				resourceServer: "https://gateway.example/v2/mcp",
+			},
+		);
+		expect(merged.authorizationEndpoint).toBe(
+			"https://identity.example/authorize",
+		);
+		expect(merged.tokenEndpoint).toBe("https://identity.example/token");
+		expect(merged.resourceServer).toBe("https://gateway.example/v2/mcp");
+		expect(merged.scope).toBe("read:me");
+	});
+
+	// A clientId in the capabilities file is always plugin-embedded or authored:
+	// dynamic registration stores its client in `oauth2_client_id_{id}` and never
+	// writes back here, so a change of auth server is no reason to discard it.
+	it("keeps a configured clientId when discovery moves to a different auth server", () => {
+		const merged = mergeDetectedOAuth2(
+			{
+				authorizationEndpoint: "https://gateway.example/v1/authorize",
+				tokenEndpoint: "https://gateway.example/v1/token",
+				clientId: "plugin-app-id",
+			},
+			{
+				...DETECTED_OAUTH,
+				registrationEndpoint: "https://auth.example/register",
+			},
+		);
+		expect(merged.clientId).toBe("plugin-app-id");
+	});
+
+	it("keeps a configured clientId across a realm change on the same host", () => {
+		const merged = mergeDetectedOAuth2(
+			{
+				authorizationEndpoint:
+					"https://auth.example/realms/a/protocol/openid-connect/auth",
+				tokenEndpoint:
+					"https://auth.example/realms/a/protocol/openid-connect/token",
+				clientId: "plugin-app-id",
+			},
+			{
+				authorizationEndpoint:
+					"https://auth.example/realms/b/protocol/openid-connect/auth",
+				tokenEndpoint:
+					"https://auth.example/realms/b/protocol/openid-connect/token",
+				resourceServer: "https://mcp.example/mcp",
+				registrationEndpoint:
+					"https://auth.example/realms/b/clients-registrations/openid-connect",
+			},
+		);
+		expect(merged.clientId).toBe("plugin-app-id");
+		expect(merged.authorizationEndpoint).toBe(
+			"https://auth.example/realms/b/protocol/openid-connect/auth",
+		);
+	});
+
+	it("keeps a plugin-embedded clientId when the new auth server has no registration endpoint", () => {
+		const merged = mergeDetectedOAuth2(
+			{
+				authorizationEndpoint: "https://slack.example/authorize",
+				clientId: "embedded-app",
+				callbackPort: 3111,
+			},
+			DETECTED_OAUTH,
+		);
+		expect(merged.clientId).toBe("embedded-app");
+		expect(merged.callbackPort).toBe(3111);
+	});
 });
 
 describe("mergeEmbeddedOAuthFields", () => {

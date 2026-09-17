@@ -64,12 +64,25 @@ export function serverHasExplicitAuthHeader(server: MCPServer): boolean {
 	);
 }
 
-/** Merge auto-detected OAuth endpoints with plugin-embedded clientId / callbackPort. */
+/**
+ * Merge auto-detected OAuth endpoints with plugin-embedded clientId / callbackPort.
+ *
+ * Detected endpoints and the RFC 8707 resource always win: capabilities written by
+ * an earlier release may pin a gateway AS the resource no longer accepts.
+ *
+ * A clientId here is always one a plugin embedded or the user authored — a client
+ * issued by dynamic registration is stored per project in `oauth2_client_id_{id}`
+ * and never written back into the capabilities file — so it survives a change of
+ * authorization server. Discovery moving to an AS that supports registration is
+ * not evidence the id came from registration, and dropping it would throw away the
+ * plugin's application identity.
+ */
 export function mergeDetectedOAuth2(
 	existingOAuth: CapabilitiesOAuth2Config | undefined,
 	oauth2Config: OAuth2Config,
 ): OAuth2Config {
 	const merged: OAuth2Config = { ...(existingOAuth ?? {}), ...oauth2Config };
+
 	const embeddedClientId = readEmbeddedClientId(existingOAuth);
 	if (embeddedClientId) merged.clientId = embeddedClientId;
 

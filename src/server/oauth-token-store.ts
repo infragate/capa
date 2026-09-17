@@ -112,6 +112,11 @@ export async function refreshAccessToken(
 			client_id: clientId,
 		};
 
+		const resourceServer = oauth2Config.resourceServer;
+		if (resourceServer) {
+			tokenParams.resource = resourceServer;
+		}
+
 		if (clientSecret) {
 			tokenParams.client_secret = clientSecret;
 		}

@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, rmSync, readFileSync, mkdtempSync, writeFileSync
 import { join } from 'path';
 import { tmpdir, homedir } from 'os';
 import TOML from '@iarna/toml';
+import * as YAML from 'js-yaml';
 
 import { getProvider, getAllProviders, getAllProviderIds, getIntegratedProviders } from '../index';
 import { getMcpConfigPath, buildMcpEntry, buildSubAgentFile } from '../handlers';
@@ -360,6 +361,104 @@ describe('Codex pilot integration', () => {
     );
   });
 
+
+  describe('native sub-agent frontmatter', () => {
+    const claudeAgent = {
+      id: 'watcher',
+      description: 'Watches CI',
+      skills: [],
+      tools: [],
+      nativeTools: ['Read', 'Grep', 'Bash'],
+      model: 'haiku',
+      sourcePlugin: { id: 'megalinter-1', name: 'megalinter', provider: 'claude' as const },
+    };
+    const emptyCaps = { providers: [], skills: [], servers: [], tools: [] };
+
+    it('writes the plugin tool allow-list and model into the matching provider', () => {
+      const result = buildSubAgentFile(getProvider('claude-code')!, claudeAgent, emptyCaps);
+      expect(result).toContain('model: haiku');
+      expect(result).not.toContain('model: inherit');
+      expect(result).toContain('tools: Read, Grep, Bash, mcp__capa-watcher');
+    });
+
+    it('keeps the agent reachable on its own MCP endpoint, which an allow-list would exclude', () => {
+      const result = buildSubAgentFile(getProvider('claude-code')!, claudeAgent, {
+        ...emptyCaps,
+        options: { toolExposure: 'none' as const },
+      });
+      // No endpoint is registered under `none`, so nothing to re-allow.
+      expect(result).toContain('tools: Read, Grep, Bash\n');
+    });
+
+    it('does not carry Claude vocabulary into another provider', () => {
+      const result = buildSubAgentFile(getProvider('cursor')!, claudeAgent, emptyCaps);
+      expect(result).toContain('model: inherit');
+      expect(result).not.toContain('haiku');
+      expect(result).not.toContain('tools:');
+    });
+
+    it('trusts values authored in the capabilities file, which have no source provider', () => {
+      const { sourcePlugin, ...authored } = claudeAgent;
+      const result = buildSubAgentFile(getProvider('claude-code')!, authored, emptyCaps);
+      expect(result).toContain('model: haiku');
+      expect(result).toContain('tools: Read, Grep, Bash, mcp__capa-watcher');
+    });
+
+
+    it('keeps an explicitly empty allow-list a restriction, not an inherit', () => {
+      const result = buildSubAgentFile(
+        getProvider('claude-code')!,
+        { ...claudeAgent, nativeTools: [] },
+        emptyCaps,
+      );
+      // Only its own capa endpoint — not every native tool.
+      expect(result).toContain('tools: mcp__capa-watcher');
+    });
+
+    it('writes an empty YAML list when there is no endpoint to fall back on', () => {
+      const result = buildSubAgentFile(
+        getProvider('claude-code')!,
+        { ...claudeAgent, nativeTools: [] },
+        { ...emptyCaps, options: { toolExposure: 'none' as const } },
+      );
+      expect(result).toContain('tools: []');
+    });
+
+    it('cannot let a plugin value open a second frontmatter key', () => {
+      const result = buildSubAgentFile(
+        getProvider('claude-code')!,
+        {
+          ...claudeAgent,
+          nativeTools: undefined,
+          description: 'Benign\nmodel: opus',
+          model: 'haiku\ntools: Read, Write, Bash',
+        } as any,
+        emptyCaps,
+      );
+      const parsed = YAML.load(result.split('---')[1]!) as any;
+
+      // The injected lines stay inside their own scalar rather than becoming fields.
+      expect(parsed.tools).toBeUndefined();
+      expect(parsed.model).toBe('haiku\ntools: Read, Write, Bash');
+      expect(parsed.description).toBe('Benign\nmodel: opus');
+    });
+
+    it('drops native tool names that would split the comma-separated list', () => {
+      const result = buildSubAgentFile(
+        getProvider('claude-code')!,
+        { ...claudeAgent, nativeTools: ['Read', 'Bash, Write', 'Grep'] },
+        emptyCaps,
+      );
+      const parsed = YAML.load(result.split('---')[1]!) as any;
+      expect(parsed.tools).toBe('Read, Grep, mcp__capa-watcher');
+    });
+    it('leaves tools inherited when the plugin agent declares no tools key', () => {
+      const { nativeTools, ...noTools } = claudeAgent;
+      const result = buildSubAgentFile(getProvider('claude-code')!, noTools, emptyCaps);
+      expect(result).not.toContain('tools:');
+      expect(result).toContain('model: haiku');
+    });
+  });
   it('omits Codex MCP declarations when tool exposure is disabled', () => {
     const codex = getProvider('codex')!;
     const result = buildSubAgentFile(
