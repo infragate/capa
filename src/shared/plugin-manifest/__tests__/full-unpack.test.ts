@@ -111,6 +111,33 @@ describe("plugin full unpack parsers", () => {
 		expect(hook.targetProvider).toBe("claude-code");
 	});
 
+	it("distinguishes an absent tools key from an explicit empty allow-list", () => {
+		mkdirSync(join(root, "agents"), { recursive: true });
+		writeFileSync(
+			join(root, "agents", "inherits.md"),
+			"---\nname: inherits\ndescription: No tools key\n---\n\nBody.\n",
+		);
+		writeFileSync(
+			join(root, "agents", "restricted.md"),
+			"---\nname: restricted\ndescription: Explicitly empty\ntools: []\n---\n\nBody.\n",
+		);
+		const manifest = parseClaudeManifest(root, { name: "demo", version: "1.0.0" });
+		const byId = new Map(manifest.agentEntries!.map((a) => [a.id, a]));
+
+		expect(byId.get("inherits")!.nativeTools).toBeUndefined();
+		expect(byId.get("restricted")!.nativeTools).toEqual([]);
+	});
+
+	it("trims native tool names given as a YAML sequence", () => {
+		mkdirSync(join(root, "agents"), { recursive: true });
+		writeFileSync(
+			join(root, "agents", "spaced.md"),
+			'---\nname: spaced\ndescription: Spaced\ntools: ["Read", " Bash "]\n---\n\nBody.\n',
+		);
+		const manifest = parseClaudeManifest(root, { name: "demo", version: "1.0.0" });
+		expect(manifest.agentEntries![0]!.nativeTools).toEqual(["Read", "Bash"]);
+	});
+
 	it("parses Cursor manifest hooks path (hooks-cursor.json)", () => {
 		mkdirSync(join(root, ".cursor-plugin"), { recursive: true });
 		writeFileSync(

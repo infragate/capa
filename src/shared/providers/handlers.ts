@@ -272,14 +272,18 @@ function buildMarkdownSubAgent(
 		fmLines.push(`${key}: ${override ? subAgent.model : value}`);
 	}
 
-	if (sa.nativeTools && nativeOk && subAgent.nativeTools?.length) {
+	// An absent list means "inherit the provider's tools"; an empty one is an
+	// explicit restriction, so it still has to be written out.
+	if (sa.nativeTools && nativeOk && subAgent.nativeTools) {
 		const allowed = [...subAgent.nativeTools];
 		// An allow-list excludes everything unlisted, including the agent's own
 		// filtered endpoint — but there is no endpoint to re-allow under `none`.
 		if (capabilities.options?.toolExposure !== "none") {
 			allowed.push(sa.nativeTools.mcpPattern.replace("{id}", subAgent.id));
 		}
-		fmLines.push(`${sa.nativeTools.key}: ${allowed.join(", ")}`);
+		fmLines.push(
+			`${sa.nativeTools.key}: ${allowed.length > 0 ? allowed.join(", ") : "[]"}`,
+		);
 	}
 
 	if (perAgentToolScope) {

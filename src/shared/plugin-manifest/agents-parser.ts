@@ -71,7 +71,9 @@ export function parseAgentEntries(
 			skillIds,
 			// Agent `tools:` are the provider's own tool names (`Read`, `Bash`),
 			// a different namespace from capa tool ids — see SubAgent.nativeTools.
-			nativeTools: asStringArray(fm.tools),
+			// An absent key inherits the provider's tools; `tools: []` is an
+			// explicit empty allow-list, so the two must not collapse to one value.
+			nativeTools: fm.tools === undefined ? undefined : asStringArray(fm.tools),
 			model: asOptionalString(fm.model),
 			droppedFrontmatterKeys,
 		});

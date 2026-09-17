@@ -285,6 +285,48 @@ describe('capabilities', () => {
       expect((caps.tools[1].def as any).run.args[0].default).toBeNull();
     });
 
+    it('rejects a sub-agent nativeTools value that is not a list of strings', async () => {
+      const file = join(tempDir, 'capabilities.yaml');
+      await writeFile(
+        file,
+        [
+          'skills: []',
+          'servers: []',
+          'tools: []',
+          'subagents:',
+          '  - id: watcher',
+          '    skills: []',
+          '    tools: []',
+          '    nativeTools:',
+          '      length: 1',
+          '',
+        ].join('\n'),
+      );
+
+      // Without this the bad value reaches the renderer and throws mid-install.
+      await expect(parseCapabilitiesFile(file, 'yaml')).rejects.toThrow();
+    });
+
+    it('rejects a non-string sub-agent model', async () => {
+      const file = join(tempDir, 'capabilities.yaml');
+      await writeFile(
+        file,
+        [
+          'skills: []',
+          'servers: []',
+          'tools: []',
+          'subagents:',
+          '  - id: watcher',
+          '    skills: []',
+          '    tools: []',
+          '    model: 5',
+          '',
+        ].join('\n'),
+      );
+
+      await expect(parseCapabilitiesFile(file, 'yaml')).rejects.toThrow();
+    });
+
     it('accepts a bare "description:" key in YAML (parses as null)', async () => {
       const file = join(tempDir, 'capabilities.yaml');
       await writeFile(
