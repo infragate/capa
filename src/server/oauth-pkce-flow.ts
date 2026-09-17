@@ -80,12 +80,16 @@ export async function generateAuthorizationUrl(
 				clientId = registeredClient.client_id;
 				log.success(`Registered client: ${clientId}`);
 
+				// A fresh registration owns the secret slot: clear a secret left by a
+				// previous registration when the new client is public.
 				if (registeredClient.client_secret) {
 					db.setVariable(
 						projectId,
 						`oauth2_client_secret_${serverId}`,
 						registeredClient.client_secret,
 					);
+				} else {
+					db.deleteVariable(projectId, `oauth2_client_secret_${serverId}`);
 				}
 			}
 		} catch (error: any) {

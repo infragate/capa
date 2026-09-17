@@ -288,6 +288,132 @@ describe("detectOAuth2Requirement", () => {
 		);
 	});
 
+	it("falls through to the next advertised authorization server when the first is unavailable", async () => {
+		globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+			const url = String(input);
+			if (
+				url === "https://mcp-gateway.example.test/v2/mcp" &&
+				init?.method === "POST"
+			) {
+				return new Response("", {
+					status: 401,
+					headers: {
+						"WWW-Authenticate":
+							'Bearer resource_metadata="https://mcp-gateway.example.test/.well-known/oauth-protected-resource/v2/mcp"',
+					},
+				});
+			}
+			if (
+				url ===
+				"https://mcp-gateway.example.test/.well-known/oauth-protected-resource/v2/mcp"
+			) {
+				return Response.json({
+					resource: "https://mcp-gateway.example.test/v2/mcp",
+					authorization_servers: [
+						"https://down.example.test",
+						"https://identity.example.test",
+					],
+				});
+			}
+			if (
+				url === "https://down.example.test/.well-known/oauth-authorization-server"
+			) {
+				return new Response("", { status: 503 });
+			}
+			if (
+				url ===
+				"https://identity.example.test/.well-known/oauth-authorization-server"
+			) {
+				return Response.json({
+					authorization_endpoint: "https://identity.example.test/authorize",
+					token_endpoint: "https://identity.example.test/token",
+				});
+			}
+			return new Response("", { status: 404 });
+		}) as unknown as typeof fetch;
+
+		const result = await detectOAuth2Requirement(
+			"https://mcp-gateway.example.test/v2/mcp",
+		);
+		expect(result.status).toBe(OAuth2DetectionStatus.REQUIRED);
+		if (result.status !== OAuth2DetectionStatus.REQUIRED) return;
+		expect(result.config.authorizationEndpoint).toBe(
+			"https://identity.example.test/authorize",
+		);
+	});
+
+	it("ignores an advertised server that returns incomplete metadata and uses the origin AS", async () => {
+		globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+			const url = String(input);
+			if (
+				url === "https://mcp-gateway.example.test/mcp" &&
+				init?.method === "POST"
+			) {
+				return new Response("", {
+					status: 401,
+					headers: { "WWW-Authenticate": 'Bearer realm="mcp"' },
+				});
+			}
+			if (
+				url ===
+				"https://mcp-gateway.example.test/.well-known/oauth-protected-resource/mcp"
+			) {
+				return Response.json({
+					resource: "https://mcp-gateway.example.test/mcp",
+					authorization_servers: ["https://empty.example.test"],
+				});
+			}
+			if (
+				url === "https://empty.example.test/.well-known/oauth-authorization-server"
+			) {
+				return Response.json({});
+			}
+			if (
+				url ===
+				"https://mcp-gateway.example.test/.well-known/oauth-authorization-server"
+			) {
+				return Response.json({
+					authorization_endpoint: "https://mcp-gateway.example.test/authorize",
+					token_endpoint: "https://mcp-gateway.example.test/token",
+				});
+			}
+			return new Response("", { status: 404 });
+		}) as unknown as typeof fetch;
+
+		const result = await detectOAuth2Requirement(
+			"https://mcp-gateway.example.test/mcp",
+		);
+		expect(result.status).toBe(OAuth2DetectionStatus.REQUIRED);
+		if (result.status !== OAuth2DetectionStatus.REQUIRED) return;
+		expect(result.config.authorizationEndpoint).toBe(
+			"https://mcp-gateway.example.test/authorize",
+		);
+	});
+
+	it("returns inconclusive when the only reachable metadata is incomplete", async () => {
+		globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+			const url = String(input);
+			if (
+				url === "https://mcp.example.test/mcp" &&
+				init?.method === "POST"
+			) {
+				return new Response("", {
+					status: 401,
+					headers: { "WWW-Authenticate": 'Bearer realm="mcp"' },
+				});
+			}
+			if (
+				url === "https://mcp.example.test/.well-known/oauth-authorization-server"
+			) {
+				return Response.json({ issuer: "https://mcp.example.test" });
+			}
+			return new Response("", { status: 404 });
+		}) as unknown as typeof fetch;
+
+		const result = await detectOAuth2Requirement("https://mcp.example.test/mcp");
+		expect(result.status).toBe(OAuth2DetectionStatus.INCONCLUSIVE);
+	});
+
 	it("returns inconclusive when the MCP server is unreachable", async () => {
 		globalThis.fetch = (async () => {
 			throw new DOMException("The operation was aborted.", "AbortError");

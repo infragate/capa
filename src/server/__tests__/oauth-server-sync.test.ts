@@ -139,6 +139,71 @@ describe("mergeDetectedOAuth2", () => {
 		expect(merged.callbackPort).toBe(3111);
 		expect(merged.authorizationEndpoint).toBe("https://auth.example/authorize");
 	});
+
+	it("replaces persisted gateway endpoints and resource with freshly discovered ones", () => {
+		const merged = mergeDetectedOAuth2(
+			{
+				authorizationEndpoint: "https://gateway.example/v1/authorize",
+				tokenEndpoint: "https://gateway.example/v1/token",
+				resourceServer: "https://gateway.example/mcp",
+				scope: "read:me",
+			},
+			{
+				authorizationEndpoint: "https://identity.example/authorize",
+				tokenEndpoint: "https://identity.example/token",
+				resourceServer: "https://gateway.example/v2/mcp",
+			},
+		);
+		expect(merged.authorizationEndpoint).toBe(
+			"https://identity.example/authorize",
+		);
+		expect(merged.tokenEndpoint).toBe("https://identity.example/token");
+		expect(merged.resourceServer).toBe("https://gateway.example/v2/mcp");
+		expect(merged.scope).toBe("read:me");
+	});
+
+	it("drops a registered clientId when discovery moved to a different auth server", () => {
+		const merged = mergeDetectedOAuth2(
+			{
+				authorizationEndpoint: "https://gateway.example/v1/authorize",
+				tokenEndpoint: "https://gateway.example/v1/token",
+				clientId: "gateway-issued-id",
+			},
+			{
+				...DETECTED_OAUTH,
+				registrationEndpoint: "https://auth.example/register",
+			},
+		);
+		expect(merged.clientId).toBeUndefined();
+	});
+
+	it("keeps the clientId when the auth server is unchanged", () => {
+		const merged = mergeDetectedOAuth2(
+			{
+				authorizationEndpoint: "https://auth.example/authorize",
+				tokenEndpoint: "https://auth.example/token",
+				clientId: "same-as-id",
+			},
+			{
+				...DETECTED_OAUTH,
+				registrationEndpoint: "https://auth.example/register",
+			},
+		);
+		expect(merged.clientId).toBe("same-as-id");
+	});
+
+	it("keeps a plugin-embedded clientId when the new auth server has no registration endpoint", () => {
+		const merged = mergeDetectedOAuth2(
+			{
+				authorizationEndpoint: "https://slack.example/authorize",
+				clientId: "embedded-app",
+				callbackPort: 3111,
+			},
+			DETECTED_OAUTH,
+		);
+		expect(merged.clientId).toBe("embedded-app");
+		expect(merged.callbackPort).toBe(3111);
+	});
 });
 
 describe("mergeEmbeddedOAuthFields", () => {
