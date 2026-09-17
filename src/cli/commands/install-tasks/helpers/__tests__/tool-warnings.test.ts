@@ -63,6 +63,24 @@ describe('collectSubagentRefWarnings', () => {
     expect(warnings[0]).toContain('unknown tool');
   });
 
+
+  it('points a native-looking tool ref at nativeTools', () => {
+    const cap = baseCapabilities();
+    cap.subagents = [
+      {
+        id: 'ci-watcher',
+        description: '',
+        skills: [],
+        // The `tools` / `nativeTools` mix-up: these are Claude tool names, not capa ids.
+        tools: ['Read', 'Bash'],
+      },
+    ];
+    const warnings = collectSubagentRefWarnings(cap);
+    expect(warnings).toHaveLength(2);
+    for (const warning of warnings) {
+      expect(warning).toContain('nativeTools');
+    }
+  });
   it('accepts @server.tool, server.tool, and bare tool_id forms for the same tool', () => {
     const cap = baseCapabilities();
     cap.subagents = [

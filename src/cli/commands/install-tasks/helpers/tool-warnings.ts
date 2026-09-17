@@ -137,7 +137,11 @@ export function collectSubagentRefWarnings(capabilities: Capabilities): string[]
       if (referencesExposingServer(toolRef, capabilities)) continue;
       warnings.push(
         `Subagent "${sa.id}" references unknown tool "${toolRef}". ` +
-        `Add it under top-level \`tools\` (accepts \`tool_id\`, \`server.tool\`, or \`@server.tool\`) or remove it from the subagent.`,
+        `Add it under top-level \`tools\` (accepts \`tool_id\`, \`server.tool\`, or \`@server.tool\`) or remove it from the subagent. ` +
+        // `tools` and `nativeTools` are one word apart and mean different things,
+        // so the likeliest cause of an unresolvable ref is reaching for the wrong
+        // one. This fires only once the ref has already failed to resolve.
+        `If you meant a provider-native tool such as \`Read\` or \`Bash\`, use \`nativeTools\` instead.`,
       );
     }
   }
