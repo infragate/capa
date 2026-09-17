@@ -64,14 +64,44 @@ export function serverHasExplicitAuthHeader(server: MCPServer): boolean {
 	);
 }
 
-/** Merge auto-detected OAuth endpoints with plugin-embedded clientId / callbackPort. */
+/** Same auth server? Missing or unparseable URLs count as different. */
+function sameAuthServer(a?: string, b?: string): boolean {
+	if (!a || !b) return false;
+	try {
+		return new URL(a).origin === new URL(b).origin;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Merge auto-detected OAuth endpoints with plugin-embedded clientId / callbackPort.
+ *
+ * Detected endpoints and the RFC 8707 resource always win: capabilities written by
+ * an earlier release may pin a gateway AS the resource no longer accepts. A client
+ * id issued by dynamic registration belongs to the AS that issued it, so it is
+ * dropped when discovery moved to a different AS that can register a new one —
+ * plugin-embedded ids (no registrationEndpoint, e.g. Slack) are always kept.
+ */
 export function mergeDetectedOAuth2(
 	existingOAuth: CapabilitiesOAuth2Config | undefined,
 	oauth2Config: OAuth2Config,
 ): OAuth2Config {
 	const merged: OAuth2Config = { ...(existingOAuth ?? {}), ...oauth2Config };
+	const movedAuthServer =
+		!!oauth2Config.registrationEndpoint &&
+		!!existingOAuth?.authorizationEndpoint &&
+		!sameAuthServer(
+			existingOAuth.authorizationEndpoint,
+			oauth2Config.authorizationEndpoint,
+		);
+
 	const embeddedClientId = readEmbeddedClientId(existingOAuth);
-	if (embeddedClientId) merged.clientId = embeddedClientId;
+	if (embeddedClientId && !movedAuthServer) {
+		merged.clientId = embeddedClientId;
+	} else {
+		delete merged.clientId;
+	}
 
 	const embeddedCallbackPort = readEmbeddedCallbackPort(existingOAuth);
 	if (embeddedCallbackPort != null) merged.callbackPort = embeddedCallbackPort;

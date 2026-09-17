@@ -83,6 +83,33 @@ export async function fetchAuthServerMetadata(
 	}
 }
 
+/**
+ * Why this auth-server metadata cannot drive an authorization_code flow,
+ * or null when it is usable. A 200 response is not enough: gateways and
+ * proxies answer `{}` or omit endpoints, which must not suppress fallbacks.
+ */
+export function authServerMetadataRejection(
+	metadata: OAuth2Metadata,
+): string | null {
+	const isHttpUrl = (value?: string) =>
+		!!value && URL.canParse(value) && /^https?:$/.test(new URL(value).protocol);
+	if (!isHttpUrl(metadata.authorization_endpoint)) {
+		return "Auth server metadata has no usable authorization_endpoint";
+	}
+	if (!isHttpUrl(metadata.token_endpoint)) {
+		return "Auth server metadata has no usable token_endpoint";
+	}
+	const grantTypes = metadata.grant_types_supported;
+	if (Array.isArray(grantTypes) && !grantTypes.includes("authorization_code")) {
+		return "Auth server does not support authorization_code grant";
+	}
+	const responseTypes = metadata.response_types_supported;
+	if (Array.isArray(responseTypes) && !responseTypes.includes("code")) {
+		return "Auth server does not support response_type=code";
+	}
+	return null;
+}
+
 /** Scopes commonly listed by Keycloak but not valid for user-facing authorization_code + DCR clients. */
 export const BLOCKED_OAUTH_SCOPES = new Set([
 	"service_account",
@@ -217,37 +244,64 @@ export async function detectOAuth2Requirement(
 			if (resourceMetadataMatch) {
 				resourceMetadataUrl = resourceMetadataMatch[1];
 				log.debug(`Resource metadata URL: ${resourceMetadataUrl}`);
-			} else {
-				log.debug(
-					"No resource_metadata in WWW-Authenticate, trying standard location",
+				resourceMetadata = await fetchProtectedResourceMetadata(
+					resourceMetadataUrl,
+					tlsSkipVerify,
 				);
-				resourceMetadataUrl = `${baseUrl}/.well-known/oauth-protected-resource`;
-				log.debug(`Trying: ${resourceMetadataUrl}`);
+			}
+			if (!resourceMetadata) {
+				// Path-aware PRM first (RFC 9728 + MCP SDK), then origin root.
+				const path = serverUrlObj.pathname.replace(/\/$/, "");
+				if (path && path !== "/") {
+					resourceMetadataUrl = `${baseUrl}/.well-known/oauth-protected-resource${path}`;
+					log.debug(`Trying path-aware PRM: ${resourceMetadataUrl}`);
+					resourceMetadata = await fetchProtectedResourceMetadata(
+						resourceMetadataUrl,
+						tlsSkipVerify,
+					);
+				}
+				if (!resourceMetadata) {
+					resourceMetadataUrl = `${baseUrl}/.well-known/oauth-protected-resource`;
+					log.debug(`Trying origin PRM: ${resourceMetadataUrl}`);
+					resourceMetadata = await fetchProtectedResourceMetadata(
+						resourceMetadataUrl,
+						tlsSkipVerify,
+					);
+				}
 			}
 
-			resourceMetadata = await fetchProtectedResourceMetadata(
-				resourceMetadataUrl,
-				tlsSkipVerify,
-			);
-
-			log.debug(`Trying direct OAuth discovery at: ${baseUrl}`);
-			authMetadata = await fetchAuthServerMetadata(baseUrl, tlsSkipVerify, log);
-
-			if (!authMetadata) {
-				log.debug("Direct discovery failed, trying RFC 9728...");
-				if (
-					resourceMetadata &&
-					resourceMetadata.authorization_servers &&
-					resourceMetadata.authorization_servers.length > 0
-				) {
-					const authServerUrl = resourceMetadata.authorization_servers[0];
-					log.debug(`Authorization server: ${authServerUrl}`);
-					authMetadata = await fetchAuthServerMetadata(
+			// Prefer RFC 9728 authorization_servers over origin AS metadata.
+			// Gateways often publish a local AS that is not the resource's Identity AS.
+			if (
+				resourceMetadata?.authorization_servers &&
+				resourceMetadata.authorization_servers.length > 0
+			) {
+				// Try every advertised AS in order: the first may be down or
+				// answer with metadata that cannot drive an auth-code flow.
+				for (const authServerUrl of resourceMetadata.authorization_servers) {
+					log.debug(`Authorization server from PRM: ${authServerUrl}`);
+					const candidate = await fetchAuthServerMetadata(
 						authServerUrl,
 						tlsSkipVerify,
 						log,
 					);
+					if (!candidate) continue;
+					const rejection = authServerMetadataRejection(candidate);
+					if (rejection) {
+						log.warn(`Skipping ${authServerUrl}: ${rejection}`);
+						continue;
+					}
+					authMetadata = candidate;
+					break;
 				}
+			}
+			if (!authMetadata) {
+				log.debug(`Trying direct OAuth discovery at: ${baseUrl}`);
+				authMetadata = await fetchAuthServerMetadata(
+					baseUrl,
+					tlsSkipVerify,
+					log,
+				);
 			}
 		} else {
 			log.debug(
@@ -262,20 +316,13 @@ export async function detectOAuth2Requirement(
 			return { status: OAuth2DetectionStatus.INCONCLUSIVE, reason };
 		}
 
-		const grantTypes = authMetadata.grant_types_supported;
-		if (
-			Array.isArray(grantTypes) &&
-			!grantTypes.includes("authorization_code")
-		) {
-			const reason = "Auth server does not support authorization_code grant";
-			log.warn(reason);
-			return { status: OAuth2DetectionStatus.INCONCLUSIVE, reason };
-		}
-		const responseTypes = authMetadata.response_types_supported;
-		if (Array.isArray(responseTypes) && !responseTypes.includes("code")) {
-			const reason = "Auth server does not support response_type=code";
-			log.warn(reason);
-			return { status: OAuth2DetectionStatus.INCONCLUSIVE, reason };
+		const rejection = authServerMetadataRejection(authMetadata);
+		if (rejection) {
+			log.warn(rejection);
+			return {
+				status: OAuth2DetectionStatus.INCONCLUSIVE,
+				reason: rejection,
+			};
 		}
 
 		const scope = resolveOAuthScope({
@@ -287,7 +334,7 @@ export async function detectOAuth2Requirement(
 		const config: OAuth2Config = {
 			authorizationEndpoint: authMetadata.authorization_endpoint,
 			tokenEndpoint: authMetadata.token_endpoint,
-			resourceServer: serverUrl,
+			resourceServer: resourceMetadata?.resource || serverUrl,
 			registrationEndpoint: authMetadata.registration_endpoint,
 			...(scope ? { scope } : {}),
 		};

@@ -158,6 +158,260 @@ describe("detectOAuth2Requirement", () => {
 		expect(result.config.scope).toBe(
 			"openid email profile offline_access api.read",
 		);
+		expect(result.config.resourceServer).toBe(
+			"https://mcp-gateway.example.test/mcp",
+		);
+	});
+
+	it("prefers PRM authorization_servers over a reachable origin AS", async () => {
+		globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+			const url = String(input);
+			if (
+				url === "https://mcp-gateway.example.test/v2/mcp" &&
+				init?.method === "POST"
+			) {
+				return new Response("", {
+					status: 401,
+					headers: {
+						"WWW-Authenticate":
+							'Bearer error="invalid_token", resource_metadata="https://mcp-gateway.example.test/.well-known/oauth-protected-resource/v2/mcp"',
+					},
+				});
+			}
+			if (
+				url ===
+				"https://mcp-gateway.example.test/.well-known/oauth-protected-resource/v2/mcp"
+			) {
+				return Response.json({
+					resource: "https://mcp-gateway.example.test/v2/mcp",
+					authorization_servers: [
+						"https://identity.example.test/issuer/abc",
+					],
+					scopes_supported: ["read:me", "offline_access"],
+				});
+			}
+			if (
+				url ===
+				"https://mcp-gateway.example.test/.well-known/oauth-authorization-server"
+			) {
+				return Response.json({
+					authorization_endpoint:
+						"https://mcp-gateway.example.test/v1/authorize",
+					token_endpoint: "https://mcp-gateway.example.test/v1/token",
+					registration_endpoint:
+						"https://mcp-gateway.example.test/v1/register",
+					grant_types_supported: ["authorization_code"],
+					response_types_supported: ["code"],
+				});
+			}
+			if (
+				url ===
+				"https://identity.example.test/.well-known/oauth-authorization-server/issuer/abc"
+			) {
+				return Response.json({
+					authorization_endpoint:
+						"https://identity.example.test/authorize",
+					token_endpoint: "https://identity.example.test/token",
+					registration_endpoint:
+						"https://identity.example.test/register",
+					grant_types_supported: ["authorization_code"],
+					response_types_supported: ["code"],
+				});
+			}
+			return new Response("", { status: 404 });
+		}) as unknown as typeof fetch;
+
+		const result = await detectOAuth2Requirement(
+			"https://mcp-gateway.example.test/v2/mcp",
+		);
+		expect(result.status).toBe(OAuth2DetectionStatus.REQUIRED);
+		if (result.status !== OAuth2DetectionStatus.REQUIRED) return;
+		expect(result.config.authorizationEndpoint).toBe(
+			"https://identity.example.test/authorize",
+		);
+		expect(result.config.tokenEndpoint).toBe(
+			"https://identity.example.test/token",
+		);
+		expect(result.config.registrationEndpoint).toBe(
+			"https://identity.example.test/register",
+		);
+		expect(result.config.scope).toBe("read:me offline_access");
+		expect(result.config.resourceServer).toBe(
+			"https://mcp-gateway.example.test/v2/mcp",
+		);
+	});
+
+	it("discovers path-aware PRM when WWW-Authenticate omits resource_metadata", async () => {
+		globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+			const url = String(input);
+			if (
+				url === "https://mcp-gateway.example.test/v2/mcp" &&
+				init?.method === "POST"
+			) {
+				return new Response("", {
+					status: 401,
+					headers: { "WWW-Authenticate": 'Bearer realm="mcp"' },
+				});
+			}
+			if (
+				url ===
+				"https://mcp-gateway.example.test/.well-known/oauth-protected-resource/v2/mcp"
+			) {
+				return Response.json({
+					resource: "https://mcp-gateway.example.test/v2/mcp",
+					authorization_servers: ["https://identity.example.test"],
+					scopes_supported: ["read:me"],
+				});
+			}
+			if (
+				url ===
+				"https://identity.example.test/.well-known/oauth-authorization-server"
+			) {
+				return Response.json({
+					authorization_endpoint:
+						"https://identity.example.test/authorize",
+					token_endpoint: "https://identity.example.test/token",
+					grant_types_supported: ["authorization_code"],
+					response_types_supported: ["code"],
+				});
+			}
+			return new Response("", { status: 404 });
+		}) as unknown as typeof fetch;
+
+		const result = await detectOAuth2Requirement(
+			"https://mcp-gateway.example.test/v2/mcp",
+		);
+		expect(result.status).toBe(OAuth2DetectionStatus.REQUIRED);
+		if (result.status !== OAuth2DetectionStatus.REQUIRED) return;
+		expect(result.config.authorizationEndpoint).toBe(
+			"https://identity.example.test/authorize",
+		);
+	});
+
+	it("falls through to the next advertised authorization server when the first is unavailable", async () => {
+		globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+			const url = String(input);
+			if (
+				url === "https://mcp-gateway.example.test/v2/mcp" &&
+				init?.method === "POST"
+			) {
+				return new Response("", {
+					status: 401,
+					headers: {
+						"WWW-Authenticate":
+							'Bearer resource_metadata="https://mcp-gateway.example.test/.well-known/oauth-protected-resource/v2/mcp"',
+					},
+				});
+			}
+			if (
+				url ===
+				"https://mcp-gateway.example.test/.well-known/oauth-protected-resource/v2/mcp"
+			) {
+				return Response.json({
+					resource: "https://mcp-gateway.example.test/v2/mcp",
+					authorization_servers: [
+						"https://down.example.test",
+						"https://identity.example.test",
+					],
+				});
+			}
+			if (
+				url === "https://down.example.test/.well-known/oauth-authorization-server"
+			) {
+				return new Response("", { status: 503 });
+			}
+			if (
+				url ===
+				"https://identity.example.test/.well-known/oauth-authorization-server"
+			) {
+				return Response.json({
+					authorization_endpoint: "https://identity.example.test/authorize",
+					token_endpoint: "https://identity.example.test/token",
+				});
+			}
+			return new Response("", { status: 404 });
+		}) as unknown as typeof fetch;
+
+		const result = await detectOAuth2Requirement(
+			"https://mcp-gateway.example.test/v2/mcp",
+		);
+		expect(result.status).toBe(OAuth2DetectionStatus.REQUIRED);
+		if (result.status !== OAuth2DetectionStatus.REQUIRED) return;
+		expect(result.config.authorizationEndpoint).toBe(
+			"https://identity.example.test/authorize",
+		);
+	});
+
+	it("ignores an advertised server that returns incomplete metadata and uses the origin AS", async () => {
+		globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+			const url = String(input);
+			if (
+				url === "https://mcp-gateway.example.test/mcp" &&
+				init?.method === "POST"
+			) {
+				return new Response("", {
+					status: 401,
+					headers: { "WWW-Authenticate": 'Bearer realm="mcp"' },
+				});
+			}
+			if (
+				url ===
+				"https://mcp-gateway.example.test/.well-known/oauth-protected-resource/mcp"
+			) {
+				return Response.json({
+					resource: "https://mcp-gateway.example.test/mcp",
+					authorization_servers: ["https://empty.example.test"],
+				});
+			}
+			if (
+				url === "https://empty.example.test/.well-known/oauth-authorization-server"
+			) {
+				return Response.json({});
+			}
+			if (
+				url ===
+				"https://mcp-gateway.example.test/.well-known/oauth-authorization-server"
+			) {
+				return Response.json({
+					authorization_endpoint: "https://mcp-gateway.example.test/authorize",
+					token_endpoint: "https://mcp-gateway.example.test/token",
+				});
+			}
+			return new Response("", { status: 404 });
+		}) as unknown as typeof fetch;
+
+		const result = await detectOAuth2Requirement(
+			"https://mcp-gateway.example.test/mcp",
+		);
+		expect(result.status).toBe(OAuth2DetectionStatus.REQUIRED);
+		if (result.status !== OAuth2DetectionStatus.REQUIRED) return;
+		expect(result.config.authorizationEndpoint).toBe(
+			"https://mcp-gateway.example.test/authorize",
+		);
+	});
+
+	it("returns inconclusive when the only reachable metadata is incomplete", async () => {
+		globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+			const url = String(input);
+			if (
+				url === "https://mcp.example.test/mcp" &&
+				init?.method === "POST"
+			) {
+				return new Response("", {
+					status: 401,
+					headers: { "WWW-Authenticate": 'Bearer realm="mcp"' },
+				});
+			}
+			if (
+				url === "https://mcp.example.test/.well-known/oauth-authorization-server"
+			) {
+				return Response.json({ issuer: "https://mcp.example.test" });
+			}
+			return new Response("", { status: 404 });
+		}) as unknown as typeof fetch;
+
+		const result = await detectOAuth2Requirement("https://mcp.example.test/mcp");
+		expect(result.status).toBe(OAuth2DetectionStatus.INCONCLUSIVE);
 	});
 
 	it("returns inconclusive when the MCP server is unreachable", async () => {

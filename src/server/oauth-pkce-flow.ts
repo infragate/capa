@@ -80,12 +80,16 @@ export async function generateAuthorizationUrl(
 				clientId = registeredClient.client_id;
 				log.success(`Registered client: ${clientId}`);
 
+				// A fresh registration owns the secret slot: clear a secret left by a
+				// previous registration when the new client is public.
 				if (registeredClient.client_secret) {
 					db.setVariable(
 						projectId,
 						`oauth2_client_secret_${serverId}`,
 						registeredClient.client_secret,
 					);
+				} else {
+					db.deleteVariable(projectId, `oauth2_client_secret_${serverId}`);
 				}
 			}
 		} catch (error: any) {
@@ -126,6 +130,10 @@ export async function generateAuthorizationUrl(
 		if (scope) {
 			authUrl.searchParams.set("scope", scope);
 		}
+	}
+
+	if (oauth2Config.resourceServer) {
+		authUrl.searchParams.set("resource", oauth2Config.resourceServer);
 	}
 
 	log.info(`Generated authorization URL for ${serverId}`);
@@ -211,6 +219,10 @@ export async function handleCallback(
 			client_id: client_id,
 			code_verifier: code_verifier,
 		};
+
+		if (oauth2Config.resourceServer) {
+			tokenParams.resource = oauth2Config.resourceServer;
+		}
 
 		if (clientSecret) {
 			tokenParams.client_secret = clientSecret;
