@@ -277,8 +277,9 @@ export function installRules(
     const provider = getProvider(pid);
     if (!provider?.rules) continue;
 
+    const covered = plan.nativeCovered.get(provider.id);
     const applicableRules = rules.filter((r) => {
-      if (skipped.has(r.id)) return false;
+      if (skipped.has(r.id) || covered?.has(r.id)) return false;
       if (!r.providers || r.providers.length === 0) return true;
       return r.providers.includes(pid);
     });
@@ -459,8 +460,9 @@ export function pruneRules(
     if (!provider?.rules) continue;
 
     const desiredForProvider = new Set<string>();
+    const covered = plan.nativeCovered.get(provider.id);
     for (const r of currentRules) {
-      if (skipped.has(r.id)) continue;
+      if (skipped.has(r.id) || covered?.has(r.id)) continue;
       if (!r.providers || r.providers.length === 0 || r.providers.includes(pid)) {
         desiredForProvider.add(r.id);
       }
