@@ -201,6 +201,29 @@ describe('rules in shared instruction files', () => {
     expect(install.diagnostics.map((d) => [d.code, d.level])).toEqual([['scope-widened', 'warn']]);
   });
 
+  it('dedupes cursor even when gemini is isolated onto GEMINI.md', () => {
+    const rule: Rule = { id: 'all', type: 'inline', content: 'All.' };
+    sync([rule], ['codex', 'gemini-cli', 'cursor']);
+
+    expect(read('AGENTS.md')).toContain('All.');
+    expect(read('GEMINI.md')).toContain('All.');
+    expect(exists('.cursor/rules/all.mdc')).toBe(false);
+  });
+
+  it('keeps the native cursor rule when the nested folded target dir is missing', () => {
+    const rule: Rule = { id: 'svc', type: 'inline', appliesTo: ['services/**'], content: 'Svc.' };
+    const bodies = new Map([['svc', 'Svc.']]);
+    const cursorFile = join(projectPath, '.cursor', 'rules', 'svc.mdc');
+    installRules(projectPath, [rule], ['cursor'], bodies);
+
+    const prune = pruneRules(projectPath, ['codex', 'cursor'], [rule], [cursorFile]);
+    installRules(projectPath, [rule], ['codex', 'cursor'], bodies);
+
+    expect(prune.removedFiles).toEqual([]);
+    expect(existsSync(cursorFile)).toBe(true);
+    expect(exists('services/AGENTS.md')).toBe(false);
+  });
+
   it('keeps the native cursor rule when codex does not receive the rule', () => {
     const rule: Rule = { id: 'cur', type: 'inline', providers: ['cursor'], content: 'Cur.' };
     sync([rule], ['codex', 'cursor']);

@@ -78,6 +78,12 @@ export interface PlanRulePlacementInput {
    */
   targetProviders?: string[];
   conflicts?: RuleConflictMode;
+  /**
+   * Whether a nested placement (`dir/<file>`) can actually be written. A
+   * native rule file is only dropped in favour of folded copies that land.
+   * Defaults to true (pure planning, e.g. diagnostics only).
+   */
+  canWrite?: (relPath: string) => boolean;
 }
 
 /** Resolve `options.rules.conflicts`, defaulting to `error` under `onInstallError: stop`. */
@@ -245,21 +251,22 @@ export function planRulePlacement(input: PlanRulePlacementInput): RulePlacementP
 
     const skipped = level === 'error' && ruleDiagnostics.length > 0;
     if (!skipped && placements.length > 0) {
-      // An allowed provider with a native rules dir that also reads every
-      // file this rule lands in (Cursor + AGENTS.md) would get it twice. The
+      // An allowed provider with a native rules dir that also reads the file
+      // this rule is folded into (Cursor + AGENTS.md) would get it twice. The
       // folded copy is at least as broad as the native one, so the native
-      // file adds nothing but the duplicate.
-      const widened = placements.some((p) => p.preamble);
+      // file adds nothing but the duplicate. Only the provider's own file
+      // counts (not an isolated GEMINI.md copy), and only if every location
+      // got a copy that will actually be written.
       for (const pid of activeIds) {
         if (!allowed.has(pid) || foldsRulesIntoInstructions(pid)) continue;
-        const readsAll = placements.every((p) =>
-          (layout.files.get(posix.basename(p.path)) ?? []).includes(pid),
-        );
-        if (!readsAll) continue;
+        const file = layout.providerFile.get(pid);
+        const mine = placements.filter((p) => posix.basename(p.path) === file);
+        if (mine.length !== locations.length) continue;
+        if (!mine.every((p) => p.path === file || (input.canWrite?.(p.path) ?? true))) continue;
         const covered = nativeCovered.get(pid) ?? new Set<string>();
         covered.add(rule.id);
         nativeCovered.set(pid, covered);
-        if (widened) {
+        if (mine.some((p) => p.preamble)) {
           // Reported even under `scope: best-effort`: that opt-in covers the
           // folding providers, not one that could scope the rule natively.
           ruleDiagnostics.push({
@@ -267,7 +274,7 @@ export function planRulePlacement(input: PlanRulePlacementInput): RulePlacementP
             ruleId: rule.id,
             level: 'warn',
             message:
-              `Rule "${rule.id}": ${pid} also reads ${placements.map((p) => p.path).join(', ')}, ` +
+              `Rule "${rule.id}": ${pid} also reads ${mine.map((p) => p.path).join(', ')}, ` +
               `so it gets the project-wide copy folded for ${targets.join(', ')} instead of its ` +
               `native appliesTo scope (its own rule file is skipped to avoid a duplicate). ` +
               `Use directory globs (e.g. "src/**") to keep the scope for every provider.`,

@@ -240,6 +240,12 @@ export interface InstallRulesResult {
   installedRuleIds: string[];
 }
 
+/** Mirrors the nested-file checks in {@link installRules}. */
+function canWriteNested(projectPath: string, relPath: string): boolean {
+  const filePath = join(projectPath, relPath);
+  return existsSync(dirname(filePath)) && isCapaOwnedInstallPath(projectPath, filePath);
+}
+
 /**
  * Install rules for all active providers.
  *
@@ -266,6 +272,7 @@ export function installRules(
     readerProviders: options.readerProviders ?? providers,
     targetProviders: providers,
     conflicts: options.conflicts,
+    canWrite: (rel) => canWriteNested(projectPath, rel),
   });
   // A rule with an error-level conflict is skipped for every provider, native
   // rules directories included.
@@ -452,6 +459,7 @@ export function pruneRules(
     rules: currentRules,
     readerProviders: providers,
     conflicts: options.conflicts,
+    canWrite: (rel) => canWriteNested(projectPath, rel),
   });
   const skipped = skippedRuleIds(plan.diagnostics);
 
