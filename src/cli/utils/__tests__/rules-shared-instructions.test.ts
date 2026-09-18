@@ -154,8 +154,8 @@ describe('rules in shared instruction files', () => {
     const bodies = new Map([['py', 'Py.']]);
     const cursorFile = join(projectPath, '.cursor', 'rules', 'py.mdc');
 
-    // Installed earlier under warn mode: both providers have it.
-    installRules(projectPath, [rule], ['codex', 'cursor'], bodies);
+    // Installed earlier when Cursor was the only provider.
+    installRules(projectPath, [rule], ['cursor'], bodies);
     expect(existsSync(cursorFile)).toBe(true);
 
     const prune = pruneRules(projectPath, ['codex', 'cursor'], [rule], [cursorFile], {
@@ -168,7 +168,83 @@ describe('rules in shared instruction files', () => {
     expect(prune.diagnostics.map((d) => d.level)).toEqual(['error']);
     expect(install.diagnostics.map((d) => d.level)).toEqual(['error']);
     expect(existsSync(cursorFile)).toBe(false);
-    expect(read('AGENTS.md')).not.toContain('Py.');
+    expect(exists('AGENTS.md')).toBe(false);
+  });
+
+  it('delivers a rule once to cursor when codex folds it into AGENTS.md (#260)', () => {
+    mkdirSync(join(projectPath, 'services'));
+    const rules: Rule[] = [
+      { id: 'all', type: 'inline', content: 'All.' },
+      { id: 'svc', type: 'inline', appliesTo: ['services/**'], content: 'Svc.' },
+    ];
+    const { install } = sync(rules, ['codex', 'cursor']);
+
+    expect(read('AGENTS.md')).toContain('All.');
+    expect(read('services/AGENTS.md')).toContain('Svc.');
+    expect(exists('.cursor/rules/all.mdc')).toBe(false);
+    expect(exists('.cursor/rules/svc.mdc')).toBe(false);
+    expect(install.diagnostics).toEqual([]);
+  });
+
+  it('warns when codex best-effort fold widens cursor scope, even under best-effort (#260)', () => {
+    const rule: Rule = {
+      id: 'py',
+      type: 'inline',
+      appliesTo: ['**/*.py'],
+      scope: 'best-effort',
+      content: 'Py.',
+    };
+    const { install } = sync([rule], ['codex', 'cursor']);
+
+    expect(read('AGENTS.md')).toContain('Py.');
+    expect(exists('.cursor/rules/py.mdc')).toBe(false);
+    expect(install.diagnostics.map((d) => [d.code, d.level])).toEqual([['scope-widened', 'warn']]);
+  });
+
+  it('dedupes cursor even when gemini is isolated onto GEMINI.md', () => {
+    const rule: Rule = { id: 'all', type: 'inline', content: 'All.' };
+    sync([rule], ['codex', 'gemini-cli', 'cursor']);
+
+    expect(read('AGENTS.md')).toContain('All.');
+    expect(read('GEMINI.md')).toContain('All.');
+    expect(exists('.cursor/rules/all.mdc')).toBe(false);
+  });
+
+  it('keeps the native cursor rule when the nested folded target dir is missing', () => {
+    const rule: Rule = { id: 'svc', type: 'inline', appliesTo: ['services/**'], content: 'Svc.' };
+    const bodies = new Map([['svc', 'Svc.']]);
+    const cursorFile = join(projectPath, '.cursor', 'rules', 'svc.mdc');
+    installRules(projectPath, [rule], ['cursor'], bodies);
+
+    const prune = pruneRules(projectPath, ['codex', 'cursor'], [rule], [cursorFile]);
+    installRules(projectPath, [rule], ['codex', 'cursor'], bodies);
+
+    expect(prune.removedFiles).toEqual([]);
+    expect(existsSync(cursorFile)).toBe(true);
+    expect(exists('services/AGENTS.md')).toBe(false);
+  });
+
+  it('keeps the native cursor rule when codex does not receive the rule', () => {
+    const rule: Rule = { id: 'cur', type: 'inline', providers: ['cursor'], content: 'Cur.' };
+    sync([rule], ['codex', 'cursor']);
+
+    expect(exists('.cursor/rules/cur.mdc')).toBe(true);
+    expect(exists('AGENTS.md')).toBe(false);
+  });
+
+  it('prunes a now-duplicate native cursor rule when codex is added', () => {
+    const rule: Rule = { id: 'all', type: 'inline', content: 'All.' };
+    const bodies = new Map([['all', 'All.']]);
+    const cursorFile = join(projectPath, '.cursor', 'rules', 'all.mdc');
+    installRules(projectPath, [rule], ['cursor'], bodies);
+    expect(existsSync(cursorFile)).toBe(true);
+
+    const prune = pruneRules(projectPath, ['codex', 'cursor'], [rule], [cursorFile]);
+    installRules(projectPath, [rule], ['codex', 'cursor'], bodies);
+
+    expect(prune.removedFiles).toEqual([cursorFile]);
+    expect(existsSync(cursorFile)).toBe(false);
+    expect(read('AGENTS.md')).toContain('All.');
   });
 
   it('cleanRules finds nested targets from the rules when the DB has no record', () => {

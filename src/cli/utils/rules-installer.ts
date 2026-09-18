@@ -240,6 +240,12 @@ export interface InstallRulesResult {
   installedRuleIds: string[];
 }
 
+/** Mirrors the nested-file checks in {@link installRules}. */
+function canWriteNested(projectPath: string, relPath: string): boolean {
+  const filePath = join(projectPath, relPath);
+  return existsSync(dirname(filePath)) && isCapaOwnedInstallPath(projectPath, filePath);
+}
+
 /**
  * Install rules for all active providers.
  *
@@ -266,6 +272,7 @@ export function installRules(
     readerProviders: options.readerProviders ?? providers,
     targetProviders: providers,
     conflicts: options.conflicts,
+    canWrite: (rel) => canWriteNested(projectPath, rel),
   });
   // A rule with an error-level conflict is skipped for every provider, native
   // rules directories included.
@@ -277,8 +284,9 @@ export function installRules(
     const provider = getProvider(pid);
     if (!provider?.rules) continue;
 
+    const covered = plan.nativeCovered.get(provider.id);
     const applicableRules = rules.filter((r) => {
-      if (skipped.has(r.id)) return false;
+      if (skipped.has(r.id) || covered?.has(r.id)) return false;
       if (!r.providers || r.providers.length === 0) return true;
       return r.providers.includes(pid);
     });
@@ -451,6 +459,7 @@ export function pruneRules(
     rules: currentRules,
     readerProviders: providers,
     conflicts: options.conflicts,
+    canWrite: (rel) => canWriteNested(projectPath, rel),
   });
   const skipped = skippedRuleIds(plan.diagnostics);
 
@@ -459,8 +468,9 @@ export function pruneRules(
     if (!provider?.rules) continue;
 
     const desiredForProvider = new Set<string>();
+    const covered = plan.nativeCovered.get(provider.id);
     for (const r of currentRules) {
-      if (skipped.has(r.id)) continue;
+      if (skipped.has(r.id) || covered?.has(r.id)) continue;
       if (!r.providers || r.providers.length === 0 || r.providers.includes(pid)) {
         desiredForProvider.add(r.id);
       }

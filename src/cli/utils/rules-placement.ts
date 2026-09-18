@@ -11,11 +11,15 @@
  *   2. Where each folded rule block goes (root or nested `dir/<file>`), and
  *      which placements would widen visibility or scope. Those are reported
  *      as diagnostics instead of happening silently.
+ *   3. Which providers with a native rules directory already read a folded
+ *      copy (Cursor reads `AGENTS.md`), so their native file is skipped
+ *      instead of delivering the rule twice.
  *
  * Install, prune, and clean all derive their view of the world from this
  * plan, so their results don't depend on provider iteration order.
  */
 
+import { posix } from 'path';
 import type { Rule } from '../../types/rules';
 import type { CapabilitiesOptions } from '../../types/capabilities';
 import type { InstructionsContextConfig } from '../../types/providers';
@@ -26,6 +30,7 @@ export type RuleConflictMode = 'warn' | 'error';
 export type RuleDiagnosticCode =
   | 'visibility-conflict'
   | 'scope-not-representable'
+  | 'scope-widened'
   | 'invalid-glob';
 
 export interface RuleDiagnostic {
@@ -56,6 +61,11 @@ export interface RulePlacementPlan {
   /** Project-relative POSIX path → rule blocks placed there, in rule order. */
   blocks: Map<string, PlannedRuleBlock[]>;
   diagnostics: RuleDiagnostic[];
+  /**
+   * Provider id → rule ids it already receives through a folded instructions
+   * file. Install skips (and prune removes) the native rule file for these.
+   */
+  nativeCovered: Map<string, Set<string>>;
 }
 
 export interface PlanRulePlacementInput {
@@ -68,6 +78,12 @@ export interface PlanRulePlacementInput {
    */
   targetProviders?: string[];
   conflicts?: RuleConflictMode;
+  /**
+   * Whether a nested placement (`dir/<file>`) can actually be written. A
+   * native rule file is only dropped in favour of folded copies that land.
+   * Defaults to true (pure planning, e.g. diagnostics only).
+   */
+  canWrite?: (relPath: string) => boolean;
 }
 
 /** Resolve `options.rules.conflicts`, defaulting to `error` under `onInstallError: stop`. */
@@ -152,6 +168,7 @@ export function planRulePlacement(input: PlanRulePlacementInput): RulePlacementP
 
   const blocks = new Map<string, PlannedRuleBlock[]>();
   const diagnostics: RuleDiagnostic[] = [];
+  const nativeCovered = new Map<string, Set<string>>();
 
   for (const rule of input.rules) {
     const allowed = new Set(
@@ -232,8 +249,42 @@ export function planRulePlacement(input: PlanRulePlacementInput): RulePlacementP
       }
     }
 
+    const skipped = level === 'error' && ruleDiagnostics.length > 0;
+    if (!skipped && placements.length > 0) {
+      // An allowed provider with a native rules dir that also reads the file
+      // this rule is folded into (Cursor + AGENTS.md) would get it twice. The
+      // folded copy is at least as broad as the native one, so the native
+      // file adds nothing but the duplicate. Only the provider's own file
+      // counts (not an isolated GEMINI.md copy), and only if every location
+      // got a copy that will actually be written.
+      for (const pid of activeIds) {
+        if (!allowed.has(pid) || foldsRulesIntoInstructions(pid)) continue;
+        const file = layout.providerFile.get(pid);
+        const mine = placements.filter((p) => posix.basename(p.path) === file);
+        if (mine.length !== locations.length) continue;
+        if (!mine.every((p) => p.path === file || (input.canWrite?.(p.path) ?? true))) continue;
+        const covered = nativeCovered.get(pid) ?? new Set<string>();
+        covered.add(rule.id);
+        nativeCovered.set(pid, covered);
+        if (mine.some((p) => p.preamble)) {
+          // Reported even under `scope: best-effort`: that opt-in covers the
+          // folding providers, not one that could scope the rule natively.
+          ruleDiagnostics.push({
+            code: 'scope-widened',
+            ruleId: rule.id,
+            level: 'warn',
+            message:
+              `Rule "${rule.id}": ${pid} also reads ${mine.map((p) => p.path).join(', ')}, ` +
+              `so it gets the project-wide copy folded for ${targets.join(', ')} instead of its ` +
+              `native appliesTo scope (its own rule file is skipped to avoid a duplicate). ` +
+              `Use directory globs (e.g. "src/**") to keep the scope for every provider.`,
+          });
+        }
+      }
+    }
+
     diagnostics.push(...ruleDiagnostics);
-    if (level === 'error' && ruleDiagnostics.length > 0) continue;
+    if (skipped) continue;
 
     for (const { path, preamble } of placements) {
       const list = blocks.get(path) ?? [];
@@ -242,7 +293,7 @@ export function planRulePlacement(input: PlanRulePlacementInput): RulePlacementP
     }
   }
 
-  return { layout, blocks, diagnostics };
+  return { layout, blocks, diagnostics, nativeCovered };
 }
 
 /** Rule body as written inside its marker block. */
