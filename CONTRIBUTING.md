@@ -33,4 +33,4 @@ bun run dev
 4. Link the related issue in the PR description.
 5. Update docs when user-facing behavior changes.
 
-Questions? Open a [discussion](https://github.com/infragate/capa/discussions) or issue.
+Questions? Open an [issue](https://github.com/infragate/capa/issues).
