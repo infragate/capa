@@ -287,6 +287,40 @@ export function serializeLockfile(
 }
 
 /**
+ * Tag to store on a lock entry after a snapshot resolve.
+ *
+ * The first install of an unpinned source discovers a semver tag and records it
+ * as `resolvedVersion`. Later installs reuse the pinned commit. The snapshot
+ * layer then reports no version: it only echoes a requested version, and the
+ * offline fast path never asks git which tag that commit was. Keep the tag
+ * already stored for that same commit. A newly discovered version wins, and a
+ * tag from a different commit is not reused.
+ */
+export function preserveResolvedVersion(
+	snapshot: { resolvedSha: string; resolvedVersion: string | null },
+	previous: {
+		resolvedRef: string | null;
+		resolvedVersion: string | null;
+	} | null,
+): string | null {
+	if (snapshot.resolvedVersion) return snapshot.resolvedVersion;
+	if (
+		previous?.resolvedRef &&
+		sameResolvedCommit(previous.resolvedRef, snapshot.resolvedSha)
+	) {
+		return previous.resolvedVersion;
+	}
+	return null;
+}
+
+/** Git accepts either hex case; `rev-parse` returns lowercase. */
+function sameResolvedCommit(a: string, b: string): boolean {
+	const hex = /^[a-f0-9]{40}$/i;
+	if (hex.test(a) && hex.test(b)) return a.toLowerCase() === b.toLowerCase();
+	return a === b;
+}
+
+/**
  * Mutable builder used by the install pipeline to accumulate lock entries.
  *
  * Usage:
@@ -370,6 +404,38 @@ export class LockfileBuilder {
 			return entry;
 		}
 		return null;
+	}
+
+	/**
+	 * Look up a plugin pin by its stable install id.
+	 *
+	 * ID-only marketplace entries have no subpath in capabilities and no
+	 * requested search name. The first install records the nested directory it
+	 * discovered, so a later subpath lookup misses the pin. Match that entry
+	 * by id when source, repo, and requested version/ref still agree, and only
+	 * when the previous entry was itself ID-only (`requestedSearchName` is
+	 * null). A `repo@name` search declaration is a different selector even
+	 * when the install id, repository, version, and ref match.
+	 */
+	findPluginForInstallId(
+		id: string,
+		query: {
+			source: string;
+			repo: string;
+			requestedVersion: string | null;
+			requestedRef: string | null;
+		},
+	): LockPluginEntry | null {
+		const entry = this.plugins.get(id);
+		if (!entry) return null;
+		if (entry.source !== query.source) return null;
+		if (entry.repo !== query.repo) return null;
+		if ((entry.requestedSearchName ?? null) !== null) return null;
+		if ((entry.requestedVersion ?? null) !== (query.requestedVersion ?? null))
+			return null;
+		if ((entry.requestedRef ?? null) !== (query.requestedRef ?? null))
+			return null;
+		return entry;
 	}
 
 	upsertSkill(entry: LockSkillEntry): void {

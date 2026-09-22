@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, unlinkSync } from 'fs';
-import { join, dirname, basename, sep, relative, resolve, isAbsolute } from 'path';
+import { join, dirname, basename, sep, relative, resolve, isAbsolute, posix } from 'path';
 import * as yaml from 'js-yaml';
 import type { Rule } from '../../types/rules';
 import { getAllProviders, getProvider } from '../../shared/providers';
@@ -20,6 +20,7 @@ import {
   renderPlannedRuleBody,
   type RuleConflictMode,
   type RuleDiagnostic,
+  type RulePlacementPlan,
 } from './rules-placement';
 
 const RULE_MARKER_PREFIX = 'rule:';
@@ -238,6 +239,17 @@ export interface InstallRulesResult {
   skippedRuleIds: string[];
   /** Rules written to at least one provider file (unique ids). */
   installedRuleIds: string[];
+  /**
+   * Native rule files removed because their folded replacement was written.
+   * Callers that track managed files should drop these from the database.
+   */
+  removedNativeFiles: string[];
+}
+
+/** Mirrors the nested-file checks in {@link installRules}. */
+function canWriteNested(projectPath: string, relPath: string): boolean {
+  const filePath = join(projectPath, relPath);
+  return existsSync(dirname(filePath)) && isCapaOwnedInstallPath(projectPath, filePath);
 }
 
 /**
@@ -266,19 +278,23 @@ export function installRules(
     readerProviders: options.readerProviders ?? providers,
     targetProviders: providers,
     conflicts: options.conflicts,
+    canWrite: (rel) => canWriteNested(projectPath, rel),
   });
   // A rule with an error-level conflict is skipped for every provider, native
   // rules directories included.
   const skipped = skippedRuleIds(plan.diagnostics);
   const writtenInstructionFiles: string[] = [];
   const installedRuleIds = new Set<string>();
+  /** rule id → folded paths that were actually written. */
+  const writtenFolded = new Map<string, Set<string>>();
 
   for (const pid of providers) {
     const provider = getProvider(pid);
     if (!provider?.rules) continue;
 
+    const covered = plan.nativeCovered.get(provider.id);
     const applicableRules = rules.filter((r) => {
-      if (skipped.has(r.id)) return false;
+      if (skipped.has(r.id) || covered?.has(r.id)) return false;
       if (!r.providers || r.providers.length === 0) return true;
       return r.providers.includes(pid);
     });
@@ -372,7 +388,12 @@ export function installRules(
     }
     writeMd(projectPath, relPath, mdContent);
     writtenInstructionFiles.push(relPath);
-    for (const block of blocks) installedRuleIds.add(block.ruleId);
+    for (const block of blocks) {
+      installedRuleIds.add(block.ruleId);
+      const written = writtenFolded.get(block.ruleId) ?? new Set<string>();
+      written.add(relPath);
+      writtenFolded.set(block.ruleId, written);
+    }
     if (!isDefaultInstructionsFilename(relPath)) {
       options.onInstructionTargetWritten?.(filePath);
     }
@@ -384,13 +405,75 @@ export function installRules(
     }
   }
 
+  const removedNativeFiles = removeFoldedNativeRules(
+    projectPath,
+    providers,
+    plan,
+    writtenFolded,
+    options.quiet,
+    warnings,
+  );
+
   return {
     diagnostics: plan.diagnostics,
     warnings,
     writtenInstructionFiles,
     skippedRuleIds: [...skipped],
     installedRuleIds: [...installedRuleIds],
+    removedNativeFiles,
   };
+}
+
+/**
+ * Delete a native rule file only after every folded placement that justified
+ * skipping it was written. A planned fold whose body never resolved, or whose
+ * target was skipped, leaves the native file in place.
+ */
+function removeFoldedNativeRules(
+  projectPath: string,
+  providers: string[],
+  plan: RulePlacementPlan,
+  writtenFolded: Map<string, Set<string>>,
+  quiet: boolean | undefined,
+  warnings: string[],
+): string[] {
+  const removed: string[] = [];
+  for (const pid of providers) {
+    const provider = getProvider(pid);
+    if (!provider?.rules) continue;
+    const covered = plan.nativeCovered.get(provider.id);
+    if (!covered?.size) continue;
+    const instructionFile = plan.layout.providerFile.get(provider.id);
+    if (!instructionFile) continue;
+
+    for (const ruleId of covered) {
+      if (!isSafeCapabilityId(ruleId)) continue;
+      const planned: string[] = [];
+      for (const [relPath, blocks] of plan.blocks) {
+        if (posix.basename(relPath) !== instructionFile) continue;
+        if (blocks.some((block) => block.ruleId === ruleId)) planned.push(relPath);
+      }
+      if (planned.length === 0) continue;
+      const written = writtenFolded.get(ruleId);
+      if (!planned.every((relPath) => written?.has(relPath))) continue;
+
+      const filePath = join(projectPath, provider.rules.dir, `${ruleId}${provider.rules.extension}`);
+      if (!existsSync(filePath) || !isCapaOwnedInstallPath(projectPath, filePath)) continue;
+      try {
+        unlinkSync(filePath);
+        removed.push(filePath);
+        if (!quiet) {
+          taskLog(
+            `  ✓ Removed native ${provider.rules.dir}/${basename(filePath)} (${provider.displayName}); folded copy is in place`,
+          );
+        }
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        warnings.push(`Failed to remove native rule ${filePath}: ${message}`);
+      }
+    }
+  }
+  return removed;
 }
 
 export interface PruneRulesOptions {
@@ -451,6 +534,7 @@ export function pruneRules(
     rules: currentRules,
     readerProviders: providers,
     conflicts: options.conflicts,
+    canWrite: (rel) => canWriteNested(projectPath, rel),
   });
   const skipped = skippedRuleIds(plan.diagnostics);
 
@@ -459,8 +543,12 @@ export function pruneRules(
     if (!provider?.rules) continue;
 
     const desiredForProvider = new Set<string>();
+    const covered = plan.nativeCovered.get(provider.id);
     for (const r of currentRules) {
       if (skipped.has(r.id)) continue;
+      // Folded coverage is not enough to delete the native file. Prune runs
+      // before the body resolves; installRules removes the native copy only
+      // after the folded replacement is written.
       if (!r.providers || r.providers.length === 0 || r.providers.includes(pid)) {
         desiredForProvider.add(r.id);
       }
@@ -475,7 +563,15 @@ export function pruneRules(
       if (!file.startsWith(dirPrefix)) continue;
       if (!file.endsWith(ext)) continue;
       const ruleId = basename(file).slice(0, -ext.length);
-      if (desiredForProvider.has(ruleId)) continue;
+      if (desiredForProvider.has(ruleId)) {
+        // A previous successful fold already removed this file. Drop the
+        // stale managed-file record without deleting anything that is still
+        // on disk.
+        if (covered?.has(ruleId) && !existsSync(file)) {
+          removedFiles.push(file);
+        }
+        continue;
+      }
 
       if (existsSync(file)) {
         try {
