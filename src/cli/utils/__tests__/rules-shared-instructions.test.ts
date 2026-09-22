@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import type { Rule } from '../../../types/rules';
 import { cleanRules, installRules, pruneRules } from '../rules-installer';
 import { cleanAgentsFile, installAgentsFile } from '../agents-file/index';
@@ -240,11 +240,41 @@ describe('rules in shared instruction files', () => {
     expect(existsSync(cursorFile)).toBe(true);
 
     const prune = pruneRules(projectPath, ['codex', 'cursor'], [rule], [cursorFile]);
-    installRules(projectPath, [rule], ['codex', 'cursor'], bodies);
+    const install = installRules(projectPath, [rule], ['codex', 'cursor'], bodies);
+
+    // Prune keeps the native file until the folded body is written.
+    expect(prune.removedFiles).toEqual([]);
+    expect(install.removedNativeFiles).toEqual([cursorFile]);
+    expect(existsSync(cursorFile)).toBe(false);
+    expect(read('AGENTS.md')).toContain('All.');
+  });
+
+  it('keeps the native cursor rule when the folded body fails to resolve', () => {
+    const rule: Rule = { id: 'all', type: 'inline', content: 'All.' };
+    const bodies = new Map([['all', 'All.']]);
+    const cursorFile = join(projectPath, '.cursor', 'rules', 'all.mdc');
+    installRules(projectPath, [rule], ['cursor'], bodies);
+    expect(existsSync(cursorFile)).toBe(true);
+
+    // install-rules omits rules whose body fetch failed, so the replacement
+    // is never written. The native file must survive that refresh.
+    const prune = pruneRules(projectPath, ['codex', 'cursor'], [rule], [cursorFile]);
+    const install = installRules(projectPath, [], ['codex', 'cursor'], new Map());
+
+    expect(prune.removedFiles).toEqual([]);
+    expect(install.removedNativeFiles).toEqual([]);
+    expect(existsSync(cursorFile)).toBe(true);
+    expect(exists('AGENTS.md')).toBe(false);
+  });
+
+  it('drops a managed native path after a previous fold already removed the file', () => {
+    const rule: Rule = { id: 'all', type: 'inline', content: 'All.' };
+    const cursorFile = join(projectPath, '.cursor', 'rules', 'all.mdc');
+
+    const prune = pruneRules(projectPath, ['codex', 'cursor'], [rule], [cursorFile]);
 
     expect(prune.removedFiles).toEqual([cursorFile]);
     expect(existsSync(cursorFile)).toBe(false);
-    expect(read('AGENTS.md')).toContain('All.');
   });
 
   it('cleanRules finds nested targets from the rules when the DB has no record', () => {
