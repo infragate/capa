@@ -63,7 +63,9 @@ export interface RulePlacementPlan {
   diagnostics: RuleDiagnostic[];
   /**
    * Provider id → rule ids it already receives through a folded instructions
-   * file. Install skips (and prune removes) the native rule file for these.
+   * file. Install skips the native rule file for these and deletes an existing
+   * one only after that folded copy is written. Prune leaves the native file
+   * in place until then, so a failed body fetch cannot remove the only copy.
    */
   nativeCovered: Map<string, Set<string>>;
 }
