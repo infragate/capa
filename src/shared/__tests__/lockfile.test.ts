@@ -365,6 +365,26 @@ describe('lockfile', () => {
       ).toBeNull();
     });
 
+    it('findPluginForInstallId ignores a search-form entry with the same install id', () => {
+      const searched: LockPluginEntry = {
+        ...samplePlugin,
+        id: 'widget',
+        repo: 'acme/plugins-monorepo',
+        subpath: 'widget',
+        requestedSearchName: 'widget',
+        resolvedVersion: 'v1.2.3',
+      };
+      const b = new LockfileBuilder({ ...emptyLockfile(), plugins: [searched] });
+      expect(
+        b.findPluginForInstallId('widget', {
+          source: 'github',
+          repo: 'acme/plugins-monorepo',
+          requestedVersion: null,
+          requestedRef: null,
+        }),
+      ).toBeNull();
+    });
+
     it('findPlugin pivots on requestedSearchName and ignores the resolved subpath', () => {
       const searched: LockPluginEntry = {
         ...samplePlugin,
