@@ -287,6 +287,30 @@ export function serializeLockfile(
 }
 
 /**
+ * Tag to store on a lock entry after a snapshot resolve.
+ *
+ * The first install of an unpinned source discovers a semver tag and records it
+ * as `resolvedVersion`. Later installs reuse the pinned commit. The snapshot
+ * layer then reports no version: it only echoes a requested version, and the
+ * offline fast path never asks git which tag that commit was. Keep the tag
+ * already stored for that same commit. A newly discovered version wins, and a
+ * tag from a different commit is not reused.
+ */
+export function preserveResolvedVersion(
+	snapshot: { resolvedSha: string; resolvedVersion: string | null },
+	previous: {
+		resolvedRef: string | null;
+		resolvedVersion: string | null;
+	} | null,
+): string | null {
+	if (snapshot.resolvedVersion) return snapshot.resolvedVersion;
+	if (previous?.resolvedRef && previous.resolvedRef === snapshot.resolvedSha) {
+		return previous.resolvedVersion;
+	}
+	return null;
+}
+
+/**
  * Mutable builder used by the install pipeline to accumulate lock entries.
  *
  * Usage:

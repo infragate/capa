@@ -48,7 +48,7 @@ import {
   BlockedPhraseError,
 } from '../../shared/skill-security';
 import type { GetSnapshotResult, CachePlatform } from '../../shared/cache';
-import type { LockfileBuilder } from '../../shared/lockfile';
+import { preserveResolvedVersion, type LockfileBuilder } from '../../shared/lockfile';
 import type { LockPluginEntry } from '../../types/lockfile';
 import { copySkillTree } from '../../shared/skill-copy';
 import { acquireFileLock } from '../../shared/file-lock';
@@ -388,8 +388,9 @@ export async function resolvePlugins(
       const { platform, repoPath, subpath, search, version, ref } = validated;
 
       let snapshot: GetSnapshotResult;
+      let previousLock: LockPluginEntry | null = null;
       try {
-        const lockEntry = noCache
+        previousLock = noCache
           ? null
           : lockBuilder.findPlugin({
               source: platform,
@@ -399,7 +400,7 @@ export async function resolvePlugins(
               requestedVersion: version ?? null,
               requestedRef: ref ?? null,
             });
-        const pinnedSha = lockEntry?.resolvedRef;
+        const pinnedSha = previousLock?.resolvedRef;
         snapshot = await getRepoSnapshot(platform, repoPath, authFetch, {
           version,
           ref,
@@ -506,7 +507,7 @@ export async function resolvePlugins(
       requestedVersion: version ?? null,
       requestedRef: ref ?? null,
       resolvedRef: snapshot.resolvedSha,
-      resolvedVersion: snapshot.resolvedVersion ?? null,
+      resolvedVersion: preserveResolvedVersion(snapshot, previousLock),
       manifestName: manifest.name,
       manifestVersion: manifest.version ?? null,
     };

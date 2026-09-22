@@ -6,7 +6,7 @@ import { createAuthenticatedFetch, AuthenticatedFetch } from '../../../../shared
 import { getIntegrationsUrl, parseRepoUrl } from '../../../utils/integration-helper';
 import { getProvider, getAllProviders } from '../../../../shared/providers';
 import { getGitProvider } from '../../../../shared/git-providers/registry';
-import { LockfileBuilder } from '../../../../shared/lockfile';
+import { LockfileBuilder, preserveResolvedVersion } from '../../../../shared/lockfile';
 import { assertSafeRepoPath } from '../../../../shared/repo-file';
 import { assertCapaOwnedInstallPath } from '../../../../shared/install-path-guard';
 import {
@@ -28,7 +28,7 @@ import {
 import { type CachePlatform, type GetSnapshotResult } from '../../../../shared/cache';
 import type { LockSkillEntry } from '../../../../types/lockfile';
 import { isVerbose } from '../../../ui';
-import { getRepoSnapshot } from './repo-snapshot';
+import * as repoSnapshot from './repo-snapshot';
 import { findSkillsInDirectory, readSkillFromDirectory } from './skill-discovery';
 import type { SkillInstallOutcome } from '../context';
 
@@ -122,12 +122,14 @@ export async function installOneSkill(
 
       const repoKey = `${platform}:${repoPath}${version ? ':' + version : ''}${ref ? '#' + ref : ''}`;
       let snapshot = resolvedRepos.get(repoKey);
+      // Hoisted so a snapshot reused from another skill in this run can still
+      // keep this skill's previously discovered tag.
+      const previousLock = noCache
+        ? null
+        : lockBuilder.findSkill(skill.id, version ?? null, ref ?? null);
 
       if (!snapshot) {
-        const lockEntry = noCache
-          ? null
-          : lockBuilder.findSkill(skill.id, version ?? null, ref ?? null);
-        const pinnedSha = lockEntry?.resolvedRef;
+        const pinnedSha = previousLock?.resolvedRef;
 
         const sourceLabel = pinnedSha
           ? ` (cached @ ${pinnedSha.slice(0, 7)})`
@@ -141,7 +143,7 @@ export async function installOneSkill(
         }
 
         try {
-          snapshot = await getRepoSnapshot(platform, repoPath, authFetch, {
+          snapshot = await repoSnapshot.getRepoSnapshot(platform, repoPath, authFetch, {
             version,
             ref,
             pinnedSha,
@@ -171,7 +173,7 @@ export async function installOneSkill(
         requestedVersion: version ?? null,
         requestedRef: ref ?? null,
         resolvedRef: snapshot.resolvedSha,
-        resolvedVersion: snapshot.resolvedVersion ?? null,
+        resolvedVersion: preserveResolvedVersion(snapshot, previousLock),
       };
       lockBuilder.upsertSkill(lockEntry);
 

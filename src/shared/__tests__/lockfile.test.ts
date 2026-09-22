@@ -12,6 +12,7 @@ import {
   getLockfilePath,
   loadLockfile,
   lockfilesSemanticallyEqual,
+  preserveResolvedVersion,
   saveLockfile,
   serializeLockfile,
 } from '../lockfile';
@@ -418,5 +419,42 @@ describe('lockfile', () => {
       lf = b.build();
       expect(lf.hooks.map((h) => h.id)).toEqual(['gh-hook']);
     });
+  });
+});
+
+describe('preserveResolvedVersion', () => {
+  const sha = 'a'.repeat(40);
+
+  it('keeps the tag already recorded for the same pinned commit', () => {
+    expect(
+      preserveResolvedVersion(
+        { resolvedSha: sha, resolvedVersion: null },
+        { resolvedRef: sha, resolvedVersion: 'v1.2.3' },
+      ),
+    ).toBe('v1.2.3');
+  });
+
+  it('prefers a version the snapshot just resolved', () => {
+    expect(
+      preserveResolvedVersion(
+        { resolvedSha: sha, resolvedVersion: 'v2.0.0' },
+        { resolvedRef: sha, resolvedVersion: 'v1.2.3' },
+      ),
+    ).toBe('v2.0.0');
+  });
+
+  it('does not reuse a tag recorded for a different commit', () => {
+    expect(
+      preserveResolvedVersion(
+        { resolvedSha: sha, resolvedVersion: null },
+        { resolvedRef: 'b'.repeat(40), resolvedVersion: 'v1.2.3' },
+      ),
+    ).toBeNull();
+  });
+
+  it('stays null when nothing was discovered before', () => {
+    expect(
+      preserveResolvedVersion({ resolvedSha: sha, resolvedVersion: null }, null),
+    ).toBeNull();
   });
 });
