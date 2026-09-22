@@ -141,14 +141,23 @@ export function installRulesTask(): Task<InstallCtx> {
 
       task.output = 'writing files…';
       // Placement diagnostics were already reported by the prune task.
-      const { warnings } = installRules(ctx.projectPath, installedRules, providers, ctx.ruleBodies!, {
-        onFileWritten: (filePath) => ctx.db.addManagedFile(ctx.projectId, filePath),
-        onInstructionTargetWritten: (filePath) =>
-          ctx.db.addManagedInstructionTarget(ctx.projectId, filePath),
-        conflicts: resolveRuleConflictMode(ctx.capabilitiesToUse.options),
-      });
+      const { warnings, removedNativeFiles } = installRules(
+        ctx.projectPath,
+        installedRules,
+        providers,
+        ctx.ruleBodies!,
+        {
+          onFileWritten: (filePath) => ctx.db.addManagedFile(ctx.projectId, filePath),
+          onInstructionTargetWritten: (filePath) =>
+            ctx.db.addManagedInstructionTarget(ctx.projectId, filePath),
+          conflicts: resolveRuleConflictMode(ctx.capabilitiesToUse.options),
+        },
+      );
+      for (const filePath of removedNativeFiles) {
+        ctx.db.removeManagedFile(ctx.projectId, filePath);
+      }
       ctx.warnings.push(...warnings);
-      ctx.added += installedRules.length;
+      ctx.added += installedRules.length + removedNativeFiles.length;
       task.title =
         failedInTask > 0
           ? `Installed ${installedRules.length} of ${totalRules} rule${totalRules === 1 ? '' : 's'}`
