@@ -400,6 +400,20 @@ export async function resolvePlugins(
               requestedVersion: version ?? null,
               requestedRef: ref ?? null,
             });
+        // ID-only marketplace plugins persist the nested directory they
+        // discovered. A subpath lookup misses that pin, so fall back to the
+        // stable install id before giving up the commit.
+        if (!noCache && !previousLock && !subpath && !search && pluginRef.id) {
+          previousLock = lockBuilder.findPluginForInstallId(
+            getPluginInstallId(pluginRef.id),
+            {
+              source: platform,
+              repo: repoPath,
+              requestedVersion: version ?? null,
+              requestedRef: ref ?? null,
+            },
+          );
+        }
         const pinnedSha = previousLock?.resolvedRef;
         snapshot = await getRepoSnapshot(platform, repoPath, authFetch, {
           version,

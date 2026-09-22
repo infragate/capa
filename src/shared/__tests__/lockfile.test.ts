@@ -341,6 +341,30 @@ describe('lockfile', () => {
       expect(b.findPlugin({ source: 'github', repo: 'owner/plugin', subpath: 'plugins/other', requestedVersion: null, requestedRef: null })).toBeNull();
     });
 
+    it('findPluginForInstallId recovers a nested pin when the declaration has no subpath', () => {
+      const nested: LockPluginEntry = {
+        ...samplePlugin,
+        id: 'widget',
+        repo: 'acme/plugins-monorepo',
+        subpath: 'widget',
+        resolvedVersion: 'v1.2.3',
+      };
+      const b = new LockfileBuilder({ ...emptyLockfile(), plugins: [nested] });
+      const query = {
+        source: 'github' as const,
+        repo: 'acme/plugins-monorepo',
+        requestedVersion: null,
+        requestedRef: null,
+      };
+
+      expect(b.findPlugin({ ...query, subpath: null })).toBeNull();
+      expect(b.findPluginForInstallId('widget', query)?.resolvedVersion).toBe('v1.2.3');
+      expect(b.findPluginForInstallId('widget', { ...query, repo: 'other/repo' })).toBeNull();
+      expect(
+        b.findPluginForInstallId('widget', { ...query, requestedVersion: 'v9.9.9' }),
+      ).toBeNull();
+    });
+
     it('findPlugin pivots on requestedSearchName and ignores the resolved subpath', () => {
       const searched: LockPluginEntry = {
         ...samplePlugin,
@@ -456,5 +480,14 @@ describe('preserveResolvedVersion', () => {
     expect(
       preserveResolvedVersion({ resolvedSha: sha, resolvedVersion: null }, null),
     ).toBeNull();
+  });
+
+  it('treats uppercase and lowercase hex as the same commit', () => {
+    expect(
+      preserveResolvedVersion(
+        { resolvedSha: sha, resolvedVersion: null },
+        { resolvedRef: sha.toUpperCase(), resolvedVersion: 'v1.2.3' },
+      ),
+    ).toBe('v1.2.3');
   });
 });

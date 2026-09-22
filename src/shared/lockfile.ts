@@ -304,10 +304,20 @@ export function preserveResolvedVersion(
 	} | null,
 ): string | null {
 	if (snapshot.resolvedVersion) return snapshot.resolvedVersion;
-	if (previous?.resolvedRef && previous.resolvedRef === snapshot.resolvedSha) {
+	if (
+		previous?.resolvedRef &&
+		sameResolvedCommit(previous.resolvedRef, snapshot.resolvedSha)
+	) {
 		return previous.resolvedVersion;
 	}
 	return null;
+}
+
+/** Git accepts either hex case; `rev-parse` returns lowercase. */
+function sameResolvedCommit(a: string, b: string): boolean {
+	const hex = /^[a-f0-9]{40}$/i;
+	if (hex.test(a) && hex.test(b)) return a.toLowerCase() === b.toLowerCase();
+	return a === b;
 }
 
 /**
@@ -394,6 +404,34 @@ export class LockfileBuilder {
 			return entry;
 		}
 		return null;
+	}
+
+	/**
+	 * Look up a plugin pin by its stable install id.
+	 *
+	 * ID-only marketplace entries have no subpath in capabilities. The first
+	 * install records the nested directory it discovered, so a later subpath
+	 * lookup misses the pin. Match that entry by id when source, repo, and
+	 * requested version/ref still agree.
+	 */
+	findPluginForInstallId(
+		id: string,
+		query: {
+			source: string;
+			repo: string;
+			requestedVersion: string | null;
+			requestedRef: string | null;
+		},
+	): LockPluginEntry | null {
+		const entry = this.plugins.get(id);
+		if (!entry) return null;
+		if (entry.source !== query.source) return null;
+		if (entry.repo !== query.repo) return null;
+		if ((entry.requestedVersion ?? null) !== (query.requestedVersion ?? null))
+			return null;
+		if ((entry.requestedRef ?? null) !== (query.requestedRef ?? null))
+			return null;
+		return entry;
 	}
 
 	upsertSkill(entry: LockSkillEntry): void {
