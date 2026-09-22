@@ -391,6 +391,10 @@ async function syncProjectRules(opts: {
 				},
 			);
 			warnings.push(...result.warnings);
+			for (const file of result.removedNativeFiles) {
+				opts.db.removeManagedFile(opts.projectId, file);
+			}
+			removed += result.removedNativeFiles.length;
 			// Rules with error-level conflicts were skipped (already reported by prune).
 			const skipped = new Set(
 				result.diagnostics.filter((d) => d.level === "error").map((d) => d.ruleId),
