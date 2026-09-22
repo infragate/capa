@@ -189,4 +189,69 @@ describe('resolvePlugins preserves pinned resolvedVersion', () => {
     expect(entry?.resolvedVersion).toBe('v1.2.3');
     expect(entry?.subpath).toBe('widget');
   });
+
+  it('does not reuse a search-form pin when the declaration becomes id-only', async () => {
+    const oldSha = 'b'.repeat(40);
+    const newSha = 'c'.repeat(40);
+    const nestedRoot = join(dir, 'search-snapshot');
+    mkdirSync(join(nestedRoot, '.cursor-plugin'), { recursive: true });
+    writeFileSync(
+      join(nestedRoot, '.cursor-plugin', 'marketplace.json'),
+      JSON.stringify({ name: 'demo-market', plugins: [{ name: 'widget', source: 'widget' }] }),
+    );
+    const pluginRoot = join(nestedRoot, 'widget');
+    mkdirSync(join(pluginRoot, '.cursor-plugin'), { recursive: true });
+    writeFileSync(
+      join(pluginRoot, '.cursor-plugin', 'plugin.json'),
+      JSON.stringify({ name: 'widget', version: '1.0.0' }),
+    );
+
+    const lockBuilder = new LockfileBuilder(null);
+    lockBuilder.upsertPlugin({
+      id: 'widget',
+      source: 'github',
+      repo: 'acme/plugins-monorepo',
+      subpath: 'widget',
+      requestedSearchName: 'widget',
+      requestedVersion: null,
+      requestedRef: null,
+      resolvedRef: oldSha,
+      resolvedVersion: 'v1.2.3',
+      manifestName: 'widget',
+      manifestVersion: '1.0.0',
+    });
+
+    const seen: Array<string | undefined> = [];
+    const caps: Capabilities = {
+      providers: ['cursor'],
+      skills: [],
+      servers: [],
+      tools: [],
+      plugins: [{ id: 'widget', type: 'github', def: { repo: 'acme/plugins-monorepo' } }],
+    };
+    await resolvePlugins(
+      caps,
+      projectPath,
+      'proj-lock',
+      (async () => new Response()) as never,
+      db,
+      async (_platform, _repo, _auth, opts) => {
+        seen.push(opts?.pinnedSha);
+        return { snapshotDir: nestedRoot, resolvedSha: newSha, resolvedVersion: null };
+      },
+      join(projectPath, 'capabilities.yaml'),
+      lockBuilder,
+      {
+        materializeProjectSkills: false,
+        pluginsBaseDir: pluginsBase,
+        trackManaged: false,
+      },
+    );
+
+    const entry = lockBuilder.build().plugins.find((p) => p.id === 'widget');
+    expect(seen).toEqual([undefined]);
+    expect(entry?.resolvedRef).toBe(newSha);
+    expect(entry?.resolvedVersion).toBeNull();
+    expect(entry?.requestedSearchName).toBeNull();
+  });
 });
