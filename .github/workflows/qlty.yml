@@ -22,7 +22,7 @@ jobs:
           fetch-depth: 0
 
       - name: Install Qlty CLI
-        uses: qltysh/qlty-action/install@v2.3.0
+        uses: qltysh/qlty-action/install@v2.4.0
 
       - name: Check for new code smells
         run: |
