@@ -29,7 +29,7 @@ function pluginsCacheKey(
 	return plugins
 		.map(
 			(p) =>
-				`${p.id ?? ""}|${p.type}|${p.def?.repo ?? ""}|${p.def?.version ?? ""}|${p.def?.ref ?? ""}`,
+				`${p.id ?? ""}|${p.type}|${p.def?.repo ?? p.def?.url ?? ""}|${p.def?.version ?? ""}|${p.def?.ref ?? ""}`,
 		)
 		.join("||");
 }

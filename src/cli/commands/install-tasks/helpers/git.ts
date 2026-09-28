@@ -26,17 +26,65 @@ export function gitOAuthHelpText(): string {
   );
 }
 
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host || url;
+  } catch {
+    return url;
+  }
+}
+
+// Any git host other than github.com / gitlab.com: capa has no integration to
+// connect, so credentials come from the user's own git credential helper.
+function explainGenericGitError(error: any, errorMessage: string, repoUrl: string, host: string): Error {
+  if (
+    errorMessage.includes('git: command not found') ||
+    errorMessage.includes("'git' is not recognized") ||
+    errorMessage.includes('git: not found') ||
+    error?.code === 'ENOENT'
+  ) {
+    return new Error('Git is not installed — install git and re-run `capa install` (https://git-scm.com/downloads).');
+  }
+  if (
+    errorMessage.includes('Authentication failed') ||
+    errorMessage.includes('could not read Username') ||
+    errorMessage.includes('could not read Password') ||
+    errorMessage.includes('terminal prompts disabled')
+  ) {
+    return new Error(
+      `Authentication failed for ${repoUrl} (repository not accessible)\n` +
+        `If the repository is private, sign in once with \`git clone ${repoUrl}\` so your git credential helper ` +
+        `remembers the credentials, then re-run \`capa install\`.`
+    );
+  }
+  if (errorMessage.includes('not found') || errorMessage.includes('does not appear to be a git repository')) {
+    return new Error(`Repository not found: ${repoUrl}\nCheck the URL, or sign in with git if it is private.`);
+  }
+  if (errorMessage.includes('unable to access') || errorMessage.includes('Could not resolve host')) {
+    return new Error(`Network error: cannot reach ${host} — check the URL and your connection.`);
+  }
+  const fatal =
+    errorMessage.split('\n').find((line: string) => line.includes('fatal:') || line.includes('error:')) ||
+    'Unknown error';
+  return new Error(`Failed to clone ${repoUrl}: ${fatal}`);
+}
+
 // Returns short, actionable messages; callers wrap them into the per-skill
 // error block which already prefixes `Skill "<id>" failed:`.
 export function explainGitError(
   error: any,
   platform: CachePlatform,
   repoPath: string,
-  hasAuth: boolean
+  hasAuth: boolean,
+  cloneUrl?: string
 ): Error {
   const errorMessage: string = error?.stderr || error?.message || '';
-  const platformName = getGitProvider(platform)?.displayName ?? platform;
-  const repoUrl = `https://${platform}.com/${repoPath}`;
+  const host = cloneUrl ? hostOf(cloneUrl) : `${platform}.com`;
+  const platformName = getGitProvider(platform)?.displayName ?? host;
+  const repoUrl = cloneUrl ?? `https://${platform}.com/${repoPath}`;
+  if (platform === 'git') {
+    return explainGenericGitError(error, errorMessage, repoUrl, host);
+  }
 
   if (
     errorMessage.includes('git: command not found') ||

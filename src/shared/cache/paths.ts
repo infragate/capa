@@ -2,7 +2,8 @@ import { homedir } from "os";
 import { join } from "path";
 import { validateRepoPath } from "./validate";
 
-export type CachePlatform = "github" | "gitlab";
+/** `git` is any other host: its repoPath is `gitRepoKey(url)` and callers pass the clone URL. */
+export type CachePlatform = "github" | "gitlab" | "git";
 
 /** Root cache directory. Override via CAPA_CACHE_DIR for tests. */
 export function getCacheDir(): string {

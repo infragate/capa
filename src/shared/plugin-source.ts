@@ -7,6 +7,7 @@
 
 import type { Plugin } from "../types/plugin";
 import type { CachePlatform } from "./cache";
+import { gitRepoKey } from "./git-url";
 
 const SEGMENT_RE = /^[^/:#]+$/;
 const FORBIDDEN_SEGMENTS = new Set([".", ".."]);
@@ -38,6 +39,8 @@ export interface ValidatedPluginDef {
 	search?: string;
 	version?: string;
 	ref?: string;
+	/** Clone URL. Set only for the `git` platform (any host). */
+	repoUrl?: string;
 }
 
 export interface PluginDefError {
@@ -86,6 +89,9 @@ export function validatePluginDef(
 	plugin: Plugin,
 ): ValidatedPluginDef | PluginDefError {
 	const { type, def } = plugin;
+	if (type === "git") {
+		return validateGitPluginDef(def);
+	}
 	if (type !== "github" && type !== "gitlab") {
 		return { error: `Unsupported plugin type: ${type}` };
 	}
@@ -164,6 +170,44 @@ export function validatePluginDef(
 		version: def.version,
 		ref: def.ref,
 	};
+}
+
+/**
+ * A `git` plugin: `def.url` is the clone URL of any host, `def.subpath` the
+ * plugin directory (repo root when unset). The `@name` search and `::` suffix
+ * are github/gitlab grammar, so a git URL is taken as-is.
+ */
+function validateGitPluginDef(
+	def: Plugin["def"],
+): ValidatedPluginDef | PluginDefError {
+	if (!def?.url) {
+		return { error: "Missing required field: def.url (the git clone URL)" };
+	}
+	let repoPath: string;
+	try {
+		repoPath = gitRepoKey(def.url);
+	} catch {
+		return { error: `Invalid git clone URL: "${def.url}"` };
+	}
+	const subpath = def.subpath ?? "";
+	if (subpath !== "" && !isValidPath(subpath, 1)) {
+		return {
+			error: `Invalid subpath: "${subpath}". Must be non-empty segments without "." or "..".`,
+		};
+	}
+	return {
+		platform: "git",
+		repoPath,
+		subpath,
+		version: def.version,
+		ref: def.ref,
+		repoUrl: def.url,
+	};
+}
+
+/** The repo string (github/gitlab) or clone URL (git) a plugin entry points at. */
+export function pluginSourceOf(def: Plugin["def"] | undefined): string | undefined {
+	return def?.repo ?? def?.url;
 }
 
 /**

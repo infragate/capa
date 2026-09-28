@@ -16,7 +16,7 @@ import type { Rule } from '../../types/rules';
 import type { Hook } from '../../types/hooks';
 import type { CapaDatabase } from '../../db/database';
 import type { AuthenticatedFetch } from '../../shared/authenticated-fetch';
-import { validatePluginDef, getPluginInstallId } from '../../shared/plugin-source';
+import { validatePluginDef, getPluginInstallId, pluginSourceOf } from '../../shared/plugin-source';
 import {
   detectAndParseManifest,
   discoverPluginEntries,
@@ -211,7 +211,7 @@ export type GetRepoSnapshotFn = (
   platform: CachePlatform,
   repoPath: string,
   authFetch: AuthenticatedFetch,
-  opts?: { version?: string; ref?: string; pinnedSha?: string; noCache?: boolean }
+  opts?: { version?: string; ref?: string; pinnedSha?: string; noCache?: boolean; repoUrl?: string }
 ) => Promise<GetSnapshotResult>;
 
 /**
@@ -358,10 +358,11 @@ export async function resolvePlugins(
   let allowedCharacters: string | null = null;
 
   for (const pluginRef of plugins) {
-    if (!getGitProvider(pluginRef.type)) continue;
-    if (!pluginRef.def?.repo) continue;
+    if (pluginRef.type !== 'git' && !getGitProvider(pluginRef.type)) continue;
+    const source = pluginSourceOf(pluginRef.def);
+    if (!source) continue;
 
-    const pluginLabel = pluginRef.id ?? pluginRef.def.repo;
+    const pluginLabel = pluginRef.id ?? source;
     // Isolate per-plugin failures so one bad entry (marketplace repo root,
     // missing manifest, clone error, …) cannot wipe expansions from the rest.
     let pluginInstallId: string | undefined;
@@ -385,7 +386,7 @@ export async function resolvePlugins(
         );
       }
 
-      const { platform, repoPath, subpath, search, version, ref } = validated;
+      const { platform, repoPath, subpath, search, version, ref, repoUrl } = validated;
 
       let snapshot: GetSnapshotResult;
       let previousLock: LockPluginEntry | null = null;
@@ -420,10 +421,11 @@ export async function resolvePlugins(
           ref,
           pinnedSha,
           noCache,
+          repoUrl,
         });
       } catch (err: any) {
         throw new Error(
-          `Failed to clone plugin ${repoPath}: ${err.message}`
+          `Failed to clone plugin ${repoUrl ?? repoPath}: ${err.message}`
         );
       }
 
@@ -485,7 +487,9 @@ export async function resolvePlugins(
         throw new Error(
           `No plugin manifest found in ${repoPath}${subpath ? `/${subpath}` : ''}.\n` +
           `    Expected one of: .claude-plugin/plugin.json, .cursor-plugin/plugin.json.` +
-          (pluginRef.id
+          (repoUrl
+            ? `\n    Tip: if the plugin is not at the repository root, set def.subpath to its directory.`
+            : pluginRef.id
             ? `\n    Tip: for monorepos, pin the plugin with "${repoPath}@${pluginRef.id}" or "${repoPath}::${pluginRef.id}".`
             : '')
         );
@@ -516,6 +520,7 @@ export async function resolvePlugins(
       id: pluginInstallId,
       source: platform,
       repo: repoPath,
+      ...(repoUrl && { url: repoUrl }),
       subpath: resolvedSubpath || null,
       requestedSearchName: search ?? null,
       requestedVersion: version ?? null,
@@ -530,7 +535,10 @@ export async function resolvePlugins(
     const refish = ref ?? version ?? 'HEAD';
     const gp = getGitProvider(platform);
     const host = gp?.host ?? `${platform}.com`;
-    const repository = resolvedSubpath
+    // Any other git host has no known web URL scheme, so link the clone URL.
+    const repository = repoUrl
+      ? repoUrl
+      : resolvedSubpath
       ? `https://${host}/${repoPath}/tree/${refish}/${resolvedSubpath}`
       : `https://${host}/${repoPath}`;
     const sourcePlugin: SourcePlugin = {

@@ -40,7 +40,7 @@ export interface PluginServerConfig {
 export interface Plugin {
   /** Stable identifier. Defaults to last segment of subpath or repo. */
   id?: string;
-  type: 'github' | 'gitlab';
+  type: 'github' | 'gitlab' | 'git';
   def: PluginDefinition;
   /** Per-server aliasing and tool subset, keyed by the manifest's mcpServers key. */
   servers?: Record<string, PluginServerConfig>;
@@ -57,8 +57,11 @@ export interface PluginDefinition {
    *   - `owner/repo::sub/path`     — exact subpath inside the repo
    *
    * GitLab nested groups are supported (`group/subgroup/project[...]`).
+   * Required for github/gitlab; `git` plugins use `url` instead.
    */
-  repo: string;
+  repo?: string;
+  /** Clone URL for `git` plugins (any host). The plugin location goes in `subpath`. */
+  url?: string;
   /**
    * Optional exact subpath inside the repo when you prefer to keep it out of
    * the `repo` string. Equivalent to writing `owner/repo::<subpath>` — capa

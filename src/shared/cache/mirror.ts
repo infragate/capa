@@ -22,6 +22,9 @@ function publicHttpsRepoUrl(
 	repoPath: string,
 ): string {
 	validateRepoPath(repoPath);
+	if (platform === "git") {
+		throw new Error(`A clone URL is required for git repository ${repoPath}`);
+	}
 	return `https://${platform}.com/${repoPath}.git`;
 }
 

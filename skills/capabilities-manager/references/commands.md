@@ -112,6 +112,7 @@ Add an entry to `capabilities.yaml` (default) or write provider-native files imm
 - **Pinning** (works with both `@` and `::`): append `:v1.2.3` for a tag/branch or `#abc1234` for a commit SHA — e.g. `capa add owner/repo@skill:v1.2.3`, `capa add gitlab:group/repo::skills/x/y#abc1234`.
 - **Registry**: `capa add <registryId>:<itemId>` — resolve the skill from a configured registry adapter. Example: `capa add skills-sh:vercel-labs/skills/find-skills`.
 - **Installed (no CLI)**: declare `type: installed` directly in `capabilities.yaml` — capa only records the skill for tool binding, it does not fetch or install anything. Set `def.description` and `def.requires` on the entry. Same pattern for `type: plugin` (skills shipped by a configured plugin).
+- **Any git host**: `capa add https://git.example.com/team/skills.git` — a clone URL ending in `.git`, stored as type `git` with `def.url`. Installs the `SKILL.md` at the repo root; add `::path/to/skill` for another directory, and `:v1.2.3` / `#abc1234` to pin. Private repos use your git credential helper (clone once with `git` to sign in).
 - **Remote URL**: `capa add https://example.com/path/to/SKILL.md`
 - **Local path**: `capa add ./path/to/skill` — directory must contain `SKILL.md`; stored as type `local` so the file is read on each install
 
@@ -123,6 +124,7 @@ Use `--plugin` to add a plugin entry (skills, MCP, rules, sub-agents, hooks) ins
 - **GitHub subpath**: `capa add --plugin anthropics/claude-plugins-official::plugins/frontend-design`
 - **GitLab (nested groups)**: `capa add --plugin gitlab:acme/platform/team/services/devops-skills:v1.0.1`
 - **URL**: `capa add --plugin https://github.com/anthropics/claude-plugins-official/tree/main/plugins/code-review`
+- **Any git host**: `capa add --plugin https://git.example.com/team/plugin.git[::path/to/plugin]` — stored as type `git` with `def.url` (and `def.subpath`)
 - **Registry**: `capa add claude-plugins:frontend-design` — the registry adapter determines whether the item is a skill or plugin.
 
 ### Servers, tools, rules, hooks

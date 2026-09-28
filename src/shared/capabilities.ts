@@ -62,6 +62,7 @@ const skillSchema = z
 			"remote",
 			"github",
 			"gitlab",
+			"git",
 			"local",
 			"installed",
 			"plugin",
@@ -216,7 +217,9 @@ const toolSchema = z.discriminatedUnion("type", [
 
 const pluginDefSchema = z
 	.object({
-		repo: z.string(),
+		// github/gitlab use `repo`; git uses `url` (validatePluginDef checks which).
+		repo: z.string().optional(),
+		url: z.string().optional(),
 		subpath: z.string().optional(),
 		version: z.string().optional(),
 		ref: z.string().optional(),
@@ -227,7 +230,7 @@ const pluginDefSchema = z
 const pluginSchema = z
 	.object({
 		id: z.string().optional(),
-		type: z.enum(["github", "gitlab"]),
+		type: z.enum(["github", "gitlab", "git"]),
 		def: pluginDefSchema,
 		servers: z
 			.record(

@@ -322,7 +322,7 @@ export interface Capabilities {
 
 export interface Skill {
   id: string;
-  type: 'inline' | 'remote' | 'github' | 'gitlab' | 'local' | 'installed' | 'plugin';
+  type: 'inline' | 'remote' | 'github' | 'gitlab' | 'git' | 'local' | 'installed' | 'plugin';
   def: SkillDefinition;
   sourcePlugin?: SourcePlugin;
 }
@@ -336,6 +336,7 @@ export interface SkillDefinition {
   // Capa validates that the skill id matches a skill exposed by some plugin's manifest
   // and warns if no match is found.
   // For remote skills (raw SKILL.md URL)
+  // For git skills: the clone URL of any git host (e.g. "https://git.example.com/team/skills.git")
   url?: string;
   // For GitHub skills (e.g., "vercel-labs/agent-skills@find-skills")
   // For GitLab skills (e.g., "group/project@skill-name")
@@ -344,6 +345,7 @@ export interface SkillDefinition {
   // For inline skills (SKILL.md content as string)
   content?: string;
   // For local skills: path to directory containing SKILL.md (relative to project root or absolute)
+  // For git skills: directory inside the repo holding SKILL.md (default: the repo root)
   path?: string;
   // Version or tag to checkout (e.g., "1.2.1" or "v1.2.1")
   version?: string;
