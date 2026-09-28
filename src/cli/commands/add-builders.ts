@@ -6,6 +6,7 @@
 import { basename, resolve, relative } from 'path';
 import { access } from 'fs/promises';
 import { constants } from 'fs';
+import { isGitUrl } from '../../shared/git-url';
 import { CANONICAL_HOOK_EVENTS, type Hook, type HookSource } from '../../types/hooks';
 import type { Rule } from '../../types/rules';
 import type { MCPServer, Tool, SecretValue } from '../../types/capabilities';
@@ -328,6 +329,12 @@ export async function parseRuleSource(source: string): Promise<ParsedRuleSource>
     };
   }
 
+  if (isGitUrl(source)) {
+    throw new Error(
+      `Rules from a git clone URL are not supported yet: ${source}\n` +
+        `  Use a raw URL to the rule file, or a GitHub/GitLab repo.`,
+    );
+  }
   if (source.startsWith('http://') || source.startsWith('https://')) {
     return {
       id: basename(source).replace(/\.md$/i, '') || 'custom-rule',
@@ -421,6 +428,12 @@ function parseHookSource(raw: string): HookSource {
       ? relative(projectRoot, absPath)
       : absPath;
     return { type: 'local', path: pathToStore };
+  }
+  if (isGitUrl(trimmed)) {
+    throw new Error(
+      `Hooks from a git clone URL are not supported yet: ${raw}\n` +
+        `  Use a raw URL to the hook script, or a GitHub/GitLab repo.`,
+    );
   }
   if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
     return { type: 'remote', url: trimmed };

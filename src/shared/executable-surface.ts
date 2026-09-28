@@ -137,11 +137,13 @@ export function collectExecutableSurface(capabilities: Capabilities): Executable
 
   const plugins: SurfacePlugin[] = [];
   for (const plugin of (capabilities.plugins ?? []) as Plugin[]) {
-    const id = plugin.id ?? plugin.def.repo;
+    // git plugins (any host) have a clone URL instead of an owner/repo.
+    const repo = plugin.def.repo ?? plugin.def.url ?? '';
+    const id = plugin.id ?? repo;
     const entry: SurfacePlugin = {
       id,
       type: plugin.type,
-      repo: plugin.def.repo,
+      repo,
     };
     if (plugin.def.version) entry.version = plugin.def.version;
     if (plugin.def.ref) entry.ref = plugin.def.ref;

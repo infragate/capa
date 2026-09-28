@@ -13,7 +13,7 @@ export function installSkillsTask(): Task<InstallCtx> {
       const providers = materialInstallProviders(ctx);
       const skills = ctx.capabilitiesToUse.skills ?? [];
       const needsGit = skills.some(
-        (skill) => skill.type === 'github' || skill.type === 'gitlab',
+        (skill) => skill.type === 'github' || skill.type === 'gitlab' || skill.type === 'git',
       );
       if (needsGit) {
         const gitInstalled = await checkGitInstalled();

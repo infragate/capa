@@ -10,18 +10,21 @@
 
 export type LockfileFormat = 'json' | 'yaml';
 
-export type LockSource = 'github' | 'gitlab';
+/** `git` is any other host, identified by `url`. */
+export type LockSource = 'github' | 'gitlab' | 'git';
 
 /**
- * Locked entry for a `github`/`gitlab` skill.
+ * Locked entry for a `github`/`gitlab`/`git` skill.
  */
 export interface LockSkillEntry {
   /** Skill id from capabilities file. Matches `Skill.id`. */
   id: string;
   /** Source type. */
   source: LockSource;
-  /** "owner/repo" path. */
+  /** "owner/repo" path; for `git`, the host/path cache key. */
   repo: string;
+  /** Clone URL. Only for `git`. */
+  url?: string;
   /** Skill directory name within the repo (the "@skill-name" part of `def.repo`). */
   skillName: string;
   /** Version requested in capabilities (tag/branch). null if not specified. */
@@ -42,8 +45,10 @@ export interface LockPluginEntry {
   id: string;
   /** Source type. */
   source: LockSource;
-  /** Multi-segment repo path (GitLab nested groups allowed). */
+  /** Multi-segment repo path (GitLab nested groups allowed); for `git`, the host/path cache key. */
   repo: string;
+  /** Clone URL. Only for `git`. */
+  url?: string;
   /**
    * Path inside the repo where the plugin manifest lives — either pinned via
    * `def.subpath` or resolved from a `def.search` walk. null when at root.

@@ -15,7 +15,7 @@ export function writeLockfileTask(): Task<InstallCtx> {
     task: async (ctx) => {
       const skillIdsForLock = new Set(
         ctx.capabilities.skills
-          .filter((s) => s.type === 'github' || s.type === 'gitlab')
+          .filter((s) => s.type === 'github' || s.type === 'gitlab' || s.type === 'git')
           .map((s) => s.id),
       );
       const pluginIdsForLock = new Set(

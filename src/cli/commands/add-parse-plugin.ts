@@ -2,9 +2,10 @@ import { basename } from 'path';
 import type { PluginDefinition } from '../../types/plugin';
 import { validatePluginDef } from '../../shared/plugin-source';
 import { getAllGitProviders } from '../../shared/git-providers/registry';
+import { parseGitUrlSource } from '../../shared/git-url';
 
 export interface ParsedPluginSource {
-  type: 'github' | 'gitlab';
+  type: 'github' | 'gitlab' | 'git';
   def: PluginDefinition;
   idHint: string;
 }
@@ -61,6 +62,17 @@ export function parsePluginSource(source: string): ParsedPluginSource {
     const parsed = gp.parseRepoUrl(source);
     if (!parsed) continue;
     return buildPluginSourceFromRepoUrl(gp.id as 'github' | 'gitlab', parsed);
+  }
+
+  // A clone URL on any other git host: https://host/path/repo.git[::subpath][:version|#sha]
+  const gitSource = parseGitUrlSource(source);
+  if (gitSource) {
+    const { url, path, version, ref, idHint } = gitSource;
+    const def: PluginDefinition = { url };
+    if (path) def.subpath = path;
+    if (version) def.version = version;
+    if (ref) def.ref = ref;
+    return assertValidPluginSource({ type: 'git', def, idHint });
   }
 
   // GitLab `@name` search: gitlab:group/sub/project@plugin-name[:version|#sha]
@@ -138,7 +150,8 @@ export function parsePluginSource(source: string): ParsedPluginSource {
     `    - Nested groups:  gitlab:group/sub/project\n` +
     `    - Exact subpath:  gitlab:group/project::plugins/my-plugin\n` +
     `    - Recursive @:    gitlab:group/project@my-plugin\n` +
-    `    - URL:            https://gitlab.com/group/project/-/tree/main/plugins/my-plugin\n\n` +
+    `    - URL:            https://gitlab.com/group/project/-/tree/main/plugins/my-plugin\n` +
+    `  Any git host:       https://git.example.com/team/plugin.git[::path/to/plugin]\n\n` +
     `Pinning (any of the above):\n` +
     `  - Tag:    capa add --plugin owner/repo@my-plugin:v1.2.3\n` +
     `  - Commit: capa add --plugin owner/repo@my-plugin#abc123def\n\n` +

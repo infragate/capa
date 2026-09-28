@@ -1,10 +1,11 @@
 import { resolve, basename, join, relative } from 'path';
 import { access } from 'fs/promises';
 import { constants } from 'fs';
+import { parseGitUrlSource } from '../../shared/git-url';
 
 export interface ParsedSkillSource {
   id: string;
-  type: 'remote' | 'github' | 'gitlab' | 'local';
+  type: 'remote' | 'github' | 'gitlab' | 'git' | 'local';
   def: {
     repo?: string;
     url?: string;
@@ -154,6 +155,22 @@ export async function parseSkillSource(source: string): Promise<ParsedSkillSourc
     };
   }
   
+  // A clone URL on any git host: https://host/path/repo.git[::path][:version|#sha]
+  const gitSource = parseGitUrlSource(source);
+  if (gitSource) {
+    const { url, path, version, ref, idHint } = gitSource;
+    return {
+      id: idHint || 'custom-skill',
+      type: 'git',
+      def: {
+        url,
+        ...(path && { path }),
+        ...(version && { version }),
+        ...(ref && { ref }),
+      },
+    };
+  }
+
   // Any other HTTP/HTTPS URL - treat as remote
   if (source.startsWith('http://') || source.startsWith('https://')) {
     const id = basename(source).replace(/\.md$/i, '') || 'custom-skill';
@@ -177,6 +194,7 @@ export async function parseSkillSource(source: string): Promise<ParsedSkillSourc
     `    - Recursive search:  gitlab:owner/repo@skill-name\n` +
     `    - Exact path:        gitlab:owner/repo::skills/path/to/skill-name\n` +
     `    - URL:               https://gitlab.com/owner/repo/-/tree/main/skills/skill-name\n` +
+    `  Any git host:          https://git.example.com/team/skills.git[::path/to/skill]\n` +
     `  Local path:            ./my-local-skills (directory containing SKILL.md)\n` +
     `  Remote SKILL.md URL:   https://example.com/path/to/SKILL.md\n\n` +
     `Pinning (any of the above):\n` +
