@@ -245,7 +245,17 @@ const pluginSchema = z
 			)
 			.optional(),
 	})
-	.passthrough();
+	.passthrough()
+	.superRefine((plugin, ctx) => {
+		const field = plugin.type === "git" ? "url" : "repo";
+		if (!plugin.def[field]) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["def", field],
+				message: `${plugin.type} plugin${plugin.id ? ` "${plugin.id}"` : ""} requires def.${field}`,
+			});
+		}
+	});
 
 const optionsSchema = z
 	.object({

@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import type { AuthoredPlugin, ResolvedPlugin } from '../../../types/api';
+import { pluginSource, type AuthoredPlugin, type ResolvedPlugin } from '../../../types/api';
 import { SourceBadge } from '../../../components/common/ServerBadge';
 import { ReorderableList } from '../../../components/common/ReorderableList';
 import { useDeleteCapability, useReorderCapability } from '../hooks';
@@ -43,9 +43,9 @@ function PluginRow({
         className="min-w-0 flex-1 p-3 text-left transition-colors hover:bg-hover-bg cursor-pointer"
       >
         <div className="mb-1">
-          <SourceBadge name={plugin.id || plugin.def.repo} kind="plugin" />
+          <SourceBadge name={plugin.id || pluginSource(plugin)} kind="plugin" />
         </div>
-        <div className="font-mono text-[11px] text-text-tertiary">{plugin.def.repo}</div>
+        <div className="font-mono text-[11px] text-text-tertiary">{pluginSource(plugin)}</div>
         {resolvedInfo?.version && (
           <div className="mt-1 text-[11px] text-text-secondary">{resolvedInfo.version}</div>
         )}
@@ -83,13 +83,13 @@ export function PluginsEditor({ authored, resolved, projectId }: PluginsEditorPr
     ? resolved.find(
         (r) =>
           r.name === previewPlugin.id ||
-          r.repository?.includes(previewPlugin.def.repo.split('@')[0]),
+          r.repository?.includes(pluginSource(previewPlugin).split('@')[0]),
       )
     : undefined;
 
   function resolveInfo(plugin: AuthoredPlugin) {
     return resolved.find(
-      (r) => r.name === plugin.id || r.repository?.includes(plugin.def.repo.split('@')[0]),
+      (r) => r.name === plugin.id || r.repository?.includes(pluginSource(plugin).split('@')[0]),
     );
   }
 
@@ -125,7 +125,7 @@ export function PluginsEditor({ authored, resolved, projectId }: PluginsEditorPr
           )}
           {withoutId.map((plugin) => (
             <PluginRow
-              key={plugin.def.repo}
+              key={pluginSource(plugin)}
               plugin={plugin}
               resolvedInfo={resolveInfo(plugin)}
               onPreview={() => setPreviewPlugin(plugin)}

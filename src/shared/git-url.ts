@@ -46,21 +46,26 @@ export function isGitUrl(source: string): boolean {
 }
 
 /**
- * Cache key for a clone URL: `<host>/<path>` without the `.git` suffix, e.g.
- * `git.example.com/team/skills`. Characters Windows forbids in directory names
- * (a port's `:`) become `_`. file:// URLs become `file/<name>-<hash>`, so an
- * absolute local path doesn't blow past Windows path limits in the cache.
+ * Cache key for a clone URL: `<host>/<path>-<hash>`, e.g.
+ * `git.example.com/team/skills-3fa2c1d09b7e`. Host and path keep it readable;
+ * the hash of the whole URL (scheme, host, port, path; never credentials)
+ * keeps two different URLs from ever sharing a mirror or a lock pin, even when
+ * sanitizing makes their paths look alike. Characters Windows forbids in
+ * directory names become `_`. file:// URLs keep only the repository name, so
+ * an absolute local path doesn't blow past Windows path limits in the cache.
  */
 export function gitRepoKey(url: string): string {
 	const u = new URL(url);
-	const path = decodeURIComponent(u.pathname).replace(/\.git\/?$/i, "");
-	if (u.protocol === "file:") {
-		const name = path.split("/").filter(Boolean).pop() ?? "repo";
-		const hash = createHash("sha256").update(u.href).digest("hex").slice(0, 12);
-		return `file/${name.replace(/[<>:"|?*\\]/g, "_")}-${hash}`;
-	}
-	return [u.host, ...path.split("/")]
+	u.username = "";
+	u.password = "";
+	const hash = createHash("sha256").update(u.href).digest("hex").slice(0, 12);
+	const safe = (s: string) => s.replace(/[<>:"|?*\\]/g, "_");
+	const segments = decodeURIComponent(u.pathname)
+		.replace(/\.git\/?$/i, "")
+		.split("/")
 		.filter((s) => s && s !== "." && s !== "..")
-		.map((s) => s.replace(/[<>:"|?*\\]/g, "_"))
-		.join("/");
+		.map(safe);
+	const name = `${segments.pop() ?? "repo"}-${hash}`;
+	if (u.protocol === "file:") return `file/${name}`;
+	return [safe(u.host), ...segments, name].join("/");
 }

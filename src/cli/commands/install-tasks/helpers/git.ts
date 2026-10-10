@@ -57,7 +57,12 @@ function explainGenericGitError(error: any, errorMessage: string, repoUrl: strin
         `remembers the credentials, then re-run \`capa install\`.`
     );
   }
-  if (errorMessage.includes('not found') || errorMessage.includes('does not appear to be a git repository')) {
+  // The cache's own ref errors ("Tag/branch "v2" not found", "Commit … not
+  // found", "Pinned commit …") already name the cause; keep them.
+  if (/^(Tag\/branch |Commit |Pinned commit )/.test(error?.message ?? '')) {
+    return error instanceof Error ? error : new Error(errorMessage);
+  }
+  if (/repository '.*' not found/.test(errorMessage) || errorMessage.includes('does not appear to be a git repository')) {
     return new Error(`Repository not found: ${repoUrl}\nCheck the URL, or sign in with git if it is private.`);
   }
   if (errorMessage.includes('unable to access') || errorMessage.includes('Could not resolve host')) {

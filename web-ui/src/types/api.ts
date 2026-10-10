@@ -191,11 +191,19 @@ export interface AuthoredPlugin {
   id: string | null;
   type: string;
   def: {
-    repo: string;
+    /** github / gitlab repo string. */
+    repo?: string;
+    /** Clone URL of a `git` plugin (any host). */
+    url?: string;
     version?: string;
     ref?: string;
     subpath?: string;
   };
+}
+
+/** What a plugin entry points at: its repo string, or clone URL for `git` plugins. */
+export function pluginSource(plugin: AuthoredPlugin): string {
+  return plugin.def.repo ?? plugin.def.url ?? '';
 }
 
 export interface RequiredCommand {

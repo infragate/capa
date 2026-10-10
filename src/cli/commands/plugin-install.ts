@@ -359,10 +359,8 @@ export async function resolvePlugins(
 
   for (const pluginRef of plugins) {
     if (pluginRef.type !== 'git' && !getGitProvider(pluginRef.type)) continue;
-    const source = pluginSourceOf(pluginRef.def);
-    if (!source) continue;
-
-    const pluginLabel = pluginRef.id ?? source;
+    // An entry without a source still goes on to validatePluginDef, which reports it.
+    const pluginLabel = pluginRef.id ?? pluginSourceOf(pluginRef.def) ?? `(${pluginRef.type} plugin)`;
     // Isolate per-plugin failures so one bad entry (marketplace repo root,
     // missing manifest, clone error, …) cannot wipe expansions from the rest.
     let pluginInstallId: string | undefined;
@@ -415,6 +413,8 @@ export async function resolvePlugins(
             },
           );
         }
+        // A git pin only holds for the clone URL it was resolved from.
+        if (repoUrl && previousLock && previousLock.url !== repoUrl) previousLock = null;
         const pinnedSha = previousLock?.resolvedRef;
         snapshot = await getRepoSnapshot(platform, repoPath, authFetch, {
           version,

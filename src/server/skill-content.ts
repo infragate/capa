@@ -10,6 +10,7 @@ import {
 } from "../cli/commands/install-tasks/helpers/skill-discovery";
 import type { AuthenticatedFetch } from "../shared/authenticated-fetch";
 import { type CachePlatform, getOrCreateSnapshot } from "../shared/cache";
+import { gitRepoKey } from "../shared/git-url";
 import { getProjectPluginsDir } from "../shared/plugin-paths";
 import { getProvider } from "../shared/providers";
 import { assertSafeRepoPath } from "../shared/repo-file";
@@ -408,6 +409,29 @@ export async function fetchUninstalledSkillContent(
 				if (!skillMdPath) return null;
 			}
 
+			const skillData = readSkillFromDirectory(skillMdPath);
+			const files = [
+				"SKILL.md",
+				...Array.from(skillData.additionalFiles.keys()).sort(),
+			];
+			return tryParse(skillData.markdown, files);
+		}
+
+		if (skill.type === "git" && skill.def?.url) {
+			const snapshot = await getOrCreateSnapshot({
+				platform: "git",
+				repoPath: gitRepoKey(skill.def.url),
+				repoUrl: skill.def.url,
+				authFetch,
+				version: skill.def.version,
+				ref: skill.def.ref,
+			});
+			const skillPath = (skill.def.path ?? "").replace(/^\/+|\/+$/g, "");
+			const skillDir = skillPath
+				? assertSafeRepoPath(snapshot.snapshotDir, skillPath)
+				: snapshot.snapshotDir;
+			const skillMdPath = join(skillDir, "SKILL.md");
+			if (!existsSync(skillMdPath)) return null;
 			const skillData = readSkillFromDirectory(skillMdPath);
 			const files = [
 				"SKILL.md",

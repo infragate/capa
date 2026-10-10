@@ -129,6 +129,21 @@ export function scrubCachedMirrorAuthUrls(): void {
 }
 
 /**
+ * A generic git cache key is derived from the clone URL, so a mirror whose
+ * origin is a different URL means the cache was tampered with or keyed by an
+ * older capa. Refuse it rather than serve another repository's content.
+ */
+async function assertMirrorOrigin(mirrorDir: string, url: string): Promise<void> {
+	const { stdout } = await git(["-C", mirrorDir, "remote", "get-url", "origin"]);
+	if (stdout.trim() !== url) {
+		throw new Error(
+			`Cached mirror at ${mirrorDir} is for ${stdout.trim()}, not ${url}. ` +
+				`Run \`capa cache clean\` and try again.`,
+		);
+	}
+}
+
+/**
  * Ensure a mirror clone exists for the given repo. If it doesn't, perform a
  * bare clone. If it does, leave it as-is — callers can request a fetch via
  * `fetchMirror()` when they need newer refs.
@@ -146,6 +161,9 @@ export async function ensureMirrorClone(
 	const mirrorDir = getRepoMirrorDir(platform, repoPath);
 	if (existsSync(mirrorDir)) {
 		scrubMirrorConfigFile(mirrorDir);
+		if (platform === "git" && repoUrl) {
+			await assertMirrorOrigin(mirrorDir, stripHttpUrlUserinfo(repoUrl));
+		}
 		return mirrorDir;
 	}
 	mkdirSync(getRepoCacheDir(platform, repoPath), { recursive: true });

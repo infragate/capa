@@ -56,26 +56,15 @@ export function getCacheStats(): CacheStats {
 	}
 
 	const repos: CachedRepoInfo[] = [];
-	for (const platformEntry of readdirSync(gitDir, { withFileTypes: true })) {
-		if (!platformEntry.isDirectory()) continue;
-		if (platformEntry.name !== "github" && platformEntry.name !== "gitlab")
-			continue;
-		const platform = platformEntry.name as CachePlatform;
-		const platformDir = join(gitDir, platformEntry.name);
-
-		for (const ownerEntry of readdirSync(platformDir, {
-			withFileTypes: true,
-		})) {
-			if (!ownerEntry.isDirectory()) continue;
-			const ownerDir = join(platformDir, ownerEntry.name);
-
-			for (const repoEntry of readdirSync(ownerDir, { withFileTypes: true })) {
-				if (!repoEntry.isDirectory()) continue;
-				const repoPath = `${ownerEntry.name}/${repoEntry.name}`;
-				const repoDir = join(ownerDir, repoEntry.name);
-				const mirrorDir = join(repoDir, "mirror");
-				const snapshotsDir = join(repoDir, "snapshots");
-
+	const platforms: CachePlatform[] = ["github", "gitlab", "git"];
+	for (const platform of platforms) {
+		// A repo directory is one holding `mirror/` or `snapshots/`. Repo paths
+		// have any depth: GitLab nested groups, and `<host>/<path>` for git hosts.
+		const visit = (dir: string, repoPath: string, depth: number): void => {
+			if (depth > 12) return;
+			const mirrorDir = join(dir, "mirror");
+			const snapshotsDir = join(dir, "snapshots");
+			if (existsSync(mirrorDir) || existsSync(snapshotsDir)) {
 				const mirrorBytes = dirSize(mirrorDir);
 				let snapshotCount = 0;
 				let snapshotBytes = 0;
@@ -97,8 +86,19 @@ export function getCacheStats(): CacheStats {
 					snapshotBytes,
 					totalBytes: mirrorBytes + snapshotBytes,
 				});
+				return;
 			}
-		}
+			for (const entry of readdirSync(dir, { withFileTypes: true })) {
+				if (!entry.isDirectory()) continue;
+				visit(
+					join(dir, entry.name),
+					repoPath ? `${repoPath}/${entry.name}` : entry.name,
+					depth + 1,
+				);
+			}
+		};
+		const platformDir = join(gitDir, platform);
+		if (existsSync(platformDir)) visit(platformDir, "", 0);
 	}
 
 	repos.sort((a, b) => b.totalBytes - a.totalBytes);

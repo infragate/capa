@@ -33,10 +33,40 @@ describe('parseGitUrlSource', () => {
 });
 
 describe('gitRepoKey', () => {
-  it('is host plus path without .git, safe for Windows directory names', () => {
-    expect(gitRepoKey('https://git.example.com/@acme/code-review.git')).toBe('git.example.com/@acme/code-review');
-    expect(gitRepoKey('http://localhost:8080/a/b.git')).toBe('localhost_8080/a/b');
+  it('is host plus path plus a URL hash, safe for Windows directory names', () => {
+    expect(gitRepoKey('https://git.example.com/@acme/code-review.git')).toMatch(
+      /^git\.example\.com\/@acme\/code-review-[0-9a-f]{12}$/,
+    );
+    expect(gitRepoKey('http://localhost:8080/a/b.git')).toMatch(/^localhost_8080\/a\/b-[0-9a-f]{12}$/);
     expect(gitRepoKey('https://h.test/a/../../etc.git')).not.toContain('..');
+  });
+
+  it('never shares a key between different URLs', () => {
+    const keys = new Set(
+      [
+        'https://h.test/a/b.git',
+        'http://h.test/a/b.git',
+        'https://h.test:8443/a/b.git',
+        'https://h.test/a:b.git',
+        'https://h.test/a_b.git',
+      ].map(gitRepoKey),
+    );
+    expect(keys.size).toBe(5);
+  });
+
+  it('ignores credentials in the URL', () => {
+    expect(gitRepoKey('https://user:secret@h.test/a/b.git')).toBe(gitRepoKey('https://h.test/a/b.git'));
+  });
+});
+
+describe('plugin schema', () => {
+  it('requires the source field that matches the type', async () => {
+    const { normalizeCapabilities } = await import('../capabilities');
+    expect(() => normalizeCapabilities({ plugins: [{ id: 'p', type: 'git', def: {} }] })).toThrow(/def\.url/);
+    expect(() => normalizeCapabilities({ plugins: [{ id: 'p', type: 'github', def: {} }] })).toThrow(/def\.repo/);
+    expect(
+      normalizeCapabilities({ plugins: [{ id: 'p', type: 'git', def: { url: 'https://h.test/p.git' } }] }).plugins,
+    ).toHaveLength(1);
   });
 });
 
@@ -62,7 +92,7 @@ describe('capa add with a git clone URL', () => {
     });
     expect(validatePluginDef({ type: 'git', def: parsed.def })).toMatchObject({
       platform: 'git',
-      repoPath: 'h.test/@acme/tools',
+      repoPath: gitRepoKey('https://h.test/@acme/tools.git'),
       subpath: 'plugins/deploy',
       repoUrl: 'https://h.test/@acme/tools.git',
     });

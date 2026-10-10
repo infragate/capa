@@ -6,7 +6,8 @@ import { execFileSync } from 'child_process';
 import { pathToFileURL } from 'url';
 import { CapaDatabase } from '../../../../../db/database';
 import { LockfileBuilder } from '../../../../../shared/lockfile';
-import { installOneSkill } from '../install-one-skill';
+import { installOneSkill, looksLikeHtml } from '../install-one-skill';
+import { getCacheStats } from '../../../../../shared/cache';
 import type { Capabilities, Skill } from '../../../../../types/capabilities';
 
 // A skill on "any git host": a real repository cloned over file://, so the
@@ -92,9 +93,34 @@ describe('installOneSkill with a git clone URL', () => {
     expect(readFileSync(join(projectPath, '.cursor', 'skills', 'lint', 'SKILL.md'), 'utf8')).toContain('name: lint');
   });
 
-  it('names the skills it found when SKILL.md is missing', async () => {
+  it('names the skills it found when SKILL.md is missing, and leaves no lock pin', async () => {
+    const lockBuilder = new LockfileBuilder();
     await expect(
-      install({ id: 'x', type: 'git', def: { url: repoUrl, path: 'nested' } }),
+      install({ id: 'x', type: 'git', def: { url: repoUrl, path: 'nested' } }, lockBuilder),
     ).rejects.toThrow(/nested\/lint/);
+    expect(lockBuilder.build().skills).toEqual([]);
+  });
+
+  it('reports a missing tag as a missing tag, not a missing repository', async () => {
+    await expect(
+      install({ id: 'code-review', type: 'git', def: { url: repoUrl, version: 'v9.9.9' } }),
+    ).rejects.toThrow(/Tag\/branch "v9\.9\.9" not found/);
+  });
+
+  it('shows git repositories in cache stats', async () => {
+    await install({ id: 'code-review', type: 'git', def: { url: repoUrl } });
+    const repos = getCacheStats().repos.filter((r) => r.platform === 'git');
+    expect(repos).toHaveLength(1);
+    expect(repos[0].repoPath).toMatch(/^file\/code-review-[0-9a-f]{12}$/);
+    expect(repos[0].snapshotCount).toBe(1);
+  });
+});
+
+describe('looksLikeHtml', () => {
+  it('catches ordinary web pages, with or without leading whitespace', () => {
+    expect(looksLikeHtml('<!DOCTYPE html>\n<html lang="en">')).toBe(true);
+    expect(looksLikeHtml('  \n<html lang="en"><head>')).toBe(true);
+    expect(looksLikeHtml('---\nname: x\n---\n<html> in a code sample')).toBe(false);
+    expect(looksLikeHtml('# Skill\n')).toBe(false);
   });
 });

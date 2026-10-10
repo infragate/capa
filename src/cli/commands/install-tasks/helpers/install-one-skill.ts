@@ -33,6 +33,12 @@ import * as repoSnapshot from './repo-snapshot';
 import { findSkillsInDirectory, readSkillFromDirectory } from './skill-discovery';
 import type { SkillInstallOutcome } from '../context';
 
+/** An HTML document (e.g. a repository web page), which is never a SKILL.md. */
+export function looksLikeHtml(text: string): boolean {
+  const head = text.trimStart().slice(0, 200).toLowerCase();
+  return head.startsWith('<!doctype') || head.startsWith('<html');
+}
+
 function buildInvalidSkillMessage(skill: Skill): string {
   const lines = [`Invalid skill definition: ${skill.id}`];
   if (!skill.type || !['inline', 'remote', 'github', 'gitlab', 'git', 'local', 'installed', 'plugin'].includes(skill.type)) {
@@ -80,6 +86,7 @@ export async function installOneSkill(
   let skillMarkdown: string;
   let additionalFiles: Map<string, string> = new Map();
   let skillSourceDir: string | null = null;
+  let pendingLock: LockSkillEntry | null = null;
 
   if (skill.type === 'installed') {
     return 'skipped';
@@ -262,7 +269,8 @@ export async function installOneSkill(
       resolvedRepos.set(repoKey, snapshot);
     }
 
-    lockBuilder.upsertSkill({
+    // Recorded once the skill is on disk, so a failed install leaves no pin behind.
+    pendingLock = {
       id: skill.id,
       source: 'git',
       repo: repoPath,
@@ -272,7 +280,7 @@ export async function installOneSkill(
       requestedRef: ref ?? null,
       resolvedRef: snapshot.resolvedSha,
       resolvedVersion: preserveResolvedVersion(snapshot, previousLock),
-    });
+    };
 
     const skillDir = skillPath ? assertSafeRepoPath(snapshot.snapshotDir, skillPath) : snapshot.snapshotDir;
     const skillMdPath = join(skillDir, 'SKILL.md');
@@ -312,7 +320,7 @@ export async function installOneSkill(
       skillMarkdown = await response.text();
       // A web page is never a SKILL.md: usually a repository page or a clone URL
       // missing its .git suffix. Installing it would hand the agent HTML.
-      if (/^s*<(!doctype|html)[s>]/i.test(skillMarkdown)) {
+      if (looksLikeHtml(skillMarkdown)) {
         throw new Error(
           `${skill.def.url} returned a web page, not a SKILL.md. ` +
             `For a git repository, use its clone URL ending in .git (type: git).`
@@ -431,5 +439,6 @@ export async function installOneSkill(
     }
   }
 
+  if (pendingLock) lockBuilder.upsertSkill(pendingLock);
   return 'installed';
 }
