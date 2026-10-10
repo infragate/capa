@@ -307,6 +307,31 @@ describe('capabilities', () => {
       await expect(parseCapabilitiesFile(file, 'yaml')).rejects.toThrow();
     });
 
+    it('accepts servers contributed by every plugin manifest format', async () => {
+      const file = join(tempDir, 'capabilities.yaml');
+      for (const provider of ['claude', 'cursor', 'agent-plugins']) {
+        await writeFile(
+          file,
+          [
+            'skills: []',
+            'tools: []',
+            'servers:',
+            '  - id: envoy',
+            '    type: mcp',
+            '    def:',
+            '      url: https://mcp.example.com/mcp',
+            '    sourcePlugin:',
+            '      id: envoy',
+            '      name: envoy',
+            `      provider: ${provider}`,
+            '',
+          ].join('\n'),
+        );
+        const parsed = await parseCapabilitiesFile(file, 'yaml');
+        expect(parsed.servers[0]?.sourcePlugin?.provider).toBe(provider);
+      }
+    });
+
     it('rejects a non-string sub-agent model', async () => {
       const file = join(tempDir, 'capabilities.yaml');
       await writeFile(
