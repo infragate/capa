@@ -74,6 +74,11 @@ export function extractPath(obj: Record<string, unknown>): string | null {
 		nestedString(obj, ["tool_input", "path"]) ||
 		nestedString(obj, ["input", "file_path"]) ||
 		nestedString(obj, ["input", "path"]) ||
+		// Antigravity: write_to_file / replace_file_content use TargetFile, view_file AbsolutePath.
+		nestedString(obj, ["toolCall", "args", "TargetFile"]) ||
+		nestedString(obj, ["toolCall", "args", "AbsolutePath"]) ||
+		nestedString(obj, ["toolCall", "args", "file_path"]) ||
+		nestedString(obj, ["toolCall", "args", "path"]) ||
 		null
 	);
 }

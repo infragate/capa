@@ -292,6 +292,7 @@ function argsForEvent(
 			cwd:
 				stringField(obj, "cwd") ||
 				stringField(obj, "working_directory") ||
+				nestedString(obj, ["toolCall", "args", "Cwd"]) ||
 				null,
 		};
 	}

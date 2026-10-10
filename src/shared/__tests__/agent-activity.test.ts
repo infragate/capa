@@ -185,6 +185,7 @@ describe("normalizeActivityHookPayload", () => {
 		expect(shell.skip).toBe(false);
 		expect(shell.status).toBe("ok");
 		expect(shell.toolName).toContain("npm test");
+		expect(shell.args).toMatchObject({ command: "npm test", cwd: "/w" });
 		expect(shell.conversationId).toBe("conv-1");
 		// The afterTool row for run_command is the shell wrapper duplicate.
 		expect(
@@ -197,6 +198,16 @@ describe("normalizeActivityHookPayload", () => {
 				"antigravity",
 			).status,
 		).toBe("error");
+	});
+
+	it("reads the Antigravity file path from toolCall.args", () => {
+		const out = normalizeActivityHookPayload(
+			"afterFileEdit",
+			{ toolCall: { name: "write_to_file", args: { TargetFile: "/w/a.ts" } } },
+			"antigravity",
+		);
+		expect(out.kind).toBe("file");
+		expect(out.toolName).toBe("/w/a.ts");
 	});
 
 	it("maps prompts", () => {
