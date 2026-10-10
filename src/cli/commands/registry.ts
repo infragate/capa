@@ -8,6 +8,7 @@ import {
   removeInstalledAdapter,
   deriveSlug,
   isValidSlug,
+  RegistryDisabledError,
 } from '../../shared/registries/installer';
 import { createAuthenticatedFetch } from '../../shared/authenticated-fetch';
 import type { RegistrySourceType } from '../../types/database';
@@ -425,7 +426,13 @@ export async function registryRefreshCommand(
             const result = await installRegistry(
               { slug: ctx.slug, type: existing.type, source: existing.source },
               authFetch,
-              { noCache: ctx.noCache },
+              {
+                noCache: ctx.noCache,
+                // A disable can land while the new adapter downloads.
+                beforeExecute: () => {
+                  if (!ctx.db.getRegistry(ctx.slug)?.enabled) throw new RegistryDisabledError(ctx.slug);
+                },
+              },
             );
             ctx.resolvedRef = result.resolvedRef;
             ctx.manifestName = result.manifest.name;
@@ -433,7 +440,7 @@ export async function registryRefreshCommand(
             task.title = `Fetched "${result.manifest.name}"`;
           } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
-            ctx.db.setRegistryStatus(ctx.slug, 'failed', message);
+            if (!(err instanceof RegistryDisabledError)) ctx.db.setRegistryStatus(ctx.slug, 'failed', message);
             throw err;
           }
         },

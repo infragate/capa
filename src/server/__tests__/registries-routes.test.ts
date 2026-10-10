@@ -425,16 +425,20 @@ describe('registries-routes', () => {
       expect(r.status).toBe('installed');
     });
 
-    it('does not undo a disable that lands while the adapter is being fetched', async () => {
+    it('does not run or re-enable a registry disabled while its adapter is being fetched', async () => {
       allowLocalUrlPolicy();
-      const create = new Request('http://localhost/api/registries', {
-        method: 'POST',
-        body: JSON.stringify({ type: 'url', source: goodUrl, slug: 'race' }),
+      db.upsertRegistry({
+        slug: 'race',
+        type: 'url',
+        source: evilUrl,
+        status: 'installed',
+        enabled: true,
       });
-      await createRegistryHandler(db, manager, create);
       onAdapterRequest = () => db.setRegistryEnabled('race', false);
       const res = await refreshRegistryHandler(db, manager, 'race');
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(409);
+      expect(adapterRequests).toBe(1);
+      expect(existsSync(markerPath)).toBe(false);
       expect(db.getRegistry('race')!.enabled).toBe(false);
     });
 

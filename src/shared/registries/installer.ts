@@ -249,12 +249,25 @@ export async function executeStagedRegistry(
 /**
  * Stage then execute. Used by CLI `--yes` and first-start seed.
  */
+/** A refresh found its registry disabled after downloading the new adapter. */
+export class RegistryDisabledError extends Error {
+	constructor(slug: string) {
+		super(`Registry "${slug}" was disabled during the refresh; its new adapter was not run.`);
+		this.name = "RegistryDisabledError";
+	}
+}
+
 export async function installRegistry(
 	input: RegistryInstallInput,
 	authFetch: AuthenticatedFetch,
-	opts: { noCache?: boolean } = {},
+	opts: {
+		noCache?: boolean;
+		/** Runs after the download, before the adapter executes; throw to stop. */
+		beforeExecute?: () => void;
+	} = {},
 ): Promise<RegistryInstallResult> {
 	const staged = await stageRegistry(input, authFetch, opts);
+	opts.beforeExecute?.();
 	const executed = await executeStagedRegistry(input.slug, staged.contentSha256);
 	return {
 		...executed,

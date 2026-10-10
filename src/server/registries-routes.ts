@@ -6,6 +6,7 @@ import {
 	executeStagedRegistry,
 	fetchAdapterSource,
 	isValidSlug,
+	RegistryDisabledError,
 	removeInstalledAdapter,
 	stageRegistry,
 } from "../shared/registries/installer";
@@ -55,9 +56,15 @@ async function stageAndInstallRegistry(
 	manager: RegistryManager,
 	input: RegistryInstallInput,
 	authFetch: ReturnType<typeof createAuthenticatedFetch>,
-	opts: { enabled?: boolean; noCache?: boolean } = {},
+	opts: {
+		enabled?: boolean;
+		noCache?: boolean;
+		/** Runs after the download, before the adapter executes; throw to stop. */
+		beforeExecute?: () => void;
+	} = {},
 ) {
 	const result = await stageRegistry(input, authFetch, opts);
+	opts.beforeExecute?.();
 	try {
 		await executeStagedRegistry(input.slug, result.contentSha256);
 	} catch (err: any) {
@@ -303,9 +310,17 @@ export async function refreshRegistryHandler(
 			manager,
 			{ slug: existing.slug, type: existing.type, source: existing.source },
 			authFetch,
+			{
+				// A disable can land while the new adapter downloads: re-check
+				// before running it.
+				beforeExecute: () => {
+					if (!db.getRegistry(slug)?.enabled) throw new RegistryDisabledError(slug);
+				},
+			},
 		);
 		return jsonOk({ registry: record });
 	} catch (err: any) {
+		if (err instanceof RegistryDisabledError) return jsonError(err.message, 409);
 		const message = clientErrorMessage(err);
 		db.setRegistryStatus(slug, "failed", message);
 		return new Response(JSON.stringify({ error: message, slug }), {
