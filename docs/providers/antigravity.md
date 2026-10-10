@@ -46,6 +46,8 @@ matchers. Capa's output looks like:
 - Handlers only support `type: "command"`, so `type: prompt` hooks are skipped
   with a warning. `failClosed` has no equivalent and is ignored.
 - A user's `"enabled": false` on a `capa:<id>` key survives re-installs.
+- `--passthrough` writes `capa-passthrough:<id>` keys instead, so it can't
+  overwrite a hook you named `<id>` yourself, and `capa clean` leaves them alone.
 - A `matcher` on a non-tool event is dropped, since Antigravity ignores it.
 
 ## Hooks event mapping

@@ -209,7 +209,12 @@ function buildAntigravityEntry(input: HookEntryInput): HookEntryOutput {
 		eventName: mapping.event,
 		entry: isToolEvent ? { matcher, hooks: [handler] } : handler,
 		matcher,
-		nameTag: buildNameTag(hook.id, input.nameTagPrefix ?? NAME_TAG_PREFIX),
+		// The name tag is a whole top-level hook here, so passthrough ('' prefix)
+		// gets its own namespace: a bare id could overwrite a user-authored hook.
+		nameTag: buildNameTag(
+			hook.id,
+			(input.nameTagPrefix ?? NAME_TAG_PREFIX) || "capa-passthrough:",
+		),
 	};
 }
 

@@ -320,6 +320,20 @@ describe('hook-handlers — antigravity shape', () => {
     expect(root).toEqual({ user: { Stop: [] } });
   });
 
+  it('passthrough keys are namespaced so they never replace a user hook', () => {
+    const root: Record<string, unknown> = { lint: { Stop: [{ command: 'mine' }] } };
+    const out = buildHookEntry(integration, {
+      hook: { id: 'lint', on: 'stop', command: 'theirs' },
+      runReference: 'theirs',
+      mapping: integration.eventMap.stop!,
+      nameTagPrefix: '',
+    });
+    expect(upsertHookEntry(integration, root, out)).toEqual(['capa-passthrough:lint']);
+    expect(root.lint).toEqual({ Stop: [{ command: 'mine' }] });
+    // Not capa-managed: clean's name-tag fallback must not claim it.
+    expect(removeHookEntryAt(integration, root, ['capa-passthrough:lint'], 'lint')).toBe(false);
+  });
+
   it('rejects prompt hooks (Antigravity only runs commands)', () => {
     expect(() => build({ id: 'p', on: 'stop', type: 'prompt', prompt: 'hi' } as Hook)).toThrow();
   });
