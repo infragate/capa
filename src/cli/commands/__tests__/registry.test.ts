@@ -5,6 +5,7 @@ import { tmpdir } from 'os';
 import * as config from '../../../shared/config';
 import { CapaDatabase } from '../../../db/database';
 import * as safeRemoteUrl from '../../../shared/safe-remote-url';
+import * as serverManager from '../../utils/server-manager';
 import {
   detectRegistrySourceType,
   registryAddCommand,
@@ -62,6 +63,7 @@ describe('registry CLI commands', () => {
   let url: string;
   let originalProcessExit: typeof process.exit;
   let urlPolicySpy: ReturnType<typeof spyOn>;
+  let serverStatusSpy: ReturnType<typeof spyOn>;
   let originalFetch: typeof fetch;
 
   beforeEach(() => {
@@ -73,6 +75,8 @@ describe('registry CLI commands', () => {
     urlPolicySpy = spyOn(safeRemoteUrl, 'assertPublicHttpsUrl').mockImplementation(
       async (urlString: string) => new URL(urlString),
     );
+    // A capa server running on the dev machine must not change these tests.
+    serverStatusSpy = spyOn(serverManager, 'getServerStatus').mockResolvedValue({ running: false });
     setFlags({ yes: true, json: false, quiet: false, verbose: false });
 
     // Convert process.exit calls into thrown errors so tests don't bail.
@@ -126,6 +130,7 @@ describe('registry CLI commands', () => {
   afterEach(() => {
     setFlags({ yes: false, json: false, quiet: false, verbose: false });
     urlPolicySpy.mockRestore();
+    serverStatusSpy.mockRestore();
     globalThis.fetch = originalFetch;
     exitSpy.mockRestore();
     process.exit = originalProcessExit;
@@ -297,6 +302,20 @@ describe('registry CLI commands', () => {
     } finally {
       db2.close();
     }
+  });
+
+  it('refresh and remove defer to a running server', async () => {
+    await registryAddCommand(url, 'served', { type: 'url', yes: true });
+    serverStatusSpy.mockResolvedValue({ running: true });
+    await expect(registryRefreshCommand('served')).rejects.toThrow(/process\.exit\(1\)/);
+    await expect(registryRemoveCommand('served')).rejects.toThrow(/process\.exit\(1\)/);
+    const db = new CapaDatabase(dbPath);
+    try {
+      expect(db.getRegistry('served')?.status).toBe('installed');
+    } finally {
+      db.close();
+    }
+    expect(existsSync(join(managedDir, 'served'))).toBe(true);
   });
 
   it('enable / disable toggles the enabled flag', async () => {
