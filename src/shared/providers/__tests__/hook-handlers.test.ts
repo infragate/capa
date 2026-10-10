@@ -6,6 +6,7 @@ import {
   upsertHookEntry,
   removeHookEntryAt,
 } from '../hook-handlers';
+import { providers } from '../registry';
 import type { HooksIntegration } from '../../../types/providers';
 import type { Hook } from '../../../types/hooks';
 
@@ -275,5 +276,51 @@ describe('hook-handlers — name tag helpers', () => {
     expect(isCapaNameTag(tag, 'foo')).toBe(true);
     expect(isCapaNameTag(tag, 'bar')).toBe(false);
     expect(isCapaNameTag('user-named')).toBe(false);
+  });
+});
+
+describe('hook-handlers — antigravity shape', () => {
+  // .agents/hooks.json maps hook NAMES to event configs.
+  // Docs: https://antigravity.google/docs/hooks/
+  const integration = providers.antigravity.hooks!;
+  const build = (hook: Hook) =>
+    buildHookEntry(integration, {
+      hook,
+      runReference: hook.command ?? '',
+      mapping: integration.eventMap[hook.on as keyof typeof integration.eventMap]!,
+    });
+
+  it('keys each capa hook by name tag, matcher-grouped for tool events', () => {
+    const root: Record<string, unknown> = { 'user-hook': { Stop: [{ command: 'u' }] } };
+    const loc = upsertHookEntry(integration, root, build({ id: 'sh', on: 'beforeShell', command: 'check', timeout: 5 }));
+    upsertHookEntry(integration, root, build({ id: 'done', on: 'stop', command: 'bye', matcher: 'ignored' }));
+    expect(loc).toEqual(['capa:sh']);
+    expect(root).toEqual({
+      'user-hook': { Stop: [{ command: 'u' }] },
+      'capa:sh': {
+        PreToolUse: [{ matcher: 'run_command', hooks: [{ type: 'command', command: 'check', timeout: 5 }] }],
+      },
+      // Non-tool events list handlers directly; matcher is dropped.
+      'capa:done': { Stop: [{ type: 'command', command: 'bye' }] },
+    });
+  });
+
+  it('re-install keeps a user enabled:false toggle; remove leaves user hooks', () => {
+    const root: Record<string, unknown> = {};
+    const loc = upsertHookEntry(integration, root, build({ id: 'x', on: 'afterTool', command: 'a' }));
+    (root['capa:x'] as Record<string, unknown>).enabled = false;
+    upsertHookEntry(integration, root, build({ id: 'x', on: 'afterTool', command: 'b' }));
+    expect(root['capa:x']).toEqual({
+      enabled: false,
+      PostToolUse: [{ matcher: '', hooks: [{ type: 'command', command: 'b' }] }],
+    });
+    root.user = { Stop: [] };
+    expect(removeHookEntryAt(integration, root, loc, 'x')).toBe(true);
+    expect(removeHookEntryAt(integration, root, ['stale'], 'x')).toBe(false);
+    expect(root).toEqual({ user: { Stop: [] } });
+  });
+
+  it('rejects prompt hooks (Antigravity only runs commands)', () => {
+    expect(() => build({ id: 'p', on: 'stop', type: 'prompt', prompt: 'hi' } as Hook)).toThrow();
   });
 });

@@ -40,7 +40,8 @@ export function toolNameFrom(obj: Record<string, unknown>): string | null {
 		stringField(obj, "tool_name") ||
 		stringField(obj, "toolName") ||
 		stringField(obj, "name") ||
-		nestedString(obj, ["tool", "name"])
+		nestedString(obj, ["tool", "name"]) ||
+		nestedString(obj, ["toolCall", "name"])
 	);
 }
 
@@ -59,7 +60,8 @@ export function shellCommandFrom(obj: Record<string, unknown>): string | null {
 		stringField(obj, "cmd") ||
 		nestedString(obj, ["tool_input", "command"]) ||
 		nestedString(obj, ["input", "command"]) ||
-		nestedString(obj, ["args", "command"])
+		nestedString(obj, ["args", "command"]) ||
+		nestedString(obj, ["toolCall", "args", "CommandLine"])
 	);
 }
 
