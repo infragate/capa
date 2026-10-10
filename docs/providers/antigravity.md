@@ -71,9 +71,9 @@ only an `error` string, not the tool output.
 ## Caveats
 
 - Capa registers as `serverUrl`. Don't regress it to `url`.
-- Detection checks `.agents/`, the legacy `.agent/`, and
-  `~/.gemini/antigravity`. `.agents/` is shared with other universal-layout
-  providers, so it can report Antigravity when only those are in use.
+- Detection checks the legacy `.agent/` and `~/.gemini/antigravity`. It
+  skips `.agents/` on purpose: capa writes that tree for every
+  universal-layout provider, so it would report Antigravity in most projects.
 
 ## Sources
 

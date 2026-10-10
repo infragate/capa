@@ -8,8 +8,9 @@ export const antigravity: ProviderIntegration = {
 	displayName: "Antigravity",
 	skillsDir: ".agents/skills",
 	globalSkillsDir: join(home, ".gemini/config/skills"),
+	// Not `.agents/`: capa writes that tree for every universal-skills provider,
+	// so it would flag Antigravity in most capa projects.
 	detectInstalled: async () =>
-		existsSync(join(process.cwd(), ".agents")) ||
 		existsSync(join(process.cwd(), ".agent")) ||
 		existsSync(join(home, ".gemini/antigravity")),
 	mcp: {
