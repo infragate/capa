@@ -55,7 +55,7 @@ export function emptyLockfile(): Lockfile {
 }
 
 function isLockSource(value: unknown): value is LockSource {
-	return value === "github" || value === "gitlab";
+	return value === "github" || value === "gitlab" || value === "git";
 }
 
 function isLockHookSource(value: unknown): value is LockHookEntry["source"] {
@@ -74,6 +74,7 @@ export function isValidSkillLockEntry(x: unknown): x is LockSkillEntry {
 		e.id.length > 0 &&
 		isLockSource(e.source) &&
 		typeof e.repo === "string" &&
+		(e.source !== "git" || typeof e.url === "string") &&
 		typeof e.skillName === "string" &&
 		isNullableString(e.requestedVersion) &&
 		isNullableString(e.requestedRef) &&
@@ -107,6 +108,7 @@ export function isValidPluginLockEntry(x: unknown): x is LockPluginEntry {
 		e.id.length > 0 &&
 		isLockSource(e.source) &&
 		typeof e.repo === "string" &&
+		(e.source !== "git" || typeof e.url === "string") &&
 		isNullableString(e.subpath) &&
 		isNullableString(e.requestedSearchName) &&
 		isNullableString(e.requestedVersion) &&

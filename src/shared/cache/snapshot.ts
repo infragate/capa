@@ -91,7 +91,8 @@ export async function materializeSnapshot(
 export interface GetSnapshotOptions extends ResolveOptions {
 	platform: CachePlatform;
 	repoPath: string;
-	authFetch: AuthenticatedFetch;
+	/** Omit to clone with no capa-stored git-host token. */
+	authFetch?: AuthenticatedFetch;
 	/** When true, ignore any existing snapshot/mirror state and re-resolve from network. */
 	noCache?: boolean;
 	/** Override the clone URL instead of deriving it from platform/repoPath (useful for tests). */
