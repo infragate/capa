@@ -46,6 +46,8 @@
     "subtitle": "Manage registry adapters and Claude marketplaces that supply skills and plugins.",
     "browseLink": "Back to browse",
     "addButton": "Add registry",
+    "refreshAllButton": "Refresh all",
+    "refreshingAll": "Refreshing...",
     "noneTitle": "No registries yet",
     "noneDescription": "Add your first registry adapter or Claude marketplace to start browsing.",
     "warningTitle": "Two registry types",
@@ -75,6 +77,9 @@
       "added": "Registry \"{{slug}}\" added and installed.",
       "removed": "Registry \"{{slug}}\" removed.",
       "refreshed": "Registry \"{{slug}}\" refreshed.",
+      "refreshedAll_one": "Refreshed {{count}} registry.",
+      "refreshedAll_other": "Refreshed {{count}} registries.",
+      "refreshAllFailed": "{{count}} of {{total}} registries failed to refresh: {{slugs}}. See the status column for details.",
       "edited": "Registry \"{{slug}}\" updated.",
       "enabled": "Registry \"{{slug}}\" enabled.",
       "disabled": "Registry \"{{slug}}\" disabled."
