@@ -13,6 +13,7 @@ import { CapaDatabase } from '../../../db/database';
 import { cleanProject } from '../clean-project';
 import type { Capabilities } from '../../../types/capabilities';
 import { getWorkspacesDir, WORKSPACE_MARKER } from '../../../shared/workspaces/paths';
+import { getProjectPluginDataDir } from '../../../shared/plugin-paths';
 
 describe('cleanProject skill directories', () => {
   let tempDir: string;
@@ -130,6 +131,33 @@ describe('cleanProject skill directories', () => {
       expect(existsSync(shadowSkillDir)).toBe(false);
       expect(result.skillDirsRemoved).toBe(0);
       expect(result.workspacesPruned).toBe(1);
+    } finally {
+      if (prevHome === undefined) delete process.env.HOME;
+      else process.env.HOME = prevHome;
+      try {
+        rmSync(home, { recursive: true, force: true });
+      } catch {}
+    }
+  });
+
+  it("removes the project's plugin data dirs and leaves other projects' alone", async () => {
+    const prevHome = process.env.HOME;
+    const home = mkdtempSync(join(tmpdir(), 'capa-clean-data-home-'));
+    process.env.HOME = home;
+    try {
+      const mine = join(getProjectPluginDataDir('capa-clean-data'), 'p-0123456789ab');
+      const other = join(getProjectPluginDataDir('other-project'), 'p-0123456789ab');
+      mkdirSync(mine, { recursive: true });
+      mkdirSync(other, { recursive: true });
+      writeFileSync(join(mine, 'token'), 'secret');
+
+      const db = new CapaDatabase(dbPath);
+      const capabilities: Capabilities = { providers: ['cursor'], skills: [], servers: [], tools: [] };
+      await cleanProject({ projectPath: tempDir, projectId: 'capa-clean-data', db, capabilities });
+      db.close();
+
+      expect(existsSync(getProjectPluginDataDir('capa-clean-data'))).toBe(false);
+      expect(existsSync(other)).toBe(true);
     } finally {
       if (prevHome === undefined) delete process.env.HOME;
       else process.env.HOME = prevHome;

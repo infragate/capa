@@ -229,11 +229,16 @@ and [`src/shared/plugin-manifest/detect.ts`](../src/shared/plugin-manifest/detec
    Claude-shaped manifests are hoisted to the front of the queue because
    many real-world plugins ship both `.claude-plugin/plugin.json` and
    `.cursor-plugin/plugin.json`, and only the Claude variant carries a
-   complete OAuth2 block.
+   complete OAuth2 block. A root `plugin.json` in the vendor-neutral
+   [Agent Plugins](https://agent-plugins.org/specification) format is
+   tried last, and only counts when its `$schema` is
+   `https://agent-plugins.org/schemas/1.0.0/plugin.schema.json`.
 3. **Parse it.** The matched provider either declares a custom
    `parsePluginManifest` callback or the parser falls back to the two
-   built-in shapes: `parseClaudeManifest` and `parseCursorManifest`. Any
-   other format is currently unsupported — see
+   built-in shapes: `parseClaudeManifest` and `parseCursorManifest`.
+   Agent Plugins manifests go through `parseAgentPluginsManifest`
+   (see [Agent Plugins](#agent-plugins) below). Any other format is
+   currently unsupported — see
    [Plugin format support](#plugin-format-support) below.
 4. **Discover-mode fallback.** If no manifest is found, capa still scans
    for `skills/` (or a root `SKILL.md`), `commands/`, `agents/`, `hooks/`,
@@ -250,9 +255,11 @@ and [`src/shared/plugin-manifest/detect.ts`](../src/shared/plugin-manifest/detec
 
 ### Plugin format support
 
-Only two manifest schemas are wired up today: Claude (`.claude-plugin/`)
-and Cursor (`.cursor-plugin/`). The corresponding `pluginManifestPaths`
-declarations on those provider entries are the inputs to step 2 above.
+Three manifest schemas are wired up today: Claude (`.claude-plugin/`),
+Cursor (`.cursor-plugin/`), and Agent Plugins (root `plugin.json`). The
+`pluginManifestPaths` declarations on the Claude and Cursor provider
+entries are the inputs to step 2 above; Agent Plugins is not tied to a
+provider, so `detect.ts` appends it to the search order itself.
 
 Several other providers ship their own plugin manifest formats
 (`.augment-plugin/plugin.json`, `.factory-plugin/plugin.json`,
@@ -274,6 +281,65 @@ To onboard a new plugin format, either:
 
 The per-provider pages flag manifest formats that are documented but not
 yet wired up (currently Augment, Droid, Kode).
+
+### Agent Plugins
+
+[Agent Plugins v1.0.0](https://agent-plugins.org/specification) defines a
+root `plugin.json`, skills in `skills/`, and MCP servers in `mcp.json`.
+[`agent-plugins-parser.ts`](../src/shared/plugin-manifest/agent-plugins-parser.ts)
+reads only those fixed locations: `.mcp.json`, `commands/`, `agents/`,
+`hooks/`, `rules/` and reverse-domain extension directories are ignored,
+and the plugin's `provider` is reported as `agent-plugins`.
+
+- **Lenient validation.** `plugin.json` is checked by hand against the
+  closed schema (unknown fields, `name` rules, field types, `author`,
+  `extensions`). Every problem is an install warning, never a failure.
+- **Per-component failure.** An `mcp.json` that is not valid JSON, has the
+  wrong `$schema`, or has unknown top-level fields disables MCP for that
+  plugin but keeps its skills. An invalid server entry (unknown field,
+  shell-string `command`, bad `cwd` form, non-HTTPS remote URL, URL
+  credentials, duplicate header names) is skipped with a warning while the
+  other servers load.
+- **Remote hosts.** A remote `url` may target loopback (`localhost`,
+  `127.0.0.0/8`, `::1`, plain `http` allowed) for local dev servers, but
+  not private (RFC 1918, CGNAT, `fc00::/7`), link-local (`169.254.0.0/16`,
+  `fe80::/10`) or cloud metadata hosts. This reuses `isBlockedHostnameOrIp`
+  from [`safe-remote-url.ts`](../src/shared/safe-remote-url.ts) and checks
+  the URL as written, without DNS.
+- **Transports.** `stdio` and `streamable-http` are supported. `sse`
+  (legacy HTTP+SSE) is skipped with a warning because capa's HTTP
+  transport speaks Streamable HTTP only.
+- **Placeholders.** `${PLUGIN_ROOT}` and `${PLUGIN_DATA}` are expanded
+  once, non-recursively, in `args`, `env` values and `cwd` only (a
+  `command` containing them stays literal). Any other `${...}` in
+  `command`, `args`, `env` values or `cwd`, and any `${` at all in
+  `url` or header values, skips the server with a warning: capa and native
+  clients would otherwise fill them from the user's variables or
+  environment and hand the plugin the user's secrets.
+- **Commands.** A `./` `command` resolves against the plugin root. A bare
+  name must match `[A-Za-z0-9._+-]+` and is looked up on `PATH`; on
+  Windows the server's `cwd` is searched before `PATH`. `cwd` defaults
+  to the plugin root, and `PLUGIN_ROOT` / `PLUGIN_DATA` are always set in
+  the server's environment.
+- **Containment.** A `./` `command` and a `./` or `${PLUGIN_ROOT}` `cwd`
+  must stay inside the plugin root (checked lexically and after resolving
+  symlinks), and a `${PLUGIN_DATA}` `cwd` must stay inside the data dir.
+  Both checks reuse `assertInsideProjectRoot` from
+  [`install-path-guard.ts`](../src/shared/install-path-guard.ts).
+  `mcp.json` is read through one descriptor, and the read is rejected
+  unless the path still names that file inside the plugin root after the
+  open.
+- **Plugin data dir.** `${PLUGIN_DATA}` is
+  `~/.capa/plugin-data/<projectId>/<slug>-<hash>/`, created when a stdio
+  server from the plugin is merged. The slug comes from the plugin entry
+  and the hash from its declared source (platform, repo, subpath, search
+  name, `id`), never from the plugin's own `name`, so a different plugin
+  can't inherit the dir. It sits outside `~/.capa/plugins/<projectId>/`
+  so plugin updates keep it; `capa install` deletes it once the plugin
+  is no longer declared, and `capa clean` deletes the project's data dirs.
+- **Output.** Control characters are stripped from plugin install
+  warnings, and plugin-supplied keys are quoted, so a plugin can't send
+  terminal escape sequences through them.
 
 ---
 
