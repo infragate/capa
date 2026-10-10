@@ -2,14 +2,12 @@ import { createHash, randomBytes } from "crypto";
 import {
 	copyFileSync,
 	existsSync,
-	linkSync,
 	mkdirSync,
 	readdirSync,
 	readFileSync,
 	renameSync,
 	rmSync,
 	statSync,
-	utimesSync,
 	writeFileSync,
 } from "fs";
 import { basename, join } from "path";
@@ -260,125 +258,27 @@ export class RegistryBusyError extends Error {
 	}
 }
 
-/** Lock timing; the owner refreshes the lock well within the stale window. */
-const DEFAULT_LOCK_TIMING = { staleMs: 10 * 60 * 1000, heartbeatMs: 60 * 1000 };
-const registryLockTiming = { ...DEFAULT_LOCK_TIMING };
-
-/** Shorten the lock timing in tests (pass null to restore the defaults). */
-export function setRegistryLockTimingForTests(
-	timing: { staleMs: number; heartbeatMs: number } | null,
-): void {
-	Object.assign(registryLockTiming, timing ?? DEFAULT_LOCK_TIMING);
-}
+const lockedRegistries = new Set<string>();
 
 /**
- * Create path holding content, atomically: content is written to a temp
- * file first and hard-linked into place, so path either doesn't exist or
- * exists complete. False when path already exists.
- */
-function publishExclusive(path: string, content: string): boolean {
-	const tmp = `${path}.${randomBytes(6).toString("hex")}.tmp`;
-	writeFileSync(tmp, content, { flag: "wx" });
-	try {
-		linkSync(tmp, path);
-		return true;
-	} catch (err) {
-		const code = (err as NodeJS.ErrnoException).code;
-		if (code === "EEXIST") return false;
-		if (code !== "EPERM" && code !== "ENOTSUP" && code !== "ENOSYS") throw err;
-		// No hard links on this filesystem: plain create-new instead.
-		try {
-			writeFileSync(path, content, { flag: "wx" });
-			return true;
-		} catch (err2) {
-			if ((err2 as NodeJS.ErrnoException).code === "EEXIST") return false;
-			throw err2;
-		}
-	} finally {
-		rmSync(tmp, { force: true });
-	}
-}
-
-function readText(path: string): string | null {
-	try {
-		return readFileSync(path, "utf-8");
-	} catch {
-		return null;
-	}
-}
-
-/** Not touched within the stale window: its owner is gone (it heartbeats). */
-function isStale(path: string): boolean {
-	try {
-		return Date.now() - statSync(path).mtimeMs > registryLockTiming.staleMs;
-	} catch {
-		return false;
-	}
-}
-
-/** Remove path only if it still holds content (best effort compare-and-delete). */
-function removeIfHolds(path: string, content: string): void {
-	if (readText(path) === content) rmSync(path, { force: true });
-}
-
-/**
- * Run fn while holding the registry's lock, so two installs or refreshes of
- * one slug (server or CLI, any process) can't delete or restore each other's
- * adapter files. Throws RegistryBusyError while another operation holds it.
+ * Run fn while holding the registry's lock, so two installs, refreshes or
+ * removals of one slug can't delete or restore each other's adapter files.
+ * Throws RegistryBusyError while another operation holds it.
  *
- * The lock is a file `<slug>.lock` next to the adapters holding a random
- * token, published atomically (never empty). Its owner touches it while fn
- * runs, so liveness is the mtime, not a process id that could be reused. A
- * lock untouched for the stale window is abandoned; taking it over requires
- * the short-lived `<slug>.lock.takeover` guard, under which the lock is
- * checked again, so concurrent takers can't remove each other's fresh lock.
+ * The lock lives in this process: the capa server runs every registry change
+ * the web UI makes, and the CLI refuses to change registries while the server
+ * is running (see registry.ts), so there is no second process to exclude.
  */
 export async function withRegistryLock<T>(
 	slug: string,
 	fn: () => Promise<T>,
 ): Promise<T> {
-	if (!isValidSlug(slug)) return fn(); // fn rejects the slug itself
-	const base = getManagedRegistriesDir();
-	mkdirSync(base, { recursive: true });
-	// Dotted names are never valid slugs, so never mistaken for a registry.
-	const lock = join(base, `${slug}.lock`);
-	const token = `${process.pid} ${randomBytes(8).toString("hex")}`;
-
-	if (!publishExclusive(lock, token)) {
-		if (!isStale(lock)) throw new RegistryBusyError(slug);
-		const guard = `${lock}.takeover`;
-		const guardToken = `${token} takeover`;
-		if (!publishExclusive(guard, guardToken)) {
-			// A taker that crashed mid-takeover; the guard is held for
-			// milliseconds, so one that old is abandoned too.
-			if (isStale(guard)) rmSync(guard, { force: true });
-			throw new RegistryBusyError(slug);
-		}
-		try {
-			// Only guard holders remove a stale lock, so re-checking under the
-			// guard means no other taker can have replaced it in between.
-			const held = readText(lock);
-			if (held !== null && !isStale(lock)) throw new RegistryBusyError(slug);
-			if (held !== null) removeIfHolds(lock, held);
-			if (!publishExclusive(lock, token)) throw new RegistryBusyError(slug);
-		} finally {
-			removeIfHolds(guard, guardToken);
-		}
-	}
-
-	const heartbeat = setInterval(() => {
-		try {
-			if (readText(lock) !== token) return; // no longer ours
-			const now = new Date();
-			utimesSync(lock, now, now);
-		} catch {}
-	}, registryLockTiming.heartbeatMs);
-	heartbeat.unref?.();
+	if (lockedRegistries.has(slug)) throw new RegistryBusyError(slug);
+	lockedRegistries.add(slug);
 	try {
 		return await fn();
 	} finally {
-		clearInterval(heartbeat);
-		removeIfHolds(lock, token);
+		lockedRegistries.delete(slug);
 	}
 }
 

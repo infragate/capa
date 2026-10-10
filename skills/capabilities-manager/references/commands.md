@@ -323,6 +323,8 @@ capa registry enable <slug>                                # Re-enable a previou
 capa registry disable <slug>                               # Hide a registry without removing it
 ```
 
+While the capa server is running, `capa registry refresh` and `capa registry remove` refuse and point to the web UI (Registries > Manage registries), because the server serializes changes to each registry. Refreshing a disabled registry is refused too: enable it first.
+
 Registries let you browse and install skills and plugins from third-party sources (e.g. skills.sh, Cursor Marketplace, Claude plugins, Claude marketplaces, internal company registries). Each registry is tracked in capa's database.
 
 **Seeded on first server start:** `skills-sh`, `claude-plugins`, `cursor-marketplace`.
