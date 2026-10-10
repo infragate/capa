@@ -309,7 +309,7 @@ describe('capabilities', () => {
 
     it('accepts servers contributed by every plugin manifest format', async () => {
       const file = join(tempDir, 'capabilities.yaml');
-      for (const provider of ['claude', 'cursor', 'agent-plugins']) {
+      for (const provider of ['claude', 'cursor', 'agent-plugins'] as const) {
         await writeFile(
           file,
           [
