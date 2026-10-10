@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "crypto";
 import {
 	copyFileSync,
 	existsSync,
+	linkSync,
 	mkdirSync,
 	readdirSync,
 	readFileSync,
@@ -260,59 +261,77 @@ export class RegistryBusyError extends Error {
 }
 
 /** Lock timing; the owner refreshes the lock well within the stale window. */
-const registryLockTiming = { staleMs: 10 * 60 * 1000, heartbeatMs: 60 * 1000 };
+const DEFAULT_LOCK_TIMING = { staleMs: 10 * 60 * 1000, heartbeatMs: 60 * 1000 };
+const registryLockTiming = { ...DEFAULT_LOCK_TIMING };
 
 /** Shorten the lock timing in tests (pass null to restore the defaults). */
 export function setRegistryLockTimingForTests(
 	timing: { staleMs: number; heartbeatMs: number } | null,
 ): void {
-	Object.assign(
-		registryLockTiming,
-		timing ?? { staleMs: 10 * 60 * 1000, heartbeatMs: 60 * 1000 },
-	);
+	Object.assign(registryLockTiming, timing ?? DEFAULT_LOCK_TIMING);
 }
 
-function readLockOwner(lock: string): string | null {
+/**
+ * Create path holding content, atomically: content is written to a temp
+ * file first and hard-linked into place, so path either doesn't exist or
+ * exists complete. False when path already exists.
+ */
+function publishExclusive(path: string, content: string): boolean {
+	const tmp = `${path}.${randomBytes(6).toString("hex")}.tmp`;
+	writeFileSync(tmp, content, { flag: "wx" });
 	try {
-		return readFileSync(join(lock, "owner"), "utf-8");
+		linkSync(tmp, path);
+		return true;
+	} catch (err) {
+		const code = (err as NodeJS.ErrnoException).code;
+		if (code === "EEXIST") return false;
+		if (code !== "EPERM" && code !== "ENOTSUP" && code !== "ENOSYS") throw err;
+		// No hard links on this filesystem: plain create-new instead.
+		try {
+			writeFileSync(path, content, { flag: "wx" });
+			return true;
+		} catch (err2) {
+			if ((err2 as NodeJS.ErrnoException).code === "EEXIST") return false;
+			throw err2;
+		}
+	} finally {
+		rmSync(tmp, { force: true });
+	}
+}
+
+function readText(path: string): string | null {
+	try {
+		return readFileSync(path, "utf-8");
 	} catch {
 		return null;
 	}
 }
 
-function processAlive(pid: number): boolean {
-	if (!Number.isInteger(pid) || pid <= 0) return false;
+/** Not touched within the stale window: its owner is gone (it heartbeats). */
+function isStale(path: string): boolean {
 	try {
-		process.kill(pid, 0);
-		return true;
-	} catch (err) {
-		// EPERM: it exists but belongs to someone else.
-		return (err as NodeJS.ErrnoException).code === "EPERM";
-	}
-}
-
-/** Abandoned: not refreshed within the stale window and its owner is gone. */
-function lockIsStale(lock: string, owner: string | null): boolean {
-	let age = 0;
-	try {
-		age = Date.now() - statSync(lock).mtimeMs;
+		return Date.now() - statSync(path).mtimeMs > registryLockTiming.staleMs;
 	} catch {
 		return false;
 	}
-	if (age <= registryLockTiming.staleMs) return false;
-	const pid = Number(owner?.split(" ")[0]);
-	return !processAlive(pid);
+}
+
+/** Remove path only if it still holds content (best effort compare-and-delete). */
+function removeIfHolds(path: string, content: string): void {
+	if (readText(path) === content) rmSync(path, { force: true });
 }
 
 /**
  * Run fn while holding the registry's lock, so two installs or refreshes of
  * one slug (server or CLI, any process) can't delete or restore each other's
- * adapter files. The lock is a directory next to the adapters (mkdir is
- * atomic) holding an `owner` file of "<pid> <token>". The owner touches it
- * while fn runs; a lock is only taken over when it has gone stale and its
- * process is dead, by renaming it aside so only one taker wins, and it is
- * only removed by the process that still owns it. Throws RegistryBusyError
- * when it's held.
+ * adapter files. Throws RegistryBusyError while another operation holds it.
+ *
+ * The lock is a file `<slug>.lock` next to the adapters holding a random
+ * token, published atomically (never empty). Its owner touches it while fn
+ * runs, so liveness is the mtime, not a process id that could be reused. A
+ * lock untouched for the stale window is abandoned; taking it over requires
+ * the short-lived `<slug>.lock.takeover` guard, under which the lock is
+ * checked again, so concurrent takers can't remove each other's fresh lock.
  */
 export async function withRegistryLock<T>(
 	slug: string,
@@ -321,43 +340,35 @@ export async function withRegistryLock<T>(
 	if (!isValidSlug(slug)) return fn(); // fn rejects the slug itself
 	const base = getManagedRegistriesDir();
 	mkdirSync(base, { recursive: true });
-	// Has a dot, so it is never a valid slug and never mistaken for a registry.
+	// Dotted names are never valid slugs, so never mistaken for a registry.
 	const lock = join(base, `${slug}.lock`);
-	const owner = `${process.pid} ${randomBytes(8).toString("hex")}`;
+	const token = `${process.pid} ${randomBytes(8).toString("hex")}`;
 
-	const claim = (): boolean => {
-		try {
-			mkdirSync(lock);
-		} catch (err) {
-			if ((err as NodeJS.ErrnoException).code === "EEXIST") return false;
-			throw err;
-		}
-		writeFileSync(join(lock, "owner"), owner);
-		return true;
-	};
-
-	if (!claim()) {
-		const stale = readLockOwner(lock);
-		if (!lockIsStale(lock, stale)) throw new RegistryBusyError(slug);
-		const grave = `${lock}.stale-${randomBytes(4).toString("hex")}`;
-		try {
-			renameSync(lock, grave);
-		} catch {
-			throw new RegistryBusyError(slug); // another taker got there first
-		}
-		if (readLockOwner(grave) !== stale) {
-			// Renamed a lock someone claimed after our check: hand it back.
-			try {
-				renameSync(grave, lock);
-			} catch {}
+	if (!publishExclusive(lock, token)) {
+		if (!isStale(lock)) throw new RegistryBusyError(slug);
+		const guard = `${lock}.takeover`;
+		const guardToken = `${token} takeover`;
+		if (!publishExclusive(guard, guardToken)) {
+			// A taker that crashed mid-takeover; the guard is held for
+			// milliseconds, so one that old is abandoned too.
+			if (isStale(guard)) rmSync(guard, { force: true });
 			throw new RegistryBusyError(slug);
 		}
-		rmSync(grave, { recursive: true, force: true });
-		if (!claim()) throw new RegistryBusyError(slug);
+		try {
+			// Only guard holders remove a stale lock, so re-checking under the
+			// guard means no other taker can have replaced it in between.
+			const held = readText(lock);
+			if (held !== null && !isStale(lock)) throw new RegistryBusyError(slug);
+			if (held !== null) removeIfHolds(lock, held);
+			if (!publishExclusive(lock, token)) throw new RegistryBusyError(slug);
+		} finally {
+			removeIfHolds(guard, guardToken);
+		}
 	}
 
 	const heartbeat = setInterval(() => {
 		try {
+			if (readText(lock) !== token) return; // no longer ours
 			const now = new Date();
 			utimesSync(lock, now, now);
 		} catch {}
@@ -367,9 +378,7 @@ export async function withRegistryLock<T>(
 		return await fn();
 	} finally {
 		clearInterval(heartbeat);
-		if (readLockOwner(lock) === owner) {
-			rmSync(lock, { recursive: true, force: true });
-		}
+		removeIfHolds(lock, token);
 	}
 }
 

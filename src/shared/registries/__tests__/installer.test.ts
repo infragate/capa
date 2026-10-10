@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, spyOn } from 'bun:test';
 import { createHash } from 'crypto';
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, readFileSync, utimesSync } from 'fs';
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, readFileSync, readdirSync, utimesSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import * as config from '../../config';
@@ -314,58 +314,58 @@ describe('installer — pending vs execute', () => {
 describe('withRegistryLock', () => {
   let dir: string;
   let spy: ReturnType<typeof spyOn>;
+  const lockPath = () => join(dir, 'demo.lock');
+  const age = (path: string, ms: number) => {
+    const t = new Date(Date.now() - ms);
+    utimesSync(path, t, t);
+  };
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'capa-registry-lock-'));
     spy = spyOn(config, 'getManagedRegistriesDir').mockReturnValue(dir);
   });
   afterEach(() => {
     spy.mockRestore();
+    setRegistryLockTimingForTests(null);
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('refuses while held and releases afterwards', async () => {
+  it('refuses while held, publishes a complete lock, and releases afterwards', async () => {
     let inner: Promise<unknown> | undefined;
     await withRegistryLock('demo', async () => {
+      // Never an empty or ownerless lock: the token is there from the start.
+      expect(readFileSync(lockPath(), 'utf8')).toMatch(new RegExp(`^${process.pid} [0-9a-f]{16}$`));
       inner = withRegistryLock('demo', async () => 'never').catch((e) => e);
     });
     expect(await inner).toBeInstanceOf(RegistryBusyError);
-    expect(existsSync(join(dir, 'demo.lock'))).toBe(false);
+    expect(existsSync(lockPath())).toBe(false);
+    expect(readdirSync(dir)).toEqual([]); // no temp files left behind
     expect(await withRegistryLock('demo', async () => 'ok')).toBe('ok');
-  });
-
-  it('takes over a lock left behind by a crashed process', async () => {
-    const lock = join(dir, 'demo.lock');
-    mkdirSync(lock);
-    const old = new Date(Date.now() - 60 * 60 * 1000);
-    utimesSync(lock, old, old);
-    expect(await withRegistryLock('demo', async () => 'ok')).toBe('ok');
-    mkdirSync(lock); // fresh lock: still respected
-    await expect(withRegistryLock('demo', async () => 'x')).rejects.toBeInstanceOf(RegistryBusyError);
   });
 
   it('keeps the lock while a long operation runs past the stale window', async () => {
     setRegistryLockTimingForTests({ staleMs: 150, heartbeatMs: 30 });
-    try {
-      let competing: Promise<unknown> | undefined;
-      await withRegistryLock('demo', async () => {
-        await Bun.sleep(400);
-        competing = withRegistryLock('demo', async () => 'stolen').catch((e) => e);
-        await Bun.sleep(50);
-      });
-      expect(await competing).toBeInstanceOf(RegistryBusyError);
-      expect(existsSync(join(dir, 'demo.lock'))).toBe(false);
-    } finally {
-      setRegistryLockTimingForTests(null);
-    }
+    let competing: Promise<unknown> | undefined;
+    await withRegistryLock('demo', async () => {
+      await Bun.sleep(400);
+      competing = withRegistryLock('demo', async () => 'stolen').catch((e) => e);
+      await Bun.sleep(50);
+    });
+    expect(await competing).toBeInstanceOf(RegistryBusyError);
+    expect(existsSync(lockPath())).toBe(false);
+  });
+
+  it('takes over an abandoned lock even if its pid now belongs to a live process', async () => {
+    // Liveness is the heartbeat, not the pid (which can be reused).
+    writeFileSync(lockPath(), `${process.pid} crashedowner00000`);
+    age(lockPath(), 60 * 60 * 1000);
+    expect(await withRegistryLock('demo', async () => 'ok')).toBe('ok');
+    writeFileSync(lockPath(), 'fresh owner'); // fresh: still respected
+    await expect(withRegistryLock('demo', async () => 'x')).rejects.toBeInstanceOf(RegistryBusyError);
   });
 
   it('lets exactly one of two takers claim an abandoned lock', async () => {
-    const lock = join(dir, 'demo.lock');
-    mkdirSync(lock);
-    const dead = Bun.spawnSync([process.execPath, '-e', '']).pid;
-    writeFileSync(join(lock, 'owner'), `${dead} gone`);
-    const old = new Date(Date.now() - 60 * 60 * 1000);
-    utimesSync(lock, old, old);
+    writeFileSync(lockPath(), '1 gone');
+    age(lockPath(), 60 * 60 * 1000);
     const results = await Promise.allSettled([
       withRegistryLock('demo', async () => Bun.sleep(50)),
       withRegistryLock('demo', async () => Bun.sleep(50)),
@@ -375,14 +375,30 @@ describe('withRegistryLock', () => {
     expect(rejected.reason).toBeInstanceOf(RegistryBusyError);
   });
 
-  it('never removes a lock another process now owns', async () => {
-    const lock = join(dir, 'demo.lock');
+  it('does not take over while another taker holds the takeover guard', async () => {
+    writeFileSync(lockPath(), '1 gone');
+    age(lockPath(), 60 * 60 * 1000);
+    writeFileSync(`${lockPath()}.takeover`, 'someone taking over');
+    await expect(withRegistryLock('demo', async () => 'x')).rejects.toBeInstanceOf(RegistryBusyError);
+    expect(readFileSync(lockPath(), 'utf8')).toBe('1 gone');
+  });
+
+  it('clears a takeover guard abandoned by a crashed taker', async () => {
+    writeFileSync(lockPath(), '1 gone');
+    age(lockPath(), 60 * 60 * 1000);
+    const guard = `${lockPath()}.takeover`;
+    writeFileSync(guard, 'crashed taker');
+    age(guard, 60 * 60 * 1000);
+    await expect(withRegistryLock('demo', async () => 'x')).rejects.toBeInstanceOf(RegistryBusyError);
+    expect(existsSync(guard)).toBe(false);
+    expect(await withRegistryLock('demo', async () => 'ok')).toBe('ok');
+  });
+
+  it('never removes a lock another operation now owns', async () => {
     await withRegistryLock('demo', async () => {
       // Simulate the lock having been taken over while this one ran.
-      rmSync(lock, { recursive: true, force: true });
-      mkdirSync(lock);
-      writeFileSync(join(lock, 'owner'), '1 someone-else');
+      writeFileSync(lockPath(), '1 someone-else');
     });
-    expect(readFileSync(join(lock, 'owner'), 'utf8')).toBe('1 someone-else');
+    expect(readFileSync(lockPath(), 'utf8')).toBe('1 someone-else');
   });
 });
