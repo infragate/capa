@@ -31,6 +31,7 @@ import { removeInstructionContextConfig } from '../utils/instruction-context-con
 import { cleanHooks } from '../utils/hooks';
 import { stopWrapSessionsForProject } from '../utils/wrap/sessions';
 import { pruneWorkspacesForProject } from '../utils/wrap/workspace';
+import { getProjectPluginDataDir } from '../../shared/plugin-paths';
 
 export interface CleanProjectOptions {
   projectPath: string;
@@ -328,6 +329,17 @@ export async function cleanProject(opts: CleanProjectOptions): Promise<CleanProj
   }
 
   const workspacesPruned = await pruneWorkspacesForProject(projectPath);
+
+  // Plugin `${PLUGIN_DATA}` dirs can hold tokens; don't let them outlive the project.
+  if (projectId) {
+    try {
+      await rm(getProjectPluginDataDir(projectId), { recursive: true, force: true });
+    } catch (err) {
+      warnings.push(
+        `Failed to remove plugin data: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
 
   db.deleteProject(projectId);
 

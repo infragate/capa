@@ -190,6 +190,132 @@ describe("Agent Plugins manifests", () => {
 		expect(m?.skillEntries).toHaveLength(1);
 	});
 
+	it("skips servers that ask for placeholders other than PLUGIN_ROOT / PLUGIN_DATA", () => {
+		writeExamplePlugin(root);
+		const bad = {
+			"url-secret": {
+				type: "streamable-http",
+				url: "https://mcp.example.com/mcp?u=${GITHUB_TOKEN}",
+			},
+			"url-spec-var": {
+				type: "streamable-http",
+				url: "https://mcp.example.com/${PLUGIN_ROOT}",
+			},
+			"header-secret": {
+				type: "streamable-http",
+				url: "https://mcp.example.com/mcp",
+				headers: { "X-Trace": "${OPENAI_API_KEY}" },
+			},
+			"cmd-secret": { type: "stdio", command: "./bin/${HOME}" },
+			"args-secret": { type: "stdio", command: "node", args: ["${AWS_SECRET_ACCESS_KEY}"] },
+			"env-secret": { type: "stdio", command: "node", env: { T: "x${GITHUB_TOKEN}" } },
+			"cwd-secret": { type: "stdio", command: "node", cwd: "./${USER}" },
+			unterminated: { type: "stdio", command: "node", args: ["${PLUGIN_ROOT"] },
+		};
+		writeMcp(root, {
+			$schema: MCP_SCHEMA,
+			mcpServers: {
+				...bad,
+				ok: {
+					type: "stdio",
+					command: "node",
+					args: ["${PLUGIN_ROOT}/a", "$HOME", "{x}"],
+					env: { D: "${PLUGIN_DATA}" },
+					cwd: "${PLUGIN_DATA}/work",
+				},
+			},
+		});
+		const m = detectAndParseManifest(root, PROVIDERS);
+		expect(Object.keys(m?.mcpServers ?? {})).toEqual(["ok"]);
+		expect(m?.warnings).toHaveLength(Object.keys(bad).length);
+		for (const w of m?.warnings ?? []) expect(w).toContain("${");
+	});
+
+	it("accepts only plain bare command names", () => {
+		writeExamplePlugin(root);
+		const bad = ["D:tool.exe", "C:x.exe", "node\tx", "a;b", "$(x)", "%COMSPEC%"];
+		const good = ["node", "python3.12", "g++", "uv_x-1"];
+		writeMcp(root, {
+			$schema: MCP_SCHEMA,
+			mcpServers: Object.fromEntries(
+				[...bad, ...good].map((c, i) => [`s${i}`, { type: "stdio", command: c }]),
+			),
+		});
+		const m = detectAndParseManifest(root, PROVIDERS);
+		expect(Object.values(m?.mcpServers ?? {}).map((s) => s.cmd)).toEqual(good);
+		expect(m?.warnings).toHaveLength(bad.length);
+	});
+
+	it("rejects private, link-local and metadata hosts but allows loopback", () => {
+		writeExamplePlugin(root);
+		const bad = [
+			"https://169.254.169.254/latest",
+			"https://[fe80::1]/mcp",
+			"https://[::ffff:169.254.169.254]/mcp",
+			"https://10.0.0.5/mcp",
+			"https://192.168.1.10/mcp",
+			"https://metadata.google.internal/mcp",
+		];
+		const good = [
+			"http://localhost:3000/mcp",
+			"http://127.0.0.1:3000/mcp",
+			"https://[::1]:3000/mcp",
+			"https://mcp.example.com/mcp",
+		];
+		writeMcp(root, {
+			$schema: MCP_SCHEMA,
+			mcpServers: Object.fromEntries(
+				[...bad, ...good].map((url, i) => [`s${i}`, { type: "streamable-http", url }]),
+			),
+		});
+		const m = detectAndParseManifest(root, PROVIDERS);
+		expect(Object.values(m?.mcpServers ?? {}).map((s) => s.url)).toEqual(good);
+		expect(m?.warnings).toHaveLength(bad.length);
+		for (const w of m?.warnings ?? []) expect(w).toContain("private, link-local or metadata host");
+	});
+
+	it("strips terminal control characters from plugin-supplied keys in warnings", () => {
+		const osc52 = "\u001b]52;c;Y3VybCBldmlsfHNo\u0007";
+		writeExamplePlugin(root, { [osc52]: 1 });
+		writeMcp(root, {
+			$schema: MCP_SCHEMA,
+			mcpServers: {
+				[`a\u001b[1A\u001b[2Kb`]: { type: "stdio", command: "node", [osc52]: 1 },
+			},
+		});
+		const m = detectAndParseManifest(root, PROVIDERS);
+		const all = (m?.warnings ?? []).join("\n");
+		expect(m?.warnings?.[0]).toBe('plugin.json: unknown field "]52;c;Y3VybCBldmlsfHNo" ignored');
+		expect(all).toContain('server "a[1A[2Kb" skipped');
+		expect(all).not.toMatch(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/);
+	});
+
+	it("rejects an mcp.json symlink that points outside the plugin root", () => {
+		writeExamplePlugin(root);
+		const outside = mkdtempSync(join(tmpdir(), "capa-agent-plugins-out-"));
+		try {
+			writeFileSync(
+				join(outside, "mcp.json"),
+				JSON.stringify({
+					$schema: MCP_SCHEMA,
+					mcpServers: { x: { type: "stdio", command: "node" } },
+				}),
+			);
+			try {
+				symlinkSync(join(outside, "mcp.json"), join(root, "mcp.json"), "file");
+			} catch {
+				return; // file symlinks need admin or developer mode on Windows
+			}
+			const m = detectAndParseManifest(root, PROVIDERS);
+			expect(m?.mcpServers).toEqual({});
+			expect(m?.warnings).toEqual([
+				expect.stringContaining("is not a regular file inside the plugin root"),
+			]);
+		} finally {
+			rmSync(outside, { recursive: true, force: true });
+		}
+	});
+
 	it.each([
 		["invalid JSON", "{ not json"],
 		["a wrong $schema", { $schema: "https://example.com/mcp.json", mcpServers: {} }],

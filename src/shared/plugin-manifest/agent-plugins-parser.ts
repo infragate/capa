@@ -5,6 +5,7 @@ import {
 	openSync,
 	readFileSync,
 	realpathSync,
+	statSync,
 } from "fs";
 import { basename, dirname, join, relative, resolve } from "path";
 import type {
@@ -12,6 +13,7 @@ import type {
 	UnifiedPluginManifest,
 } from "../../types/plugin";
 import { assertInsideProjectRoot } from "../install-path-guard";
+import { isBlockedHostnameOrIp } from "../safe-remote-url";
 import { getSkillEntriesFromPath, isPlainObject } from "./types-helpers";
 
 /**
@@ -52,6 +54,23 @@ const STDIO_FIELDS = new Set(["type", "command", "args", "env", "cwd"]);
 const REMOTE_FIELDS = new Set(["type", "url", "headers"]);
 const CWD_PATTERN =
 	/^(?:\.\/|\$\{PLUGIN_ROOT\}(?:\/|$)|\$\{PLUGIN_DATA\}(?:\/|$))/;
+// Downstream resolvers fill any other `${NAME}` from the user's variables or
+// environment, which would hand the plugin the user's secrets.
+const NON_SPEC_PLACEHOLDER = /\$\{(?!PLUGIN_ROOT\}|PLUGIN_DATA\})/;
+// On Windows `:` makes a drive-relative path (`D:tool.exe`).
+const BARE_COMMAND = /^[A-Za-z0-9._+-]+$/;
+
+/**
+ * Plugin-supplied text made safe to print: C0/C1 control characters (ESC,
+ * BEL, CR, ...) are removed so a plugin can't emit terminal escape sequences.
+ * Newlines and tabs are kept for capa's own multi-line messages.
+ */
+export function stripControlChars(s: string): string {
+	return s.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "");
+}
+
+/** Quote one plugin-supplied value for a warning (single line, no controls). */
+const q = (s: string): string => JSON.stringify(stripControlChars(s));
 
 export function isAgentPluginsManifest(data: unknown): boolean {
 	return isPlainObject(data) && data.$schema === AGENT_PLUGINS_MANIFEST_SCHEMA;
@@ -99,7 +118,7 @@ function manifestWarnings(m: Record<string, unknown>): string[] {
 	const w: string[] = [];
 	for (const key of Object.keys(m)) {
 		if (!MANIFEST_FIELDS.has(key)) {
-			w.push(`plugin.json: unknown field "${key}" ignored`);
+			w.push(`plugin.json: unknown field ${q(key)} ignored`);
 		}
 	}
 	if (
@@ -176,7 +195,7 @@ function parseServerEntry(
 
 	if (type === "stdio") {
 		const extra = Object.keys(entry).filter((k) => !STDIO_FIELDS.has(k));
-		if (extra.length) return `unknown field(s): ${extra.join(", ")}`;
+		if (extra.length) return `unknown field(s): ${extra.map(q).join(", ")}`;
 		const command = entry.command;
 		if (typeof command !== "string" || !command) {
 			return '"command" must be a non-empty string';
@@ -185,8 +204,8 @@ function parseServerEntry(
 			if (!isContained(pluginRoot, join(pluginRoot, command))) {
 				return '"command" resolves outside the plugin root';
 			}
-		} else if (/[\s/\\]/.test(command)) {
-			return '"command" must be one bare executable name or a "./" plugin-relative path';
+		} else if (!BARE_COMMAND.test(command)) {
+			return '"command" must be one bare executable name (letters, digits, ".", "_", "+", "-") or a "./" plugin-relative path';
 		}
 		if (
 			entry.args !== undefined &&
@@ -219,6 +238,15 @@ function parseServerEntry(
 				}
 			}
 		}
+		const values = [
+			command,
+			...((entry.args as string[] | undefined) ?? []),
+			...Object.values(env ?? {}),
+			...(cwd === undefined ? [] : [cwd]),
+		];
+		if (values.some((v) => NON_SPEC_PLACEHOLDER.test(v))) {
+			return 'only "${PLUGIN_ROOT}" and "${PLUGIN_DATA}" may appear as "${...}" in command, args, env and cwd';
+		}
 		return {
 			cmd: command,
 			args: entry.args as string[] | undefined,
@@ -229,8 +257,9 @@ function parseServerEntry(
 
 	if (type === "streamable-http" || type === "sse") {
 		const extra = Object.keys(entry).filter((k) => !REMOTE_FIELDS.has(k));
-		if (extra.length) return `unknown field(s): ${extra.join(", ")}`;
+		if (extra.length) return `unknown field(s): ${extra.map(q).join(", ")}`;
 		if (typeof entry.url !== "string") return '"url" must be a string';
+		if (entry.url.includes("${")) return '"url" must not contain "${...}"';
 		let url: URL;
 		try {
 			url = new URL(entry.url);
@@ -240,8 +269,14 @@ function parseServerEntry(
 		if (url.protocol !== "https:" && url.protocol !== "http:") {
 			return '"url" must use http or https';
 		}
-		if (url.protocol === "http:" && !isLoopbackHost(url.hostname)) {
+		const loopback = isLoopbackHost(url.hostname);
+		if (url.protocol === "http:" && !loopback) {
 			return '"url" must use https for non-loopback hosts';
+		}
+		// Loopback stays allowed for local dev servers; private, link-local and
+		// cloud metadata hosts follow capa's SSRF policy for remote fetches.
+		if (!loopback && isBlockedHostnameOrIp(url.hostname)) {
+			return '"url" must not target a private, link-local or metadata host';
 		}
 		if (url.username || url.password || entry.url.includes("#")) {
 			return '"url" must not contain credentials or a fragment';
@@ -253,6 +288,9 @@ function parseServerEntry(
 			const names = Object.keys(parsed).map((k) => k.toLowerCase());
 			if (new Set(names).size !== names.length) {
 				return '"headers" repeats a header name with different casing';
+			}
+			if (Object.values(parsed).some((v) => v.includes("${"))) {
+				return '"headers" values must not contain "${...}"';
 			}
 			headers = parsed;
 		}
@@ -279,13 +317,21 @@ function parseMcpJson(pluginRoot: string): {
 	});
 	const notRegular = "is not a regular file inside the plugin root";
 	if (!isContained(pluginRoot, path)) return disabled(notRegular);
-	// Open once and check/read through the descriptor so the file can't be
-	// swapped between the check and the read.
+	// Open once and read through the descriptor. `openSync` follows links, so
+	// after opening, re-check containment and that the path still names the
+	// opened file: a swap to a link between the check and the open is rejected.
 	let data: unknown;
 	let fd: number | undefined;
 	try {
 		fd = openSync(path, "r");
-		if (!fstatSync(fd).isFile()) return disabled(notRegular);
+		const opened = fstatSync(fd, { bigint: true });
+		if (!opened.isFile() || !isContained(pluginRoot, path)) {
+			return disabled(notRegular);
+		}
+		const now = statSync(path, { bigint: true });
+		if (now.dev !== opened.dev || now.ino !== opened.ino) {
+			return disabled(notRegular);
+		}
 		data = JSON.parse(readFileSync(fd, "utf-8"));
 	} catch (err) {
 		const code = (err as NodeJS.ErrnoException).code;
@@ -304,7 +350,7 @@ function parseMcpJson(pluginRoot: string): {
 		(k) => k !== "$schema" && k !== "mcpServers",
 	);
 	if (extra.length) {
-		return disabled(`has unknown top-level field(s): ${extra.join(", ")}`);
+		return disabled(`has unknown top-level field(s): ${extra.map(q).join(", ")}`);
 	}
 
 	const warnings: string[] = [];
@@ -315,7 +361,7 @@ function parseMcpJson(pluginRoot: string): {
 		}
 		const parsed = parseServerEntry(pluginRoot, entry);
 		if (typeof parsed === "string") {
-			warnings.push(`mcp.json: server "${key}" skipped: ${parsed}`);
+			warnings.push(`mcp.json: server ${q(key)} skipped: ${parsed}`);
 		} else {
 			servers[key] = parsed;
 		}

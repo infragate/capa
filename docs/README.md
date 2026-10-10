@@ -299,25 +299,46 @@ and the plugin's `provider` is reported as `agent-plugins`.
   shell-string `command`, bad `cwd` form, non-HTTPS remote URL, URL
   credentials, duplicate header names) is skipped with a warning while the
   other servers load.
+- **Remote hosts.** A remote `url` may target loopback (`localhost`,
+  `127.0.0.0/8`, `::1`, plain `http` allowed) for local dev servers, but
+  not private (RFC 1918, CGNAT, `fc00::/7`), link-local (`169.254.0.0/16`,
+  `fe80::/10`) or cloud metadata hosts. This reuses `isBlockedHostnameOrIp`
+  from [`safe-remote-url.ts`](../src/shared/safe-remote-url.ts) and checks
+  the URL as written, without DNS.
 - **Transports.** `stdio` and `streamable-http` are supported. `sse`
   (legacy HTTP+SSE) is skipped with a warning because capa's HTTP
   transport speaks Streamable HTTP only.
 - **Placeholders.** `${PLUGIN_ROOT}` and `${PLUGIN_DATA}` are expanded
-  once, non-recursively, in `args`, `env` values and `cwd` only, never in
-  `command`, `url` or `headers`. A `./` `command` resolves against the
-  plugin root; bare names resolve from `PATH`. `cwd` defaults to the
-  plugin root, and `PLUGIN_ROOT` / `PLUGIN_DATA` are always set in the
-  server's environment.
+  once, non-recursively, in `args`, `env` values and `cwd` only (a
+  `command` containing them stays literal). Any other `${...}` in
+  `command`, `args`, `env` values or `cwd`, and any `${` at all in
+  `url` or header values, skips the server with a warning: capa and native
+  clients would otherwise fill them from the user's variables or
+  environment and hand the plugin the user's secrets.
+- **Commands.** A `./` `command` resolves against the plugin root. A bare
+  name must match `[A-Za-z0-9._+-]+` and is looked up on `PATH`; on
+  Windows the server's `cwd` is searched before `PATH`. `cwd` defaults
+  to the plugin root, and `PLUGIN_ROOT` / `PLUGIN_DATA` are always set in
+  the server's environment.
 - **Containment.** A `./` `command` and a `./` or `${PLUGIN_ROOT}` `cwd`
   must stay inside the plugin root (checked lexically and after resolving
   symlinks), and a `${PLUGIN_DATA}` `cwd` must stay inside the data dir.
   Both checks reuse `assertInsideProjectRoot` from
   [`install-path-guard.ts`](../src/shared/install-path-guard.ts).
+  `mcp.json` is read through one descriptor, and the read is rejected
+  unless the path still names that file inside the plugin root after the
+  open.
 - **Plugin data dir.** `${PLUGIN_DATA}` is
-  `~/.capa/plugin-data/<projectId>/<pluginId>/`, created when a stdio
-  server from the plugin is merged. It sits outside
-  `~/.capa/plugins/<projectId>/` so plugin updates and the stale-copy
-  sweep never touch it.
+  `~/.capa/plugin-data/<projectId>/<slug>-<hash>/`, created when a stdio
+  server from the plugin is merged. The slug comes from the plugin entry
+  and the hash from its declared source (platform, repo, subpath, search
+  name, `id`), never from the plugin's own `name`, so a different plugin
+  can't inherit the dir. It sits outside `~/.capa/plugins/<projectId>/`
+  so plugin updates keep it; `capa install` deletes it once the plugin
+  is no longer declared, and `capa clean` deletes the project's data dirs.
+- **Output.** Control characters are stripped from plugin install
+  warnings, and plugin-supplied keys are quoted, so a plugin can't send
+  terminal escape sequences through them.
 
 ---
 

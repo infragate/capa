@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'fs';
 import { join, resolve } from 'path';
 import { tmpdir } from 'os';
 import { LockfileBuilder } from '../../../shared/lockfile';
@@ -39,13 +39,13 @@ describe('resolvePlugins with an Agent Plugins package', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  function run() {
+  function run(repo = 'owner/reports-plugin') {
     const caps: Capabilities = {
       providers: ['claude-code'],
       skills: [],
       servers: [],
       tools: [],
-      plugins: [{ type: 'github', def: { repo: 'owner/reports-plugin' } }],
+      plugins: [{ type: 'github', def: { repo } }],
     };
     return resolvePlugins(
       caps,
@@ -59,6 +59,13 @@ describe('resolvePlugins with an Agent Plugins package', () => {
       new LockfileBuilder(null),
       { pluginsBaseDir: pluginsBase, pluginDataBaseDir: dataBase, materializeProjectSkills: false },
     );
+  }
+
+  /** The one `${PLUGIN_DATA}` dir created so far. */
+  function onlyDataDir(): string {
+    const names = readdirSync(dataBase);
+    expect(names).toHaveLength(1);
+    return resolve(dataBase, names[0]);
   }
 
   it('merges skills and stdio servers with PLUGIN_ROOT / PLUGIN_DATA', async () => {
@@ -78,7 +85,8 @@ describe('resolvePlugins with an Agent Plugins package', () => {
     );
     const result = await run();
     const pluginRoot = resolve(pluginsBase, 'reports-plugin');
-    const dataDir = resolve(dataBase, 'reports-plugin');
+    const dataDir = onlyDataDir();
+    expect(dataDir).toMatch(/[\\/]reports-plugin-[0-9a-f]{12}$/);
 
     expect(result.mergedCapabilities.resolvedPlugins?.[0]).toMatchObject({
       name: 'reports-plugin',
@@ -112,7 +120,7 @@ describe('resolvePlugins with an Agent Plugins package', () => {
       }),
     );
     const result = await run();
-    expect(existsSync(resolve(dataBase, 'reports-plugin', 'work'))).toBe(true);
+    expect(existsSync(resolve(onlyDataDir(), 'work'))).toBe(true);
     expect(result.mergedCapabilities.servers.map((s) => s.id)).toEqual(['worker', 'nodir']);
     expect(result.warnings).toEqual([
       expect.stringContaining('server "nodir" cwd'),
@@ -144,6 +152,48 @@ describe('resolvePlugins with an Agent Plugins package', () => {
     expect(result.mergedCapabilities.resolvedPlugins?.[0]?.id).toBe('reports-plugin');
     expect(existsSync(join(pluginsBase, 'reports-plugin', 'plugin.json'))).toBe(true);
     expect(result.mergedCapabilities.skills.map((s) => s.id)).toEqual(['summarize']);
+  });
+
+  it('keys the data dir by plugin source, not the plugin-chosen name', async () => {
+    writeFileSync(
+      join(snapshotDir, 'mcp.json'),
+      JSON.stringify({ $schema: MCP_SCHEMA, mcpServers: { worker: { type: 'stdio', command: 'node' } } }),
+    );
+    await run('owner/reports-plugin');
+    const first = onlyDataDir();
+    writeFileSync(join(first, 'token'), 'secret');
+
+    // Same manifest name from another repo: a fresh dir, and the old one is
+    // swept because its plugin is no longer declared.
+    const result = await run('someone/else');
+    const second = onlyDataDir();
+    expect(second).not.toBe(first);
+    expect(second).toMatch(/[\\/]else-[0-9a-f]{12}$/);
+    expect(existsSync(first)).toBe(false);
+    expect(result.mergedCapabilities.servers[0].def.env).toMatchObject({ PLUGIN_DATA: second });
+
+    // A renamed manifest from the same source keeps its data.
+    writeFileSync(join(second, 'token'), 'kept');
+    writeFileSync(
+      join(snapshotDir, 'plugin.json'),
+      JSON.stringify({ $schema: MANIFEST_SCHEMA, name: 'renamed' }),
+    );
+    await run('someone/else');
+    expect(onlyDataDir()).toBe(second);
+    expect(existsSync(join(second, 'token'))).toBe(true);
+  });
+
+  it('strips terminal control characters from plugin warnings', async () => {
+    writeFileSync(
+      join(snapshotDir, 'plugin.json'),
+      JSON.stringify({ $schema: MANIFEST_SCHEMA, name: 'x\u001b]52;c;Y3VybA==\u0007', ['\u001b[2K']: 1 }),
+    );
+    const result = await run();
+    expect(result.warnings.length).toBeGreaterThan(0);
+    for (const w of result.warnings) {
+      expect(w).not.toMatch(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/);
+    }
+    expect(result.warnings).toContain('Plugin "x]52;c;Y3VybA==": plugin.json: unknown field "[2K" ignored');
   });
 
   it('keeps skills when mcp.json is broken', async () => {

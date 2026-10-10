@@ -26,8 +26,9 @@ import {
   resolvePluginRootInString,
   resolveAgentPluginsServerDef,
   materializeCommandAsSkill,
+  stripControlChars,
 } from '../../shared/plugin-manifest';
-import { getProjectPluginDataDir, getProjectPluginsDir } from '../../shared/plugin-paths';
+import { getPluginDataId, getProjectPluginDataDir, getProjectPluginsDir } from '../../shared/plugin-paths';
 import { getProvider } from '../../shared/providers';
 import { getGitProvider } from '../../shared/git-providers/registry';
 import { assertSafeRepoPath } from '../../shared/repo-file';
@@ -276,6 +277,8 @@ export async function resolvePlugins(
   // Declared plugins that failed this run: keep their existing copies for the
   // next successful resolve instead of sweeping them as undeclared.
   const failedPluginIds = new Set<string>();
+  // `${PLUGIN_DATA}` dir names of every declared plugin, failed or not.
+  const declaredDataIds = new Set<string>();
   const warnings: string[] = [];
 
   const registeredServerIds = new Set(mergedServers.map(s => s.id));
@@ -390,6 +393,13 @@ export async function resolvePlugins(
       }
 
       const { platform, repoPath, subpath, search, version, ref } = validated;
+      // Keyed by the declared source rather than the plugin's own name, and
+      // known before fetching so a failed resolve still keeps its data.
+      const pluginDataId = getPluginDataId(
+        pluginRef.id ?? search ?? basename(subpath || repoPath),
+        JSON.stringify([platform, repoPath, subpath ?? '', search ?? '', pluginRef.id ?? '']),
+      );
+      declaredDataIds.add(pluginDataId);
 
       let snapshot: GetSnapshotResult;
       let previousLock: LockPluginEntry | null = null;
@@ -667,7 +677,7 @@ export async function resolvePlugins(
       }
       let resolvedDef: ReturnType<typeof resolvePluginServerDef> & { cwd?: string };
       if (manifest.provider === 'agent-plugins') {
-        const pluginDataPath = resolve(join(pluginDataBase, pluginInstallId));
+        const pluginDataPath = resolve(join(pluginDataBase, pluginDataId));
         try {
           resolvedDef = resolveAgentPluginsServerDef(serverDef, pluginStablePath, pluginDataPath);
           if (resolvedDef.cmd && resolvedDef.cwd) {
@@ -935,6 +945,22 @@ export async function resolvePlugins(
     }
   }
 
+  // Drop data dirs of plugins no longer declared. Only a full install sees the
+  // project's whole plugin list (passthrough adds resolve a single plugin).
+  if (trackManaged) {
+    try {
+      for (const d of readdirSync(pluginDataBase, { withFileTypes: true })) {
+        if (!d.isDirectory() || declaredDataIds.has(d.name)) continue;
+        rmSync(join(pluginDataBase, d.name), { recursive: true, force: true });
+      }
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT') {
+        console.warn(`Failed to clean up plugin data directories: ${(err as Error).message}`);
+      }
+    }
+  }
+
   const mergedCapabilities: Capabilities = {
     ...capabilities,
     skills: mergedSkills,
@@ -946,5 +972,6 @@ export async function resolvePlugins(
     resolvedPlugins,
   };
 
-  return { mergedCapabilities, tempDirsToCleanup: tempDirs, warnings };
+  // Warnings carry plugin-supplied names and keys: strip terminal controls.
+  return { mergedCapabilities, tempDirsToCleanup: tempDirs, warnings: warnings.map(stripControlChars) };
 }
