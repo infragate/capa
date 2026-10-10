@@ -52,7 +52,6 @@ export function ProjectDetailPage() {
 
   const displayName = project ? projectDisplayName(project.path, projectId || undefined) : projectId || '';
   const caps = project?.capabilities;
-  const hasProviders = (caps?.providers?.length ?? 0) > 0;
   const showNoConfig = !isLoading && !caps && !error;
 
   const missingVarCount = variables?.required
@@ -153,7 +152,7 @@ export function ProjectDetailPage() {
               />
             </div>
 
-            {hasProviders && <ProvidersSection providers={caps!.providers} />}
+            {caps && <ProvidersSection providers={caps.providers ?? []} projectId={projectId} />}
 
             <VariablesForm projectId={projectId} returnUrl={returnUrl} />
 

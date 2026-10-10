@@ -820,32 +820,56 @@ export async function upsertOptions(
 }
 
 /**
- * Replace (or remove) the top-level `agents` object.
- * Pass `null` to delete the key. YAML path preserves unrelated comments/keys.
+ * Replace (or remove) a top-level key. Pass `null` to delete the key.
+ * YAML path preserves unrelated comments/keys.
  */
-export async function upsertAgents(
+async function setTopLevelKey(
 	path: string,
 	format: CapabilitiesFormat,
-	agents: AgentFileConfig | null,
+	key: string,
+	value: unknown,
 ): Promise<void> {
 	const content = await Bun.file(path).text();
 
 	if (format === "json") {
 		const data = JSON.parse(content) as Record<string, unknown>;
-		if (agents === null) {
-			delete data.agents;
+		if (value === null) {
+			delete data[key];
 		} else {
-			data.agents = agents;
+			data[key] = value;
 		}
 		await Bun.write(path, JSON.stringify(data, null, 2) + "\n");
 		return;
 	}
 
 	const doc = parseDocument(content);
-	if (agents === null) {
-		doc.delete("agents");
+	if (value === null) {
+		doc.delete(key);
 	} else {
-		doc.set("agents", doc.createNode(agents));
+		doc.set(key, doc.createNode(value));
 	}
 	await Bun.write(path, doc.toString());
+}
+
+/** Replace (or remove, with `null`) the top-level `agents` object. */
+export function upsertAgents(
+	path: string,
+	format: CapabilitiesFormat,
+	agents: AgentFileConfig | null,
+): Promise<void> {
+	return setTopLevelKey(path, format, "agents", agents);
+}
+
+/** Replace the top-level `providers` list; an empty list removes the key. */
+export function upsertProviders(
+	path: string,
+	format: CapabilitiesFormat,
+	providers: string[],
+): Promise<void> {
+	return setTopLevelKey(
+		path,
+		format,
+		"providers",
+		providers.length > 0 ? providers : null,
+	);
 }

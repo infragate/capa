@@ -17,6 +17,7 @@ import {
 	handleFromRegistry,
 	handlePatchOptions,
 	handlePutAgents,
+	handlePutProviders,
 } from "./capabilities-special-routes";
 import { matchRoute } from "./match-route";
 
@@ -50,6 +51,11 @@ export async function handleCapabilitiesMutation(
 	// PUT /capabilities/agents — replace or clear the agents object
 	if (rest === "/agents" && method === "PUT") {
 		return handlePutAgents(deps, projectId, request);
+	}
+
+	// PUT /capabilities/providers — replace the providers list
+	if (rest === "/providers" && method === "PUT") {
+		return handlePutProviders(deps, projectId, request);
 	}
 
 	// POST /capabilities/skills/from-registry
