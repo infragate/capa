@@ -91,7 +91,7 @@ export async function handlePutProviders(
 		return jsonError("Invalid JSON body", 400);
 	}
 
-	const list = body.providers;
+	const list = body?.providers;
 	if (!Array.isArray(list) || !list.every((p) => typeof p === "string")) {
 		return jsonError('Body must include a "providers" array of strings', 400);
 	}
@@ -106,6 +106,8 @@ export async function handlePutProviders(
 
 	try {
 		await upsertProviders(loaded.path, loaded.format, ids);
+		// Otherwise install/configure falls back to the stored preference.
+		if (ids.length === 0) deps.db.setProjectProviders(projectId, []);
 		return await afterWrite(deps, projectId, loaded.path, loaded.format);
 	} catch (err: any) {
 		return jsonError(clientErrorMessage(err), 400);

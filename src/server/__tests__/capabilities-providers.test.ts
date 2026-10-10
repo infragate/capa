@@ -5,6 +5,7 @@ import { join } from "path";
 import type { CapaDatabase } from "../../db/database";
 import type { RegistryManager } from "../../shared/registries/manager";
 import { parseCapabilitiesFile } from "../../shared/capabilities";
+import { resolveProvidersForServer } from "../resolve-effective-capabilities";
 import {
 	type CapabilitiesRouteDeps,
 	handleCapabilitiesMutation,
@@ -17,13 +18,21 @@ describe("PUT /capabilities/providers", () => {
 	let dir: string;
 	let file: string;
 	let deps: CapabilitiesRouteDeps;
+	let stored: string[];
 
 	beforeEach(async () => {
 		dir = mkdtempSync(join(tmpdir(), "capa-providers-route-"));
 		file = join(dir, "capabilities.yaml");
 		await Bun.write(file, "# keep me\nproviders:\n  - cursor\nskills: []\n");
+		stored = ["cursor"];
 		deps = {
-			db: { getProject: () => ({ path: dir }) } as unknown as CapaDatabase,
+			db: {
+				getProject: () => ({ path: dir }),
+				getProjectProviders: () => stored,
+				setProjectProviders: (_id: string, list: string[]) => {
+					stored = list;
+				},
+			} as unknown as CapaDatabase,
 			registryManager: {} as RegistryManager,
 			configure: async () => ({}),
 		};
@@ -64,6 +73,23 @@ describe("PUT /capabilities/providers", () => {
 	it("rejects a body without a string array", async () => {
 		expect((await put({ providers: "cursor" }))?.status).toBe(400);
 		expect((await put({ providers: [1] }))?.status).toBe(400);
+		expect((await put(null))?.status).toBe(400);
+	});
+
+	it("rejects inherited object keys as provider ids without writing", async () => {
+		const before = await Bun.file(file).text();
+		for (const id of ["constructor", "__proto__"]) {
+			const res = await put({ providers: [id] });
+			expect(res?.status).toBe(400);
+		}
+		expect(await Bun.file(file).text()).toBe(before);
+	});
+
+	it("returns a JSON 400 when the existing file is malformed", async () => {
+		await Bun.write(file, "providers: [cursor\n");
+		const res = await put({ providers: ["cursor"] });
+		expect(res?.status).toBe(400);
+		expect(typeof (await res!.json()).error).toBe("string");
 	});
 
 	it("removes the key when the list is empty", async () => {
@@ -71,5 +97,7 @@ describe("PUT /capabilities/providers", () => {
 		expect(res?.status).toBe(200);
 		const caps = await parseCapabilitiesFile(file, "yaml");
 		expect(caps.providers).toBeUndefined();
+		expect(stored).toEqual([]);
+		expect(resolveProvidersForServer(caps, deps.db, PROJECT)).toBeNull();
 	});
 });

@@ -4,6 +4,7 @@ import { parseCapabilitiesFile } from "../shared/capabilities";
 import { detectCapabilitiesFile } from "../shared/paths";
 import type { RegistryManager } from "../shared/registries/manager";
 import type { Capabilities, CapabilitiesFormat } from "../types/capabilities";
+import { clientErrorMessage } from "./http-error";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
@@ -87,7 +88,18 @@ export async function loadProjectFile(
 			),
 		};
 	}
-	const caps = await parseCapabilitiesFile(file.path, file.format);
+	let caps: Capabilities;
+	try {
+		caps = await parseCapabilitiesFile(file.path, file.format);
+	} catch (err) {
+		return {
+			ok: false,
+			response: jsonError(
+				clientErrorMessage(err, "Invalid capabilities file"),
+				400,
+			),
+		};
+	}
 	return {
 		ok: true,
 		projectPath: project.path,
