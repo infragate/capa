@@ -25,6 +25,17 @@ describe('cursor-marketplace pluginDef', () => {
     });
   });
 
+  it('treats "." gitPath as the repo root (as the marketplace lists it)', () => {
+    expect(pluginDef('https://github.com/n8n-io/n8n-cursor-plugin', '.', 'a885813')).toEqual({
+      type: 'github',
+      def: { repo: 'n8n-io/n8n-cursor-plugin', ref: 'a885813' },
+    });
+    expect(pluginDef('https://github.com/acme/plugins', './partners')).toEqual({
+      type: 'github',
+      def: { repo: 'acme/plugins::partners' },
+    });
+  });
+
   it('rejects traversal in gitPath', () => {
     expect(pluginDef('https://github.com/acme/plugins', '../escape')).toBeUndefined();
     expect(pluginDef('https://github.com/acme/plugins', 'ok/../nope')).toBeUndefined();

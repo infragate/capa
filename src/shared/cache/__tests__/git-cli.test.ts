@@ -1,11 +1,12 @@
 import { describe, it, expect, spyOn } from 'bun:test';
 import * as childProcess from 'child_process';
-import { LFS_SKIP_ARGS, gitCommandArgs, git } from '../git-cli';
+import { LFS_SKIP_ARGS, LONG_PATHS_ARGS, gitCommandArgs, git } from '../git-cli';
 
 describe('git-cli', () => {
   it('prepends LFS skip flags on clone --mirror', () => {
     expect(gitCommandArgs(['clone', '--mirror', 'https://example.com/repo.git', '/tmp/mirror'])).toEqual([
       ...LFS_SKIP_ARGS,
+      ...LONG_PATHS_ARGS,
       'clone',
       '--mirror',
       'https://example.com/repo.git',
