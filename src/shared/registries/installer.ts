@@ -258,44 +258,27 @@ export class RegistryBusyError extends Error {
 	}
 }
 
-/** A lock left behind by a crashed process stops blocking after this long. */
-const REGISTRY_LOCK_STALE_MS = 10 * 60 * 1000;
+const lockedRegistries = new Set<string>();
 
 /**
- * Run fn while holding the registry's lock, so two installs or refreshes of
- * one slug (server or CLI, any process) can't delete or restore each other's
- * adapter files. The lock is a directory next to the adapters: mkdir is
- * atomic and fails if it exists. Throws RegistryBusyError when it's held.
+ * Run fn while holding the registry's lock, so two installs, refreshes or
+ * removals of one slug can't delete or restore each other's adapter files.
+ * Throws RegistryBusyError while another operation holds it.
+ *
+ * The lock lives in this process: the capa server runs every registry change
+ * the web UI makes, and the CLI refuses to change registries while the server
+ * is running (see registry.ts), so there is no second process to exclude.
  */
 export async function withRegistryLock<T>(
 	slug: string,
 	fn: () => Promise<T>,
 ): Promise<T> {
-	if (!isValidSlug(slug)) return fn(); // fn rejects the slug itself
-	const base = getManagedRegistriesDir();
-	mkdirSync(base, { recursive: true });
-	// Has a dot, so it is never a valid slug and never mistaken for a registry.
-	const lock = join(base, `${slug}.lock`);
-	try {
-		mkdirSync(lock);
-	} catch (err) {
-		if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-		let stale = false;
-		try {
-			stale = Date.now() - statSync(lock).mtimeMs > REGISTRY_LOCK_STALE_MS;
-		} catch {}
-		if (!stale) throw new RegistryBusyError(slug);
-		rmSync(lock, { recursive: true, force: true });
-		try {
-			mkdirSync(lock);
-		} catch {
-			throw new RegistryBusyError(slug);
-		}
-	}
+	if (lockedRegistries.has(slug)) throw new RegistryBusyError(slug);
+	lockedRegistries.add(slug);
 	try {
 		return await fn();
 	} finally {
-		rmSync(lock, { recursive: true, force: true });
+		lockedRegistries.delete(slug);
 	}
 }
 

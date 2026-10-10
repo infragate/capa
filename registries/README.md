@@ -53,7 +53,7 @@ capa registry disable <slug>        # hide a registry without removing it
 capa registry path                  # print ~/.capa/registries-managed/
 ```
 
-Most of those actions also exist in the web UI at `/ui/registries/settings`. The Add dialog includes a **Preview** button that calls `GET /api/registries/preview` and renders the raw adapter source in the dialog so you can audit it before checking *"I trust this code"* and confirming the install.
+While the server is running, `refresh` and `remove` must go through the web UI (the CLI refuses), because the server serializes changes to each registry. Most of those actions also exist in the web UI at `/ui/registries/settings`. The Add dialog includes a **Preview** button that calls `GET /api/registries/preview` and renders the raw adapter source in the dialog so you can audit it before checking *"I trust this code"* and confirming the install.
 
 ## The `RegistryAdapter` interface
 

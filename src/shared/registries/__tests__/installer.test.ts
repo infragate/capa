@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, spyOn } from 'bun:test';
 import { createHash } from 'crypto';
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, readFileSync, utimesSync } from 'fs';
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import * as config from '../../config';
@@ -311,34 +311,31 @@ describe('installer — pending vs execute', () => {
 });
 
 describe('withRegistryLock', () => {
-  let dir: string;
-  let spy: ReturnType<typeof spyOn>;
-  beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), 'capa-registry-lock-'));
-    spy = spyOn(config, 'getManagedRegistriesDir').mockReturnValue(dir);
-  });
-  afterEach(() => {
-    spy.mockRestore();
-    rmSync(dir, { recursive: true, force: true });
-  });
-
-  it('refuses while held and releases afterwards', async () => {
+  it('refuses while held and releases afterwards, also after a failure', async () => {
     let inner: Promise<unknown> | undefined;
     await withRegistryLock('demo', async () => {
       inner = withRegistryLock('demo', async () => 'never').catch((e) => e);
     });
     expect(await inner).toBeInstanceOf(RegistryBusyError);
-    expect(existsSync(join(dir, 'demo.lock'))).toBe(false);
+    await expect(
+      withRegistryLock('demo', async () => {
+        throw new Error('boom');
+      }),
+    ).rejects.toThrow('boom');
     expect(await withRegistryLock('demo', async () => 'ok')).toBe('ok');
   });
 
-  it('takes over a lock left behind by a crashed process', async () => {
-    const lock = join(dir, 'demo.lock');
-    mkdirSync(lock);
-    const old = new Date(Date.now() - 60 * 60 * 1000);
-    utimesSync(lock, old, old);
-    expect(await withRegistryLock('demo', async () => 'ok')).toBe('ok');
-    mkdirSync(lock); // fresh lock: still respected
-    await expect(withRegistryLock('demo', async () => 'x')).rejects.toBeInstanceOf(RegistryBusyError);
+  it('locks each registry separately', async () => {
+    const order: string[] = [];
+    await Promise.all([
+      withRegistryLock('a', async () => {
+        await Bun.sleep(20);
+        order.push('a');
+      }),
+      withRegistryLock('b', async () => {
+        order.push('b');
+      }),
+    ]);
+    expect(order).toEqual(['b', 'a']);
   });
 });
