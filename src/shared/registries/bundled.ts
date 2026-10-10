@@ -23,7 +23,7 @@ export const BUNDLED_ADAPTER_PINS: Record<BundledAdapterSlug, string> = {
 	"skills-sh":
 		"4f6b1c7ad0f0ab5a13edb673397602faf073736b86030a9755ab1a0fc87b7a08",
 	"claude-plugins":
-		"22f6e674cd399d33c9a2d5b5abcba3fc22a1f93c8d8e3023c28c063407457f7f",
+		"9caff2ea6b75f461cf442ad809ba56f52b03e6e3f9f3a455b7436f51c76f204b",
 	"cursor-marketplace":
 		"cbb34c908638ec30849365665e889b23350c91510045e72de3515e1c69d8265d",
 };

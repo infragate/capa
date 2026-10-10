@@ -117,9 +117,9 @@ function truncate(s: string, max: number): string {
 type MarketplaceSource =
   | { kind: 'monorepo-local'; path: string } // string: "./plugins/<name>"
   | { kind: 'git-subdir'; url: string; path: string; ref?: string; sha?: string }
-  | { kind: 'url'; url: string; sha?: string }
+  | { kind: 'url'; url: string; ref?: string; sha?: string }
   | { kind: 'url-with-path'; url: string; path: string; ref?: string; sha?: string }
-  | { kind: 'repo'; repo: string; commit?: string; sha?: string }
+  | { kind: 'repo'; repo: string; ref?: string; commit?: string; sha?: string }
   | { kind: 'unknown'; raw: unknown };
 
 interface MarketplacePlugin {
@@ -163,10 +163,10 @@ function classifySource(raw: unknown): MarketplaceSource {
       return { kind: 'url-with-path', url, path, ref, sha };
     }
     if (url) {
-      return { kind: 'url', url, sha };
+      return { kind: 'url', url, ref, sha };
     }
     if (repo) {
-      return { kind: 'repo', repo, commit, sha };
+      return { kind: 'repo', repo, ref, commit, sha };
     }
   }
   return { kind: 'unknown', raw };
@@ -272,17 +272,17 @@ function sourceToGithubCoords(src: MarketplaceSource): GithubCoords | null {
     case 'url': {
       const ownerRepo = parseGithubUrl(src.url);
       if (!ownerRepo) return null;
-      return { ownerRepo, sha: src.sha };
+      return { ownerRepo, sha: src.sha, ref: src.ref };
     }
     case 'repo': {
       // `repo` is sometimes "owner/repo" and sometimes a full URL; handle
       // both. If it's not parseable as a github coordinate, give up.
       if (/^[^/\s]+\/[^/\s]+$/.test(src.repo)) {
-        return { ownerRepo: src.repo, sha: src.sha ?? src.commit };
+        return { ownerRepo: src.repo, sha: src.sha ?? src.commit, ref: src.ref };
       }
       const ownerRepo = parseGithubUrl(src.repo);
       if (!ownerRepo) return null;
-      return { ownerRepo, sha: src.sha ?? src.commit };
+      return { ownerRepo, sha: src.sha ?? src.commit, ref: src.ref };
     }
     case 'unknown':
       return null;
