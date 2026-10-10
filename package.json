@@ -2,6 +2,7 @@
   "name": "capa",
   "version": "1.0.0",
   "description": "An agentic skills and tools package manager",
+  "license": "MIT",
   "type": "module",
   "bin": {
     "capa": "./dist/cli.js"

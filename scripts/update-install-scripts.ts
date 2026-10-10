@@ -1,58 +1,41 @@
 #!/usr/bin/env bun
 /**
  * Update FALLBACK_VERSION in install.sh and install.ps1 to match the
- * release tag (GITHUB_REF) or package.json when run locally.
+ * release tag (RELEASE_REF, RELEASE_TAG, or GITHUB_REF) or package.json
+ * when run locally.
  */
 
 import { readFileSync, writeFileSync } from 'fs';
 import { execSync } from 'child_process';
+import { resolveInstallerFallbackVersion } from './resolve-version';
 
-function getVersion(): string {
-  // 1. Try GitHub Actions environment variable (GITHUB_REF = refs/tags/v1.2.3)
-  const githubRef = process.env.GITHUB_REF;
-  if (githubRef && githubRef.startsWith('refs/tags/')) {
-    const tag = githubRef.replace('refs/tags/', '');
-    const version = tag.startsWith('v') ? tag.slice(1) : tag;
-    console.log(`✓ Using version from GitHub tag: ${version}`);
-    return version;
-  }
-
-  // 2. Try git describe (for local development)
+function readPackageVersion(): string | undefined {
   try {
-    const gitDescribe = execSync('git describe --tags --always', {
+    const packageJson = JSON.parse(readFileSync('package.json', 'utf-8')) as { version?: string };
+    return packageJson.version;
+  } catch {
+    return undefined;
+  }
+}
+
+function readGitDescribe(): string | null {
+  try {
+    return execSync('git describe --tags --always --dirty', {
       encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'ignore']
+      stdio: ['pipe', 'pipe', 'ignore'],
     }).trim();
-    
-    // If it's a clean tag (e.g., v1.2.3), use it
-    if (gitDescribe.match(/^v?\d+\.\d+\.\d+$/)) {
-      const version = gitDescribe.startsWith('v') ? gitDescribe.slice(1) : gitDescribe;
-      console.log(`✓ Using version from git tag: ${version}`);
-      return version;
-    }
-  } catch (error) {
-    // Git not available or not in a repository
+  } catch {
     console.log('⚠ Git not available, falling back to package.json');
-  }
-
-  // 3. Fallback to package.json
-  try {
-    const packageJson = JSON.parse(readFileSync('package.json', 'utf-8'));
-    const version = packageJson.version;
-    console.log(`✓ Using version from package.json: ${version}`);
-    return version;
-  } catch (error) {
-    console.error('✗ Failed to read package.json');
-    return '0.0.0-unknown';
+    return null;
   }
 }
 
 function updateInstallScript(filePath: string, version: string) {
   const content = readFileSync(filePath, 'utf-8');
-  
+
   let updated: string;
   let pattern: RegExp;
-  
+
   if (filePath.endsWith('.ps1')) {
     pattern = /^(\$FALLBACK_VERSION\s*=\s*)"[^"]*"/m;
     updated = content.replace(pattern, `$1"${version}"`);
@@ -60,7 +43,7 @@ function updateInstallScript(filePath: string, version: string) {
     pattern = /^(FALLBACK_VERSION=)"[^"]*"/m;
     updated = content.replace(pattern, `$1"${version}"`);
   }
-  
+
   if (content === updated) {
     const match = content.match(pattern);
     if (match) {
@@ -70,18 +53,38 @@ function updateInstallScript(filePath: string, version: string) {
     }
     return;
   }
-  
+
   writeFileSync(filePath, updated, 'utf-8');
   console.log(`✓ Updated ${filePath} to version ${version}`);
 }
 
 function main() {
-  const version = getVersion();
-  console.log(); // Add newline after version message
-  
+  const gitDescribe = readGitDescribe();
+  const version = resolveInstallerFallbackVersion({
+    releaseRef: process.env.RELEASE_REF,
+    releaseTag: process.env.RELEASE_TAG,
+    githubRef: process.env.GITHUB_REF,
+    gitDescribe,
+    packageVersion: readPackageVersion(),
+  });
+
+  if (process.env.RELEASE_REF?.startsWith('refs/tags/') || process.env.RELEASE_TAG) {
+    console.log(`✓ Using version from release env: ${version}`);
+  } else if (process.env.GITHUB_REF?.startsWith('refs/tags/')) {
+    console.log(`✓ Using version from GitHub tag: ${version}`);
+  } else if (gitDescribe && version !== readPackageVersion()) {
+    console.log(`✓ Using version from git tag: ${version}`);
+  } else if (version === '0.0.0-unknown') {
+    console.error('✗ Failed to read package.json');
+  } else {
+    console.log(`✓ Using version from package.json: ${version}`);
+  }
+
+  console.log();
+
   updateInstallScript('install.sh', version);
   updateInstallScript('install.ps1', version);
-  
+
   console.log('✓ All install scripts updated');
 }
 
