@@ -8,7 +8,6 @@ import {
 	renameSync,
 	rmSync,
 	statSync,
-	utimesSync,
 	writeFileSync,
 } from "fs";
 import { basename, join } from "path";
@@ -259,117 +258,27 @@ export class RegistryBusyError extends Error {
 	}
 }
 
-/** Lock timing; the owner refreshes the lock well within the stale window. */
-const registryLockTiming = { staleMs: 10 * 60 * 1000, heartbeatMs: 60 * 1000 };
-
-/** Shorten the lock timing in tests (pass null to restore the defaults). */
-export function setRegistryLockTimingForTests(
-	timing: { staleMs: number; heartbeatMs: number } | null,
-): void {
-	Object.assign(
-		registryLockTiming,
-		timing ?? { staleMs: 10 * 60 * 1000, heartbeatMs: 60 * 1000 },
-	);
-}
-
-function readLockOwner(lock: string): string | null {
-	try {
-		return readFileSync(join(lock, "owner"), "utf-8");
-	} catch {
-		return null;
-	}
-}
-
-function processAlive(pid: number): boolean {
-	if (!Number.isInteger(pid) || pid <= 0) return false;
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch (err) {
-		// EPERM: it exists but belongs to someone else.
-		return (err as NodeJS.ErrnoException).code === "EPERM";
-	}
-}
-
-/** Abandoned: not refreshed within the stale window and its owner is gone. */
-function lockIsStale(lock: string, owner: string | null): boolean {
-	let age = 0;
-	try {
-		age = Date.now() - statSync(lock).mtimeMs;
-	} catch {
-		return false;
-	}
-	if (age <= registryLockTiming.staleMs) return false;
-	const pid = Number(owner?.split(" ")[0]);
-	return !processAlive(pid);
-}
+const lockedRegistries = new Set<string>();
 
 /**
- * Run fn while holding the registry's lock, so two installs or refreshes of
- * one slug (server or CLI, any process) can't delete or restore each other's
- * adapter files. The lock is a directory next to the adapters (mkdir is
- * atomic) holding an `owner` file of "<pid> <token>". The owner touches it
- * while fn runs; a lock is only taken over when it has gone stale and its
- * process is dead, by renaming it aside so only one taker wins, and it is
- * only removed by the process that still owns it. Throws RegistryBusyError
- * when it's held.
+ * Run fn while holding the registry's lock, so two installs, refreshes or
+ * removals of one slug can't delete or restore each other's adapter files.
+ * Throws RegistryBusyError while another operation holds it.
+ *
+ * The lock lives in this process: the capa server runs every registry change
+ * the web UI makes, and the CLI refuses to change registries while the server
+ * is running (see registry.ts), so there is no second process to exclude.
  */
 export async function withRegistryLock<T>(
 	slug: string,
 	fn: () => Promise<T>,
 ): Promise<T> {
-	if (!isValidSlug(slug)) return fn(); // fn rejects the slug itself
-	const base = getManagedRegistriesDir();
-	mkdirSync(base, { recursive: true });
-	// Has a dot, so it is never a valid slug and never mistaken for a registry.
-	const lock = join(base, `${slug}.lock`);
-	const owner = `${process.pid} ${randomBytes(8).toString("hex")}`;
-
-	const claim = (): boolean => {
-		try {
-			mkdirSync(lock);
-		} catch (err) {
-			if ((err as NodeJS.ErrnoException).code === "EEXIST") return false;
-			throw err;
-		}
-		writeFileSync(join(lock, "owner"), owner);
-		return true;
-	};
-
-	if (!claim()) {
-		const stale = readLockOwner(lock);
-		if (!lockIsStale(lock, stale)) throw new RegistryBusyError(slug);
-		const grave = `${lock}.stale-${randomBytes(4).toString("hex")}`;
-		try {
-			renameSync(lock, grave);
-		} catch {
-			throw new RegistryBusyError(slug); // another taker got there first
-		}
-		if (readLockOwner(grave) !== stale) {
-			// Renamed a lock someone claimed after our check: hand it back.
-			try {
-				renameSync(grave, lock);
-			} catch {}
-			throw new RegistryBusyError(slug);
-		}
-		rmSync(grave, { recursive: true, force: true });
-		if (!claim()) throw new RegistryBusyError(slug);
-	}
-
-	const heartbeat = setInterval(() => {
-		try {
-			const now = new Date();
-			utimesSync(lock, now, now);
-		} catch {}
-	}, registryLockTiming.heartbeatMs);
-	heartbeat.unref?.();
+	if (lockedRegistries.has(slug)) throw new RegistryBusyError(slug);
+	lockedRegistries.add(slug);
 	try {
 		return await fn();
 	} finally {
-		clearInterval(heartbeat);
-		if (readLockOwner(lock) === owner) {
-			rmSync(lock, { recursive: true, force: true });
-		}
+		lockedRegistries.delete(slug);
 	}
 }
 
