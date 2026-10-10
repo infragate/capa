@@ -526,6 +526,16 @@ describe("ToolCallTracer", () => {
 		expect(row?.generation_id).toBe("gen-explicit");
 	});
 
+	it("clamps oversized tool names at 512 chars", () => {
+		const tracer = new ToolCallTracer(db);
+		const long = tracer.start({ projectId: "proj-1", kind: "tool", toolName: "t".repeat(10_000) });
+		const name = db.getToolCall(long)?.tool_name ?? "";
+		expect(name.length).toBe(512);
+		expect(name.endsWith("…")).toBe(true);
+		const exact = tracer.start({ projectId: "proj-1", kind: "tool", toolName: "t".repeat(512) });
+		expect(db.getToolCall(exact)?.tool_name).toBe("t".repeat(512));
+	});
+
 	it("measures result size before truncating the stored preview", () => {
 		const tracer = new ToolCallTracer(db);
 		const id = tracer.start({

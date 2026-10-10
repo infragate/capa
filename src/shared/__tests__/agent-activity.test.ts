@@ -209,6 +209,21 @@ describe("normalizeActivityHookPayload", () => {
 		expect(out.skip).toBe(true);
 	});
 
+	it("dedups only real capa MCP tool names, not look-alikes or tool args", () => {
+		const skip = (event: "afterTool" | "afterMcpCall", payload: Record<string, unknown>) =>
+			normalizeActivityHookPayload(event, payload).skip;
+		expect(skip("afterMcpCall", { tool_name: "mcp__capa-reviewer__setup_tools" })).toBe(true);
+		expect(skip("afterTool", { tool_name: "mcp__capa__call_tool", tool_input: {} })).toBe(true);
+		expect(skip("afterMcpCall", { tool_name: "mcp__capabilities__x", tool_input: {} })).toBe(false);
+		expect(skip("afterTool", { tool_name: "mcp__capabilities__x", tool_input: {} })).toBe(false);
+		expect(
+			skip("afterMcpCall", { tool_name: "mcp__github__x", tool_input: { server: "capa" } }),
+		).toBe(false);
+		expect(
+			skip("afterMcpCall", { tool_name: "mcp__github__x", input: { server: "capa" } }),
+		).toBe(false);
+	});
+
 	it("skips capa MCP payloads that only nest under mcpServers.capa", () => {
 		const out = normalizeActivityHookPayload("afterMcpCall", {
 			tool_name: "list_tools",

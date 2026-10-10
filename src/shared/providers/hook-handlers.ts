@@ -101,6 +101,12 @@ export function isCapaNameTag(value: unknown, hookId?: string): boolean {
  * Behaviour:
  *  - prefix only            -> use prefix
  *  - user matcher only      -> use user matcher (no canonical scope to fold in)
+ *  - both, user within prefix -> use user matcher alone. A user matcher that
+ *                              only names tools inside the canonical family
+ *                              (`mcp__github__.*` within `mcp__.*`, `Write`
+ *                              within `Edit|MultiEdit|Write`) is already
+ *                              scoped; unioning would widen it to the whole
+ *                              family.
  *  - both                   -> union them as a regex alternation
  *                              `(?:prefix)|(?:userMatcher)` so the
  *                              canonical tool family is still covered while
@@ -117,6 +123,16 @@ export function isCapaNameTag(value: unknown, hookId?: string): boolean {
  *                              `on: claude-code:PreToolUse`).
  *  - neither                -> empty (shape decides)
  */
+function matcherWithinPrefix(userMatcher: string, prefix: string): boolean {
+	const parts = userMatcher.split("|");
+	if (prefix.endsWith(".*")) {
+		const family = prefix.slice(0, -2);
+		return parts.every((p) => p.startsWith(family));
+	}
+	const alts = prefix.split("|");
+	return parts.every((p) => alts.includes(p));
+}
+
 function resolveMatcher(input: HookEntryInput): string {
 	const userMatcher =
 		input.hook.matcher && input.hook.matcher.length > 0
@@ -125,7 +141,10 @@ function resolveMatcher(input: HookEntryInput): string {
 	const prefix =
 		"matcherPrefix" in input.mapping ? input.mapping.matcherPrefix : "";
 	if (prefix && userMatcher) {
-		return prefix === userMatcher ? prefix : `(?:${prefix})|(?:${userMatcher})`;
+		if (prefix === userMatcher || matcherWithinPrefix(userMatcher, prefix)) {
+			return userMatcher;
+		}
+		return `(?:${prefix})|(?:${userMatcher})`;
 	}
 	return userMatcher || prefix;
 }

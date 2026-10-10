@@ -456,13 +456,15 @@ function isCapaMcpPayload(
 		nestedString(obj, ["server", "name"]),
 		nestedString(obj, ["mcp_server", "url"]),
 		nestedString(obj, ["mcpServer", "url"]),
-		nestedString(obj, ["tool_input", "server"]),
-		nestedString(obj, ["input", "server"]),
+		// Not tool_input/input.server: those are the tool call arguments, which
+		// the model (or a prompt injection) controls.
 	];
 	for (const value of candidates) {
 		if (!value) continue;
 		if (/^capa\b/i.test(value) || CAPA_MCP_RE.test(value)) return true;
-		if (/^mcp__capa/i.test(value)) return true;
+		// capa registers itself as `capa` and sub-agents as `capa-<agentId>`;
+		// the `__` boundary keeps e.g. an `mcp__capabilities__*` server visible.
+		if (/^mcp__capa(-[A-Za-z0-9_-]+)?__/i.test(value)) return true;
 	}
 
 	// Config-shaped payloads sometimes nest capa under mcpServers without a URL.

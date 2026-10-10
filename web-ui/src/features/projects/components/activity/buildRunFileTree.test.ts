@@ -337,6 +337,14 @@ describe('collectRunSkillFolders', () => {
     expect(skillFolderFromSkillMdPath('/proj/foo.ts')).toBeNull();
   });
 
+  it('skips failed skill spans', () => {
+    const events = [
+      call({ id: '1', kind: 'skill', tool_name: 'debug' }),
+      call({ id: '2', kind: 'skill', tool_name: 'missing', status: 'error' }),
+    ];
+    expect(collectRunSkillFolders(events)).toEqual(['debug']);
+  });
+
   it('collects unique skill folders from file activity', () => {
     const events = [
       call({

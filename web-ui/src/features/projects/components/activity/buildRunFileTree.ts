@@ -252,7 +252,7 @@ export function collectRunSkillFolders(
   const slashNames: string[] = [];
   for (const ev of events) {
     const name = ev.tool_name?.trim();
-    if (ev.kind === 'skill' && name && name !== 'skill') folders.add(name);
+    if (ev.kind === 'skill' && ev.status !== 'error' && name && name !== 'skill') folders.add(name);
     const slash = ev.kind === 'prompt' ? /^\/([\w:.-]+)(?:\s|$)/.exec(name ?? '') : null;
     if (slash) slashNames.push(slash[1]!);
   }
