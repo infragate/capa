@@ -425,17 +425,66 @@ describe('registries-routes', () => {
       expect(r.status).toBe('installed');
     });
 
-    it('does not undo a disable that lands while the adapter is being fetched', async () => {
+    it('does not run or re-enable a registry disabled while its adapter is being fetched', async () => {
+      allowLocalUrlPolicy();
+      db.upsertRegistry({
+        slug: 'race',
+        type: 'url',
+        source: evilUrl,
+        status: 'installed',
+        enabled: true,
+      });
+      onAdapterRequest = () => db.setRegistryEnabled('race', false);
+      const res = await refreshRegistryHandler(db, manager, 'race');
+      expect(res.status).toBe(409);
+      expect(adapterRequests).toBe(1);
+      expect(existsSync(markerPath)).toBe(false);
+      expect(db.getRegistry('race')!.enabled).toBe(false);
+    });
+
+    it('keeps the previous adapter loadable after a disable lands mid-refresh', async () => {
       allowLocalUrlPolicy();
       const create = new Request('http://localhost/api/registries', {
         method: 'POST',
-        body: JSON.stringify({ type: 'url', source: goodUrl, slug: 'race' }),
+        body: JSON.stringify({ type: 'url', source: goodUrl, slug: 'keep' }),
       });
-      await createRegistryHandler(db, manager, create);
-      onAdapterRequest = () => db.setRegistryEnabled('race', false);
-      const res = await refreshRegistryHandler(db, manager, 'race');
-      expect(res.status).toBe(200);
-      expect(db.getRegistry('race')!.enabled).toBe(false);
+      expect((await createRegistryHandler(db, manager, create)).status).toBe(200);
+      const adapterFile = join(managedDir, 'keep', 'adapter.ts');
+      const original = readFileSync(adapterFile, 'utf8');
+      // Upstream now serves different code; the user disables while it downloads.
+      db.upsertRegistry({ slug: 'keep', type: 'url', source: evilUrl, status: 'installed' });
+      onAdapterRequest = () => db.setRegistryEnabled('keep', false);
+      expect((await refreshRegistryHandler(db, manager, 'keep')).status).toBe(409);
+      expect(readFileSync(adapterFile, 'utf8')).toBe(original);
+      expect(existsSync(markerPath)).toBe(false);
+
+      db.setRegistryEnabled('keep', true);
+      await manager.reload();
+      expect((await manager.list()).some((m) => m.id === 'demo-registry')).toBe(true);
+    });
+
+    it('refuses a second refresh or a delete while one refresh is running', async () => {
+      allowLocalUrlPolicy();
+      const create = new Request('http://localhost/api/registries', {
+        method: 'POST',
+        body: JSON.stringify({ type: 'url', source: goodUrl, slug: 'busy' }),
+      });
+      expect((await createRegistryHandler(db, manager, create)).status).toBe(200);
+      let second: Promise<Response> | undefined;
+      let removal: Promise<Response> | undefined;
+      onAdapterRequest = () => {
+        onAdapterRequest = undefined;
+        second = refreshRegistryHandler(db, manager, 'busy');
+        removal = deleteRegistryHandler(db, manager, 'busy');
+      };
+      expect((await refreshRegistryHandler(db, manager, 'busy')).status).toBe(200);
+      const [r2, r3] = await Promise.all([second!, removal!]);
+      expect(r2.status).toBe(409);
+      expect((await jsonOf(r2)).error).toMatch(/already being installed or refreshed/);
+      expect(r3.status).toBe(409);
+      expect(db.getRegistry('busy')?.status).toBe('installed');
+      // The lock is released once the first refresh finishes.
+      expect((await refreshRegistryHandler(db, manager, 'busy')).status).toBe(200);
     });
 
     it('marks the row as failed when the source is unreachable', async () => {

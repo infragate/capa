@@ -1,10 +1,11 @@
-import { createHash } from "crypto";
+import { createHash, randomBytes } from "crypto";
 import {
 	copyFileSync,
 	existsSync,
 	mkdirSync,
 	readdirSync,
 	readFileSync,
+	renameSync,
 	rmSync,
 	statSync,
 	writeFileSync,
@@ -249,12 +250,91 @@ export async function executeStagedRegistry(
 /**
  * Stage then execute. Used by CLI `--yes` and first-start seed.
  */
+/** Another install, edit or refresh of the same registry is running. */
+export class RegistryBusyError extends Error {
+	constructor(slug: string) {
+		super(`Registry "${slug}" is already being installed or refreshed. Try again when it finishes.`);
+		this.name = "RegistryBusyError";
+	}
+}
+
+const lockedRegistries = new Set<string>();
+
+/**
+ * Run fn while holding the registry's lock, so two installs, refreshes or
+ * removals of one slug can't delete or restore each other's adapter files.
+ * Throws RegistryBusyError while another operation holds it.
+ *
+ * The lock lives in this process: the capa server runs every registry change
+ * the web UI makes, and the CLI refuses to change registries while the server
+ * is running (see registry.ts), so there is no second process to exclude.
+ */
+export async function withRegistryLock<T>(
+	slug: string,
+	fn: () => Promise<T>,
+): Promise<T> {
+	if (lockedRegistries.has(slug)) throw new RegistryBusyError(slug);
+	lockedRegistries.add(slug);
+	try {
+		return await fn();
+	} finally {
+		lockedRegistries.delete(slug);
+	}
+}
+
+/** A refresh found its registry disabled after downloading the new adapter. */
+export class RegistryDisabledError extends Error {
+	constructor(slug: string) {
+		super(`Registry "${slug}" was disabled during the refresh; its new adapter was not run.`);
+		this.name = "RegistryDisabledError";
+	}
+}
+
+/**
+ * Stage input, then run beforeExecute (which may throw to stop). The current
+ * installation is moved aside first and put back if staging or the check
+ * fails, so e.g. a registry disabled mid-refresh keeps its previous adapter,
+ * whose hash still matches the stored record, for when it is re-enabled.
+ */
+export async function stageRegistryChecked(
+	input: RegistryInstallInput,
+	authFetch: AuthenticatedFetch,
+	opts: { noCache?: boolean; beforeExecute?: () => void } = {},
+): Promise<RegistryStageResult> {
+	if (!opts.beforeExecute || !isValidSlug(input.slug)) {
+		const staged = await stageRegistry(input, authFetch, opts);
+		opts.beforeExecute?.();
+		return staged;
+	}
+	const targetDir = join(getManagedRegistriesDir(), input.slug);
+	// Not a valid slug (has a dot), so the loader never mistakes it for one.
+	const backup = `${targetDir}.prev-${randomBytes(4).toString("hex")}`;
+	const hadInstall = existsSync(targetDir);
+	if (hadInstall) renameSync(targetDir, backup);
+	try {
+		const staged = await stageRegistry(input, authFetch, opts);
+		opts.beforeExecute();
+		if (hadInstall) rmSync(backup, { recursive: true, force: true });
+		return staged;
+	} catch (err) {
+		if (hadInstall) {
+			rmSync(targetDir, { recursive: true, force: true });
+			renameSync(backup, targetDir);
+		}
+		throw err;
+	}
+}
+
 export async function installRegistry(
 	input: RegistryInstallInput,
 	authFetch: AuthenticatedFetch,
-	opts: { noCache?: boolean } = {},
+	opts: {
+		noCache?: boolean;
+		/** Runs after the download, before the adapter executes; throw to stop. */
+		beforeExecute?: () => void;
+	} = {},
 ): Promise<RegistryInstallResult> {
-	const staged = await stageRegistry(input, authFetch, opts);
+	const staged = await stageRegistryChecked(input, authFetch, opts);
 	const executed = await executeStagedRegistry(input.slug, staged.contentSha256);
 	return {
 		...executed,

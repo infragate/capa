@@ -6,6 +6,7 @@ import {
 	readdirSync,
 	readFileSync,
 	rmSync,
+	utimesSync,
 	writeFileSync,
 } from "fs";
 import { tmpdir } from "os";
@@ -211,11 +212,41 @@ describe("master-key-store", () => {
 			]);
 		});
 
-		it("refuses a corrupt master.key it can't repair", () => {
+		it("waits for a master.key another process is still writing", async () => {
+			const dir = join(home, ".capa");
+			mkdirSync(dir, { recursive: true });
+			const path = join(dir, "master.key");
+			const key = Buffer.alloc(32, 5);
+			writeFileSync(path, key.subarray(0, 8));
+			// A separate process finishes the write while this one is reading.
+			const writer = Bun.spawn([
+				process.execPath,
+				"-e",
+				`await Bun.sleep(200); require("fs").writeFileSync(${JSON.stringify(path)}, Buffer.alloc(32, 5));`,
+			]);
+			await Bun.sleep(50);
+			expect(Buffer.compare(getMasterKey(), key)).toBe(0);
+			await writer.exited;
+		});
+
+		it("doesn't wait on a short master.key that was written long ago", () => {
 			const dir = join(home, ".capa");
 			mkdirSync(dir, { recursive: true });
 			const path = join(dir, "master.key");
 			writeFileSync(path, "short");
+			const old = new Date(Date.now() - 60_000);
+			utimesSync(path, old, old);
+			const started = Date.now();
+			expect(() => getMasterKey()).toThrow(/not a valid 32-byte key/);
+			expect(Date.now() - started).toBeLessThan(500);
+		});
+
+		it("refuses a corrupt master.key it can't repair", () => {
+			const dir = join(home, ".capa");
+			mkdirSync(dir, { recursive: true });
+			const path = join(dir, "master.key");
+			// Longer than a key, so it is corrupt without waiting for a writer.
+			writeFileSync(path, "x".repeat(40));
 			writeFileSync(join(dir, "master.key.keyring"), "");
 
 			// No keyring copy.
@@ -246,7 +277,7 @@ describe("master-key-store", () => {
 			resetMasterKeyStoreForTests();
 			expect(() => getMasterKey()).toThrow(/not a valid 32-byte key/);
 
-			expect(readFileSync(path, "utf8")).toBe("short");
+			expect(readFileSync(path, "utf8")).toBe("x".repeat(40));
 		});
 
 		it("never writes the keyring after a failed read", () => {

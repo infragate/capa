@@ -6,6 +6,7 @@ import {
 	mkdirSync,
 	readFileSync,
 	renameSync,
+	statSync,
 	unlinkSync,
 	writeFileSync,
 } from "fs";
@@ -173,14 +174,41 @@ function tryOpenKeyring(): KeyringEntry | null {
 	}
 }
 
-/** master.key's key, or whether the file is missing or holds something else. */
-function readFileKey(): Buffer | "missing" | "invalid" {
+/** How long a short master.key may still be mid-write by another process. */
+const PARTIAL_KEY_WAIT_MS = 1000;
+const PARTIAL_KEY_POLL_MS = 25;
+
+function fileMtimeMs(): number {
 	try {
-		const buf = readFileSync(masterKeyPath());
-		return buf.length === 32 ? buf : "invalid";
-	} catch (err) {
-		if (errCode(err) !== "ENOENT") throw err;
-		return "missing";
+		return statSync(masterKeyPath()).mtimeMs;
+	} catch {
+		return 0;
+	}
+}
+
+/**
+ * master.key's key, or whether the file is missing or holds something else.
+ * A file shorter than a key may be another process's create-new write in
+ * progress (the fallback when hard links aren't available), so it is re-read
+ * for up to PARTIAL_KEY_WAIT_MS before it counts as invalid.
+ */
+function readFileKey(): Buffer | "missing" | "invalid" {
+	const deadline = Date.now() + PARTIAL_KEY_WAIT_MS;
+	for (;;) {
+		let buf: Buffer;
+		try {
+			buf = readFileSync(masterKeyPath());
+		} catch (err) {
+			if (errCode(err) !== "ENOENT") throw err;
+			return "missing";
+		}
+		if (buf.length === 32) return buf;
+		if (buf.length > 32 || Date.now() >= deadline) return "invalid";
+		// Only a file written just now can be another process's write in
+		// progress; a short file that has sat there is corrupt, and waiting on
+		// it would stall every key load (e.g. each /health request).
+		if (Date.now() - fileMtimeMs() > PARTIAL_KEY_WAIT_MS) return "invalid";
+		Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, PARTIAL_KEY_POLL_MS);
 	}
 }
 

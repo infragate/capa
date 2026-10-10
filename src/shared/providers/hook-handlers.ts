@@ -124,7 +124,15 @@ export function isCapaNameTag(value: unknown, hookId?: string): boolean {
  *  - neither                -> empty (shape decides)
  */
 function matcherWithinPrefix(userMatcher: string, prefix: string): boolean {
-	const parts = userMatcher.split("|");
+	// Ignore anchors and a wrapping group (`^mcp__github__.*$`,
+	// `(?:mcp__github__.*)`); anything with other groups falls back to the union.
+	const unwrap = (s: string) => {
+		const bare = s.replace(/^\^/, "").replace(/\$$/, "");
+		const inner = /^\((?:\?:)?([^()]*)\)$/.exec(bare);
+		return inner ? inner[1]!.replace(/^\^/, "").replace(/\$$/, "") : bare;
+	};
+	const parts = unwrap(userMatcher).split("|").map(unwrap);
+	if (parts.some((p) => /[()]/.test(p))) return false;
 	if (prefix.endsWith(".*")) {
 		const family = prefix.slice(0, -2);
 		return parts.every((p) => p.startsWith(family));

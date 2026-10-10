@@ -158,6 +158,15 @@ describe('hook-handlers — buildHookEntry', () => {
     expect(build('mcp__github__.*|mcp__jira__.*', 'mcp__.*')).toBe('mcp__github__.*|mcp__jira__.*');
     expect(build('Write', 'Edit|MultiEdit|Write')).toBe('Write');
     expect(build('Edit|Write', 'Edit|MultiEdit|Write')).toBe('Edit|Write');
+    // Anchors and a wrapping group don't change the scope.
+    expect(build('^mcp__github__.*$', 'mcp__.*')).toBe('^mcp__github__.*$');
+    expect(build('(?:mcp__github__.*)', 'mcp__.*')).toBe('(?:mcp__github__.*)');
+    expect(build('^mcp__github__.*$|^mcp__jira__.*$', 'mcp__.*')).toBe('^mcp__github__.*$|^mcp__jira__.*$');
+    expect(build('^(Write)$', 'Edit|MultiEdit|Write')).toBe('^(Write)$');
+    expect(build('^(?:mcp__github__.*)$', 'mcp__.*')).toBe('^(?:mcp__github__.*)$');
+    expect(build('(?:^mcp__github__.*$)', 'mcp__.*')).toBe('(?:^mcp__github__.*$)');
+    // Groups other than one wrapping group: can't tell, so union.
+    expect(build('mcp__(github|jira)__.*', 'mcp__.*')).toBe('(?:mcp__.*)|(?:mcp__(github|jira)__.*)');
     // Anything reaching outside the family still gets the union.
     expect(build('mcp__github__.*|Bash', 'mcp__.*')).toBe('(?:mcp__.*)|(?:mcp__github__.*|Bash)');
     expect(build('Write|Bash', 'Edit|MultiEdit|Write')).toBe('(?:Edit|MultiEdit|Write)|(?:Write|Bash)');

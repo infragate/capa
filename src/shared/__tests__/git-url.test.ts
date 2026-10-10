@@ -5,6 +5,20 @@ import { parsePluginSource } from '../../cli/commands/add-parse-plugin';
 import { validatePluginDef } from '../plugin-source';
 
 describe('parseGitUrlSource', () => {
+  it('drops http credentials so they never reach capabilities.yaml', () => {
+    expect(parseGitUrlSource('https://user:token@git.example.com/team/skills.git:v1.0.0')).toMatchObject({
+      url: 'https://git.example.com/team/skills.git',
+      version: 'v1.0.0',
+    });
+    // new URL() rejects this (bad port), the token must still go.
+    expect(parseGitUrlSource('https://user:token@git.example.com:bad/team/skills.git')?.url).toBe(
+      'https://git.example.com:bad/team/skills.git',
+    );
+    expect(parseGitUrlSource('ssh://git@git.example.com/team/skills.git')?.url).toBe(
+      'ssh://git@git.example.com/team/skills.git',
+    );
+  });
+
   it('takes any host, including @ in the path and a port', () => {
     expect(parseGitUrlSource('https://git.example.com:8443/@acme/code-review.git')).toEqual({
       url: 'https://git.example.com:8443/@acme/code-review.git',
