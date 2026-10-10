@@ -42,6 +42,8 @@ describe('registries-routes', () => {
   let badUrl: string;
   let evilUrl: string;
   let markerPath: string;
+  let adapterRequests: number;
+  let onAdapterRequest: (() => void) | undefined;
   let urlPolicySpy: ReturnType<typeof spyOn> | undefined;
 
   beforeEach(() => {
@@ -62,10 +64,14 @@ describe('registries-routes', () => {
       `import { writeFileSync } from 'fs';\nwriteFileSync(${JSON.stringify(markerPath)}, 'pwned');\n${VALID_ADAPTER}`,
     );
 
+    adapterRequests = 0;
+    onAdapterRequest = undefined;
     server = Bun.serve({
       port: 0,
       fetch(req) {
         const path = new URL(req.url).pathname;
+        adapterRequests++;
+        onAdapterRequest?.();
         if (path.endsWith('/good.ts')) {
           return new Response(readFileSync(goodAdapterFile, 'utf-8'), {
             headers: { 'content-type': 'application/typescript' },
@@ -397,6 +403,39 @@ describe('registries-routes', () => {
       expect(res.status).toBe(200);
       expect(db.getRegistry('r')!.status).toBe('installed');
       expect(existsSync(join(managedDir, 'r', 'adapter.ts'))).toBe(true);
+    });
+
+    it('refuses to refresh a disabled registry without fetching or executing it', async () => {
+      allowLocalUrlPolicy();
+      db.upsertRegistry({
+        slug: 'off',
+        type: 'url',
+        source: evilUrl,
+        status: 'installed',
+        enabled: false,
+      });
+      const res = await refreshRegistryHandler(db, manager, 'off');
+      expect(res.status).toBe(409);
+      expect((await jsonOf(res)).error).toMatch(/enable it first/i);
+      expect(adapterRequests).toBe(0);
+      expect(existsSync(markerPath)).toBe(false);
+      expect(existsSync(join(managedDir, 'off', 'adapter.ts'))).toBe(false);
+      const r = db.getRegistry('off')!;
+      expect(r.enabled).toBe(false);
+      expect(r.status).toBe('installed');
+    });
+
+    it('does not undo a disable that lands while the adapter is being fetched', async () => {
+      allowLocalUrlPolicy();
+      const create = new Request('http://localhost/api/registries', {
+        method: 'POST',
+        body: JSON.stringify({ type: 'url', source: goodUrl, slug: 'race' }),
+      });
+      await createRegistryHandler(db, manager, create);
+      onAdapterRequest = () => db.setRegistryEnabled('race', false);
+      const res = await refreshRegistryHandler(db, manager, 'race');
+      expect(res.status).toBe(200);
+      expect(db.getRegistry('race')!.enabled).toBe(false);
     });
 
     it('marks the row as failed when the source is unreachable', async () => {

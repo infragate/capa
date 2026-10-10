@@ -279,6 +279,26 @@ describe('registry CLI commands', () => {
     }
   });
 
+  it('refresh refuses a disabled registry and leaves it untouched', async () => {
+    await registryAddCommand(url, 'off', { type: 'url', yes: true });
+    await registrySetEnabledCommand('off', false);
+    const db1 = new CapaDatabase(dbPath);
+    const before = db1.getRegistry('off')!;
+    db1.close();
+
+    await expect(registryRefreshCommand('off')).rejects.toThrow(/process\.exit\(1\)/);
+
+    const db2 = new CapaDatabase(dbPath);
+    try {
+      const r = db2.getRegistry('off')!;
+      expect(r.enabled).toBe(false);
+      expect(r.installedAt).toBe(before.installedAt);
+      expect(r.status).toBe('installed');
+    } finally {
+      db2.close();
+    }
+  });
+
   it('enable / disable toggles the enabled flag', async () => {
     await registryAddCommand(url, 'demo', { type: 'url', yes: true });
     await registrySetEnabledCommand('demo', false);

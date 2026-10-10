@@ -1,12 +1,13 @@
 import { useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Plus, AlertTriangle, ArrowLeft } from 'lucide-react';
+import { Plus, AlertTriangle, ArrowLeft, RefreshCw } from 'lucide-react';
 import { TopBar } from '../../../components/layout/TopBar';
 import { Page } from '../../../components/layout/Page';
 import { Spinner } from '../../../components/common/Spinner';
 import { EmptyState } from '../../../components/common/EmptyState';
 import {
+  useIsRegistryMutating,
   useRegistriesAdmin,
   useRemoveRegistry,
   useRefreshRegistry,
@@ -15,6 +16,7 @@ import {
 import { RegistriesTable } from './RegistriesTable';
 import { AddRegistryDialog } from './AddRegistryDialog';
 import { EditRegistryDialog } from './EditRegistryDialog';
+import { cn } from '../../../lib/utils';
 import { errMessage } from '../../../lib/errors';
 import type { RegistryAdminRecord } from '../api';
 
@@ -30,6 +32,7 @@ export function RegistrySettingsPage() {
   const [editing, setEditing] = useState<RegistryAdminRecord | null>(null);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [busySlug, setBusySlug] = useState<string | null>(null);
+  const [refreshingAll, setRefreshingAll] = useState(false);
 
   const handleAdded = useCallback(
     (slug: string) => {
@@ -65,6 +68,44 @@ export function RegistrySettingsPage() {
     },
     [refreshMut, t],
   );
+
+  // Sequential on purpose: each refresh reinstalls into the shared registry
+  // manager, and one failure must not stop the rest. Enabled registries only:
+  // refreshing runs the latest upstream adapter code, and a disabled registry
+  // is one the user stopped trusting (the server refuses those too).
+  const handleRefreshAll = useCallback(async () => {
+    const slugs = (registries ?? []).filter((r) => r.enabled).map((r) => r.slug);
+    setRefreshingAll(true);
+    setFeedback(null);
+    const failed: string[] = [];
+    for (const slug of slugs) {
+      setBusySlug(slug);
+      try {
+        await refreshMut.mutateAsync(slug);
+      } catch {
+        failed.push(slug);
+      }
+    }
+    setBusySlug(null);
+    setRefreshingAll(false);
+    setFeedback(
+      failed.length === 0
+        ? { type: 'success', message: t('settings.feedback.refreshedAll', { count: slugs.length }) }
+        : {
+            type: 'error',
+            message: t('settings.feedback.refreshAllFailed', {
+              count: failed.length,
+              total: slugs.length,
+              slugs: failed.join(', '),
+            }),
+          },
+    );
+  }, [registries, refreshMut, t]);
+
+  // Any registry request in flight in this tab (including one from a dialog
+  // closed with Escape) locks every registry action so they cannot overlap.
+  const isMutating = useIsRegistryMutating();
+  const busy = refreshingAll || busySlug !== null || isMutating;
 
   const handleDelete = useCallback(
     async (slug: string) => {
@@ -114,14 +155,28 @@ export function RegistrySettingsPage() {
             <ArrowLeft className="h-3.5 w-3.5" />
             <span>{t('settings.browseLink')}</span>
           </Link>
-          <button
-            type="button"
-            onClick={() => setDialogOpen(true)}
-            className="inline-flex items-center gap-2 rounded-sm border border-accent-primary bg-accent-primary px-3 py-1.5 text-sm font-medium text-bg-secondary transition-opacity hover:opacity-90"
-          >
-            <Plus className="h-4 w-4" />
-            <span>{t('settings.addButton')}</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled={busy || !registries?.some((r) => r.enabled)}
+              onClick={handleRefreshAll}
+              className="inline-flex items-center gap-2 rounded-sm border border-border-secondary bg-bg-tertiary px-3 py-1.5 text-sm text-text-secondary transition-colors hover:bg-hover-bg disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <RefreshCw className={cn('h-4 w-4', refreshingAll && 'animate-spin')} />
+              <span>
+                {refreshingAll ? t('settings.refreshingAll') : t('settings.refreshAllButton')}
+              </span>
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => setDialogOpen(true)}
+              className="inline-flex items-center gap-2 rounded-sm border border-accent-primary bg-accent-primary px-3 py-1.5 text-sm font-medium text-bg-secondary transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Plus className="h-4 w-4" />
+              <span>{t('settings.addButton')}</span>
+            </button>
+          </div>
         </div>
 
         <div className="mb-5 flex items-start gap-3 rounded-sm border border-info-border bg-info-bg px-4 py-3 text-xs text-info-text">
@@ -159,6 +214,7 @@ export function RegistrySettingsPage() {
             onDelete={handleDelete}
             onSetEnabled={handleSetEnabled}
             busySlug={busySlug}
+            disabled={busy}
           />
         )}
       </Page>

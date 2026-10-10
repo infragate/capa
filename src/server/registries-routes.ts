@@ -67,7 +67,7 @@ async function stageAndInstallRegistry(
 			type: input.type,
 			source: input.source,
 			status: "failed",
-			enabled: opts.enabled ?? true,
+			enabled: opts.enabled,
 			lastError: message,
 			resolvedRef: result.resolvedRef,
 			installedAt: null,
@@ -82,7 +82,7 @@ async function stageAndInstallRegistry(
 		type: input.type,
 		source: input.source,
 		status: "installed",
-		enabled: opts.enabled ?? true,
+		enabled: opts.enabled,
 		lastError: null,
 		resolvedRef: result.resolvedRef,
 		installedAt: Date.now(),
@@ -248,7 +248,7 @@ export async function patchRegistryHandler(
 				manager,
 				{ slug, type: newType!, source: newSource },
 				authFetch,
-				{ enabled: hasEnabled ? body.enabled! : existing.enabled },
+				{ enabled: hasEnabled ? body.enabled! : undefined },
 			);
 			return jsonOk({ registry: record });
 		} catch (err: any) {
@@ -260,7 +260,7 @@ export async function patchRegistryHandler(
 				type: newType!,
 				source: newSource,
 				status: "failed",
-				enabled: hasEnabled ? body.enabled! : existing.enabled,
+				enabled: hasEnabled ? body.enabled! : undefined,
 				lastError: message,
 				resolvedRef: existing.resolvedRef,
 				installedAt: existing.installedAt,
@@ -286,8 +286,18 @@ export async function refreshRegistryHandler(
 	if (!existing) {
 		return jsonError(`Registry "${slug}" not found.`, 404);
 	}
+	// Refreshing downloads and executes the latest upstream adapter. A disabled
+	// registry is one the user stopped trusting, so never run its code here.
+	if (!existing.enabled) {
+		return jsonError(
+			`Registry "${slug}" is disabled. Enable it first to refresh it.`,
+			409,
+		);
+	}
 	try {
 		const authFetch = createAuthenticatedFetch(db);
+		// No `enabled` here: upsert keeps the current DB value, so a disable
+		// that lands while the adapter is being fetched is not undone.
 		const record = await stageAndInstallRegistry(
 			db,
 			manager,

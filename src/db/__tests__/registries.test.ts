@@ -154,6 +154,12 @@ describe('CapaDatabase — registry operations', () => {
     expect(r.status).toBe('installed');
   });
 
+  it('preserves enabled=false on an upsert that omits enabled', () => {
+    db.upsertRegistry({ slug: 's1', type: 'url', source: 'https://example.com/adapter.ts', enabled: false });
+    db.upsertRegistry({ slug: 's1', type: 'url', source: 'https://example.com/adapter.ts', status: 'installed' });
+    expect(db.getRegistry('s1')!.enabled).toBe(false);
+  });
+
   it('persists contentSha256 and preserves it on partial upsert', () => {
     const hash = 'a'.repeat(64);
     db.upsertRegistry({

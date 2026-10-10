@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useIsMutating, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   registriesApi,
   type RegistryAdminRecord,
@@ -7,6 +7,14 @@ import {
 } from './api';
 
 const REGISTRIES_KEY = ['registries'] as const;
+
+/**
+ * True while any registry add/edit/remove/enable/refresh request is in flight,
+ * including ones started from a dialog that has since been closed.
+ */
+export function useIsRegistryMutating() {
+  return useIsMutating({ mutationKey: REGISTRIES_KEY }) > 0;
+}
 
 export function useRegistriesAdmin() {
   return useQuery({
@@ -63,6 +71,7 @@ export function useRegistryView(
 export function useAddRegistry() {
   const qc = useQueryClient();
   return useMutation({
+    mutationKey: REGISTRIES_KEY,
     mutationFn: (input: { slug?: string; type: RegistrySourceType; source: string }) =>
       registriesApi.create(input),
     onSuccess: () => {
@@ -74,6 +83,7 @@ export function useAddRegistry() {
 export function useRemoveRegistry() {
   const qc = useQueryClient();
   return useMutation({
+    mutationKey: REGISTRIES_KEY,
     mutationFn: (slug: string) => registriesApi.remove(slug),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: REGISTRIES_KEY });
@@ -84,6 +94,7 @@ export function useRemoveRegistry() {
 export function useSetRegistryEnabled() {
   const qc = useQueryClient();
   return useMutation({
+    mutationKey: REGISTRIES_KEY,
     mutationFn: ({ slug, enabled }: { slug: string; enabled: boolean }) =>
       registriesApi.patch(slug, { enabled }),
     onSuccess: () => {
@@ -95,6 +106,7 @@ export function useSetRegistryEnabled() {
 export function useEditRegistry() {
   const qc = useQueryClient();
   return useMutation({
+    mutationKey: REGISTRIES_KEY,
     mutationFn: ({
       slug,
       type,
@@ -113,8 +125,10 @@ export function useEditRegistry() {
 export function useRefreshRegistry() {
   const qc = useQueryClient();
   return useMutation({
+    mutationKey: REGISTRIES_KEY,
     mutationFn: (slug: string) => registriesApi.refresh(slug),
-    onSuccess: () => {
+    // Settled, not success: a failed refresh records its status server-side.
+    onSettled: () => {
       void qc.invalidateQueries({ queryKey: REGISTRIES_KEY });
     },
   });
