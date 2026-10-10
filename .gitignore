@@ -81,6 +81,7 @@ pnpm-lock.yaml
 example-project
 test-capa*
 src/version.ts
+src/shared/keyring-addon.ts
 
 capa-docs
 

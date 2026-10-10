@@ -33,15 +33,9 @@ export function peekSecretStorageTier(): SecretStorageTier {
 	if (forceFileTier()) return "file";
 
 	const keyring = tryOpenKeyring();
-	if (keyring) {
-		const stored = keyring.getPassword();
-		if (stored) {
-			const buf = Buffer.from(stored, "base64");
-			if (buf.length === 32) return tierForPlatform();
-		}
+	if (keyring && keyringKeyInUse(keyring, readFileKey())) {
+		return tierForPlatform();
 	}
-
-	if (readFileKey()) return "file";
 	return "file";
 }
 
@@ -81,16 +75,60 @@ type KeyringEntry = {
 	setPassword: (password: string) => void;
 };
 
-function tryOpenKeyring(): KeyringEntry | null {
-	if (forceFileTier()) return null;
+type KeyringModule = {
+	Entry: new (
+		service: string,
+		account: string,
+	) => {
+		getPassword: () => string | null;
+		setPassword: (password: string) => void;
+	};
+};
+
+/**
+ * macOS gate: compiled macOS binaries stay on the file tier until releases are
+ * code signed, since an unsigned (or re-signed per upgrade) binary can trigger
+ * Keychain access prompts. Flip to true once signing is in place.
+ */
+const MACOS_COMPILED_KEYCHAIN = false;
+
+/** True when running from a `bun build --compile` binary (embedded bunfs). */
+function isCompiledBinary(): boolean {
+	return (
+		import.meta.path.includes("$bunfs") || import.meta.path.includes("~BUN")
+	);
+}
+
+export function keyringAllowed(
+	platform: NodeJS.Platform = process.platform,
+	compiled: boolean = isCompiledBinary(),
+): boolean {
+	return platform !== "darwin" || !compiled || MACOS_COMPILED_KEYCHAIN;
+}
+
+function loadKeyringModule(): KeyringModule {
 	try {
-		const require = createRequire(import.meta.url);
-		const mod = require("@napi-rs/keyring") as {
-			Entry: new (service: string, account: string) => {
-				getPassword: () => string;
-				setPassword: (password: string) => void;
-			};
-		};
+		// Generated per build target by scripts/generate-keyring-addon.ts so the
+		// compiled binary embeds the native addon. Absent when running from source.
+		return require("./keyring-addon").default;
+	} catch {
+		return createRequire(import.meta.url)("@napi-rs/keyring");
+	}
+}
+
+let keyringModuleLoader: () => KeyringModule = loadKeyringModule;
+
+/** Swap the keyring module (pass null to restore the real one). */
+export function setKeyringModuleLoaderForTests(
+	loader: (() => KeyringModule) | null,
+): void {
+	keyringModuleLoader = loader ?? loadKeyringModule;
+}
+
+function tryOpenKeyring(): KeyringEntry | null {
+	if (forceFileTier() || !keyringAllowed()) return null;
+	try {
+		const mod = keyringModuleLoader();
 		const entry = new mod.Entry(KEYRING_SERVICE, KEYRING_ACCOUNT);
 		return {
 			getPassword: () => {
@@ -156,9 +194,28 @@ function loadFromFileTier(): Buffer {
 }
 
 /**
+ * The keyring key, if it is the one in use: either there is no file key, or
+ * the file is the rollback copy of that same key. A file key that differs (or
+ * has no keyring counterpart) means an existing file-tier install, which keeps
+ * the file so upgrades never change which key encrypts existing secrets.
+ */
+function keyringKeyInUse(
+	keyring: KeyringEntry,
+	fileKey: Buffer | null,
+): Buffer | null {
+	const stored = keyring.getPassword();
+	if (!stored) return null;
+	const buf = Buffer.from(stored, "base64");
+	if (buf.length !== 32) return null;
+	return !fileKey || buf.equals(fileKey) ? buf : null;
+}
+
+/**
  * Load (or create) the 256-bit master key.
- * Prefers OS keyring when available; migrates ~/.capa/master.key into the
- * keyring when both are viable; falls back to the file tier otherwise.
+ * Uses the OS keyring when it holds the key in use (see keyringKeyInUse). An
+ * existing ~/.capa/master.key otherwise keeps the file tier and is never
+ * migrated. Only a new install (no key anywhere) goes to the keyring, with a
+ * file copy kept for rollback.
  */
 export function loadMasterKey(): Buffer {
 	if (cachedKey && cachedKey.length === 32 && cachedTier) {
@@ -168,35 +225,30 @@ export function loadMasterKey(): Buffer {
 	const keyring = tryOpenKeyring();
 	if (keyring) {
 		const tier = tierForPlatform();
-		const stored = keyring.getPassword();
-		if (stored) {
-			const buf = Buffer.from(stored, "base64");
-			if (buf.length === 32) {
-				cachedKey = buf;
-				cachedTier = tier;
-				return buf;
-			}
+		const fileKey = readFileKey();
+		const inKeyring = keyringKeyInUse(keyring, fileKey);
+		if (inKeyring) {
+			cachedKey = inKeyring;
+			cachedTier = tier;
+			return inKeyring;
 		}
 
-		// Migrate existing file key, or generate a new one.
-		let key = readFileKey();
-		if (!key) {
-			key = randomBytes(32);
-			// Keep a file copy for documented fallback / rollback.
+		if (!fileKey) {
+			// New install: generate, keep a file copy for fallback / rollback.
+			let key: Buffer = randomBytes(32);
 			writeFileKey(key);
 			key = readFileKey() ?? key;
-		}
-
-		try {
-			keyring.setPassword(key.toString("base64"));
-			cachedKey = key;
-			cachedTier = tier;
-			return key;
-		} catch {
-			// Keyring write failed — stay on file.
-			cachedKey = key;
-			cachedTier = "file";
-			return key;
+			try {
+				keyring.setPassword(key.toString("base64"));
+				cachedKey = key;
+				cachedTier = tier;
+				return key;
+			} catch {
+				// Keyring write failed: stay on file.
+				cachedKey = key;
+				cachedTier = "file";
+				return key;
+			}
 		}
 	}
 
