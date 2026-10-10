@@ -250,6 +250,38 @@ export async function executeStagedRegistry(
 /**
  * Stage then execute. Used by CLI `--yes` and first-start seed.
  */
+/** Another install, edit or refresh of the same registry is running. */
+export class RegistryBusyError extends Error {
+	constructor(slug: string) {
+		super(`Registry "${slug}" is already being installed or refreshed. Try again when it finishes.`);
+		this.name = "RegistryBusyError";
+	}
+}
+
+const lockedRegistries = new Set<string>();
+
+/**
+ * Run fn while holding the registry's lock, so two installs, refreshes or
+ * removals of one slug can't delete or restore each other's adapter files.
+ * Throws RegistryBusyError while another operation holds it.
+ *
+ * The lock lives in this process: the capa server runs every registry change
+ * the web UI makes, and the CLI refuses to change registries while the server
+ * is running (see registry.ts), so there is no second process to exclude.
+ */
+export async function withRegistryLock<T>(
+	slug: string,
+	fn: () => Promise<T>,
+): Promise<T> {
+	if (lockedRegistries.has(slug)) throw new RegistryBusyError(slug);
+	lockedRegistries.add(slug);
+	try {
+		return await fn();
+	} finally {
+		lockedRegistries.delete(slug);
+	}
+}
+
 /** A refresh found its registry disabled after downloading the new adapter. */
 export class RegistryDisabledError extends Error {
 	constructor(slug: string) {

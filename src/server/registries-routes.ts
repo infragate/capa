@@ -6,9 +6,11 @@ import {
 	executeStagedRegistry,
 	fetchAdapterSource,
 	isValidSlug,
+	RegistryBusyError,
 	RegistryDisabledError,
 	removeInstalledAdapter,
 	stageRegistryChecked,
+	withRegistryLock,
 } from "../shared/registries/installer";
 import type { RegistryManager } from "../shared/registries/manager";
 import type { RegistrySourceType } from "../types/database";
@@ -62,6 +64,18 @@ async function stageAndInstallRegistry(
 		/** Runs after the download, before the adapter executes; throw to stop. */
 		beforeExecute?: () => void;
 	} = {},
+) {
+	return withRegistryLock(input.slug, () =>
+		stageAndInstallLocked(db, manager, input, authFetch, opts),
+	);
+}
+
+async function stageAndInstallLocked(
+	db: CapaDatabase,
+	manager: RegistryManager,
+	input: RegistryInstallInput,
+	authFetch: ReturnType<typeof createAuthenticatedFetch>,
+	opts: { enabled?: boolean; noCache?: boolean; beforeExecute?: () => void },
 ) {
 	const result = await stageRegistryChecked(input, authFetch, opts);
 	try {
@@ -181,6 +195,7 @@ export async function createRegistryHandler(
 		);
 		return jsonOk({ registry: record });
 	} catch (err: any) {
+		if (err instanceof RegistryBusyError) return jsonError(err.message, 409);
 		return jsonError(clientErrorMessage(err), 400);
 	}
 }
@@ -193,8 +208,15 @@ export async function deleteRegistryHandler(
 	if (!db.getRegistry(slug)) {
 		return jsonError(`Registry "${slug}" not found.`, 404);
 	}
-	db.deleteRegistry(slug);
-	removeInstalledAdapter(slug);
+	try {
+		await withRegistryLock(slug, async () => {
+			db.deleteRegistry(slug);
+			removeInstalledAdapter(slug);
+		});
+	} catch (err) {
+		if (err instanceof RegistryBusyError) return jsonError(err.message, 409);
+		throw err;
+	}
 	await manager.reload().catch(() => {});
 	return new Response(null, { status: 204 });
 }
@@ -258,6 +280,7 @@ export async function patchRegistryHandler(
 			);
 			return jsonOk({ registry: record });
 		} catch (err: any) {
+			if (err instanceof RegistryBusyError) return jsonError(err.message, 409);
 			const message = clientErrorMessage(err);
 			// Persist the new pointer so the user can fix and retry, but mark
 			// the row failed so the loader stops serving the broken adapter.
@@ -319,7 +342,9 @@ export async function refreshRegistryHandler(
 		);
 		return jsonOk({ registry: record });
 	} catch (err: any) {
-		if (err instanceof RegistryDisabledError) return jsonError(err.message, 409);
+		if (err instanceof RegistryDisabledError || err instanceof RegistryBusyError) {
+			return jsonError(err.message, 409);
+		}
 		const message = clientErrorMessage(err);
 		db.setRegistryStatus(slug, "failed", message);
 		return new Response(JSON.stringify({ error: message, slug }), {

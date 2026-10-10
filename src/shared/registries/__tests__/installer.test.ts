@@ -19,6 +19,8 @@ import {
   isValidSlug,
   getInstalledAdapterPath,
   removeInstalledAdapter,
+  withRegistryLock,
+  RegistryBusyError,
 } from '../installer';
 
 const VALID_ADAPTER = `export default {
@@ -305,5 +307,35 @@ describe('installer — pending vs execute', () => {
     expect(p).toBe(join(managedDir, 'roundtrip', 'adapter.ts'));
     removeInstalledAdapter('roundtrip');
     expect(getInstalledAdapterPath('roundtrip')).toBeNull();
+  });
+});
+
+describe('withRegistryLock', () => {
+  it('refuses while held and releases afterwards, also after a failure', async () => {
+    let inner: Promise<unknown> | undefined;
+    await withRegistryLock('demo', async () => {
+      inner = withRegistryLock('demo', async () => 'never').catch((e) => e);
+    });
+    expect(await inner).toBeInstanceOf(RegistryBusyError);
+    await expect(
+      withRegistryLock('demo', async () => {
+        throw new Error('boom');
+      }),
+    ).rejects.toThrow('boom');
+    expect(await withRegistryLock('demo', async () => 'ok')).toBe('ok');
+  });
+
+  it('locks each registry separately', async () => {
+    const order: string[] = [];
+    await Promise.all([
+      withRegistryLock('a', async () => {
+        await Bun.sleep(20);
+        order.push('a');
+      }),
+      withRegistryLock('b', async () => {
+        order.push('b');
+      }),
+    ]);
+    expect(order).toEqual(['b', 'a']);
   });
 });

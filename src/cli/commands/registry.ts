@@ -10,6 +10,20 @@ import {
   isValidSlug,
   RegistryDisabledError,
 } from '../../shared/registries/installer';
+import { getServerStatus } from '../utils/server-manager';
+
+/**
+ * While the capa server runs it owns registry files (it serializes changes
+ * per registry), so the CLI leaves refreshing and removing to it.
+ */
+async function refuseWhileServerRuns(action: string): Promise<void> {
+  if ((await getServerStatus()).running) {
+    error(
+      `The capa server is running and manages registries while it does. ${action} from the web UI (Registries > Manage registries), or stop the server first (capa stop).`,
+    );
+    process.exit(1);
+  }
+}
 import { createAuthenticatedFetch } from '../../shared/authenticated-fetch';
 import type { RegistrySourceType } from '../../types/database';
 import type { RegistryCapability, RegistryItemSummary } from '../../types/registry';
@@ -356,6 +370,7 @@ export async function registryRemoveCommand(slug: string): Promise<void> {
       error(`Registry "${slug}" not found.`);
       process.exit(1);
     }
+    await refuseWhileServerRuns(`Remove "${slug}"`);
 
     header('Remove registry');
     const tasks: Task<RemoveCtx>[] = [
@@ -411,6 +426,7 @@ export async function registryRefreshCommand(
       error(`Registry "${slug}" is disabled. Enable it first (capa registry enable ${slug}) to refresh it.`);
       process.exit(1);
     }
+    await refuseWhileServerRuns(`Refresh "${slug}"`);
 
     header(`Refresh registry "${slug}"`);
     const tasks: Task<RefreshCtx>[] = [

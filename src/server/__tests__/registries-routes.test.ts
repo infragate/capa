@@ -463,6 +463,30 @@ describe('registries-routes', () => {
       expect((await manager.list()).some((m) => m.id === 'demo-registry')).toBe(true);
     });
 
+    it('refuses a second refresh or a delete while one refresh is running', async () => {
+      allowLocalUrlPolicy();
+      const create = new Request('http://localhost/api/registries', {
+        method: 'POST',
+        body: JSON.stringify({ type: 'url', source: goodUrl, slug: 'busy' }),
+      });
+      expect((await createRegistryHandler(db, manager, create)).status).toBe(200);
+      let second: Promise<Response> | undefined;
+      let removal: Promise<Response> | undefined;
+      onAdapterRequest = () => {
+        onAdapterRequest = undefined;
+        second = refreshRegistryHandler(db, manager, 'busy');
+        removal = deleteRegistryHandler(db, manager, 'busy');
+      };
+      expect((await refreshRegistryHandler(db, manager, 'busy')).status).toBe(200);
+      const [r2, r3] = await Promise.all([second!, removal!]);
+      expect(r2.status).toBe(409);
+      expect((await jsonOf(r2)).error).toMatch(/already being installed or refreshed/);
+      expect(r3.status).toBe(409);
+      expect(db.getRegistry('busy')?.status).toBe('installed');
+      // The lock is released once the first refresh finishes.
+      expect((await refreshRegistryHandler(db, manager, 'busy')).status).toBe(200);
+    });
+
     it('marks the row as failed when the source is unreachable', async () => {
       db.upsertRegistry({
         slug: 'broken',
