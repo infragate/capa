@@ -57,6 +57,20 @@ describe('gitRepoKey', () => {
   it('ignores credentials in the URL', () => {
     expect(gitRepoKey('https://user:secret@h.test/a/b.git')).toBe(gitRepoKey('https://h.test/a/b.git'));
   });
+
+  it('accepts ssh clone URLs', () => {
+    expect(gitRepoKey('ssh://git@h.test/a/b.git')).toMatch(/^h\.test\/a\/b-[0-9a-f]{12}$/);
+    expect(parseGitUrlSource('ssh://git@h.test/a/b.git:v1.0.0')).toMatchObject({
+      url: 'ssh://git@h.test/a/b.git',
+      version: 'v1.0.0',
+    });
+  });
+
+  it('rejects git helper transports that run commands', () => {
+    expect(() => gitRepoKey('ext::sh -c touch% /tmp/pwned')).toThrow(/Unsupported git URL scheme/);
+    expect(() => gitRepoKey('fd::17/foo.git')).toThrow(/Unsupported git URL scheme/);
+    expect(() => gitRepoKey('--upload-pack=touch /tmp/pwned')).toThrow();
+  });
 });
 
 describe('plugin schema', () => {

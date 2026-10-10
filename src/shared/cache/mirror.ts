@@ -186,7 +186,7 @@ export async function ensureMirrorClone(
 	//
 	// Requires git >= 2.19. Servers without partial-clone support degrade
 	// gracefully to a full clone (git warns and ignores the filter).
-	await git(["clone", "--mirror", "--filter=blob:none", url, mirrorDir], {
+	await git(["clone", "--mirror", "--filter=blob:none", "--", url, mirrorDir], {
 		env,
 	});
 	await git(["-C", mirrorDir, "remote", "set-url", "origin", url]);

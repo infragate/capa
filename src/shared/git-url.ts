@@ -6,12 +6,13 @@
  *   https://git.example.com/team/skills.git::path/to/skill   exact subpath
  *   https://git.example.com/team/skills.git:v1.2.0           tag or branch
  *   https://git.example.com/team/skills.git#<sha>            commit
+ *   ssh://git@git.example.com/team/skills.git                 over SSH
  */
 
 import { createHash } from "crypto";
 
 const GIT_URL_RE =
-	/^((?:https?|file):\/\/.+?\.git)\/?(?:::([^:#]+))?(?::([\w.+/-]+))?(?:#([a-f0-9]{7,40}))?$/i;
+	/^((?:https?|ssh|file):\/\/.+?\.git)\/?(?:::([^:#]+))?(?::([\w.+/-]+))?(?:#([a-f0-9]{7,40}))?$/i;
 
 export interface GitUrlSource {
 	/** Clone URL, without the `::path` / `:version` / `#sha` suffixes. */
@@ -45,6 +46,8 @@ export function isGitUrl(source: string): boolean {
 	return parseGitUrlSource(source) !== null;
 }
 
+const CLONE_PROTOCOLS = new Set(["https:", "http:", "ssh:", "file:"]);
+
 /**
  * Cache key for a clone URL: `<host>/<path>-<hash>`, e.g.
  * `git.example.com/team/skills-3fa2c1d09b7e`. Host and path keep it readable;
@@ -56,6 +59,12 @@ export function isGitUrl(source: string): boolean {
  */
 export function gitRepoKey(url: string): string {
 	const u = new URL(url);
+	// Only real transports: `new URL` also accepts helper schemes such as
+	// `ext::<command>`, which git would run (it blocks `ext` by default, but
+	// capabilities files can come from elsewhere, so don't rely on that).
+	if (!CLONE_PROTOCOLS.has(u.protocol)) {
+		throw new Error(`Unsupported git URL scheme "${u.protocol}" in ${url}`);
+	}
 	u.username = "";
 	u.password = "";
 	const hash = createHash("sha256").update(u.href).digest("hex").slice(0, 12);
