@@ -198,6 +198,10 @@ function buildAntigravityEntry(input: HookEntryInput): HookEntryOutput {
 	if ((hook.type ?? "command") !== "command") {
 		throw new Error('Antigravity hooks only support type "command"');
 	}
+	// `enabled` is the per-hook on/off toggle; an event of that name would replace it.
+	if (mapping.event === "enabled") {
+		throw new Error('"enabled" is the Antigravity hook on/off toggle, not an event name');
+	}
 	const handler: Record<string, unknown> = {
 		type: "command",
 		command: runReference,

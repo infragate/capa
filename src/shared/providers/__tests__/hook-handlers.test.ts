@@ -337,4 +337,14 @@ describe('hook-handlers — antigravity shape', () => {
   it('rejects prompt hooks (Antigravity only runs commands)', () => {
     expect(() => build({ id: 'p', on: 'stop', type: 'prompt', prompt: 'hi' } as Hook)).toThrow();
   });
+
+  it('rejects an event named "enabled" (it is the on/off toggle key)', () => {
+    expect(() =>
+      buildHookEntry(integration, {
+        hook: { id: 'e', on: 'antigravity:enabled', command: 'x' },
+        runReference: 'x',
+        mapping: { event: 'enabled' },
+      }),
+    ).toThrow(/toggle/);
+  });
 });

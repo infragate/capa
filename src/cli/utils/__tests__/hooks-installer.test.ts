@@ -628,6 +628,48 @@ describe('hooks-installer — pruneOrphanHooks / cleanHooks', () => {
     expect(db.getManagedHooks(projectId).map((r) => r.providerId)).toEqual(['claude-code']);
   });
 
+  it('warns when a user-disabled Antigravity hook is kept disabled on re-install', async () => {
+    const install = () =>
+      installHooks({
+        projectPath,
+        projectId,
+        capabilitiesFilePath: join(projectPath, 'capabilities.yaml'),
+        hooks: [{ id: 'guard', on: 'beforeShell', command: 'echo guard' }],
+        providers: ['antigravity'],
+        db,
+        authFetch: makeAuthFetch(),
+        getRepoSnapshot: stubGetRepoSnapshot,
+      });
+    expect((await install()).warnings).toEqual([]);
+    const hooksJson = join(projectPath, '.agents', 'hooks.json');
+    const config = JSON.parse(readFileSync(hooksJson, 'utf-8'));
+    config['capa:guard'].enabled = false;
+    writeFileSync(hooksJson, JSON.stringify(config));
+
+    const result = await install();
+    expect(result.warnings).toEqual([
+      'capa hook guard is disabled in .agents/hooks.json; capa left it disabled',
+    ]);
+    expect(JSON.parse(readFileSync(hooksJson, 'utf-8'))['capa:guard'].enabled).toBe(false);
+  });
+
+  it('refuses an antigravity:enabled event instead of replacing the toggle', async () => {
+    const result = await installHooks({
+      projectPath,
+      projectId,
+      capabilitiesFilePath: join(projectPath, 'capabilities.yaml'),
+      hooks: [{ id: 'bad', on: 'antigravity:enabled', command: 'echo x' }],
+      providers: ['antigravity'],
+      db,
+      authFetch: makeAuthFetch(),
+      getRepoSnapshot: stubGetRepoSnapshot,
+    });
+    expect(result.installed).toBe(0);
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toContain('"enabled" is the Antigravity hook on/off toggle');
+    expect(existsSync(join(projectPath, '.agents', 'hooks.json'))).toBe(false);
+  });
+
   it('keeps the managed_hooks row when on-disk prune fails so future runs can retry', async () => {
     // Install a hook, then corrupt the locator so removeManagedHookEntry
     // throws. The DB row should survive the failed prune (warn-but-retry)
