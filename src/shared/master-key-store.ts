@@ -173,14 +173,29 @@ function tryOpenKeyring(): KeyringEntry | null {
 	}
 }
 
-/** master.key's key, or whether the file is missing or holds something else. */
+/** How long a short master.key may still be mid-write by another process. */
+const PARTIAL_KEY_WAIT_MS = 1000;
+const PARTIAL_KEY_POLL_MS = 25;
+
+/**
+ * master.key's key, or whether the file is missing or holds something else.
+ * A file shorter than a key may be another process's create-new write in
+ * progress (the fallback when hard links aren't available), so it is re-read
+ * for up to PARTIAL_KEY_WAIT_MS before it counts as invalid.
+ */
 function readFileKey(): Buffer | "missing" | "invalid" {
-	try {
-		const buf = readFileSync(masterKeyPath());
-		return buf.length === 32 ? buf : "invalid";
-	} catch (err) {
-		if (errCode(err) !== "ENOENT") throw err;
-		return "missing";
+	const deadline = Date.now() + PARTIAL_KEY_WAIT_MS;
+	for (;;) {
+		let buf: Buffer;
+		try {
+			buf = readFileSync(masterKeyPath());
+		} catch (err) {
+			if (errCode(err) !== "ENOENT") throw err;
+			return "missing";
+		}
+		if (buf.length === 32) return buf;
+		if (buf.length > 32 || Date.now() >= deadline) return "invalid";
+		Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, PARTIAL_KEY_POLL_MS);
 	}
 }
 
