@@ -6,6 +6,7 @@ import {
 	readdirSync,
 	readFileSync,
 	rmSync,
+	utimesSync,
 	writeFileSync,
 } from "fs";
 import { tmpdir } from "os";
@@ -226,6 +227,18 @@ describe("master-key-store", () => {
 			await Bun.sleep(50);
 			expect(Buffer.compare(getMasterKey(), key)).toBe(0);
 			await writer.exited;
+		});
+
+		it("doesn't wait on a short master.key that was written long ago", () => {
+			const dir = join(home, ".capa");
+			mkdirSync(dir, { recursive: true });
+			const path = join(dir, "master.key");
+			writeFileSync(path, "short");
+			const old = new Date(Date.now() - 60_000);
+			utimesSync(path, old, old);
+			const started = Date.now();
+			expect(() => getMasterKey()).toThrow(/not a valid 32-byte key/);
+			expect(Date.now() - started).toBeLessThan(500);
 		});
 
 		it("refuses a corrupt master.key it can't repair", () => {

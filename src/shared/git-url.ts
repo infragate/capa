@@ -34,8 +34,9 @@ export function parseGitUrlSource(source: string): GitUrlSource | null {
 	const idHint = path ? last(path) : last(url.replace(/\.git$/i, ""));
 	return {
 		// Never carry `user:token@` into capabilities.yaml (usually committed);
-		// private hosts authenticate through the git credential helper.
-		url: stripHttpUrlUserinfo(url),
+		// private hosts authenticate through the git credential helper. The
+		// textual strip also covers URLs `new URL` rejects (e.g. a bad port).
+		url: stripHttpUrlUserinfo(url).replace(/^(https?:\/\/)[^/]*@/i, "$1"),
 		...(path && { path }),
 		...(version && { version }),
 		...(ref && { ref }),

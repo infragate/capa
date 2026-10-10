@@ -6,6 +6,7 @@ import {
 	mkdirSync,
 	readFileSync,
 	renameSync,
+	statSync,
 	unlinkSync,
 	writeFileSync,
 } from "fs";
@@ -177,6 +178,14 @@ function tryOpenKeyring(): KeyringEntry | null {
 const PARTIAL_KEY_WAIT_MS = 1000;
 const PARTIAL_KEY_POLL_MS = 25;
 
+function fileMtimeMs(): number {
+	try {
+		return statSync(masterKeyPath()).mtimeMs;
+	} catch {
+		return 0;
+	}
+}
+
 /**
  * master.key's key, or whether the file is missing or holds something else.
  * A file shorter than a key may be another process's create-new write in
@@ -195,6 +204,10 @@ function readFileKey(): Buffer | "missing" | "invalid" {
 		}
 		if (buf.length === 32) return buf;
 		if (buf.length > 32 || Date.now() >= deadline) return "invalid";
+		// Only a file written just now can be another process's write in
+		// progress; a short file that has sat there is corrupt, and waiting on
+		// it would stall every key load (e.g. each /health request).
+		if (Date.now() - fileMtimeMs() > PARTIAL_KEY_WAIT_MS) return "invalid";
 		Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, PARTIAL_KEY_POLL_MS);
 	}
 }
