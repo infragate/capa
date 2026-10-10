@@ -143,6 +143,12 @@ export const projectsApi = {
       { agents },
     ),
 
+  putProviders: (projectId: string, providers: string[]) =>
+    api.put<CapabilitiesMutationResponse>(
+      `/api/projects/${encodeURIComponent(projectId)}/capabilities/providers`,
+      { providers },
+    ),
+
   listFs: (
     projectId: string,
     opts?: { path?: string; ext?: string; dirsOnly?: boolean },

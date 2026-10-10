@@ -410,6 +410,14 @@ export function usePutAgents(projectId: string) {
   });
 }
 
+export function usePutProviders(projectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (providers: string[]) => projectsApi.putProviders(projectId, providers),
+    onSuccess: () => invalidateProjectQueries(qc, projectId),
+  });
+}
+
 export function useAddFromRegistry(projectId: string) {
   const qc = useQueryClient();
   return useMutation({

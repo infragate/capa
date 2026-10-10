@@ -3,7 +3,9 @@ import {
 	appendCapabilityEntry,
 	upsertAgents,
 	upsertOptions,
+	upsertProviders,
 } from "../shared/capabilities";
+import { getProvider } from "../shared/providers";
 import type { AgentFileConfig, Skill } from "../types/capabilities";
 import type { Plugin } from "../types/plugin";
 import type { RegistryCapability } from "../types/registry";
@@ -51,7 +53,7 @@ export async function handlePutAgents(
 		return jsonError("Invalid JSON body", 400);
 	}
 
-	if (!("agents" in body)) {
+	if (!body || typeof body !== "object" || !("agents" in body)) {
 		return jsonError(
 			'Body must include an "agents" field (object or null)',
 			400,
@@ -71,6 +73,41 @@ export async function handlePutAgents(
 
 	try {
 		await upsertAgents(loaded.path, loaded.format, agents ?? null);
+		return await afterWrite(deps, projectId, loaded.path, loaded.format);
+	} catch (err: any) {
+		return jsonError(clientErrorMessage(err), 400);
+	}
+}
+
+export async function handlePutProviders(
+	deps: CapabilitiesRouteDeps,
+	projectId: string,
+	request: Request,
+): Promise<Response> {
+	let body: { providers?: unknown };
+	try {
+		body = (await request.json()) as typeof body;
+	} catch {
+		return jsonError("Invalid JSON body", 400);
+	}
+
+	const list = body?.providers;
+	if (!Array.isArray(list) || !list.every((p) => typeof p === "string")) {
+		return jsonError('Body must include a "providers" array of strings', 400);
+	}
+	const unknown = list.filter((id) => !getProvider(id));
+	if (unknown.length > 0) {
+		return jsonError(`Unknown provider: ${unknown.join(", ")}`, 400);
+	}
+	const ids = [...new Set(list.map((id) => getProvider(id)!.id))];
+
+	const loaded = await loadProjectFile(deps.db, projectId);
+	if (!loaded.ok) return loaded.response;
+
+	try {
+		await upsertProviders(loaded.path, loaded.format, ids);
+		// Otherwise install/configure falls back to the stored preference.
+		if (ids.length === 0) deps.db.setProjectProviders(projectId, []);
 		return await afterWrite(deps, projectId, loaded.path, loaded.format);
 	} catch (err: any) {
 		return jsonError(clientErrorMessage(err), 400);
