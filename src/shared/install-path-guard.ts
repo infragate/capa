@@ -30,6 +30,11 @@ function pathOps(): PathOps {
 		: { resolve, relative, isAbsolute, parse, sep };
 }
 
+/** `..` or a `../` prefix is traversal; a name like `..cache` is not. */
+function isParentRel(rel: string, separator: string): boolean {
+	return rel === ".." || rel.startsWith(`..${separator}`);
+}
+
 /**
  * Lexical containment check. Also used by the Agent Plugins parser to keep
  * `command` / `cwd` inside the plugin root or data dir.
@@ -53,7 +58,7 @@ export function assertInsideProjectRoot(
 		);
 	}
 	const rel = ops.relative(root, dest);
-	if (ops.isAbsolute(rel) || rel.startsWith("..") || rel === "") {
+	if (ops.isAbsolute(rel) || isParentRel(rel, ops.sep) || rel === "") {
 		throw new Error(
 			`Refusing to install outside the project root: ${formatRel(root, dest, ops)}`,
 		);
@@ -119,7 +124,7 @@ function relativeFromProjectReal(projectRoot: string, absPath: string): string {
 	const rootReal = realpathSync(resolve(projectRoot));
 	const pathReal = realpathSync(absPath);
 	const rel = relative(rootReal, pathReal);
-	if (isAbsolute(rel) || rel.startsWith("..") || rel === "") {
+	if (isAbsolute(rel) || isParentRel(rel, sep) || rel === "") {
 		throw new Error(
 			`Refusing to install outside the project root: ${formatRel(projectRoot, absPath)}`,
 		);

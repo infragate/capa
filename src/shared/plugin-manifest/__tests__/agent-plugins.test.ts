@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
+import {
+	mkdirSync,
+	mkdtempSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import {
@@ -199,6 +205,71 @@ describe("Agent Plugins manifests", () => {
 		expect(m?.warnings).toEqual([
 			expect.stringContaining("MCP servers disabled for this plugin"),
 		]);
+	});
+
+	it("accepts plugin-local names that start with two dots", () => {
+		writeExamplePlugin(root);
+		writeMcp(root, {
+			$schema: MCP_SCHEMA,
+			mcpServers: {
+				cached: { type: "stdio", command: "./..cache/server", cwd: "./..cache" },
+			},
+		});
+		const m = detectAndParseManifest(root, PROVIDERS);
+		expect(m?.mcpServers.cached?.cmd).toBe("./..cache/server");
+		expect(m?.warnings).toBeUndefined();
+	});
+
+	it("skips a __proto__ server with a warning and keeps the others", () => {
+		writeExamplePlugin(root);
+		writeMcp(
+			root,
+			`{"$schema":"${MCP_SCHEMA}","mcpServers":{"__proto__":{"type":"stdio","command":"node"},"ok":{"type":"stdio","command":"node"}}}`,
+		);
+		const m = detectAndParseManifest(root, PROVIDERS);
+		expect(Object.keys(m?.mcpServers ?? {})).toEqual(["ok"]);
+		expect(Object.getPrototypeOf(m?.mcpServers)).toBe(Object.prototype);
+		expect(m?.warnings).toEqual([
+			'mcp.json: server "__proto__" skipped: reserved name',
+		]);
+	});
+
+	it("disables MCP when mcp.json is a directory", () => {
+		writeExamplePlugin(root);
+		mkdirSync(join(root, "mcp.json"));
+		const m = detectAndParseManifest(root, PROVIDERS);
+		expect(m?.mcpServers).toEqual({});
+		expect(m?.warnings).toEqual([
+			expect.stringContaining("is not a regular file inside the plugin root"),
+		]);
+	});
+
+	it("rejects missing command/cwd paths under a link that leaves the plugin root", () => {
+		writeExamplePlugin(root);
+		const outside = mkdtempSync(join(tmpdir(), "capa-agent-plugins-out-"));
+		try {
+			try {
+				// Junctions need no admin rights on Windows; ignored elsewhere.
+				symlinkSync(outside, join(root, "link"), "junction");
+			} catch {
+				return; // symlinks unsupported here
+			}
+			writeMcp(root, {
+				$schema: MCP_SCHEMA,
+				mcpServers: {
+					cmd: { type: "stdio", command: "./link/missing/server" },
+					cwd: { type: "stdio", command: "node", cwd: "./link/missing" },
+				},
+			});
+			const m = detectAndParseManifest(root, PROVIDERS);
+			expect(m?.mcpServers).toEqual({});
+			expect(m?.warnings).toEqual([
+				expect.stringContaining('"command" resolves outside the plugin root'),
+				expect.stringContaining('"cwd" resolves outside the plugin root'),
+			]);
+		} finally {
+			rmSync(outside, { recursive: true, force: true });
+		}
 	});
 
 	it("ignores .mcp.json and extension directories", () => {

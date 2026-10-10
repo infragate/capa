@@ -1,5 +1,12 @@
-import { existsSync, readFileSync, realpathSync, statSync } from "fs";
-import { join, relative, resolve } from "path";
+import {
+	closeSync,
+	fstatSync,
+	lstatSync,
+	openSync,
+	readFileSync,
+	realpathSync,
+} from "fs";
+import { basename, dirname, join, relative, resolve } from "path";
 import type {
 	NormalizedPluginMCPServerDef,
 	UnifiedPluginManifest,
@@ -51,8 +58,24 @@ export function isAgentPluginsManifest(data: unknown): boolean {
 }
 
 /**
- * True when `target` is `root` or inside it, both lexically and (when the
- * path exists) after resolving symlinks/junctions.
+ * Real path of `p`, resolving symlinks/junctions in its longest existing
+ * ancestor and appending the missing components. Throws on a dangling link.
+ */
+function realpathOfExisting(p: string): string {
+	let cur = resolve(p);
+	const rest: string[] = [];
+	while (!lstatSync(cur, { throwIfNoEntry: false })) {
+		const parent = dirname(cur);
+		if (parent === cur) break;
+		rest.unshift(basename(cur));
+		cur = parent;
+	}
+	return join(realpathSync(cur), ...rest);
+}
+
+/**
+ * True when `target` is `root` or inside it, both lexically and after
+ * resolving symlinks/junctions in the existing part of each path.
  */
 function isContained(root: string, target: string): boolean {
 	const within = (r: string, t: string): boolean => {
@@ -65,9 +88,8 @@ function isContained(root: string, target: string): boolean {
 		}
 	};
 	if (!within(root, target)) return false;
-	if (!existsSync(target)) return true;
 	try {
-		return within(realpathSync(root), realpathSync(target));
+		return within(realpathOfExisting(root), realpathOfExisting(target));
 	} catch {
 		return false;
 	}
@@ -250,20 +272,27 @@ function parseMcpJson(pluginRoot: string): {
 } {
 	const servers: Record<string, NormalizedPluginMCPServerDef> = {};
 	const path = join(pluginRoot, "mcp.json");
-	if (!existsSync(path)) return { servers, warnings: [] };
 
 	const disabled = (why: string) => ({
 		servers,
 		warnings: [`mcp.json ${why}; MCP servers disabled for this plugin`],
 	});
+	const notRegular = "is not a regular file inside the plugin root";
+	if (!isContained(pluginRoot, path)) return disabled(notRegular);
+	// Open once and check/read through the descriptor so the file can't be
+	// swapped between the check and the read.
 	let data: unknown;
+	let fd: number | undefined;
 	try {
-		if (!statSync(path).isFile() || !isContained(pluginRoot, path)) {
-			return disabled("is not a regular file inside the plugin root");
-		}
-		data = JSON.parse(readFileSync(path, "utf-8"));
-	} catch {
-		return disabled("is not valid JSON");
+		fd = openSync(path, "r");
+		if (!fstatSync(fd).isFile()) return disabled(notRegular);
+		data = JSON.parse(readFileSync(fd, "utf-8"));
+	} catch (err) {
+		const code = (err as NodeJS.ErrnoException).code;
+		if (code === "ENOENT") return { servers, warnings: [] };
+		return disabled(code === "EISDIR" ? notRegular : "is not valid JSON");
+	} finally {
+		if (fd !== undefined) closeSync(fd);
 	}
 	if (!isPlainObject(data) || data.$schema !== AGENT_PLUGINS_MCP_SCHEMA) {
 		return disabled(`must declare "$schema": "${AGENT_PLUGINS_MCP_SCHEMA}"`);
@@ -280,6 +309,10 @@ function parseMcpJson(pluginRoot: string): {
 
 	const warnings: string[] = [];
 	for (const [key, entry] of Object.entries(data.mcpServers)) {
+		if (key === "__proto__") {
+			warnings.push('mcp.json: server "__proto__" skipped: reserved name');
+			continue;
+		}
 		const parsed = parseServerEntry(pluginRoot, entry);
 		if (typeof parsed === "string") {
 			warnings.push(`mcp.json: server "${key}" skipped: ${parsed}`);
