@@ -87,8 +87,9 @@ export const claudeCode: ProviderIntegration = {
 				event: "PostToolUse",
 				matcherPrefix: "Edit|MultiEdit|Write",
 			},
-			beforeMcpCall: { event: "PreToolUse", matcherPrefix: "mcp__" },
-			afterMcpCall: { event: "PostToolUse", matcherPrefix: "mcp__" },
+			// A bare word matcher is an exact tool-name match; MCP tools need the regex.
+			beforeMcpCall: { event: "PreToolUse", matcherPrefix: "mcp__.*" },
+			afterMcpCall: { event: "PostToolUse", matcherPrefix: "mcp__.*" },
 			subagentStart: { event: "SubagentStart" },
 			subagentStop: { event: "SubagentStop" },
 			preCompact: { event: "PreCompact" },

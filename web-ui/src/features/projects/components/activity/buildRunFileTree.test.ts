@@ -360,4 +360,13 @@ describe('collectRunSkillFolders', () => {
     ];
     expect(collectRunSkillFolders(events)).toEqual(['debug', 'standup']);
   });
+
+  it('includes Claude Skill spans and /skill prompts', () => {
+    const events = [
+      call({ id: '1', kind: 'skill', tool_name: 'create-video' }),
+      call({ id: '2', kind: 'prompt', tool_name: '/init-brand infragate' }),
+      call({ id: '3', kind: 'prompt', tool_name: 'fix the build' }),
+    ];
+    expect(collectRunSkillFolders(events)).toEqual(['create-video', 'init-brand']);
+  });
 });

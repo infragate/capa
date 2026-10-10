@@ -82,8 +82,9 @@ export const codex: ProviderIntegration = {
 			beforeShell: { event: "PreToolUse", matcherPrefix: "Bash" },
 			afterShell: { event: "PostToolUse", matcherPrefix: "Bash" },
 			afterFileEdit: { event: "PostToolUse", matcherPrefix: "apply_patch" },
-			beforeMcpCall: { event: "PreToolUse", matcherPrefix: "mcp__" },
-			afterMcpCall: { event: "PostToolUse", matcherPrefix: "mcp__" },
+			// Regex form so the MCP family matches whether the matcher is anchored or not.
+			beforeMcpCall: { event: "PreToolUse", matcherPrefix: "mcp__.*" },
+			afterMcpCall: { event: "PostToolUse", matcherPrefix: "mcp__.*" },
 			subagentStart: { event: "SubagentStart" },
 			subagentStop: { event: "SubagentStop" },
 			preCompact: { event: "PreCompact" },

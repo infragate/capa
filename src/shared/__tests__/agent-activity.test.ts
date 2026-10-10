@@ -280,4 +280,96 @@ describe("normalizeActivityHookPayload", () => {
 			cache_write_tokens: null,
 		});
 	});
+
+	it("records Claude Skill tool calls as the invoked skill", () => {
+		const out = normalizeActivityHookPayload(
+			"afterTool",
+			{
+				hook_event_name: "PostToolUse",
+				tool_name: "Skill",
+				tool_input: { skill: "create-video", args: "launch clip" },
+				tool_response: { success: true, commandName: "create-video" },
+			},
+			"claude-code",
+		);
+		expect(out.skip).toBe(false);
+		expect(out.kind).toBe("skill");
+		expect(out.toolName).toBe("create-video");
+	});
+
+	it("treats SKILL.md edits as file work, not skill use", () => {
+		const payload = {
+			tool_name: "Edit",
+			tool_input: { file_path: "/proj/skills/artifact-design/SKILL.md" },
+		};
+		expect(
+			normalizeActivityHookPayload("afterFileEdit", payload, "claude-code").kind,
+		).toBe("file");
+		expect(
+			normalizeActivityHookPayload("afterTool", payload, "gemini-cli").kind,
+		).toBe("agent_tool");
+	});
+
+	it("skips afterTool rows that afterFileEdit / afterMcpCall already record", () => {
+		const skipped = (provider: string, tool_name: string) =>
+			normalizeActivityHookPayload("afterTool", { tool_name }, provider).skip;
+		expect(skipped("claude-code", "Edit")).toBe(true);
+		expect(skipped("claude-code", "Write")).toBe(true);
+		expect(skipped("claude-code", "mcp__github__get_issue")).toBe(true);
+		expect(skipped("cursor", "Write")).toBe(true);
+		expect(skipped("cursor", "MCP:get_artifact")).toBe(true);
+		expect(skipped("claude-code", "Read")).toBe(false);
+		expect(skipped("cursor", "Read")).toBe(false);
+		// Failures only arrive on afterToolFailure, so keep them.
+		expect(
+			normalizeActivityHookPayload(
+				"afterToolFailure",
+				{ tool_name: "Edit" },
+				"claude-code",
+			).skip,
+		).toBe(false);
+	});
+
+	it("attributes events to the Claude sub-agent that produced them", () => {
+		const start = normalizeActivityHookPayload(
+			"subagentStart",
+			{
+				hook_event_name: "SubagentStart",
+				agent_id: "af855ab6bd3b2ea23",
+				agent_type: "general-purpose",
+			},
+			"claude-code",
+		);
+		expect(start.kind).toBe("subagent");
+		expect(start.toolName).toBe("general-purpose");
+		expect(start.agentId).toBe("af855ab6bd3b2ea23");
+
+		const inner = normalizeActivityHookPayload(
+			"afterShell",
+			{
+				hook_event_name: "PostToolUse",
+				tool_name: "Bash",
+				tool_input: { command: "ls" },
+				agent_id: "af855ab6bd3b2ea23",
+				agent_type: "general-purpose",
+			},
+			"claude-code",
+		);
+		expect(inner.agentId).toBe("af855ab6bd3b2ea23");
+
+		const untyped = normalizeActivityHookPayload(
+			"subagentStop",
+			{ agent_id: "a1b2", agent_type: "" },
+			"claude-code",
+		);
+		expect(untyped.toolName).toBe("subagent");
+		expect(untyped.agentId).toBe("a1b2");
+
+		const main = normalizeActivityHookPayload(
+			"afterShell",
+			{ tool_name: "Bash", tool_input: { command: "ls" } },
+			"claude-code",
+		);
+		expect(main.agentId).toBeNull();
+	});
 });

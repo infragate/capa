@@ -23,6 +23,7 @@ import {
 	tokenUsageFrom,
 	toolNameFrom,
 } from "./agent-activity-fields";
+import { getProvider } from "./providers";
 
 export interface NormalizedActivityEvent {
 	kind: ToolCallKind;
@@ -42,6 +43,8 @@ export interface NormalizedActivityEvent {
 	model?: string | null;
 	/** Provider envelope attributes (model_id, versions, …). */
 	attributes?: ActivityAttributes | null;
+	/** Sub-agent that produced the event (Claude `agent_id`, Cursor `subagent_id`). */
+	agentId?: string | null;
 	/** When true, caller should drop the event (capa MCP dedup). */
 	skip: boolean;
 	skipReason?: string;
@@ -103,6 +106,17 @@ export function normalizeActivityHookPayload(
 		}
 	}
 
+	if (event === "afterTool" && afterToolIsCovered(provider, toolNameFrom(obj))) {
+		return {
+			kind: "agent_tool",
+			toolName: toolNameFrom(obj) || event,
+			status: "ok",
+			source: provider,
+			skip: true,
+			skipReason: "covered by afterFileEdit / afterMcpCall",
+		};
+	}
+
 	const kind = kindForEvent(event, obj);
 	const toolName = nameForEvent(event, kind, obj);
 	const status = statusForEvent(event, obj);
@@ -144,8 +158,44 @@ export function normalizeActivityHookPayload(
 		generationId,
 		model,
 		attributes: Object.keys(attributes).length > 0 ? attributes : null,
+		agentId: stringField(obj, "agent_id") || stringField(obj, "subagent_id"),
 		skip: false,
 	};
+}
+
+/**
+ * `afterTool` rows that a more specific outcome hook already records.
+ * Claude-like providers fire one PostToolUse for both (scoped by
+ * `matcherPrefix`); Cursor fires `postToolUse` next to `afterFileEdit` /
+ * `afterMCPExecution`.
+ */
+function afterToolIsCovered(
+	provider: string | null,
+	name: string | null,
+): boolean {
+	if (!provider || !name) return false;
+	if (provider === "cursor") return name === "Write" || /^MCP:/.test(name);
+	const map = getProvider(provider)?.hooks?.eventMap;
+	const afterTool = map?.afterTool?.event;
+	if (!map || !afterTool) return false;
+	return (["afterFileEdit", "afterMcpCall"] as const).some((canonical) => {
+		const mapping = map[canonical];
+		return (
+			mapping?.event === afterTool &&
+			"matcherPrefix" in mapping &&
+			new RegExp(`^(?:${mapping.matcherPrefix})$`).test(name)
+		);
+	});
+}
+
+/** Claude Code loads skills through a `Skill` tool, not by reading SKILL.md. */
+function skillToolName(obj: Record<string, unknown>): string | null {
+	if (toolNameFrom(obj) !== "Skill") return null;
+	return nestedString(obj, ["tool_input", "skill"]);
+}
+
+function isEditToolName(name: string | null): boolean {
+	return !!name && /edit|write|patch|replace|delete/i.test(name);
 }
 
 function kindForEvent(
@@ -154,16 +204,21 @@ function kindForEvent(
 ): ToolCallKind {
 	if (event === "userPromptSubmit") return "prompt";
 	if (event === "beforeShell" || event === "afterShell") return "shell";
-	if (event === "afterFileEdit") {
-		return isSkillMdPath(extractPath(obj)) ? "skill" : "file";
-	}
+	// Editing a SKILL.md is file work, not using the skill.
+	if (event === "afterFileEdit") return "file";
 	if (event === "beforeMcpCall" || event === "afterMcpCall") return "agent_mcp";
 	if (event === "beforeTool") return "agent_tool";
 	if (
 		event === "afterTool" ||
 		event === "afterToolFailure"
 	) {
-		if (isSkillMdPath(extractPath(obj))) return "skill";
+		if (skillToolName(obj)) return "skill";
+		if (
+			isSkillMdPath(extractPath(obj)) &&
+			!isEditToolName(toolNameFrom(obj))
+		) {
+			return "skill";
+		}
 		return "agent_tool";
 	}
 	if (event === "sessionStart" || event === "sessionEnd") return "session";
@@ -179,7 +234,9 @@ function nameForEvent(
 	obj: Record<string, unknown>,
 ): string {
 	if (kind === "skill") {
-		return skillNameFromPath(extractPath(obj)) || "skill";
+		return (
+			skillToolName(obj) || skillNameFromPath(extractPath(obj)) || "skill"
+		);
 	}
 	if (kind === "shell") {
 		return shellCommandFrom(obj) || "shell";
@@ -202,9 +259,10 @@ function nameForEvent(
 	if (kind === "subagent") {
 		return (
 			stringField(obj, "subagent_type") ||
-			stringField(obj, "agent_id") ||
+			stringField(obj, "agent_type") ||
 			stringField(obj, "name") ||
-			event
+			// Claude often sends an empty agent_type; the id lives in agentId.
+			"subagent"
 		);
 	}
 	if (kind === "compact" || kind === "stop") return event;

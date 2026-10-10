@@ -38,6 +38,18 @@ interface ActivitySpanRowProps {
   commandLinked?: boolean;
 }
 
+/** Sub-agent type for spans a sub-agent produced (Claude `agent_type`), else null. */
+function subagentLabel(call: ToolCallRecord): string | null {
+  if (!call.agent_id) return null;
+  try {
+    const type = JSON.parse(call.attributes_json ?? '{}')?.agent_type;
+    if (typeof type === 'string' && type.trim()) return type.trim();
+  } catch {
+    /* fall through */
+  }
+  return 'subagent';
+}
+
 export function ActivitySpanRow({
   call,
   runStart,
@@ -56,6 +68,7 @@ export function ActivitySpanRow({
   const errored = call.status === 'error';
   const running = call.status === 'running';
   const showUsage = hasTokenUsage(call);
+  const subagent = call.kind !== 'subagent' ? subagentLabel(call) : null;
 
   return (
     <div className="group/span" id={`activity-span-${call.id}`}>
@@ -103,6 +116,14 @@ export function ActivitySpanRow({
         {capa ? (
           <span className="shrink-0 rounded px-1 py-0.5 text-[9px] font-semibold uppercase tracking-[0.06em] text-accent-primary">
             {t('activity.capaBadge')}
+          </span>
+        ) : null}
+        {subagent ? (
+          <span
+            className="max-w-[9rem] shrink-0 truncate rounded bg-bg-tertiary px-1 py-0.5 text-[10px] text-text-secondary"
+            title={t('activity.subagentTitle', { id: call.agent_id })}
+          >
+            {subagent}
           </span>
         ) : null}
         <span className="min-w-0 flex-1 truncate text-[12.5px] text-text-primary">

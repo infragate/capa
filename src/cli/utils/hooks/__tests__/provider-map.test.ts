@@ -20,6 +20,15 @@ describe('toCanonicalOrScopedHookOn', () => {
     );
   });
 
+  it('narrows Claude PostToolUse + an MCP matcher to afterMcpCall', () => {
+    expect(toCanonicalOrScopedHookOn('claude-code', 'PostToolUse', 'mcp__.*')).toBe(
+      'afterMcpCall',
+    );
+    expect(
+      toCanonicalOrScopedHookOn('claude-code', 'PostToolUse', 'mcp__github__.*'),
+    ).toBe('afterMcpCall');
+  });
+
   it('falls back to provider-scoped for unmapped events', () => {
     expect(toCanonicalOrScopedHookOn('claude-code', 'Notification')).toBe(
       'claude-code:Notification',
