@@ -7,4 +7,5 @@ export {
 } from "./detect";
 
 export { resolvePluginServerDef, resolvePluginRootInString } from "./mcp-parser";
+export { resolveAgentPluginsServerDef } from "./agent-plugins-parser";
 export { materializeCommandAsSkill } from "./commands-parser";

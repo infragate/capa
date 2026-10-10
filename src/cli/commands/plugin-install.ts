@@ -24,9 +24,10 @@ import {
   resolveNestedPluginById,
   resolvePluginServerDef,
   resolvePluginRootInString,
+  resolveAgentPluginsServerDef,
   materializeCommandAsSkill,
 } from '../../shared/plugin-manifest';
-import { getProjectPluginsDir } from '../../shared/plugin-paths';
+import { getProjectPluginDataDir, getProjectPluginsDir } from '../../shared/plugin-paths';
 import { getProvider } from '../../shared/providers';
 import { getGitProvider } from '../../shared/git-providers/registry';
 import { assertSafeRepoPath } from '../../shared/repo-file';
@@ -63,8 +64,8 @@ export function resolvePluginManifestRoot(
 }
 
 /** Map plugin provider id to capa provider id for hook scoping. */
-function pluginProviderToCapaId(provider: 'claude' | 'cursor'): string {
-  return provider === 'claude' ? 'claude-code' : 'cursor';
+function pluginProviderToCapaId(provider: UnifiedPluginManifest['provider']): string {
+  return provider === 'cursor' ? 'cursor' : 'claude-code';
 }
 
 function copyPluginToStable(tempDir: string, pluginStablePath: string): void {
@@ -233,6 +234,8 @@ export async function resolvePlugins(
     noCache?: boolean;
     trackManaged?: boolean;
     pluginsBaseDir?: string;
+    /** Override for `${PLUGIN_DATA}` dirs; defaults to `~/.capa/plugin-data/<projectId>/`. */
+    pluginDataBaseDir?: string;
     /**
      * When true (default), copy each plugin skill into every provider's
      * project-local skills dir (e.g. `.claude/skills`, `.cursor/skills`).
@@ -268,6 +271,7 @@ export async function resolvePlugins(
 
   // Same unpack root for install, wrap, and passthrough: ~/.capa/plugins/<projectId>/
   const pluginsBase = options.pluginsBaseDir ?? getProjectPluginsDir(projectId);
+  const pluginDataBase = options.pluginDataBaseDir ?? getProjectPluginDataDir(projectId);
   const currentPluginIds = new Set<string>();
   // Declared plugins that failed this run: keep their existing copies for the
   // next successful resolve instead of sweeping them as undeclared.
@@ -484,7 +488,7 @@ export async function resolvePlugins(
       if (!manifest) {
         throw new Error(
           `No plugin manifest found in ${repoPath}${subpath ? `/${subpath}` : ''}.\n` +
-          `    Expected one of: .claude-plugin/plugin.json, .cursor-plugin/plugin.json.` +
+          `    Expected one of: .claude-plugin/plugin.json, .cursor-plugin/plugin.json, plugin.json (Agent Plugins).` +
           (pluginRef.id
             ? `\n    Tip: for monorepos, pin the plugin with "${repoPath}@${pluginRef.id}" or "${repoPath}::${pluginRef.id}".`
             : '')
@@ -569,6 +573,9 @@ export async function resolvePlugins(
         `Plugin "${manifest.name}" contains unsupported artifacts that were skipped: ${manifest.skippedArtifacts.join(', ')}`,
       );
     }
+    for (const w of manifest.warnings ?? []) {
+      warnings.push(`Plugin "${manifest.name}": ${w}`);
+    }
 
     // Materialize legacy commands/ into skill dirs on the stable plugin copy
     const commandSkillEntries: { id: string; relativePath: string }[] = [];
@@ -645,10 +652,22 @@ export async function resolvePlugins(
         );
         continue;
       }
+      let resolvedDef: ReturnType<typeof resolvePluginServerDef> & { cwd?: string };
+      if (manifest.provider === 'agent-plugins') {
+        const pluginDataPath = resolve(join(pluginDataBase, pluginInstallId));
+        try {
+          resolvedDef = resolveAgentPluginsServerDef(serverDef, pluginStablePath, pluginDataPath);
+        } catch (err) {
+          warnings.push(`Plugin "${manifest.name}": server "${serverKey}" skipped: ${(err as Error).message}`);
+          continue;
+        }
+        if (resolvedDef.cmd) mkdirSync(pluginDataPath, { recursive: true });
+      } else {
+        resolvedDef = { ...resolvePluginServerDef(serverDef, pluginStablePath), cwd: pluginStablePath };
+      }
       registeredServerIds.add(serverId);
       pluginServerIds.push(serverId);
 
-      const resolvedDef = resolvePluginServerDef(serverDef, pluginStablePath);
       if (resolvedDef.url) {
         mergedServers.push({
           id: serverId,
@@ -672,7 +691,7 @@ export async function resolvePlugins(
             cmd: resolvedDef.cmd,
             args: resolvedDef.args,
             env: resolvedDef.env,
-            cwd: pluginStablePath,
+            cwd: resolvedDef.cwd,
           },
           sourcePlugin,
           sourcePluginServerKey: serverKey,

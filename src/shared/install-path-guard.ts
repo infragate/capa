@@ -30,7 +30,10 @@ function pathOps(): PathOps {
 		: { resolve, relative, isAbsolute, parse, sep };
 }
 
-/** @internal Exported for cross-platform containment regression tests. */
+/**
+ * Lexical containment check. Also used by the Agent Plugins parser to keep
+ * `command` / `cwd` inside the plugin root or data dir.
+ */
 export function assertInsideProjectRoot(
 	projectRoot: string,
 	destPath: string,
