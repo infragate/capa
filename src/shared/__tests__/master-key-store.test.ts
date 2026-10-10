@@ -3,6 +3,7 @@ import {
 	existsSync,
 	mkdirSync,
 	mkdtempSync,
+	readdirSync,
 	readFileSync,
 	rmSync,
 	writeFileSync,
@@ -27,21 +28,26 @@ const platformTier =
 
 /** In-memory stand-in for @napi-rs/keyring so tests never touch the OS store. */
 function fakeKeyring(
-	opts: { failWrites?: boolean; onRead?: () => void } = {},
+	opts: { failWrites?: boolean; failReads?: boolean; onRead?: () => void } = {},
 ) {
 	const store = new Map<string, string>();
-	const stats = { reads: 0 };
+	const stats = { reads: 0, writes: 0, options: undefined as unknown };
 	const Entry = class {
 		constructor(
 			private service: string,
 			private account: string,
-		) {}
+			options?: unknown,
+		) {
+			stats.options = options;
+		}
 		getPassword() {
 			stats.reads++;
 			opts.onRead?.();
+			if (opts.failReads) throw new Error("keyring is locked");
 			return store.get(`${this.service}/${this.account}`) ?? null;
 		}
 		setPassword(password: string) {
+			stats.writes++;
 			if (opts.failWrites) throw new Error("no secret service");
 			store.set(`${this.service}/${this.account}`, password);
 		}
@@ -122,6 +128,8 @@ describe("master-key-store", () => {
 			expect(store.get("capa/master-key")).toBe(key.toString("base64"));
 			const file = readFileSync(join(home, ".capa", "master.key"));
 			expect(Buffer.compare(file, key)).toBe(0);
+			// Linux: Secret Service only, never the non-durable kernel keyring.
+			expect(stats.options).toEqual({ linux: { store: "secret-service" } });
 
 			// Next start uses the file copy and never reads the keyring, which
 			// could prompt (locked GNOME keyring); the marker keeps the tier.
@@ -178,8 +186,82 @@ describe("master-key-store", () => {
 
 			const key = getMasterKey();
 			const file = readFileSync(join(dir, "master.key"));
-			expect(Buffer.compare(key, file)).toBe(0);
-			expect(store.get("capa/master-key")).toBe(file.toString("base64"));
+			expect(key.equals(other)).toBe(true);
+			expect(file.equals(other)).toBe(true);
+			expect(store.get("capa/master-key")).toBe(other.toString("base64"));
+		});
+
+		it("repairs a corrupt master.key from the keyring copy", () => {
+			const dir = join(home, ".capa");
+			mkdirSync(dir, { recursive: true });
+			const good = Buffer.alloc(32, 5);
+			writeFileSync(join(dir, "master.key"), "");
+			writeFileSync(join(dir, "master.key.keyring"), "");
+			const { store, stats, loader } = fakeKeyring();
+			store.set("capa/master-key", good.toString("base64"));
+			setKeyringModuleLoaderForTests(loader);
+
+			expect(getMasterKey().equals(good)).toBe(true);
+			expect(readFileSync(join(dir, "master.key")).equals(good)).toBe(true);
+			expect(getSecretStorageTier()).toBe(platformTier);
+			expect(stats.writes).toBe(0);
+			expect(readdirSync(dir).sort()).toEqual([
+				"master.key",
+				"master.key.keyring",
+			]);
+		});
+
+		it("refuses a corrupt master.key it can't repair", () => {
+			const dir = join(home, ".capa");
+			mkdirSync(dir, { recursive: true });
+			const path = join(dir, "master.key");
+			writeFileSync(path, "short");
+			writeFileSync(join(dir, "master.key.keyring"), "");
+
+			// No keyring copy.
+			const empty = fakeKeyring();
+			setKeyringModuleLoaderForTests(empty.loader);
+			expect(() => getMasterKey()).toThrow(/not a valid 32-byte key/);
+			expect(empty.stats.writes).toBe(0);
+
+			// Keyring read failure.
+			setKeyringModuleLoaderForTests(fakeKeyring({ failReads: true }).loader);
+			resetMasterKeyStoreForTests();
+			expect(() => getMasterKey()).toThrow(/not a valid 32-byte key/);
+
+			// A keyring key but no marker: it was never this file's copy.
+			const other = fakeKeyring();
+			other.store.set(
+				"capa/master-key",
+				Buffer.alloc(32, 3).toString("base64"),
+			);
+			setKeyringModuleLoaderForTests(other.loader);
+			rmSync(join(dir, "master.key.keyring"));
+			resetMasterKeyStoreForTests();
+			expect(() => getMasterKey()).toThrow(/not a valid 32-byte key/);
+			expect(other.stats.reads).toBe(0);
+
+			// File tier only (no keyring at all).
+			process.env.CAPA_SECRET_STORE = "file";
+			resetMasterKeyStoreForTests();
+			expect(() => getMasterKey()).toThrow(/not a valid 32-byte key/);
+
+			expect(readFileSync(path, "utf8")).toBe("short");
+		});
+
+		it("never writes the keyring after a failed read", () => {
+			const { store, stats, loader } = fakeKeyring({ failReads: true });
+			const backup = Buffer.alloc(32, 4).toString("base64");
+			store.set("capa/master-key", backup);
+			setKeyringModuleLoaderForTests(loader);
+
+			const key = getMasterKey();
+			expect(getSecretStorageTier()).toBe("file");
+			expect(stats.writes).toBe(0);
+			expect(store.get("capa/master-key")).toBe(backup);
+			const dir = join(home, ".capa");
+			expect(readFileSync(join(dir, "master.key")).equals(key)).toBe(true);
+			expect(existsSync(join(dir, "master.key.keyring"))).toBe(false);
 		});
 
 		it("falls back to the file tier when the addon can't load", () => {

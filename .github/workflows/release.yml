@@ -12,6 +12,9 @@ jobs:
   build:
     name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
+    # Only uploads workflow artifacts; the release job publishes them.
+    permissions:
+      contents: read
     strategy:
       matrix:
         include:
