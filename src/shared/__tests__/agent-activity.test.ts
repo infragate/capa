@@ -209,6 +209,21 @@ describe("normalizeActivityHookPayload", () => {
 		expect(out.skip).toBe(true);
 	});
 
+	it("dedups only real capa MCP tool names, not look-alikes or tool args", () => {
+		const skip = (event: "afterTool" | "afterMcpCall", payload: Record<string, unknown>) =>
+			normalizeActivityHookPayload(event, payload).skip;
+		expect(skip("afterMcpCall", { tool_name: "mcp__capa-reviewer__setup_tools" })).toBe(true);
+		expect(skip("afterTool", { tool_name: "mcp__capa__call_tool", tool_input: {} })).toBe(true);
+		expect(skip("afterMcpCall", { tool_name: "mcp__capabilities__x", tool_input: {} })).toBe(false);
+		expect(skip("afterTool", { tool_name: "mcp__capabilities__x", tool_input: {} })).toBe(false);
+		expect(
+			skip("afterMcpCall", { tool_name: "mcp__github__x", tool_input: { server: "capa" } }),
+		).toBe(false);
+		expect(
+			skip("afterMcpCall", { tool_name: "mcp__github__x", input: { server: "capa" } }),
+		).toBe(false);
+	});
+
 	it("skips capa MCP payloads that only nest under mcpServers.capa", () => {
 		const out = normalizeActivityHookPayload("afterMcpCall", {
 			tool_name: "list_tools",
@@ -279,5 +294,120 @@ describe("normalizeActivityHookPayload", () => {
 			cache_read_tokens: 8,
 			cache_write_tokens: null,
 		});
+	});
+
+	it("records Claude Skill tool calls as the invoked skill", () => {
+		const out = normalizeActivityHookPayload(
+			"afterTool",
+			{
+				hook_event_name: "PostToolUse",
+				tool_name: "Skill",
+				tool_input: { skill: "create-video", args: "launch clip" },
+				tool_response: { success: true, commandName: "create-video" },
+			},
+			"claude-code",
+		);
+		expect(out.skip).toBe(false);
+		expect(out.kind).toBe("skill");
+		expect(out.toolName).toBe("create-video");
+	});
+
+	it("treats SKILL.md edits as file work, not skill use", () => {
+		const payload = {
+			tool_name: "Edit",
+			tool_input: { file_path: "/proj/skills/artifact-design/SKILL.md" },
+		};
+		expect(
+			normalizeActivityHookPayload("afterFileEdit", payload, "claude-code").kind,
+		).toBe("file");
+		expect(
+			normalizeActivityHookPayload("afterTool", payload, "gemini-cli").kind,
+		).toBe("agent_tool");
+	});
+
+	it("records each tool call once when two hooks fire for it", () => {
+		const skipped = (provider: string, tool_name: string) =>
+			normalizeActivityHookPayload("afterTool", { tool_name }, provider).skip;
+		expect(skipped("claude-code", "Edit")).toBe(true);
+		expect(skipped("claude-code", "Write")).toBe(true);
+		expect(skipped("cursor", "Write")).toBe(true);
+		expect(skipped("cursor", "MCP:get_artifact")).toBe(true);
+		expect(skipped("claude-code", "Read")).toBe(false);
+		expect(skipped("cursor", "Read")).toBe(false);
+		// Claude MCP: afterTool records it (old installs never fire afterMcpCall),
+		// so the shared afterMcpCall is the one skipped.
+		const mcp = normalizeActivityHookPayload(
+			"afterTool",
+			{ tool_name: "mcp__github__get_issue" },
+			"claude-code",
+		);
+		expect(mcp.skip).toBe(false);
+		expect(mcp.kind).toBe("agent_mcp");
+		expect(
+			normalizeActivityHookPayload(
+				"afterMcpCall",
+				{ tool_name: "mcp__github__get_issue" },
+				"claude-code",
+			).skip,
+		).toBe(true);
+		// Cursor fires a separate afterMCPExecution, which stays the record.
+		expect(
+			normalizeActivityHookPayload(
+				"afterMcpCall",
+				{ tool_name: "get_artifact" },
+				"cursor",
+			).skip,
+		).toBe(false);
+		// Failures only arrive on afterToolFailure, so keep them.
+		expect(
+			normalizeActivityHookPayload(
+				"afterToolFailure",
+				{ tool_name: "Edit" },
+				"claude-code",
+			).skip,
+		).toBe(false);
+	});
+
+	it("attributes events to the Claude sub-agent that produced them", () => {
+		const start = normalizeActivityHookPayload(
+			"subagentStart",
+			{
+				hook_event_name: "SubagentStart",
+				agent_id: "af855ab6bd3b2ea23",
+				agent_type: "general-purpose",
+			},
+			"claude-code",
+		);
+		expect(start.kind).toBe("subagent");
+		expect(start.toolName).toBe("general-purpose");
+		expect(start.agentId).toBe("af855ab6bd3b2ea23");
+
+		const inner = normalizeActivityHookPayload(
+			"afterShell",
+			{
+				hook_event_name: "PostToolUse",
+				tool_name: "Bash",
+				tool_input: { command: "ls" },
+				agent_id: "af855ab6bd3b2ea23",
+				agent_type: "general-purpose",
+			},
+			"claude-code",
+		);
+		expect(inner.agentId).toBe("af855ab6bd3b2ea23");
+
+		const untyped = normalizeActivityHookPayload(
+			"subagentStop",
+			{ agent_id: "a1b2", agent_type: "" },
+			"claude-code",
+		);
+		expect(untyped.toolName).toBe("subagent");
+		expect(untyped.agentId).toBe("a1b2");
+
+		const main = normalizeActivityHookPayload(
+			"afterShell",
+			{ tool_name: "Bash", tool_input: { command: "ls" } },
+			"claude-code",
+		);
+		expect(main.agentId).toBeNull();
 	});
 });

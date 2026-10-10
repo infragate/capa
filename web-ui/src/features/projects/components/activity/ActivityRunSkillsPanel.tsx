@@ -46,8 +46,12 @@ export function ActivityRunSkillsPanel({
   const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null);
 
   const skills = useMemo(
-    () => collectRunSkillFolders(events, { realProjectPath: projectPath }),
-    [events, projectPath],
+    () =>
+      collectRunSkillFolders(events, {
+        realProjectPath: projectPath,
+        isKnownSkill: (name) => findManagedSkillForFolder(name, managedSkills) !== null,
+      }),
+    [events, projectPath, managedSkills],
   );
 
   return (

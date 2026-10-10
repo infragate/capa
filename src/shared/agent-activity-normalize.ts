@@ -5,6 +5,7 @@
 
 import type { ToolCallKind, ToolCallStatus } from "../types/database";
 import type { CanonicalHookEvent } from "../types/hooks";
+import type { ProviderEventMapping } from "../types/providers";
 import {
 	type ActivityAttributes,
 	extractActivityAttributes,
@@ -23,6 +24,7 @@ import {
 	tokenUsageFrom,
 	toolNameFrom,
 } from "./agent-activity-fields";
+import { getProvider } from "./providers";
 
 export interface NormalizedActivityEvent {
 	kind: ToolCallKind;
@@ -42,6 +44,8 @@ export interface NormalizedActivityEvent {
 	model?: string | null;
 	/** Provider envelope attributes (model_id, versions, …). */
 	attributes?: ActivityAttributes | null;
+	/** Sub-agent that produced the event (Claude `agent_id`, Cursor `subagent_id`). */
+	agentId?: string | null;
 	/** When true, caller should drop the event (capa MCP dedup). */
 	skip: boolean;
 	skipReason?: string;
@@ -103,7 +107,21 @@ export function normalizeActivityHookPayload(
 		}
 	}
 
-	const kind = kindForEvent(event, obj);
+	if (
+		(event === "afterTool" && afterToolIsCovered(provider, toolNameFrom(obj))) ||
+		(event === "afterMcpCall" && sharedAfterToolMapping(provider, "afterMcpCall"))
+	) {
+		return {
+			kind: "agent_tool",
+			toolName: toolNameFrom(obj) || event,
+			status: "ok",
+			source: provider,
+			skip: true,
+			skipReason: "recorded by another hook for the same tool call",
+		};
+	}
+
+	const kind = kindForEvent(event, obj, provider);
 	const toolName = nameForEvent(event, kind, obj);
 	const status = statusForEvent(event, obj);
 	const args = argsForEvent(event, obj);
@@ -144,26 +162,92 @@ export function normalizeActivityHookPayload(
 		generationId,
 		model,
 		attributes: Object.keys(attributes).length > 0 ? attributes : null,
+		agentId: stringField(obj, "agent_id") || stringField(obj, "subagent_id"),
 		skip: false,
 	};
+}
+
+/**
+ * The provider's mapping for `canonical` when it rides on the same native
+ * event as `afterTool` (Claude-like providers fire one PostToolUse for both,
+ * scoped by `matcherPrefix`).
+ */
+function sharedAfterToolMapping(
+	provider: string | null,
+	canonical: "afterFileEdit" | "afterMcpCall",
+): ProviderEventMapping | null {
+	const map = provider ? getProvider(provider)?.hooks?.eventMap : undefined;
+	const mapping = map?.[canonical];
+	return mapping && mapping.event === map?.afterTool?.event ? mapping : null;
+}
+
+function sharedMatcherMatches(
+	provider: string | null,
+	canonical: "afterFileEdit" | "afterMcpCall",
+	name: string | null,
+): boolean {
+	const mapping = sharedAfterToolMapping(provider, canonical);
+	return (
+		!!name &&
+		!!mapping &&
+		"matcherPrefix" in mapping &&
+		new RegExp(`^(?:${mapping.matcherPrefix})$`).test(name)
+	);
+}
+
+/**
+ * `afterTool` rows that `afterFileEdit` already records. Cursor fires
+ * `postToolUse` next to `afterFileEdit` / `afterMCPExecution`.
+ *
+ * MCP goes the other way on Claude-like providers: `afterTool` records it (as
+ * `agent_mcp`) and the shared `afterMcpCall` is skipped, because installs
+ * from before the `mcp__.*` matcher fix still carry an `mcp__` hook that
+ * never fires until hooks are re-synced.
+ */
+function afterToolIsCovered(
+	provider: string | null,
+	name: string | null,
+): boolean {
+	if (!provider || !name) return false;
+	if (provider === "cursor") return name === "Write" || /^MCP:/.test(name);
+	return sharedMatcherMatches(provider, "afterFileEdit", name);
+}
+
+/** Claude Code loads skills through a `Skill` tool, not by reading SKILL.md. */
+function skillToolName(obj: Record<string, unknown>): string | null {
+	if (toolNameFrom(obj) !== "Skill") return null;
+	return nestedString(obj, ["tool_input", "skill"]);
+}
+
+function isEditToolName(name: string | null): boolean {
+	return !!name && /edit|write|patch|replace|delete/i.test(name);
 }
 
 function kindForEvent(
 	event: CanonicalHookEvent,
 	obj: Record<string, unknown>,
+	provider: string | null,
 ): ToolCallKind {
 	if (event === "userPromptSubmit") return "prompt";
 	if (event === "beforeShell" || event === "afterShell") return "shell";
-	if (event === "afterFileEdit") {
-		return isSkillMdPath(extractPath(obj)) ? "skill" : "file";
-	}
+	// Editing a SKILL.md is file work, not using the skill.
+	if (event === "afterFileEdit") return "file";
 	if (event === "beforeMcpCall" || event === "afterMcpCall") return "agent_mcp";
 	if (event === "beforeTool") return "agent_tool";
 	if (
 		event === "afterTool" ||
 		event === "afterToolFailure"
 	) {
-		if (isSkillMdPath(extractPath(obj))) return "skill";
+		if (skillToolName(obj)) return "skill";
+		if (sharedMatcherMatches(provider, "afterMcpCall", toolNameFrom(obj))) {
+			return "agent_mcp";
+		}
+		if (
+			isSkillMdPath(extractPath(obj)) &&
+			!isEditToolName(toolNameFrom(obj))
+		) {
+			return "skill";
+		}
 		return "agent_tool";
 	}
 	if (event === "sessionStart" || event === "sessionEnd") return "session";
@@ -179,7 +263,9 @@ function nameForEvent(
 	obj: Record<string, unknown>,
 ): string {
 	if (kind === "skill") {
-		return skillNameFromPath(extractPath(obj)) || "skill";
+		return (
+			skillToolName(obj) || skillNameFromPath(extractPath(obj)) || "skill"
+		);
 	}
 	if (kind === "shell") {
 		return shellCommandFrom(obj) || "shell";
@@ -202,9 +288,10 @@ function nameForEvent(
 	if (kind === "subagent") {
 		return (
 			stringField(obj, "subagent_type") ||
-			stringField(obj, "agent_id") ||
+			stringField(obj, "agent_type") ||
 			stringField(obj, "name") ||
-			event
+			// Claude often sends an empty agent_type; the id lives in agentId.
+			"subagent"
 		);
 	}
 	if (kind === "compact" || kind === "stop") return event;
@@ -369,13 +456,15 @@ function isCapaMcpPayload(
 		nestedString(obj, ["server", "name"]),
 		nestedString(obj, ["mcp_server", "url"]),
 		nestedString(obj, ["mcpServer", "url"]),
-		nestedString(obj, ["tool_input", "server"]),
-		nestedString(obj, ["input", "server"]),
+		// Not tool_input/input.server: those are the tool call arguments, which
+		// the model (or a prompt injection) controls.
 	];
 	for (const value of candidates) {
 		if (!value) continue;
 		if (/^capa\b/i.test(value) || CAPA_MCP_RE.test(value)) return true;
-		if (/^mcp__capa/i.test(value)) return true;
+		// capa registers itself as `capa` and sub-agents as `capa-<agentId>`;
+		// the `__` boundary keeps e.g. an `mcp__capabilities__*` server visible.
+		if (/^mcp__capa(-[A-Za-z0-9_-]+)?__/i.test(value)) return true;
 	}
 
 	// Config-shaped payloads sometimes nest capa under mcpServers without a URL.

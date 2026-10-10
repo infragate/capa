@@ -70,6 +70,15 @@ export interface ToolCallFinishInput {
 	cacheWriteTokens?: number | null;
 }
 
+/** Tool names come from provider hook payloads; keep a hostile one from bloating rows. */
+export const TOOL_NAME_MAX_CHARS = 512;
+
+function clampToolName(name: string): string {
+	return name.length <= TOOL_NAME_MAX_CHARS
+		? name
+		: `${name.slice(0, TOOL_NAME_MAX_CHARS - 1)}…`;
+}
+
 /**
  * Persist + broadcast tool-call activity for the project page live feed.
  * Args/results are truncated and optionally redacted against project variables.
@@ -107,7 +116,7 @@ export class ToolCallTracer {
 			status: "running",
 			source: input.source ?? null,
 			kind: input.kind,
-			tool_name: input.toolName,
+			tool_name: clampToolName(input.toolName),
 			meta_tool: input.metaTool ?? null,
 			args_json: serializeForPreview(input.args, secrets),
 			result_preview: null,

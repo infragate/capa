@@ -145,6 +145,23 @@ describe('hook-handlers — buildHookEntry', () => {
     expect(out.matcher).toBe('Bash');
   });
 
+  it('claude shape keeps a user matcher already inside the canonical family', () => {
+    const build = (matcher: string, matcherPrefix: string) =>
+      buildHookEntry(claudeIntegration, {
+        hook: { id: 'h', on: 'afterMcpCall', command: 'echo', matcher },
+        runReference: '/abs/script',
+        mapping: { event: 'PostToolUse', matcherPrefix },
+      }).matcher;
+    // Unioning with `mcp__.*` would fire for every MCP tool.
+    expect(build('mcp__github__.*', 'mcp__.*')).toBe('mcp__github__.*');
+    expect(build('mcp__github__.*|mcp__jira__.*', 'mcp__.*')).toBe('mcp__github__.*|mcp__jira__.*');
+    expect(build('Write', 'Edit|MultiEdit|Write')).toBe('Write');
+    expect(build('Edit|Write', 'Edit|MultiEdit|Write')).toBe('Edit|Write');
+    // Anything reaching outside the family still gets the union.
+    expect(build('mcp__github__.*|Bash', 'mcp__.*')).toBe('(?:mcp__.*)|(?:mcp__github__.*|Bash)');
+    expect(build('Write|Bash', 'Edit|MultiEdit|Write')).toBe('(?:Edit|MultiEdit|Write)|(?:Write|Bash)');
+  });
+
   it('codex (claude shape) emits a matcher-grouped name-tagged command entry', () => {
     const hook: Hook = { id: 'audit-shell', on: 'beforeShell', command: 'echo' };
     const out = buildHookEntry(codexIntegration, {
