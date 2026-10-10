@@ -28,12 +28,14 @@ const platformTier =
 /** In-memory stand-in for @napi-rs/keyring so tests never touch the OS store. */
 function fakeKeyring(opts: { failWrites?: boolean } = {}) {
 	const store = new Map<string, string>();
+	const stats = { reads: 0 };
 	const Entry = class {
 		constructor(
 			private service: string,
 			private account: string,
 		) {}
 		getPassword() {
+			stats.reads++;
 			return store.get(`${this.service}/${this.account}`) ?? null;
 		}
 		setPassword(password: string) {
@@ -41,7 +43,7 @@ function fakeKeyring(opts: { failWrites?: boolean } = {}) {
 			store.set(`${this.service}/${this.account}`, password);
 		}
 	};
-	return { store, loader: () => ({ Entry }) };
+	return { store, stats, loader: () => ({ Entry }) };
 }
 
 describe("master-key-store", () => {
@@ -110,7 +112,7 @@ describe("master-key-store", () => {
 		});
 
 		it("new install stores the key in the keyring and keeps a file copy", () => {
-			const { store, loader } = fakeKeyring();
+			const { store, stats, loader } = fakeKeyring();
 			setKeyringModuleLoaderForTests(loader);
 			const key = getMasterKey();
 			expect(getSecretStorageTier()).toBe(platformTier);
@@ -118,11 +120,14 @@ describe("master-key-store", () => {
 			const file = readFileSync(join(home, ".capa", "master.key"));
 			expect(Buffer.compare(file, key)).toBe(0);
 
-			// Next start reads the keyring even though the file copy exists.
+			// Next start uses the file copy and never reads the keyring, which
+			// could prompt (locked GNOME keyring); the marker keeps the tier.
 			resetMasterKeyStoreForTests();
+			const readsBefore = stats.reads;
 			expect(peekSecretStorageTier()).toBe(platformTier);
 			expect(Buffer.compare(getMasterKey(), key)).toBe(0);
 			expect(getSecretStorageTier()).toBe(platformTier);
+			expect(stats.reads).toBe(readsBefore);
 		});
 
 		it("an existing master.key keeps the file tier and is never migrated", () => {
@@ -130,13 +135,14 @@ describe("master-key-store", () => {
 			mkdirSync(dir, { recursive: true });
 			const seeded = Buffer.alloc(32, 9);
 			writeFileSync(join(dir, "master.key"), seeded);
-			const { store, loader } = fakeKeyring();
+			const { store, stats, loader } = fakeKeyring();
 			setKeyringModuleLoaderForTests(loader);
 
 			expect(peekSecretStorageTier()).toBe("file");
 			expect(Buffer.compare(getMasterKey(), seeded)).toBe(0);
 			expect(getSecretStorageTier()).toBe("file");
 			expect(store.size).toBe(0);
+			expect(stats.reads).toBe(0);
 		});
 
 		it("a master.key that differs from the keyring key wins", () => {

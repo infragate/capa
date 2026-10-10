@@ -1,5 +1,11 @@
 import { randomBytes } from "crypto";
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import {
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	readFileSync,
+	writeFileSync,
+} from "fs";
 import { createRequire } from "module";
 import { join } from "path";
 import { getCapaDir } from "./config";
@@ -32,11 +38,9 @@ export function peekSecretStorageTier(): SecretStorageTier {
 	if (cachedTier) return cachedTier;
 	if (forceFileTier()) return "file";
 
+	if (readFileKey()) return fileKeyTier();
 	const keyring = tryOpenKeyring();
-	if (keyring && keyringKeyInUse(keyring, readFileKey())) {
-		return tierForPlatform();
-	}
-	return "file";
+	return keyring && keyringKey(keyring) ? tierForPlatform() : "file";
 }
 
 export function getMasterKey(): Buffer {
@@ -51,6 +55,17 @@ export function preferKeyringMasterKey(): Promise<void> {
 
 function masterKeyPath(): string {
 	return join(getCapaDir(), "master.key");
+}
+
+/** Present when the file key is the rollback copy of a key in the OS keyring. */
+function keyringMarkerPath(): string {
+	return join(getCapaDir(), "master.key.keyring");
+}
+
+function fileKeyTier(): SecretStorageTier {
+	return existsSync(keyringMarkerPath()) && !forceFileTier() && keyringAllowed()
+		? tierForPlatform()
+		: "file";
 }
 
 function errCode(err: unknown): string | undefined {
@@ -193,64 +208,55 @@ function loadFromFileTier(): Buffer {
 	return cachedKey;
 }
 
-/**
- * The keyring key, if it is the one in use: either there is no file key, or
- * the file is the rollback copy of that same key. A file key that differs (or
- * has no keyring counterpart) means an existing file-tier install, which keeps
- * the file so upgrades never change which key encrypts existing secrets.
- */
-function keyringKeyInUse(
-	keyring: KeyringEntry,
-	fileKey: Buffer | null,
-): Buffer | null {
+function keyringKey(keyring: KeyringEntry): Buffer | null {
 	const stored = keyring.getPassword();
 	if (!stored) return null;
 	const buf = Buffer.from(stored, "base64");
-	if (buf.length !== 32) return null;
-	return !fileKey || buf.equals(fileKey) ? buf : null;
+	return buf.length === 32 ? buf : null;
 }
 
 /**
  * Load (or create) the 256-bit master key.
- * Uses the OS keyring when it holds the key in use (see keyringKeyInUse). An
- * existing ~/.capa/master.key otherwise keeps the file tier and is never
- * migrated. Only a new install (no key anywhere) goes to the keyring, with a
- * file copy kept for rollback.
+ *
+ * An existing ~/.capa/master.key is always the key in use: a keyring install
+ * keeps an identical file copy, so the keyring is never read when the file
+ * exists. Reading it can prompt (e.g. a locked GNOME keyring), and upgrades
+ * must not prompt or move where existing secrets' key lives.
+ *
+ * Only a new install (no file key) uses the keyring: it adopts a key already
+ * stored there or generates one, writes the file copy for rollback, and leaves
+ * a marker so later starts report the keyring tier without touching it.
  */
 export function loadMasterKey(): Buffer {
 	if (cachedKey && cachedKey.length === 32 && cachedTier) {
 		return cachedKey;
 	}
 
-	const keyring = tryOpenKeyring();
-	if (keyring) {
-		const tier = tierForPlatform();
-		const fileKey = readFileKey();
-		const inKeyring = keyringKeyInUse(keyring, fileKey);
-		if (inKeyring) {
-			cachedKey = inKeyring;
-			cachedTier = tier;
-			return inKeyring;
-		}
-
-		if (!fileKey) {
-			// New install: generate, keep a file copy for fallback / rollback.
-			let key: Buffer = randomBytes(32);
-			writeFileKey(key);
-			key = readFileKey() ?? key;
-			try {
-				keyring.setPassword(key.toString("base64"));
-				cachedKey = key;
-				cachedTier = tier;
-				return key;
-			} catch {
-				// Keyring write failed: stay on file.
-				cachedKey = key;
-				cachedTier = "file";
-				return key;
-			}
-		}
+	const fileKey = readFileKey();
+	if (fileKey) {
+		cachedKey = fileKey;
+		cachedTier = fileKeyTier();
+		return fileKey;
 	}
 
-	return loadFromFileTier();
+	const keyring = tryOpenKeyring();
+	if (!keyring) return loadFromFileTier();
+
+	let key = keyringKey(keyring);
+	let inKeyring = key !== null;
+	if (!key) {
+		key = randomBytes(32);
+		try {
+			keyring.setPassword(key.toString("base64"));
+			inKeyring = true;
+		} catch {
+			// Keyring write failed: stay on file.
+		}
+	}
+	writeFileKey(key);
+	key = readFileKey() ?? key;
+	if (inKeyring) writeFileSync(keyringMarkerPath(), "");
+	cachedKey = key;
+	cachedTier = inKeyring ? tierForPlatform() : "file";
+	return key;
 }
