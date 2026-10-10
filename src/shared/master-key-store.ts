@@ -242,10 +242,14 @@ export function loadMasterKey(): Buffer {
 	const keyring = tryOpenKeyring();
 	if (!keyring) return loadFromFileTier();
 
-	let key = keyringKey(keyring);
-	let inKeyring = key !== null;
-	if (!key) {
-		key = randomBytes(32);
+	// Settle the file first: when processes initialize together, the key that
+	// wins master.key is the one in use, so only that key goes to the keyring.
+	const stored = keyringKey(keyring);
+	writeFileKey(stored ?? randomBytes(32));
+	const key = readFileKey();
+	if (!key) return loadFromFileTier();
+	let inKeyring = stored?.equals(key) ?? false;
+	if (!inKeyring) {
 		try {
 			keyring.setPassword(key.toString("base64"));
 			inKeyring = true;
@@ -253,8 +257,6 @@ export function loadMasterKey(): Buffer {
 			// Keyring write failed: stay on file.
 		}
 	}
-	writeFileKey(key);
-	key = readFileKey() ?? key;
 	if (inKeyring) writeFileSync(keyringMarkerPath(), "");
 	cachedKey = key;
 	cachedTier = inKeyring ? tierForPlatform() : "file";

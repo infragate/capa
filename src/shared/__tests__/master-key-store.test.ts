@@ -26,7 +26,9 @@ const platformTier =
 			: "libsecret";
 
 /** In-memory stand-in for @napi-rs/keyring so tests never touch the OS store. */
-function fakeKeyring(opts: { failWrites?: boolean } = {}) {
+function fakeKeyring(
+	opts: { failWrites?: boolean; onRead?: () => void } = {},
+) {
 	const store = new Map<string, string>();
 	const stats = { reads: 0 };
 	const Entry = class {
@@ -36,6 +38,7 @@ function fakeKeyring(opts: { failWrites?: boolean } = {}) {
 		) {}
 		getPassword() {
 			stats.reads++;
+			opts.onRead?.();
 			return store.get(`${this.service}/${this.account}`) ?? null;
 		}
 		setPassword(password: string) {
@@ -157,6 +160,26 @@ describe("master-key-store", () => {
 			expect(peekSecretStorageTier()).toBe("file");
 			expect(Buffer.compare(getMasterKey(), seeded)).toBe(0);
 			expect(getSecretStorageTier()).toBe("file");
+		});
+
+		it("stores the key that won master.key when another process races", () => {
+			// Another process creates master.key right after this one checked.
+			const dir = join(home, ".capa");
+			const other = Buffer.alloc(32, 7);
+			const { store, loader } = fakeKeyring({
+				onRead: () => {
+					mkdirSync(dir, { recursive: true });
+					if (!existsSync(join(dir, "master.key"))) {
+						writeFileSync(join(dir, "master.key"), other);
+					}
+				},
+			});
+			setKeyringModuleLoaderForTests(loader);
+
+			const key = getMasterKey();
+			const file = readFileSync(join(dir, "master.key"));
+			expect(Buffer.compare(key, file)).toBe(0);
+			expect(store.get("capa/master-key")).toBe(file.toString("base64"));
 		});
 
 		it("falls back to the file tier when the addon can't load", () => {
