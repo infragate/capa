@@ -127,8 +127,9 @@ function matcherWithinPrefix(userMatcher: string, prefix: string): boolean {
 	// Ignore anchors and a wrapping group (`^mcp__github__.*$`,
 	// `(?:mcp__github__.*)`); anything with other groups falls back to the union.
 	const unwrap = (s: string) => {
-		const inner = /^\((?:\?:)?([^()]*)\)$/.exec(s);
-		return (inner ? inner[1]! : s).replace(/^\^/, "").replace(/\$$/, "");
+		const bare = s.replace(/^\^/, "").replace(/\$$/, "");
+		const inner = /^\((?:\?:)?([^()]*)\)$/.exec(bare);
+		return inner ? inner[1]!.replace(/^\^/, "").replace(/\$$/, "") : bare;
 	};
 	const parts = unwrap(userMatcher).split("|").map(unwrap);
 	if (parts.some((p) => /[()]/.test(p))) return false;
