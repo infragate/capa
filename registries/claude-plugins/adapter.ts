@@ -16,9 +16,8 @@
  * stopped matching when the directory moved to /marketplace/plugins.
  *
  * Install snippets use `type: 'github'` with `def: { repo, ref? }`, where
- * `repo` uses capa's combined form: typically `owner/repo@plugin-name`
- * (recursive search by basename), falling back to `owner/repo::path` when
- * the source path's leaf doesn't match the plugin id. Sources that aren't
+ * `repo` is `owner/repo::path` when the marketplace declares a path (the
+ * exact directory, not a search by basename). Sources that aren't
  * on GitHub fall back to a `type: 'inline'` snippet that capa skips.
  */
 
@@ -73,6 +72,8 @@ const UA =
 const MARKETPLACE_REPO = 'anthropics/claude-plugins-official';
 const MARKETPLACE_JSON_URL = `https://raw.githubusercontent.com/${MARKETPLACE_REPO}/main/.claude-plugin/marketplace.json`;
 const MARKETPLACE_CACHE_TTL_MS = 10 * 60 * 1000;
+// Same allowlist as capa's capability ids: no spaces or shell metacharacters.
+const PLUGIN_NAME_RE = /^[a-z0-9][a-z0-9._-]{0,62}$/i;
 
 /* ---- HTTP helpers ---- */
 
@@ -212,7 +213,9 @@ async function loadMarketplace(): Promise<MarketplaceCache | null> {
     const byName = new Map<string, MarketplacePlugin>();
     for (const p of list) {
       const name = typeof p?.name === 'string' ? p.name : undefined;
-      if (!name) continue;
+      // The name becomes the item id and the `claude plugin install` argument,
+      // so anything beyond a plain identifier is dropped.
+      if (!name || !PLUGIN_NAME_RE.test(name)) continue;
       byName.set(name, {
         name,
         description: typeof p.description === 'string' ? p.description : undefined,
@@ -369,20 +372,34 @@ function installCommand(p: MarketplacePlugin): string {
   return `claude plugin install ${p.name}@${DEFAULT_MARKETPLACE}`;
 }
 
+/**
+ * Marketplace strings are third-party text: collapse whitespace and
+ * backslash-escape every ASCII punctuation char so markdown and raw HTML
+ * render as plain text.
+ */
+function mdText(s: string): string {
+  return s.replace(/\s+/g, ' ').trim().replace(/[!-/:-@[-`{-~]/g, '\\$&');
+}
+
+/** `[text](url)` for a plain https URL, escaped plain text otherwise. */
+function mdLink(text: string, url: string): string {
+  return /^https:\/\/[^\s<>()"'`\\]+$/.test(url) ? `[${mdText(text)}](${url})` : mdText(text);
+}
+
 /** Markdown preview shown in the registry UI. */
 function buildPreview(p: MarketplacePlugin, resolved: ResolvedSource | null): string {
-  const parts: string[] = [`# ${titleFor(p)}`, ''];
-  if (p.description) parts.push(p.description, '');
+  const parts: string[] = [`# ${mdText(titleFor(p))}`, ''];
+  if (p.description) parts.push(mdText(p.description), '');
 
   const meta: string[] = [];
-  if (p.author?.name) meta.push(`**Author:** ${p.author.name}`);
-  if (p.category) meta.push(`**Category:** ${p.category}`);
+  if (typeof p.author?.name === 'string') meta.push(`**Author:** ${mdText(p.author.name)}`);
+  if (p.category) meta.push(`**Category:** ${mdText(p.category)}`);
   meta.push(`**Marketplace:** \`${DEFAULT_MARKETPLACE}\``);
-  if (p.homepage) meta.push(`**Homepage:** ${p.homepage}`);
+  if (p.homepage) meta.push(`**Homepage:** ${mdLink(p.homepage, p.homepage)}`);
   if (resolved) {
     const c = resolved.coords;
     meta.push(
-      `**Source:** [${c.ownerRepo}${c.subpath ? `/${c.subpath}` : ''}](${githubBrowseUrl(c)})`,
+      `**Source:** ${mdLink(`${c.ownerRepo}${c.subpath ? `/${c.subpath}` : ''}`, githubBrowseUrl(c))}`,
     );
   }
   parts.push(meta.join('  \n'), '');
@@ -397,10 +414,8 @@ function buildPreview(p: MarketplacePlugin, resolved: ResolvedSource | null): st
  * Build the install snippet capa will paste into `capabilities.yaml`.
  *
  *   1. `type: 'github'` with `def: { repo, version?, ref? }` when the source
- *      resolves to GitHub. The repo string uses capa's combined form:
- *      `owner/repo@plugin-name` for a recursive search on the plugin's
- *      directory basename, or `owner/repo::path/to/plugin` when that
- *      basename doesn't match the plugin id.
+ *      resolves to GitHub. The repo string is `owner/repo::path/to/plugin`
+ *      when the marketplace declares a path, plain `owner/repo` otherwise.
  *
  *   2. `type: 'inline'` when it doesn't. capa skips inline plugin entries
  *      silently; the slash command stays in `def.command` for the UI.
@@ -411,12 +426,10 @@ function buildInstallSnippet(
 ): Record<string, unknown> {
   if (resolved) {
     const { ownerRepo, subpath, sha, ref } = resolved.coords;
-    let repoString = ownerRepo;
-    if (subpath) {
-      const leaf = subpath.replace(/\/+$/, '').split('/').pop() ?? subpath;
-      repoString = leaf === p.name ? `${ownerRepo}@${p.name}` : `${ownerRepo}::${subpath}`;
-    }
-    const def: Record<string, unknown> = { repo: repoString };
+    // The declared path is exact; `@name` would search the whole repo and
+    // could pick a same-named directory elsewhere.
+    const path = subpath?.replace(/\/+$/, '');
+    const def: Record<string, unknown> = { repo: path ? `${ownerRepo}::${path}` : ownerRepo };
     if (sha) def.ref = sha;
     else if (ref) def.version = ref;
     return { id: p.name, type: 'github', def };
