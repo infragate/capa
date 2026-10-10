@@ -9,7 +9,7 @@ import {
   writeFileSync,
   cpSync,
 } from 'fs';
-import { join, resolve } from 'path';
+import { basename, dirname, join, resolve } from 'path';
 import type { Capabilities, Skill, MCPServer, SourcePlugin, ResolvedPluginInfo, OAuth2Config, SubAgent } from '../../types/capabilities';
 import type { UnifiedPluginManifest } from '../../types/plugin';
 import type { Rule } from '../../types/rules';
@@ -496,10 +496,23 @@ export async function resolvePlugins(
       }
     }
 
-    pluginInstallId = getPluginInstallId(pluginRef.id ?? manifest.name);
+    // A name like "!!!" maps to an empty id, which would point the stable copy
+    // at the shared plugins dir itself. Fall back to the source dir name.
+    const installId =
+      getPluginInstallId(pluginRef.id ?? manifest.name) ||
+      getPluginInstallId(basename(resolvedSubpath || repoPath));
+    if (!installId) {
+      throw new Error(
+        `Cannot derive a plugin id from "${pluginRef.id ?? manifest.name}"; set "id" on the plugin entry.`,
+      );
+    }
+    pluginInstallId = installId;
     currentPluginIds.add(pluginInstallId);
 
     const pluginStablePath = resolve(join(pluginsBase, pluginInstallId));
+    if (dirname(pluginStablePath) !== resolve(pluginsBase)) {
+      throw new Error(`Refusing to use ${pluginStablePath} as a plugin copy: not a direct child of ${pluginsBase}`);
+    }
     // Serialize resolvers of this plugin across processes (CLI install, the
     // server's background re-resolve, wrap). Everything below that reads the
     // stable copy is synchronous and runs while the lock is held.
@@ -657,11 +670,21 @@ export async function resolvePlugins(
         const pluginDataPath = resolve(join(pluginDataBase, pluginInstallId));
         try {
           resolvedDef = resolveAgentPluginsServerDef(serverDef, pluginStablePath, pluginDataPath);
+          if (resolvedDef.cmd && resolvedDef.cwd) {
+            // A `${PLUGIN_DATA}/…` cwd is already contained in the data dir,
+            // so creating it creates the data dir too.
+            const inData = serverDef.cwd?.startsWith('${PLUGIN_DATA}');
+            mkdirSync(inData ? resolvedDef.cwd : pluginDataPath, { recursive: true });
+            if (!inData && !existsSync(resolvedDef.cwd)) {
+              warnings.push(
+                `Plugin "${manifest.name}": server "${serverKey}" cwd ${resolvedDef.cwd} does not exist in the plugin.`,
+              );
+            }
+          }
         } catch (err) {
           warnings.push(`Plugin "${manifest.name}": server "${serverKey}" skipped: ${(err as Error).message}`);
           continue;
         }
-        if (resolvedDef.cmd) mkdirSync(pluginDataPath, { recursive: true });
       } else {
         resolvedDef = { ...resolvePluginServerDef(serverDef, pluginStablePath), cwd: pluginStablePath };
       }

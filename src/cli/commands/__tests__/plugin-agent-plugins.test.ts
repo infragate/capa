@@ -100,6 +100,52 @@ describe('resolvePlugins with an Agent Plugins package', () => {
     ]);
   });
 
+  it('creates a ${PLUGIN_DATA} subfolder cwd and warns on a missing plugin cwd', async () => {
+    writeFileSync(
+      join(snapshotDir, 'mcp.json'),
+      JSON.stringify({
+        $schema: MCP_SCHEMA,
+        mcpServers: {
+          worker: { type: 'stdio', command: 'node', cwd: '${PLUGIN_DATA}/work' },
+          nodir: { type: 'stdio', command: 'node', cwd: './missing' },
+        },
+      }),
+    );
+    const result = await run();
+    expect(existsSync(resolve(dataBase, 'reports-plugin', 'work'))).toBe(true);
+    expect(result.mergedCapabilities.servers.map((s) => s.id)).toEqual(['worker', 'nodir']);
+    expect(result.warnings).toEqual([
+      expect.stringContaining('server "nodir" cwd'),
+    ]);
+  });
+
+  it('skips only the server when its data dir cannot be created', async () => {
+    writeFileSync(
+      join(snapshotDir, 'mcp.json'),
+      JSON.stringify({ $schema: MCP_SCHEMA, mcpServers: { worker: { type: 'stdio', command: 'node' } } }),
+    );
+    writeFileSync(dataBase, 'a file, not a dir');
+    const result = await run();
+    expect(result.mergedCapabilities.resolvedPlugins?.[0]?.id).toBe('reports-plugin');
+    expect(result.mergedCapabilities.skills.map((s) => s.id)).toEqual(['summarize']);
+    expect(result.mergedCapabilities.servers).toEqual([]);
+    expect(result.warnings).toEqual([expect.stringContaining('server "worker" skipped')]);
+  });
+
+  it('never swaps the shared plugins dir for a name that maps to an empty id', async () => {
+    writeFileSync(
+      join(snapshotDir, 'plugin.json'),
+      JSON.stringify({ $schema: MANIFEST_SCHEMA, name: '!!!' }),
+    );
+    mkdirSync(pluginsBase, { recursive: true });
+    writeFileSync(join(pluginsBase, 'keep.txt'), 'other plugin state');
+    const result = await run();
+    expect(existsSync(join(pluginsBase, 'keep.txt'))).toBe(true);
+    expect(result.mergedCapabilities.resolvedPlugins?.[0]?.id).toBe('reports-plugin');
+    expect(existsSync(join(pluginsBase, 'reports-plugin', 'plugin.json'))).toBe(true);
+    expect(result.mergedCapabilities.skills.map((s) => s.id)).toEqual(['summarize']);
+  });
+
   it('keeps skills when mcp.json is broken', async () => {
     writeFileSync(join(snapshotDir, 'mcp.json'), '{ broken');
     const result = await run();
