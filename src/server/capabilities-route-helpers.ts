@@ -4,6 +4,7 @@ import { parseCapabilitiesFile } from "../shared/capabilities";
 import { detectCapabilitiesFile } from "../shared/paths";
 import type { RegistryManager } from "../shared/registries/manager";
 import type { Capabilities, CapabilitiesFormat } from "../types/capabilities";
+import { clientErrorMessage } from "./http-error";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
@@ -60,6 +61,24 @@ export async function resolveCapabilitiesFile(projectPath: string): Promise<{
 	return detectCapabilitiesFile(projectPath);
 }
 
+/**
+ * Drop the project's absolute directory from an error message (e.g. a read
+ * error naming the file), so a client only ever sees `capabilities.yaml`.
+ */
+export function redactProjectPath(message: string, projectPath: string): string {
+	let out = message;
+	for (const dir of new Set([projectPath, projectPath.replaceAll("\\", "/")])) {
+		out = out
+			.split(`${dir}\\`)
+			.join("")
+			.split(`${dir}/`)
+			.join("")
+			.split(dir)
+			.join(".");
+	}
+	return out;
+}
+
 export async function loadProjectFile(
 	db: CapaDatabase,
 	projectId: string,
@@ -77,17 +96,33 @@ export async function loadProjectFile(
 	if (!project) {
 		return { ok: false, response: jsonError("Project not found", 404) };
 	}
-	const file = await resolveCapabilitiesFile(project.path);
-	if (!file) {
+	let file: Awaited<ReturnType<typeof resolveCapabilitiesFile>>;
+	let caps: Capabilities;
+	try {
+		// Inside the try: having both capabilities.yaml and .json throws here.
+		file = await resolveCapabilitiesFile(project.path);
+		if (!file) {
+			return {
+				ok: false,
+				response: jsonError(
+					"No capabilities.yaml or capabilities.json found in project",
+					404,
+				),
+			};
+		}
+		caps = await parseCapabilitiesFile(file.path, file.format);
+	} catch (err) {
 		return {
 			ok: false,
 			response: jsonError(
-				"No capabilities.yaml or capabilities.json found in project",
-				404,
+				redactProjectPath(
+					clientErrorMessage(err, "Invalid capabilities file"),
+					project.path,
+				),
+				400,
 			),
 		};
 	}
-	const caps = await parseCapabilitiesFile(file.path, file.format);
 	return {
 		ok: true,
 		projectPath: project.path,

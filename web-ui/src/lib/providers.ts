@@ -3,14 +3,14 @@
 // Node-specific imports (homedir, fs, xdg-basedir) that prevent that module from
 // running in the browser.
 //
-// Keep this in sync when adding a new provider to the registry. See issue #G5.
+// Keep this in sync when adding a new provider to the registry (a test enforces
+// that the keys match the registry ids). See issue #G5.
 
 export const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   amp: 'Amp',
   antigravity: 'Antigravity',
   augment: 'Augment',
   'claude-code': 'Claude Code',
-  claude: 'Claude Code',
   openclaw: 'OpenClaw',
   cline: 'Cline',
   codebuddy: 'CodeBuddy',
@@ -22,7 +22,6 @@ export const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   droid: 'Droid',
   'gemini-cli': 'Gemini CLI',
   'github-copilot': 'GitHub Copilot',
-  copilot: 'GitHub Copilot',
   goose: 'Goose',
   junie: 'Junie',
   'iflow-cli': 'iFlow CLI',
@@ -49,11 +48,18 @@ export const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   adal: 'AdaL',
 };
 
+/** Plugin-manifest provider ids that map onto a registry id. */
+const PROVIDER_ALIASES: Record<string, string> = {
+  claude: 'claude-code',
+  copilot: 'github-copilot',
+};
+
 /**
  * Resolve a provider id to its human-readable display name.
  * Falls back to the raw id if unknown so the UI never shows an empty string.
  */
 export function getProviderDisplayName(id: string | null | undefined): string {
   if (!id) return '';
-  return PROVIDER_DISPLAY_NAMES[id.toLowerCase()] ?? id;
+  const key = id.toLowerCase();
+  return PROVIDER_DISPLAY_NAMES[PROVIDER_ALIASES[key] ?? key] ?? id;
 }

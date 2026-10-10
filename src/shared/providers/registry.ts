@@ -2,6 +2,7 @@
 // Each provider's data lives in entries/*; this module assembles them.
 
 import type { ProviderIntegration } from "../../types/providers";
+import { antigravity } from "./entries/antigravity";
 import { claudeCode } from "./entries/claude-code";
 import { codex } from "./entries/codex";
 import { cursor } from "./entries/cursor";
@@ -17,6 +18,7 @@ import { skillsOnlyProviders } from "./entries/skills-only";
  * All other entries are skill-path only for now.
  */
 export const providers: Record<string, ProviderIntegration> = {
+	antigravity,
 	"claude-code": claudeCode,
 	codex,
 	cursor,

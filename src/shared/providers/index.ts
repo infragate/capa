@@ -21,7 +21,9 @@ export interface WrapTarget {
  * Get a provider by id. Returns undefined for unknown providers.
  */
 export function getProvider(id: string): ProviderIntegration | undefined {
-	return providers[id.toLowerCase()];
+	const key = id.toLowerCase();
+	// Own entries only: `constructor`, `__proto__` etc. are not providers.
+	return Object.hasOwn(providers, key) ? providers[key] : undefined;
 }
 
 /**

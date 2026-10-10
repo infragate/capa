@@ -474,6 +474,7 @@ Per provider, hook entries land in:
 | `cursor` | `.cursor/hooks.json` (standalone) | `{ version: 1, hooks: { ... } }` envelope | `name: capa:<id>` |
 | `codex` | `.codex/config.toml` → `[hooks]` | TOML's nested array-of-tables (`[[hooks.<Event>]] matcher = "..."` + `[[hooks.<Event>.hooks]] type = "command" command = "..."`) — same matcher-grouped envelope as Claude | `name: capa:<id>` (Codex's serde deserialiser ignores unknown fields, so the tag round-trips safely) |
 | `gemini-cli` | `.gemini/settings.json` → `hooks` | JSON map (claude-style) | `name: capa:<id>` |
+| `antigravity` | `.agents/hooks.json` (standalone) | JSON map keyed by hook name → `{ <Event>: [...] }`; tool events use `{ matcher, hooks }` groups. Command hooks only. | top-level key `capa:<id>` |
 
 Providers without a hooks integration (most of the rest of the registry) emit a warning and skip — `capa install` never fails on unsupported hooks. `capa clean` and `capa install` (via the `prune-orphan-hooks` task) keep their own entries in sync without disturbing entries you authored by hand.
 
@@ -481,7 +482,7 @@ Providers without a hooks integration (most of the rest of the registry) emit a 
 
 Remote plugin packages that capa **unpacks** into the same primitives as everything else: skills, servers/tools, rules, sub-agents, and hooks. Capa does **not** install plugins as opaque units.
 
-Supported manifests today: **Claude** (`.claude-plugin/`) and **Cursor** (`.cursor-plugin/`). If no manifest is found, discover-mode still scans `skills/`, `commands/`, `agents/`, `hooks/`, `rules/`, and `.mcp.json`. Unsupported artifacts (LSP, themes, monitors, …) produce install warnings and are skipped.
+Supported manifests today: **Claude** (`.claude-plugin/`), **Cursor** (`.cursor-plugin/`), and **[Agent Plugins](https://agent-plugins.org/specification)** (root `plugin.json` with `"$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"`), tried in that order. An Agent Plugins package contributes only `skills/` and `mcp.json` servers (`stdio` and `streamable-http`; `sse` is skipped). Manifest or `mcp.json` problems are install warnings, and a broken `mcp.json` never blocks the skills. `${PLUGIN_ROOT}` / `${PLUGIN_DATA}` expand in `args`, `env` values and `cwd`; `${PLUGIN_DATA}` is `~/.capa/plugin-data/<projectId>/<pluginId>/` and survives plugin updates. If no manifest is found, discover-mode still scans `skills/`, `commands/`, `agents/`, `hooks/`, `rules/`, and `.mcp.json`. Unsupported artifacts (LSP, themes, monitors, …) produce install warnings and are skipped.
 
 Plugin tools and skills are NOT auto-exposed to the agent — declare the tools you want under the top-level `tools` section and the skills you want under `skills` with `type: plugin`. Plugin-sourced rules / hooks / sub-agents flow through the normal install tasks (shown locked/badged in the Web UI).
 

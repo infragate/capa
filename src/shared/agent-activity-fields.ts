@@ -40,7 +40,8 @@ export function toolNameFrom(obj: Record<string, unknown>): string | null {
 		stringField(obj, "tool_name") ||
 		stringField(obj, "toolName") ||
 		stringField(obj, "name") ||
-		nestedString(obj, ["tool", "name"])
+		nestedString(obj, ["tool", "name"]) ||
+		nestedString(obj, ["toolCall", "name"])
 	);
 }
 
@@ -59,7 +60,8 @@ export function shellCommandFrom(obj: Record<string, unknown>): string | null {
 		stringField(obj, "cmd") ||
 		nestedString(obj, ["tool_input", "command"]) ||
 		nestedString(obj, ["input", "command"]) ||
-		nestedString(obj, ["args", "command"])
+		nestedString(obj, ["args", "command"]) ||
+		nestedString(obj, ["toolCall", "args", "CommandLine"])
 	);
 }
 
@@ -72,6 +74,11 @@ export function extractPath(obj: Record<string, unknown>): string | null {
 		nestedString(obj, ["tool_input", "path"]) ||
 		nestedString(obj, ["input", "file_path"]) ||
 		nestedString(obj, ["input", "path"]) ||
+		// Antigravity: write_to_file / replace_file_content use TargetFile, view_file AbsolutePath.
+		nestedString(obj, ["toolCall", "args", "TargetFile"]) ||
+		nestedString(obj, ["toolCall", "args", "AbsolutePath"]) ||
+		nestedString(obj, ["toolCall", "args", "file_path"]) ||
+		nestedString(obj, ["toolCall", "args", "path"]) ||
 		null
 	);
 }

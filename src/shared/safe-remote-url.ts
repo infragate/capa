@@ -10,7 +10,11 @@ const MAX_BODY_BYTES = 2 * 1024 * 1024; // 2 MiB
  * private, or otherwise non-public destinations (SSRF guard).
  */
 export function isBlockedHostnameOrIp(host: string): boolean {
-	const h = host.toLowerCase().replace(/^\[|\]$/g, "");
+	// A trailing dot names the same host ("metadata.google.internal.").
+	const h = host
+		.toLowerCase()
+		.replace(/^\[|\]$/g, "")
+		.replace(/\.$/, "");
 	if (
 		h === "localhost" ||
 		h.endsWith(".localhost") ||
@@ -64,6 +68,13 @@ function isBlockedIpv6(ip: string): boolean {
 	// IPv4-mapped ::ffff:x.x.x.x
 	const v4mapped = normalized.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
 	if (v4mapped) return isBlockedIpv4(v4mapped[1]);
+	// WHATWG URL serializes the mapped form as hex (`::ffff:a9fe:a9fe`).
+	const v4hex = normalized.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+	if (v4hex) {
+		const hi = parseInt(v4hex[1], 16);
+		const lo = parseInt(v4hex[2], 16);
+		return isBlockedIpv4(`${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`);
+	}
 	return false;
 }
 

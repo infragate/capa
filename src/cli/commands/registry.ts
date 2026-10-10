@@ -404,6 +404,12 @@ export async function registryRefreshCommand(
       error(`Registry "${slug}" not found.`);
       process.exit(1);
     }
+    // Refreshing downloads and executes the latest adapter; never do that for
+    // a registry the user disabled.
+    if (!existing.enabled) {
+      error(`Registry "${slug}" is disabled. Enable it first (capa registry enable ${slug}) to refresh it.`);
+      process.exit(1);
+    }
 
     header(`Refresh registry "${slug}"`);
     const tasks: Task<RefreshCtx>[] = [
@@ -440,7 +446,7 @@ export async function registryRefreshCommand(
             type: existing.type,
             source: existing.source,
             status: 'installed',
-            enabled: true,
+            // No `enabled`: upsert keeps the current value.
             lastError: null,
             resolvedRef: ctx.resolvedRef,
             installedAt: Date.now(),

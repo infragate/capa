@@ -323,6 +323,7 @@
     "copy": "Copy",
     "copied": "Copied",
     "via": "via",
+    "subagentTitle": "Ran in sub-agent {{id}}",
     "followLatest": "Follow latest",
     "followingLatest": "Following",
     "closeRun": "Close run",
@@ -494,7 +495,10 @@
   },
   "providers": {
     "title": "Providers",
-    "subtitle": "Configured AI coding assistant providers"
+    "subtitle": "Configured AI coding assistant providers",
+    "add": "Add provider",
+    "remove": "Remove {{provider}}",
+    "empty": "No providers configured. Add one to choose which AI coding assistants capa installs into."
   },
   "options": {
     "title": "Options",

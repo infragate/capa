@@ -26,7 +26,15 @@ Capa translates canonical events to Claude's hook event names:
 `sessionEnd → SessionEnd`, `stop → Stop`, `subagentStop → SubagentStop`,
 `preCompact → PreCompact`. `beforeShell` / `afterShell` re-use
 `PreToolUse` / `PostToolUse` with an automatic `matcher: Bash` so the
-hook only fires for shell tool invocations.
+hook only fires for shell tool invocations. `afterFileEdit` uses
+`matcher: Edit|MultiEdit|Write`, and `beforeMcpCall` / `afterMcpCall` use
+`matcher: mcp__.*`. Claude treats a bare word matcher as an exact tool
+name, so the MCP family needs the regex form.
+
+For agent activity, Claude loads skills through its `Skill` tool, so capa
+records those calls as skill spans. Events fired inside a sub-agent carry
+`agent_id` / `agent_type`, which capa stores so the Activity view can mark
+which spans a sub-agent ran.
 
 ## Sources
 

@@ -231,15 +231,33 @@ export function skillFolderFromSkillMdPath(path: string): string | null {
   return folder || null;
 }
 
-/** Unique skill folder names inferred from touched `SKILL.md` files in a run. */
+/**
+ * Unique skills used in a run: touched `SKILL.md` files (Cursor-style reads),
+ * `skill` spans (Claude `Skill` tool), and `/skill` prompts typed by the user.
+ * A `/name` prompt only counts when `name` is a known skill, so built-in
+ * commands (`/clear`) and pasted paths (`/Users/...`) stay out.
+ */
 export function collectRunSkillFolders(
   events: ToolCallRecord[],
-  options?: { realProjectPath?: string | null },
+  options?: {
+    realProjectPath?: string | null;
+    isKnownSkill?: (name: string) => boolean;
+  },
 ): string[] {
   const folders = new Set<string>();
   for (const entry of collectRunFileChanges(events, options)) {
     const folder = skillFolderFromSkillMdPath(entry.path);
     if (folder) folders.add(folder);
+  }
+  const slashNames: string[] = [];
+  for (const ev of events) {
+    const name = ev.tool_name?.trim();
+    if (ev.kind === 'skill' && ev.status !== 'error' && name && name !== 'skill') folders.add(name);
+    const slash = ev.kind === 'prompt' ? /^\/([\w:.-]+)(?:\s|$)/.exec(name ?? '') : null;
+    if (slash) slashNames.push(slash[1]!);
+  }
+  for (const name of slashNames) {
+    if (folders.has(name) || options?.isKnownSkill?.(name)) folders.add(name);
   }
   return [...folders].sort((a, b) => a.localeCompare(b));
 }

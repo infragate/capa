@@ -18,8 +18,16 @@ export const LFS_SKIP_ARGS = [
  * never LFS-backed binary blobs.
  */
 export function gitCommandArgs(args: string[]): string[] {
-	return [...LFS_SKIP_ARGS, ...args];
+	return [...LFS_SKIP_ARGS, ...LONG_PATHS_ARGS, ...args];
 }
+
+/**
+ * Plugin repos nest deeply (e.g. `plugins/<name>/skills/<skill>/references/…`),
+ * and under ~/.capa the checkout passes Windows' 260-char limit, so git fails
+ * with "Filename too long" unless the user enabled long paths themselves.
+ * Ignored on other platforms.
+ */
+export const LONG_PATHS_ARGS = ["-c", "core.longpaths=true"];
 
 /**
  * Environment that forces git to run non-interactively. Without these, cloning a

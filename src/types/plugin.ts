@@ -4,9 +4,10 @@ import type { OAuth2Config, ServerToolExposure } from './capabilities';
 
 /**
  * @see ProviderIntegration.pluginProviderId — registry id may differ from this manifest id
- * (e.g. registry id `claude-code` maps to manifest id `claude`).
+ * (e.g. registry id `claude-code` maps to manifest id `claude`). `agent-plugins` is the
+ * vendor-neutral root `plugin.json` format (agent-plugins.org), not tied to a provider.
  */
-export type PluginProvider = 'cursor' | 'claude';
+export type PluginProvider = 'cursor' | 'claude' | 'agent-plugins';
 
 /**
  * Per-server configuration for a plugin entry in capabilities.yaml.
@@ -51,9 +52,9 @@ export interface PluginDefinition {
    * Repository reference. Three accepted shapes (mirrors skills):
    *   - `owner/repo`               — plugin at the repo root
    *   - `owner/repo@plugin-name`   — recursive search; capa walks the cloned
-   *     snapshot for any directory containing `.claude-plugin/plugin.json` or
-   *     `.cursor-plugin/plugin.json` whose containing-directory basename or
-   *     manifest `name` field equals `plugin-name`. Single segment, no slashes.
+   *     snapshot for any directory containing `.claude-plugin/plugin.json`,
+   *     `.cursor-plugin/plugin.json` or an Agent Plugins `plugin.json` whose
+   *     containing-directory basename or manifest `name` field equals `plugin-name`. Single segment, no slashes.
    *   - `owner/repo::sub/path`     — exact subpath inside the repo
    *
    * GitLab nested groups are supported (`group/subgroup/project[...]`).
@@ -201,6 +202,8 @@ export interface NormalizedPluginMCPServerDef {
   cmd?: string;
   args?: string[];
   env?: Record<string, string>;
+  /** Subprocess working directory as declared (Agent Plugins `mcp.json` only; unexpanded). */
+  cwd?: string;
   /** Remote: HTTP MCP server URL */
   url?: string;
   headers?: Record<string, string>;
@@ -228,4 +231,6 @@ export interface UnifiedPluginManifest {
    * (e.g. `lsp`, `monitors`, `themes`). Surfaced as install warnings.
    */
   skippedArtifacts?: string[];
+  /** Non-fatal manifest / MCP config problems, surfaced as install warnings. */
+  warnings?: string[];
 }

@@ -1,5 +1,14 @@
 import { randomBytes } from "crypto";
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import {
+	chmodSync,
+	existsSync,
+	linkSync,
+	mkdirSync,
+	readFileSync,
+	renameSync,
+	unlinkSync,
+	writeFileSync,
+} from "fs";
 import { createRequire } from "module";
 import { join } from "path";
 import { getCapaDir } from "./config";
@@ -32,17 +41,9 @@ export function peekSecretStorageTier(): SecretStorageTier {
 	if (cachedTier) return cachedTier;
 	if (forceFileTier()) return "file";
 
+	if (readFileKey() !== "missing") return fileKeyTier();
 	const keyring = tryOpenKeyring();
-	if (keyring) {
-		const stored = keyring.getPassword();
-		if (stored) {
-			const buf = Buffer.from(stored, "base64");
-			if (buf.length === 32) return tierForPlatform();
-		}
-	}
-
-	if (readFileKey()) return "file";
-	return "file";
+	return keyring && keyringKey(keyring) ? tierForPlatform() : "file";
 }
 
 export function getMasterKey(): Buffer {
@@ -57,6 +58,17 @@ export function preferKeyringMasterKey(): Promise<void> {
 
 function masterKeyPath(): string {
 	return join(getCapaDir(), "master.key");
+}
+
+/** Present when the file key is the rollback copy of a key in the OS keyring. */
+function keyringMarkerPath(): string {
+	return join(getCapaDir(), "master.key.keyring");
+}
+
+function fileKeyTier(): SecretStorageTier {
+	return existsSync(keyringMarkerPath()) && !forceFileTier() && keyringAllowed()
+		? tierForPlatform()
+		: "file";
 }
 
 function errCode(err: unknown): string | undefined {
@@ -77,27 +89,79 @@ function tierForPlatform(): Exclude<SecretStorageTier, "file"> {
 }
 
 type KeyringEntry = {
-	getPassword: () => string | null;
+	/** The stored value; null when there is none, undefined when the read failed. */
+	getPassword: () => string | null | undefined;
 	setPassword: (password: string) => void;
 };
 
-function tryOpenKeyring(): KeyringEntry | null {
-	if (forceFileTier()) return null;
+type KeyringModule = {
+	Entry: new (
+		service: string,
+		account: string,
+		options?: { linux?: { store?: "secret-service" | "keyutils" } },
+	) => {
+		getPassword: () => string | null;
+		setPassword: (password: string) => void;
+	};
+};
+
+/**
+ * macOS gate: compiled macOS binaries stay on the file tier until releases are
+ * code signed, since an unsigned (or re-signed per upgrade) binary can trigger
+ * Keychain access prompts. Flip to true once signing is in place.
+ */
+const MACOS_COMPILED_KEYCHAIN = false;
+
+/** True when running from a `bun build --compile` binary (embedded bunfs). */
+function isCompiledBinary(): boolean {
+	return (
+		import.meta.path.includes("$bunfs") || import.meta.path.includes("~BUN")
+	);
+}
+
+export function keyringAllowed(
+	platform: NodeJS.Platform = process.platform,
+	compiled: boolean = isCompiledBinary(),
+): boolean {
+	return platform !== "darwin" || !compiled || MACOS_COMPILED_KEYCHAIN;
+}
+
+function loadKeyringModule(): KeyringModule {
 	try {
-		const require = createRequire(import.meta.url);
-		const mod = require("@napi-rs/keyring") as {
-			Entry: new (service: string, account: string) => {
-				getPassword: () => string;
-				setPassword: (password: string) => void;
-			};
-		};
-		const entry = new mod.Entry(KEYRING_SERVICE, KEYRING_ACCOUNT);
+		// Generated per build target by scripts/generate-keyring-addon.ts so the
+		// compiled binary embeds the native addon. Absent when running from source.
+		return require("./keyring-addon").default;
+	} catch {
+		return createRequire(import.meta.url)("@napi-rs/keyring");
+	}
+}
+
+let keyringModuleLoader: () => KeyringModule = loadKeyringModule;
+
+/** Swap the keyring module (pass null to restore the real one). */
+export function setKeyringModuleLoaderForTests(
+	loader: (() => KeyringModule) | null,
+): void {
+	keyringModuleLoader = loader ?? loadKeyringModule;
+}
+
+
+function tryOpenKeyring(): KeyringEntry | null {
+	if (forceFileTier() || !keyringAllowed()) return null;
+	try {
+		const mod = keyringModuleLoader();
+		// Linux: Secret Service only. The default falls back to the kernel
+		// keyring, which doesn't survive a reboot, so headless Linux uses the
+		// file tier instead of a backup that silently disappears.
+		const entry = new mod.Entry(KEYRING_SERVICE, KEYRING_ACCOUNT, {
+			linux: { store: "secret-service" },
+		});
 		return {
 			getPassword: () => {
 				try {
 					return entry.getPassword();
 				} catch {
-					return null;
+					return undefined;
 				}
 			},
 			setPassword: (password: string) => {
@@ -109,96 +173,170 @@ function tryOpenKeyring(): KeyringEntry | null {
 	}
 }
 
-function readFileKey(): Buffer | null {
+/** master.key's key, or whether the file is missing or holds something else. */
+function readFileKey(): Buffer | "missing" | "invalid" {
 	try {
 		const buf = readFileSync(masterKeyPath());
-		return buf.length === 32 ? buf : null;
+		return buf.length === 32 ? buf : "invalid";
 	} catch (err) {
 		if (errCode(err) !== "ENOENT") throw err;
-		return null;
+		return "missing";
 	}
 }
 
-function writeFileKey(key: Buffer): void {
+function invalidFileKeyError(): Error {
+	return new Error(
+		`${masterKeyPath()} is not a valid 32-byte key and can't be repaired from the OS keyring. ` +
+			"Restore it from a backup, or delete it to start over (secrets capa already stored will be unreadable).",
+	);
+}
+
+/**
+ * Re-read master.key. A process only ever uses the key that is on disk: the
+ * startup migration re-encrypts every secret under the key in use, so a key
+ * that isn't persisted would make them all unrecoverable.
+ */
+function settledFileKey(): Buffer {
+	const key = readFileKey();
+	if (!Buffer.isBuffer(key)) throw invalidFileKeyError();
+	return key;
+}
+
+/** Write key to a new 0600 temp file next to master.key; returns its path. */
+function writeTempKey(key: Buffer): string {
 	const dir = getCapaDir();
 	mkdirSync(dir, { recursive: true });
 	if (process.platform !== "win32") {
 		chmodSync(dir, 0o700);
 	}
-	const path = masterKeyPath();
+	const tmp = join(
+		dir,
+		`master.key.${process.pid}.${randomBytes(4).toString("hex")}.tmp`,
+	);
+	writeFileSync(tmp, key, { mode: 0o600, flag: "wx" });
+	return tmp;
+}
+
+function removeQuietly(path: string): void {
 	try {
-		writeFileSync(path, key, {
-			mode: 0o600,
-			flag: process.platform === "win32" ? "w" : "wx",
-		});
-		if (process.platform !== "win32") {
-			chmodSync(path, 0o600);
-		}
-	} catch (err) {
-		if (errCode(err) !== "EEXIST") throw err;
-		// Race: another process created the file — caller should re-read.
+		unlinkSync(path);
+	} catch {
+		// A stray temp file sits in the same 0700 dir as master.key.
 	}
 }
 
-function loadFromFileTier(): Buffer {
-	const existing = readFileKey();
-	if (existing) {
-		cachedKey = existing;
-		cachedTier = "file";
-		return existing;
+/**
+ * Create master.key holding key unless it already exists, then return what
+ * master.key holds. When processes initialize together the first one to
+ * create the file wins and every process uses its key. The file is linked in
+ * from a complete temp file so no reader ever sees a partial master.key.
+ */
+function createFileKey(key: Buffer): Buffer {
+	const path = masterKeyPath();
+	const tmp = writeTempKey(key);
+	try {
+		linkSync(tmp, path);
+	} catch (err) {
+		if (errCode(err) !== "EEXIST") {
+			// No hard links on this filesystem: plain create-new instead.
+			try {
+				writeFileSync(path, key, { mode: 0o600, flag: "wx" });
+			} catch (err2) {
+				if (errCode(err2) !== "EEXIST") throw err2;
+			}
+		}
+	} finally {
+		removeQuietly(tmp);
 	}
-	const key = randomBytes(32);
-	writeFileKey(key);
-	const written = readFileKey();
-	cachedKey = written ?? key;
+	return settledFileKey();
+}
+
+/**
+ * master.key exists but isn't a key (e.g. truncated by a crash or a full
+ * disk). Only a keyring install (marker present) has a copy to restore from;
+ * anything else fails closed rather than inventing a key, which would get the
+ * existing secrets re-encrypted under it.
+ */
+function repairFileKey(): Buffer {
+	const keyring = existsSync(keyringMarkerPath()) ? tryOpenKeyring() : null;
+	const stored = keyring ? keyringKey(keyring) : null;
+	if (!stored) throw invalidFileKeyError();
+	const tmp = writeTempKey(stored);
+	try {
+		renameSync(tmp, masterKeyPath());
+	} catch (err) {
+		removeQuietly(tmp);
+		throw err;
+	}
+	return settledFileKey();
+}
+
+function loadFromFileTier(): Buffer {
+	cachedKey = createFileKey(randomBytes(32));
 	cachedTier = "file";
 	return cachedKey;
 }
 
+/** The keyring's key; null when it holds none, undefined when the read failed. */
+function keyringKey(keyring: KeyringEntry): Buffer | null | undefined {
+	const stored = keyring.getPassword();
+	if (stored === undefined) return undefined;
+	if (!stored) return null;
+	const buf = Buffer.from(stored, "base64");
+	return buf.length === 32 ? buf : null;
+}
+
 /**
  * Load (or create) the 256-bit master key.
- * Prefers OS keyring when available; migrates ~/.capa/master.key into the
- * keyring when both are viable; falls back to the file tier otherwise.
+ *
+ * An existing ~/.capa/master.key is always the key in use: a keyring install
+ * keeps an identical file copy, so the keyring is never read when the file
+ * exists. Reading it can prompt (e.g. a locked GNOME keyring), and upgrades
+ * must not prompt or move where existing secrets' key lives.
+ *
+ * Only a new install (no file key) uses the keyring: it adopts a key already
+ * stored there or generates one, writes the file copy for rollback, and leaves
+ * a marker so later starts report the keyring tier without touching it.
  */
 export function loadMasterKey(): Buffer {
 	if (cachedKey && cachedKey.length === 32 && cachedTier) {
 		return cachedKey;
 	}
 
-	const keyring = tryOpenKeyring();
-	if (keyring) {
-		const tier = tierForPlatform();
-		const stored = keyring.getPassword();
-		if (stored) {
-			const buf = Buffer.from(stored, "base64");
-			if (buf.length === 32) {
-				cachedKey = buf;
-				cachedTier = tier;
-				return buf;
-			}
-		}
-
-		// Migrate existing file key, or generate a new one.
-		let key = readFileKey();
-		if (!key) {
-			key = randomBytes(32);
-			// Keep a file copy for documented fallback / rollback.
-			writeFileKey(key);
-			key = readFileKey() ?? key;
-		}
-
-		try {
-			keyring.setPassword(key.toString("base64"));
-			cachedKey = key;
-			cachedTier = tier;
-			return key;
-		} catch {
-			// Keyring write failed — stay on file.
-			cachedKey = key;
-			cachedTier = "file";
-			return key;
-		}
+	const fileKey = readFileKey();
+	if (fileKey === "invalid") {
+		cachedKey = repairFileKey();
+		cachedTier = fileKeyTier();
+		return cachedKey;
+	}
+	if (fileKey !== "missing") {
+		cachedKey = fileKey;
+		cachedTier = fileKeyTier();
+		return fileKey;
 	}
 
-	return loadFromFileTier();
+	const keyring = tryOpenKeyring();
+	if (!keyring) return loadFromFileTier();
+
+	const stored = keyringKey(keyring);
+	// A failed read (locked keyring, D-Bus timeout) isn't "no key": the keyring
+	// may hold the only backup, so never write to it after one.
+	if (stored === undefined) return loadFromFileTier();
+
+	// Settle the file first: when processes initialize together, the key that
+	// wins master.key is the one in use, so only that key goes to the keyring.
+	const key = createFileKey(stored ?? randomBytes(32));
+	let inKeyring = stored?.equals(key) ?? false;
+	if (!inKeyring) {
+		try {
+			keyring.setPassword(key.toString("base64"));
+			inKeyring = true;
+		} catch {
+			// Keyring write failed: stay on file.
+		}
+	}
+	if (inKeyring) writeFileSync(keyringMarkerPath(), "");
+	cachedKey = key;
+	cachedTier = inKeyring ? tierForPlatform() : "file";
+	return key;
 }
