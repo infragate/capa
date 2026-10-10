@@ -1,8 +1,9 @@
 import type { CapaDatabase } from '../../../db/database';
 import type { Hook } from '../../../types/hooks';
 import { isPathInside } from '../../../shared/paths';
-import { scopeHookForProvider } from './provider-map';
-import { removeManagedHookEntry } from './config-apply';
+import { getProvider } from '../../../shared/providers';
+import { pickMapping, scopeHookForProvider } from './provider-map';
+import { buildHookEntry, removeManagedHookEntry } from './config-apply';
 
 export interface PruneOrphanHooksResult {
   removed: number;
@@ -49,8 +50,7 @@ export function pruneOrphanHooks(
   for (const providerId of desiredProviders) {
     const ids = new Set<string>();
     for (const h of desiredHooks) {
-      const targets = scopeHookForProvider(h, providerId);
-      if (targets) ids.add(h.id);
+      if (scopeHookForProvider(h, providerId) && canInstallHook(h, providerId)) ids.add(h.id);
     }
     desiredByProvider.set(providerId, ids);
   }
@@ -97,6 +97,24 @@ export function pruneOrphanHooks(
     }
   }
   return { removed, warnings };
+}
+
+/**
+ * Whether install would write this hook for the provider. When it can't (no
+ * event mapping, or the shape rejects it, e.g. a prompt hook on Antigravity),
+ * the previously installed entry is stale and must be pruned rather than left
+ * running the old command. Install still reports the warning.
+ */
+function canInstallHook(hook: Hook, providerId: string): boolean {
+  const integration = getProvider(providerId)?.hooks;
+  const mapping = integration && pickMapping(integration, hook.on, providerId);
+  if (!integration || !mapping) return false;
+  try {
+    buildHookEntry(integration, { hook, mapping, runReference: '-' });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**

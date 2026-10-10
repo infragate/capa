@@ -165,6 +165,51 @@ describe("normalizeActivityHookPayload", () => {
 		expect(out.generationId).toBe("prompt-1");
 	});
 
+	it("reads Antigravity camelCase toolCall payloads", () => {
+		// https://antigravity.google/docs/hooks/ (PostToolUse stdin)
+		const payload = {
+			toolCall: {
+				name: "run_command",
+				args: { CommandLine: "npm test", Cwd: "/w" },
+			},
+			stepIdx: 5,
+			error: "",
+			conversationId: "conv-1",
+			modelName: "gemini-x",
+		};
+		const shell = normalizeActivityHookPayload(
+			"afterShell",
+			payload,
+			"antigravity",
+		);
+		expect(shell.skip).toBe(false);
+		expect(shell.status).toBe("ok");
+		expect(shell.toolName).toContain("npm test");
+		expect(shell.args).toMatchObject({ command: "npm test", cwd: "/w" });
+		expect(shell.conversationId).toBe("conv-1");
+		// The afterTool row for run_command is the shell wrapper duplicate.
+		expect(
+			normalizeActivityHookPayload("afterTool", payload, "antigravity").skip,
+		).toBe(true);
+		expect(
+			normalizeActivityHookPayload(
+				"afterTool",
+				{ ...payload, error: "exit status 1" },
+				"antigravity",
+			).status,
+		).toBe("error");
+	});
+
+	it("reads the Antigravity file path from toolCall.args", () => {
+		const out = normalizeActivityHookPayload(
+			"afterFileEdit",
+			{ toolCall: { name: "write_to_file", args: { TargetFile: "/w/a.ts" } } },
+			"antigravity",
+		);
+		expect(out.kind).toBe("file");
+		expect(out.toolName).toBe("/w/a.ts");
+	});
+
 	it("maps prompts", () => {
 		const out = normalizeActivityHookPayload("userPromptSubmit", {
 			prompt: "Please fix the bug in auth",

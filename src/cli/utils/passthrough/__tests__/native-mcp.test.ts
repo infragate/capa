@@ -4,6 +4,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { buildNativeMcpEntry, upsertNativeMcpServer } from '../native-mcp';
 import type { McpIntegration } from '../../../../types/providers';
+import { getProvider } from '../../../../shared/providers';
 
 const cursorMcp: McpIntegration = {
   configPath: '.cursor/mcp.json',
@@ -37,6 +38,18 @@ describe('buildNativeMcpEntry', () => {
       url: 'https://mcp.example.com',
     });
     expect(entry).toEqual({ type: 'http', url: 'https://mcp.example.com' });
+  });
+
+  it('builds serverUrl + headers entry for antigravity', () => {
+    // https://antigravity.google/docs/mcp/ (custom headers example)
+    const entry = buildNativeMcpEntry(getProvider('antigravity')!.mcp!, {
+      url: 'https://api.example.com/mcp/',
+      headers: { Authorization: 'Bearer ${Token}' },
+    });
+    expect(entry).toEqual({
+      serverUrl: 'https://api.example.com/mcp/',
+      headers: { Authorization: 'Bearer ${Token}' },
+    });
   });
 
   it('builds stdio command entry', () => {

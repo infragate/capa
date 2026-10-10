@@ -128,7 +128,7 @@ table below is a quick map of what each task reads/writes.
 | `prune-orphan-rules` | `prune-orphan-rules.ts` | DB managed-files, current rule IDs | rm rule files/marker blocks |
 | `install-rules` | `install-rules.ts` | `capabilities.rules`, snapshot cache | per-provider rules dir **or** marker blocks in instructions file |
 | `prune-orphan-hooks` | `prune-orphan-hooks.ts` | DB `managed_hooks`, current hook IDs | rm capa-tagged hook entries from provider configs, rm scripts in `~/.capa/hooks/<projectId>/` |
-| `install-hooks` | `install-hooks.ts` | `capabilities.hooks`, snapshot cache, lockfile | provider hook config (`.claude/settings.json`, `.cursor/hooks.json`, `.codex/config.toml`, `.gemini/settings.json`), `~/.capa/hooks/<projectId>/<hookId>` script files, `managed_hooks` rows, lock entries |
+| `install-hooks` | `install-hooks.ts` | `capabilities.hooks`, snapshot cache, lockfile | provider hook config (`.claude/settings.json`, `.cursor/hooks.json`, `.codex/config.toml`, `.gemini/settings.json`, `.agents/hooks.json`), `~/.capa/hooks/<projectId>/<hookId>` script files, `managed_hooks` rows, lock entries |
 | `configure-tools` | `configure-tools.ts` | merged capabilities | POSTs to `/api/projects/:id/configure`, stores `configureResult` |
 | `register-mcp-server` | `register-mcp-server.ts` | provider registry, mcpUrl | provider MCP config (`.cursor/mcp.json`, `.mcp.json`, …) |
 | `install-subagents` | `install-subagents.ts` | `capabilities.subagents`, DB sub-agents | sub-agent files, sub-agent MCP entries, instructions snippets |
@@ -183,7 +183,8 @@ flowchart TD
 - **Managed-hooks table**. `managed_hooks(project_id, provider_id, hook_id,
   config_path, locator, script_path)` tracks every hook entry capa wrote
   into a shared provider config (`.claude/settings.json`,
-  `.cursor/hooks.json`, `.codex/config.toml`, `.gemini/settings.json`). The
+  `.cursor/hooks.json`, `.codex/config.toml`, `.gemini/settings.json`,
+  `.agents/hooks.json`). The
   `locator` is a JSON pointer (or TOML path) into the file so prune/clean
   can edit a single entry surgically without disturbing user-authored
   ones. `script_path` points at the materialised body under

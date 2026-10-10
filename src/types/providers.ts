@@ -248,9 +248,10 @@ export interface HooksIntegration {
   /**
    * Selects the entry shape used to serialise hook entries. `claude` covers
    * every provider that uses the matcher-grouped layout (Claude Code, Gemini
-   * CLI, Codex, Windsurf, Antigravity); the variant labels exist only as
+   * CLI, Codex, Windsurf); the variant labels exist only as
    * future-proofing in case a provider diverges (e.g. extra fields). The
    * `cursor` shape is a flat array with `matcher`+`name` per entry.
+   * `antigravity` keys the file by hook name (`{ "capa:<id>": { <event>: [...] } }`).
    *
    * Codex serialises through the same `claude` shape; the storage format is
    * what makes it land as TOML rather than JSON.

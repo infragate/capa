@@ -351,8 +351,9 @@ function statusForEvent(
 	if (explicit === "error" || explicit === "failed" || explicit === "failure") {
 		return "error";
 	}
+	// Antigravity sends `error: ""` on success.
 	if (
-		obj.error != null ||
+		(obj.error != null && obj.error !== "") ||
 		obj.error_message != null ||
 		obj.errorMessage != null
 	) {
@@ -378,6 +379,7 @@ function argsForEvent(
 			cwd:
 				stringField(obj, "cwd") ||
 				stringField(obj, "working_directory") ||
+				nestedString(obj, ["toolCall", "args", "Cwd"]) ||
 				null,
 		};
 	}
@@ -392,7 +394,12 @@ function argsForEvent(
 		if (Object.keys(out).length > 0) return out;
 	}
 	const toolInput =
-		obj.tool_input ?? obj.toolInput ?? obj.input ?? obj.arguments ?? obj.args;
+		obj.tool_input ??
+		obj.toolInput ??
+		obj.input ??
+		obj.arguments ??
+		obj.args ??
+		nested(obj, ["toolCall", "args"]);
 	if (toolInput != null) return toolInput;
 	const path = extractPath(obj);
 	if (path) return { path };
@@ -491,6 +498,7 @@ function isShellToolName(name: string): boolean {
 		n === "zsh" ||
 		n === "run_terminal_cmd" ||
 		n === "run_shell_command" ||
+		n === "run_command" ||
 		n === "terminal" ||
 		n === "powershell"
 	);
