@@ -56,7 +56,7 @@ included for completeness but lack any project-local write paths.
 | --- | --- | --- | --- | --- | --- |
 | [AdaL (`adal`)](./adal.md) | `.adal/skills/` | — *(CLI-managed)* | `AGENTS.md` | — | — |
 | [Amp (`amp`)](./amp.md) | `.agents/skills/` | — *(needs nested-key support)* | — | — | — |
-| [Antigravity (`antigravity`)](./antigravity.md) | `.agents/skills/` | — *(needs `serverUrl` support)* | `AGENTS.md` | `.agents/rules/*.md` | — |
+| **[Antigravity (`antigravity`)](./antigravity.md)** | `.agents/skills/` | `.agents/mcp_config.json` → `mcpServers.capa.serverUrl` *(note `serverUrl`)* | `AGENTS.md` | `.agents/rules/*.md` (no frontmatter) | — *(not wired yet)* |
 | [Augment (`augment`)](./augment.md) | `.augment/skills/` | — *(global only)* | `AGENTS.md` | — | `.augment/agents/*.md` |
 | **[Claude Code (`claude-code`)](./claude-code.md)** | `.claude/skills/` | `.mcp.json` → `mcpServers.capa.url` | `CLAUDE.md` | `.claude/rules/*.md` (yaml: `paths`) | `.claude/agents/*.md` *(+ snippet in `CLAUDE.md`)* |
 | [Cline (`cline`)](./cline.md) | `.cline/skills/` | — *(global only)* | `AGENTS.md` | — | — |
@@ -97,7 +97,7 @@ included for completeness but lack any project-local write paths.
 ### Hooks integration
 
 Hooks are intentionally absent from the matrix above because only a small
-slice of providers wire them up. The four providers below have a `hooks`
+slice of providers wire them up. The five providers below have a `hooks`
 integration in `registry.ts` today — capa edits the file in-place using
 the `name = "capa:<id>"` tag (TOML providers like Codex use the same
 field — appended as an opaque key Codex's deserialiser ignores) so it
@@ -107,6 +107,7 @@ install` never fails because of an unsupported hook target.
 
 | Provider | Config file | Shape |
 | --- | --- | --- |
+| **[Antigravity (`antigravity`)](./antigravity.md)** | `.agents/hooks.json` (standalone) | Keyed by hook name: one `capa:<id>` key → `{ <event>: [...] }` |
 | **[Claude Code (`claude-code`)](./claude-code.md)** | `.claude/settings.json` → `hooks` | JSON map (event → `[{ matcher, hooks: [...] }]`) |
 | **[Codex (`codex`)](./codex.md)** | `.codex/config.toml` → `[hooks]` | Matcher-grouped Claude-style envelope, serialised as TOML, `name: capa:<id>` tag |
 | **[Cursor (`cursor`)](./cursor.md)** | `.cursor/hooks.json` (standalone) | `{ version: 1, hooks: { ... } }` envelope |
@@ -158,6 +159,7 @@ documentation.
 
 ### Full integration
 
+- [Antigravity (`antigravity`)](./antigravity.md)
 - [Claude Code (`claude-code`)](./claude-code.md)
 - [Codex (`codex`)](./codex.md)
 - [Crush (`crush`)](./crush.md)
@@ -183,7 +185,6 @@ Project-local file conventions exist for some — but not all — of MCP /
 instructions / rules / sub-agents. Capa writes what it can.
 
 - [AdaL (`adal`)](./adal.md)
-- [Antigravity (`antigravity`)](./antigravity.md)
 - [Augment (`augment`)](./augment.md)
 - [Cline (`cline`)](./cline.md)
 - [CodeBuddy (`codebuddy`)](./codebuddy.md)
