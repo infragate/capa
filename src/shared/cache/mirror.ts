@@ -8,6 +8,11 @@ import {
 } from "fs";
 import { join } from "path";
 import type { AuthenticatedFetch } from "../authenticated-fetch";
+import {
+	isHttpsOrLoopback,
+	stripHttpUrlUserinfo,
+	stripUserinfoFromHttpUrl,
+} from "../git-url";
 import { git, gitHttpCredentialEnv } from "./git-cli";
 import {
 	type CachePlatform,
@@ -28,33 +33,17 @@ function publicHttpsRepoUrl(
 	return `https://${platform}.com/${repoPath}.git`;
 }
 
-/** Strip userinfo from an http(s) URL. Returns null when there is none or the value is not an http(s) URL. */
-function stripUserinfoFromHttpUrl(raw: string): string | null {
-	const trimmed = raw.trim().replace(/^["']|["']$/g, "");
-	try {
-		const u = new URL(trimmed);
-		if (u.protocol !== "http:" && u.protocol !== "https:") return null;
-		if (!u.username && !u.password) return null;
-		u.username = "";
-		u.password = "";
-		let out = u.toString();
-		if (!trimmed.endsWith("/") && out.endsWith("/")) {
-			out = out.slice(0, -1);
-		}
-		return out;
-	} catch {
-		return null;
-	}
-}
-
-function stripHttpUrlUserinfo(url: string): string {
-	return stripUserinfoFromHttpUrl(url) ?? url;
-}
-
 function credentialEnvFor(
 	url: string,
-	authFetch: AuthenticatedFetch,
+	authFetch: AuthenticatedFetch | undefined,
 ): Record<string, string> | undefined {
+	if (!authFetch) return undefined;
+	// Never hand a stored token to a cleartext (non-loopback http) remote.
+	try {
+		if (!isHttpsOrLoopback(new URL(url))) return undefined;
+	} catch {
+		return undefined;
+	}
 	if (!authFetch.hasAuth(url)) return undefined;
 	const token = authFetch.getTokenForUrl(url);
 	if (!token) return undefined;
@@ -153,7 +142,7 @@ async function assertMirrorOrigin(mirrorDir: string, url: string): Promise<void>
 export async function ensureMirrorClone(
 	platform: CachePlatform,
 	repoPath: string,
-	authFetch: AuthenticatedFetch,
+	authFetch: AuthenticatedFetch | undefined,
 	repoUrl?: string,
 ): Promise<string> {
 	validateRepoPath(repoPath);

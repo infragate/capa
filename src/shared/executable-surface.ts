@@ -5,6 +5,7 @@ import type { Capabilities, SecretValue } from '../types/capabilities';
 import type { Hook } from '../types/hooks';
 import type { Plugin } from '../types/plugin';
 import { getCapaDir } from './config';
+import { stripHttpUrlUserinfo } from './git-url';
 import { secretValueMapForFingerprint } from './secret-value';
 
 export interface SurfaceServer {
@@ -138,7 +139,7 @@ export function collectExecutableSurface(capabilities: Capabilities): Executable
   const plugins: SurfacePlugin[] = [];
   for (const plugin of (capabilities.plugins ?? []) as Plugin[]) {
     // git plugins (any host) have a clone URL instead of an owner/repo.
-    const repo = plugin.def.repo ?? plugin.def.url ?? '';
+    const repo = plugin.def.repo ?? stripHttpUrlUserinfo(plugin.def.url ?? '');
     const id = plugin.id ?? repo;
     const entry: SurfacePlugin = {
       id,

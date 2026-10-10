@@ -17,6 +17,7 @@ import { tryResolveRegistryItem } from './resolve-registry-source';
 import { parseSkillSource, type ParsedSkillSource } from './add-parse-skill';
 import { parsePluginSource, type ParsedPluginSource } from './add-parse-plugin';
 import { pluginSourceOf } from '../../shared/plugin-source';
+import { stripHttpUrlUserinfo } from '../../shared/git-url';
 
 export { parseSkillSource, type ParsedSkillSource } from './add-parse-skill';
 export { parsePluginSource, type ParsedPluginSource } from './add-parse-plugin';
@@ -247,7 +248,7 @@ export async function addCommand(
 
     console.log(`✓ Added plugin "${id}" to ${capabilitiesFile.path}`);
     console.log(`  Type: ${parsed.type}`);
-    console.log(`  Repo: ${pluginSourceOf(parsed.def)}`);
+    console.log(`  Repo: ${stripHttpUrlUserinfo(pluginSourceOf(parsed.def) ?? '')}`);
     if (parsed.def.version) console.log(`  Version: ${parsed.def.version}`);
     if (parsed.def.ref) console.log(`  Ref: ${parsed.def.ref}`);
 
@@ -289,7 +290,7 @@ export async function addCommand(
   if (skillDef.def.repo) {
     console.log(`  Repo: ${skillDef.def.repo}`);
   } else if (skillDef.def.url) {
-    console.log(`  URL: ${skillDef.def.url}`);
+    console.log(`  URL: ${stripHttpUrlUserinfo(skillDef.def.url)}`);
   } else if (skillDef.def.path) {
     console.log(`  Path: ${skillDef.def.path}`);
   }

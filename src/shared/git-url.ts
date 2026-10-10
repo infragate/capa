@@ -47,6 +47,42 @@ export function isGitUrl(source: string): boolean {
 }
 
 const CLONE_PROTOCOLS = new Set(["https:", "http:", "ssh:", "file:"]);
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
+
+/**
+ * https, or plain http to this machine only. Anything else would send a
+ * token (or the clone itself) in cleartext over the network.
+ */
+export function isHttpsOrLoopback(url: URL): boolean {
+	return (
+		url.protocol === "https:" ||
+		(url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname))
+	);
+}
+
+/** Strip userinfo from an http(s) URL. Returns null when there is none or the value is not an http(s) URL. */
+export function stripUserinfoFromHttpUrl(raw: string): string | null {
+	const trimmed = raw.trim().replace(/^["']|["']$/g, "");
+	try {
+		const u = new URL(trimmed);
+		if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+		if (!u.username && !u.password) return null;
+		u.username = "";
+		u.password = "";
+		let out = u.toString();
+		if (!trimmed.endsWith("/") && out.endsWith("/")) {
+			out = out.slice(0, -1);
+		}
+		return out;
+	} catch {
+		return null;
+	}
+}
+
+/** `url` without `user:token@`, for anything stored (lockfile) or printed. */
+export function stripHttpUrlUserinfo(url: string): string {
+	return stripUserinfoFromHttpUrl(url) ?? url;
+}
 
 /**
  * Cache key for a clone URL: `<host>/<path>-<hash>`, e.g.
@@ -64,6 +100,11 @@ export function gitRepoKey(url: string): string {
 	// capabilities files can come from elsewhere, so don't rely on that).
 	if (!CLONE_PROTOCOLS.has(u.protocol)) {
 		throw new Error(`Unsupported git URL scheme "${u.protocol}" in ${url}`);
+	}
+	if (!isHttpsOrLoopback(u) && u.protocol === "http:") {
+		throw new Error(
+			`Plain http git URLs are only allowed for localhost, use https: ${stripHttpUrlUserinfo(url)}`,
+		);
 	}
 	u.username = "";
 	u.password = "";

@@ -9,6 +9,7 @@ import type { CapaDatabase } from "../db/database";
 import type { GitIntegration } from "../types/database";
 import type { GitPlatform } from "../types/git-integration";
 import { getGitProvider, getGitProviderByHost } from "./git-providers/registry";
+import { isHttpsOrLoopback } from "./git-url";
 import { isPermanentRefreshFailure } from "./oauth-refresh";
 
 const CLOUD_OAUTH_ENDPOINT = "https://capa.infragate.ai/auth";
@@ -43,6 +44,9 @@ export class AuthenticatedFetch {
 	): { platform: GitPlatform; host?: string } | null {
 		try {
 			const urlObj = new URL(url);
+			// Tokens only travel over https (or http to this machine): a plain
+			// http URL on a known host would send them in cleartext.
+			if (!isHttpsOrLoopback(urlObj)) return null;
 			const host = urlObj.hostname;
 
 			const provider = getGitProviderByHost(host);

@@ -1,8 +1,17 @@
-import { rmSync, statSync } from "fs";
+import { existsSync, rmSync, statSync } from "fs";
 import { getRepoSnapshot } from "../cli/commands/install-tasks/helpers/repo-snapshot";
 import { resolvePlugins } from "../cli/commands/plugin-install";
 import type { CapaDatabase } from "../db/database";
-import { createAuthenticatedFetch } from "../shared/authenticated-fetch";
+import {
+	type AuthenticatedFetch,
+	createAuthenticatedFetch,
+} from "../shared/authenticated-fetch";
+import {
+	type CachePlatform,
+	type GetSnapshotResult,
+	getSnapshotDir,
+} from "../shared/cache";
+import { assertPublicHttpsUrl } from "../shared/safe-remote-url";
 import { LockfileBuilder, loadLockfile } from "../shared/lockfile";
 import { logger } from "../shared/logger";
 import { validateProvider } from "../shared/providers/resolve";
@@ -32,6 +41,32 @@ function pluginsCacheKey(
 				`${p.id ?? ""}|${p.type}|${p.def?.repo ?? p.def?.url ?? ""}|${p.def?.version ?? ""}|${p.def?.ref ?? ""}`,
 		)
 		.join("||");
+}
+
+/**
+ * Snapshot fetcher for server-side plugin expansion. A `git` plugin's clone
+ * URL comes straight from the project file, so (like the remote skill preview)
+ * the server only clones public https URLs and sends no git-host token. A
+ * plugin `capa install` already pinned and cached is used offline, whatever
+ * its URL, so private and ssh plugins keep working after an install.
+ */
+export async function serverRepoSnapshot(
+	platform: CachePlatform,
+	repoPath: string,
+	auth: AuthenticatedFetch,
+	opts: Parameters<typeof getRepoSnapshot>[3] = {},
+): Promise<GetSnapshotResult> {
+	if (platform !== "git") {
+		return getRepoSnapshot(platform, repoPath, auth, opts);
+	}
+	const pinned = opts.pinnedSha;
+	const cached =
+		!!pinned &&
+		!opts.noCache &&
+		/^[a-f0-9]{40}$/i.test(pinned) &&
+		existsSync(getSnapshotDir(platform, repoPath, pinned));
+	if (!cached) await assertPublicHttpsUrl(opts.repoUrl ?? "");
+	return getRepoSnapshot(platform, repoPath, undefined, opts);
 }
 
 /**
@@ -95,8 +130,7 @@ export async function resolveEffectiveCapabilities(
 				projectId,
 				authFetch,
 				db,
-				(platform, repoPath, auth, opts) =>
-					getRepoSnapshot(platform, repoPath, auth, opts),
+				serverRepoSnapshot,
 				capabilitiesFilePath,
 				lockBuilder,
 				{

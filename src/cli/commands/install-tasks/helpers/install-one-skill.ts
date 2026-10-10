@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { resolve, join, dirname, basename, relative } from 'path';
-import { gitRepoKey } from '../../../../shared/git-url';
+import { gitRepoKey, stripHttpUrlUserinfo } from '../../../../shared/git-url';
 import type { Skill, Capabilities } from '../../../../types/capabilities';
 import type { CapaDatabase } from '../../../../db/database';
 import { createAuthenticatedFetch, AuthenticatedFetch } from '../../../../shared/authenticated-fetch';
@@ -242,12 +242,15 @@ export async function installOneSkill(
     // Any git host: `def.url` is the clone URL, `def.path` the directory
     // holding SKILL.md (the repo root when unset). Credentials come from the
     // user's git credential helper.
-    const url = skill.def.url;
+    // Credentials in the URL are never used for the clone; keep them out of
+    // the lockfile and messages too.
+    const url = stripHttpUrlUserinfo(skill.def.url);
     let repoPath: string;
     try {
       repoPath = gitRepoKey(url);
-    } catch {
-      throw new Error(`Invalid git clone URL for skill "${skill.id}": ${url}`);
+    } catch (err) {
+      const why = err instanceof TypeError ? '' : ` (${(err as Error).message})`;
+      throw new Error(`Invalid git clone URL for skill "${skill.id}": ${url}${why}`);
     }
     const skillPath = (skill.def.path ?? '').replace(/^\/+|\/+$/g, '');
     const version = skill.def.version;

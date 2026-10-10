@@ -7,7 +7,7 @@
 
 import type { Plugin } from "../types/plugin";
 import type { CachePlatform } from "./cache";
-import { gitRepoKey } from "./git-url";
+import { gitRepoKey, stripHttpUrlUserinfo } from "./git-url";
 
 const SEGMENT_RE = /^[^/:#]+$/;
 const FORBIDDEN_SEGMENTS = new Set([".", ".."]);
@@ -186,8 +186,12 @@ function validateGitPluginDef(
 	let repoPath: string;
 	try {
 		repoPath = gitRepoKey(def.url);
-	} catch {
-		return { error: `Invalid git clone URL: "${def.url}"` };
+	} catch (err) {
+		// gitRepoKey explains scheme problems; `new URL` failures are TypeErrors.
+		const why = err instanceof TypeError ? "" : ` (${(err as Error).message})`;
+		return {
+			error: `Invalid git clone URL: "${stripHttpUrlUserinfo(def.url)}"${why}`,
+		};
 	}
 	const subpath = def.subpath ?? "";
 	if (subpath !== "" && !isValidPath(subpath, 1)) {
@@ -201,7 +205,9 @@ function validateGitPluginDef(
 		subpath,
 		version: def.version,
 		ref: def.ref,
-		repoUrl: def.url,
+		// Credentials in the URL are never used for the clone; keep them out
+		// of the lockfile and messages too.
+		repoUrl: stripHttpUrlUserinfo(def.url),
 	};
 }
 

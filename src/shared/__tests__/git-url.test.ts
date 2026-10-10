@@ -44,8 +44,8 @@ describe('gitRepoKey', () => {
   it('never shares a key between different URLs', () => {
     const keys = new Set(
       [
-        'https://h.test/a/b.git',
-        'http://h.test/a/b.git',
+        'https://localhost/a/b.git',
+        'http://localhost/a/b.git',
         'https://h.test:8443/a/b.git',
         'https://h.test/a:b.git',
         'https://h.test/a_b.git',
@@ -64,6 +64,14 @@ describe('gitRepoKey', () => {
       url: 'ssh://git@h.test/a/b.git',
       version: 'v1.0.0',
     });
+  });
+
+  it('allows plain http only to this machine', () => {
+    expect(() => gitRepoKey('http://git.example.com/a/b.git')).toThrow(/only allowed for localhost/);
+    expect(() => gitRepoKey('http://user:s3cret@github.com/a/b.git')).toThrow(/^(?!.*s3cret)/);
+    for (const host of ['localhost', '127.0.0.1', '[::1]']) {
+      expect(() => gitRepoKey(`http://${host}:8080/a/b.git`)).not.toThrow();
+    }
   });
 
   it('rejects git helper transports that run commands', () => {
@@ -109,6 +117,15 @@ describe('capa add with a git clone URL', () => {
       repoPath: gitRepoKey('https://h.test/@acme/tools.git'),
       subpath: 'plugins/deploy',
       repoUrl: 'https://h.test/@acme/tools.git',
+    });
+  });
+
+  it('keeps credentials in the URL out of the validated (locked, printed) plugin URL', () => {
+    expect(
+      validatePluginDef({ type: 'git', def: { url: 'https://user:s3cret@h.test/acme/tools.git' } }),
+    ).toMatchObject({ repoUrl: 'https://h.test/acme/tools.git' });
+    expect(validatePluginDef({ type: 'git', def: { url: 'http://h.test/acme/tools.git' } })).toMatchObject({
+      error: expect.stringMatching(/only allowed for localhost/),
     });
   });
 

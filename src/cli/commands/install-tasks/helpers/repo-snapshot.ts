@@ -10,11 +10,11 @@ import { explainGitError } from './git';
 export async function getRepoSnapshot(
   platform: CachePlatform,
   repoPath: string,
-  authFetch: AuthenticatedFetch,
+  authFetch: AuthenticatedFetch | undefined,
   opts: { version?: string; ref?: string; pinnedSha?: string; noCache?: boolean; repoUrl?: string } = {}
 ): Promise<GetSnapshotResult> {
   const repoUrl = opts.repoUrl ?? `https://${platform}.com/${repoPath}`;
-  const hasAuth = authFetch.hasAuth(repoUrl);
+  const hasAuth = authFetch?.hasAuth(repoUrl) ?? false;
   try {
     return await getOrCreateSnapshot({
       platform,

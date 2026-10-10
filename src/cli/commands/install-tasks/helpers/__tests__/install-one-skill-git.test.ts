@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach, spyOn } from 'bun:test';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -8,6 +8,7 @@ import { CapaDatabase } from '../../../../../db/database';
 import { LockfileBuilder } from '../../../../../shared/lockfile';
 import { installOneSkill, looksLikeHtml } from '../install-one-skill';
 import { getCacheStats } from '../../../../../shared/cache';
+import * as repoSnapshot from '../repo-snapshot';
 import type { Capabilities, Skill } from '../../../../../types/capabilities';
 
 // A skill on "any git host": a real repository cloned over file://, so the
@@ -86,6 +87,28 @@ describe('installOneSkill with a git clone URL', () => {
       url: repoUrl,
       resolvedVersion: 'v1.0.0',
     });
+  });
+
+  it('keeps credentials in the URL out of the lock entry and the clone', async () => {
+    const real = repoSnapshot.getRepoSnapshot;
+    const seen: (string | undefined)[] = [];
+    // No real host in tests: record the URL capa clones, then serve the local repo.
+    const spy = spyOn(repoSnapshot, 'getRepoSnapshot').mockImplementation((platform, repoPath, auth, opts = {}) => {
+      seen.push(opts.repoUrl);
+      return real(platform, repoPath, auth, { ...opts, repoUrl });
+    });
+    try {
+      const lock = await install({
+        id: 'code-review',
+        type: 'git',
+        def: { url: 'https://user:s3cret@git.example.com/acme/code-review.git' },
+      });
+      expect(lock.skills[0].url).toBe('https://git.example.com/acme/code-review.git');
+      expect(JSON.stringify(lock)).not.toContain('s3cret');
+      expect(seen).toEqual(['https://git.example.com/acme/code-review.git']);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('installs a nested skill from def.path', async () => {

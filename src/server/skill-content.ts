@@ -2,7 +2,14 @@
  * Resolve and read a skill's SKILL.md for a project.
  * Used by the project-detail API for frontmatter descriptions and the skill content endpoint.
  */
-import { existsSync, readdirSync, readFileSync, statSync } from "fs";
+import {
+	existsSync,
+	lstatSync,
+	readdirSync,
+	readFileSync,
+	realpathSync,
+	statSync,
+} from "fs";
 import { isAbsolute, join, relative } from "path";
 import {
 	findSkillsInDirectory,
@@ -16,7 +23,10 @@ import { getProvider } from "../shared/providers";
 import { assertSafeRepoPath } from "../shared/repo-file";
 import { parseRepoString } from "../shared/repo-string";
 import { isSafeCapabilityId } from "../shared/safe-id";
-import { fetchPublicHttpsText } from "../shared/safe-remote-url";
+import {
+	assertPublicHttpsUrl,
+	fetchPublicHttpsText,
+} from "../shared/safe-remote-url";
 import { parseSkillMd, type SkillMetadata } from "../shared/skill-md";
 import type { Capabilities, Skill } from "../types/capabilities";
 import type { ResolvedPluginInfo } from "../types/plugin";
@@ -359,6 +369,31 @@ export async function resolveSkillContentById(
 }
 
 /**
+ * Parse a SKILL.md out of a cached repo snapshot. Refuses a SKILL.md that is a
+ * symlink or resolves outside the snapshot, so a cloned repo can't make the
+ * server read (and return) a file elsewhere on disk.
+ */
+export function previewSnapshotSkill(
+	snapshotDir: string,
+	skillMdPath: string,
+): SkillContentResult | null {
+	const rel = relative(realpathSync(snapshotDir), realpathSync(skillMdPath));
+	if (
+		lstatSync(skillMdPath).isSymbolicLink() ||
+		isAbsolute(rel) ||
+		rel.split(/[\\/]/)[0] === ".."
+	) {
+		return null;
+	}
+	const skillData = readSkillFromDirectory(skillMdPath);
+	const files = [
+		"SKILL.md",
+		...Array.from(skillData.additionalFiles.keys()).sort(),
+	];
+	return tryParse(skillData.markdown, files);
+}
+
+/**
  * Fetch SKILL.md for an uninstalled github/gitlab/remote skill using the
  * shared git cache (or HTTP for remote URLs). Returns null on failure.
  */
@@ -409,20 +444,19 @@ export async function fetchUninstalledSkillContent(
 				if (!skillMdPath) return null;
 			}
 
-			const skillData = readSkillFromDirectory(skillMdPath);
-			const files = [
-				"SKILL.md",
-				...Array.from(skillData.additionalFiles.keys()).sort(),
-			];
-			return tryParse(skillData.markdown, files);
+			return previewSnapshotSkill(snapshot.snapshotDir, skillMdPath);
 		}
 
 		if (skill.type === "git" && skill.def?.url) {
+			// Same rule as `remote`: an uninstalled skill's URL comes from the
+			// project file, so the server only clones public https hosts and
+			// sends no git-host token (SSRF / credential leak). Other URLs are
+			// previewable once `capa install` has put the skill on disk.
+			await assertPublicHttpsUrl(skill.def.url);
 			const snapshot = await getOrCreateSnapshot({
 				platform: "git",
 				repoPath: gitRepoKey(skill.def.url),
 				repoUrl: skill.def.url,
-				authFetch,
 				version: skill.def.version,
 				ref: skill.def.ref,
 			});
@@ -432,12 +466,7 @@ export async function fetchUninstalledSkillContent(
 				: snapshot.snapshotDir;
 			const skillMdPath = join(skillDir, "SKILL.md");
 			if (!existsSync(skillMdPath)) return null;
-			const skillData = readSkillFromDirectory(skillMdPath);
-			const files = [
-				"SKILL.md",
-				...Array.from(skillData.additionalFiles.keys()).sort(),
-			];
-			return tryParse(skillData.markdown, files);
+			return previewSnapshotSkill(snapshot.snapshotDir, skillMdPath);
 		}
 	} catch {
 		return null;
