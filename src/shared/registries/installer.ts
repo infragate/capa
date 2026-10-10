@@ -1,10 +1,11 @@
-import { createHash } from "crypto";
+import { createHash, randomBytes } from "crypto";
 import {
 	copyFileSync,
 	existsSync,
 	mkdirSync,
 	readdirSync,
 	readFileSync,
+	renameSync,
 	rmSync,
 	statSync,
 	writeFileSync,
@@ -257,6 +258,41 @@ export class RegistryDisabledError extends Error {
 	}
 }
 
+/**
+ * Stage input, then run beforeExecute (which may throw to stop). The current
+ * installation is moved aside first and put back if staging or the check
+ * fails, so e.g. a registry disabled mid-refresh keeps its previous adapter,
+ * whose hash still matches the stored record, for when it is re-enabled.
+ */
+export async function stageRegistryChecked(
+	input: RegistryInstallInput,
+	authFetch: AuthenticatedFetch,
+	opts: { noCache?: boolean; beforeExecute?: () => void } = {},
+): Promise<RegistryStageResult> {
+	if (!opts.beforeExecute || !isValidSlug(input.slug)) {
+		const staged = await stageRegistry(input, authFetch, opts);
+		opts.beforeExecute?.();
+		return staged;
+	}
+	const targetDir = join(getManagedRegistriesDir(), input.slug);
+	// Not a valid slug (has a dot), so the loader never mistakes it for one.
+	const backup = `${targetDir}.prev-${randomBytes(4).toString("hex")}`;
+	const hadInstall = existsSync(targetDir);
+	if (hadInstall) renameSync(targetDir, backup);
+	try {
+		const staged = await stageRegistry(input, authFetch, opts);
+		opts.beforeExecute();
+		if (hadInstall) rmSync(backup, { recursive: true, force: true });
+		return staged;
+	} catch (err) {
+		if (hadInstall) {
+			rmSync(targetDir, { recursive: true, force: true });
+			renameSync(backup, targetDir);
+		}
+		throw err;
+	}
+}
+
 export async function installRegistry(
 	input: RegistryInstallInput,
 	authFetch: AuthenticatedFetch,
@@ -266,8 +302,7 @@ export async function installRegistry(
 		beforeExecute?: () => void;
 	} = {},
 ): Promise<RegistryInstallResult> {
-	const staged = await stageRegistry(input, authFetch, opts);
-	opts.beforeExecute?.();
+	const staged = await stageRegistryChecked(input, authFetch, opts);
 	const executed = await executeStagedRegistry(input.slug, staged.contentSha256);
 	return {
 		...executed,

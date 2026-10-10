@@ -8,7 +8,7 @@ import {
 	isValidSlug,
 	RegistryDisabledError,
 	removeInstalledAdapter,
-	stageRegistry,
+	stageRegistryChecked,
 } from "../shared/registries/installer";
 import type { RegistryManager } from "../shared/registries/manager";
 import type { RegistrySourceType } from "../types/database";
@@ -63,8 +63,7 @@ async function stageAndInstallRegistry(
 		beforeExecute?: () => void;
 	} = {},
 ) {
-	const result = await stageRegistry(input, authFetch, opts);
-	opts.beforeExecute?.();
+	const result = await stageRegistryChecked(input, authFetch, opts);
 	try {
 		await executeStagedRegistry(input.slug, result.contentSha256);
 	} catch (err: any) {

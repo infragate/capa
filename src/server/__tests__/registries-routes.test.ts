@@ -442,6 +442,27 @@ describe('registries-routes', () => {
       expect(db.getRegistry('race')!.enabled).toBe(false);
     });
 
+    it('keeps the previous adapter loadable after a disable lands mid-refresh', async () => {
+      allowLocalUrlPolicy();
+      const create = new Request('http://localhost/api/registries', {
+        method: 'POST',
+        body: JSON.stringify({ type: 'url', source: goodUrl, slug: 'keep' }),
+      });
+      expect((await createRegistryHandler(db, manager, create)).status).toBe(200);
+      const adapterFile = join(managedDir, 'keep', 'adapter.ts');
+      const original = readFileSync(adapterFile, 'utf8');
+      // Upstream now serves different code; the user disables while it downloads.
+      db.upsertRegistry({ slug: 'keep', type: 'url', source: evilUrl, status: 'installed' });
+      onAdapterRequest = () => db.setRegistryEnabled('keep', false);
+      expect((await refreshRegistryHandler(db, manager, 'keep')).status).toBe(409);
+      expect(readFileSync(adapterFile, 'utf8')).toBe(original);
+      expect(existsSync(markerPath)).toBe(false);
+
+      db.setRegistryEnabled('keep', true);
+      await manager.reload();
+      expect((await manager.list()).some((m) => m.id === 'demo-registry')).toBe(true);
+    });
+
     it('marks the row as failed when the source is unreachable', async () => {
       db.upsertRegistry({
         slug: 'broken',
