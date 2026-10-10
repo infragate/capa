@@ -12,9 +12,37 @@ import { join } from "path";
 import {
 	getMasterKey,
 	getSecretStorageTier,
+	keyringAllowed,
 	peekSecretStorageTier,
 	resetMasterKeyStoreForTests,
+	setKeyringModuleLoaderForTests,
 } from "../master-key-store";
+
+const platformTier =
+	process.platform === "darwin"
+		? "keychain"
+		: process.platform === "win32"
+			? "dpapi"
+			: "libsecret";
+
+/** In-memory stand-in for @napi-rs/keyring so tests never touch the OS store. */
+function fakeKeyring(opts: { failWrites?: boolean } = {}) {
+	const store = new Map<string, string>();
+	const Entry = class {
+		constructor(
+			private service: string,
+			private account: string,
+		) {}
+		getPassword() {
+			return store.get(`${this.service}/${this.account}`) ?? null;
+		}
+		setPassword(password: string) {
+			if (opts.failWrites) throw new Error("no secret service");
+			store.set(`${this.service}/${this.account}`, password);
+		}
+	};
+	return { store, loader: () => ({ Entry }) };
+}
 
 describe("master-key-store", () => {
 	let home: string;
@@ -35,6 +63,7 @@ describe("master-key-store", () => {
 
 	afterEach(() => {
 		resetMasterKeyStoreForTests();
+		setKeyringModuleLoaderForTests(null);
 		if (prevHome === undefined) delete process.env.HOME;
 		else process.env.HOME = prevHome;
 		if (prevProfile === undefined) delete process.env.USERPROFILE;
@@ -73,5 +102,86 @@ describe("master-key-store", () => {
 		expect(peekSecretStorageTier()).toBe("file");
 		expect(existsSync(join(home, ".capa", "master.key"))).toBe(false);
 		expect(existsSync(join(home, ".capa"))).toBe(false);
+	});
+
+	describe("tier selection", () => {
+		beforeEach(() => {
+			delete process.env.CAPA_SECRET_STORE;
+		});
+
+		it("new install stores the key in the keyring and keeps a file copy", () => {
+			const { store, loader } = fakeKeyring();
+			setKeyringModuleLoaderForTests(loader);
+			const key = getMasterKey();
+			expect(getSecretStorageTier()).toBe(platformTier);
+			expect(store.get("capa/master-key")).toBe(key.toString("base64"));
+			const file = readFileSync(join(home, ".capa", "master.key"));
+			expect(Buffer.compare(file, key)).toBe(0);
+
+			// Next start reads the keyring even though the file copy exists.
+			resetMasterKeyStoreForTests();
+			expect(peekSecretStorageTier()).toBe(platformTier);
+			expect(Buffer.compare(getMasterKey(), key)).toBe(0);
+			expect(getSecretStorageTier()).toBe(platformTier);
+		});
+
+		it("an existing master.key keeps the file tier and is never migrated", () => {
+			const dir = join(home, ".capa");
+			mkdirSync(dir, { recursive: true });
+			const seeded = Buffer.alloc(32, 9);
+			writeFileSync(join(dir, "master.key"), seeded);
+			const { store, loader } = fakeKeyring();
+			setKeyringModuleLoaderForTests(loader);
+
+			expect(peekSecretStorageTier()).toBe("file");
+			expect(Buffer.compare(getMasterKey(), seeded)).toBe(0);
+			expect(getSecretStorageTier()).toBe("file");
+			expect(store.size).toBe(0);
+		});
+
+		it("a master.key that differs from the keyring key wins", () => {
+			const dir = join(home, ".capa");
+			mkdirSync(dir, { recursive: true });
+			const seeded = Buffer.alloc(32, 9);
+			writeFileSync(join(dir, "master.key"), seeded);
+			const { store, loader } = fakeKeyring();
+			store.set("capa/master-key", Buffer.alloc(32, 1).toString("base64"));
+			setKeyringModuleLoaderForTests(loader);
+
+			expect(peekSecretStorageTier()).toBe("file");
+			expect(Buffer.compare(getMasterKey(), seeded)).toBe(0);
+			expect(getSecretStorageTier()).toBe("file");
+		});
+
+		it("falls back to the file tier when the addon can't load", () => {
+			setKeyringModuleLoaderForTests(() => {
+				throw new Error("Cannot find native binding");
+			});
+			expect(getMasterKey().length).toBe(32);
+			expect(getSecretStorageTier()).toBe("file");
+			expect(existsSync(join(home, ".capa", "master.key"))).toBe(true);
+		});
+
+		it("falls back to the file tier when the keyring rejects writes", () => {
+			const { loader } = fakeKeyring({ failWrites: true });
+			setKeyringModuleLoaderForTests(loader);
+			const key = getMasterKey();
+			expect(getSecretStorageTier()).toBe("file");
+			resetMasterKeyStoreForTests();
+			expect(Buffer.compare(getMasterKey(), key)).toBe(0);
+			expect(getSecretStorageTier()).toBe("file");
+		});
+	});
+
+	describe("keyringAllowed", () => {
+		it("keeps compiled macOS builds off the keychain", () => {
+			expect(keyringAllowed("darwin", true)).toBe(false);
+		});
+
+		it("allows macOS from source and compiled Windows/Linux", () => {
+			expect(keyringAllowed("darwin", false)).toBe(true);
+			expect(keyringAllowed("win32", true)).toBe(true);
+			expect(keyringAllowed("linux", true)).toBe(true);
+		});
 	});
 });
