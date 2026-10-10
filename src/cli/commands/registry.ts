@@ -9,6 +9,7 @@ import {
   deriveSlug,
   isValidSlug,
   RegistryDisabledError,
+  withRegistryLock,
 } from '../../shared/registries/installer';
 import { createAuthenticatedFetch } from '../../shared/authenticated-fetch';
 import type { RegistrySourceType } from '../../types/database';
@@ -371,7 +372,8 @@ export async function registryRemoveCommand(slug: string): Promise<void> {
       },
     ];
 
-    await runTasks(tasks, { exitOnError: true }, { slug, db });
+    // Same lock as the server, so a refresh can't restore files mid-removal.
+    await withRegistryLock(slug, () => runTasks(tasks, { exitOnError: true }, { slug, db }));
     success(`Registry "${slug}" removed.`);
     footer('Done');
   } catch (err: unknown) {
@@ -464,14 +466,17 @@ export async function registryRefreshCommand(
       },
     ];
 
-    await runTasks(tasks, { exitOnError: true }, {
-      slug,
-      noCache: !!options.noCache,
-      db,
-      resolvedRef: null,
-      manifestName: '',
-      contentSha256: '',
-    });
+    // Held from download through the record update, shared with the server.
+    await withRegistryLock(slug, () =>
+      runTasks(tasks, { exitOnError: true }, {
+        slug,
+        noCache: !!options.noCache,
+        db,
+        resolvedRef: null,
+        manifestName: '',
+        contentSha256: '',
+      }),
+    );
 
     success(`Registry "${slug}" refreshed.`);
     footer('Done');

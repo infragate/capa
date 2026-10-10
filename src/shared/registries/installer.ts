@@ -250,6 +250,55 @@ export async function executeStagedRegistry(
 /**
  * Stage then execute. Used by CLI `--yes` and first-start seed.
  */
+/** Another install, edit or refresh of the same registry is running. */
+export class RegistryBusyError extends Error {
+	constructor(slug: string) {
+		super(`Registry "${slug}" is already being installed or refreshed. Try again when it finishes.`);
+		this.name = "RegistryBusyError";
+	}
+}
+
+/** A lock left behind by a crashed process stops blocking after this long. */
+const REGISTRY_LOCK_STALE_MS = 10 * 60 * 1000;
+
+/**
+ * Run fn while holding the registry's lock, so two installs or refreshes of
+ * one slug (server or CLI, any process) can't delete or restore each other's
+ * adapter files. The lock is a directory next to the adapters: mkdir is
+ * atomic and fails if it exists. Throws RegistryBusyError when it's held.
+ */
+export async function withRegistryLock<T>(
+	slug: string,
+	fn: () => Promise<T>,
+): Promise<T> {
+	if (!isValidSlug(slug)) return fn(); // fn rejects the slug itself
+	const base = getManagedRegistriesDir();
+	mkdirSync(base, { recursive: true });
+	// Has a dot, so it is never a valid slug and never mistaken for a registry.
+	const lock = join(base, `${slug}.lock`);
+	try {
+		mkdirSync(lock);
+	} catch (err) {
+		if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+		let stale = false;
+		try {
+			stale = Date.now() - statSync(lock).mtimeMs > REGISTRY_LOCK_STALE_MS;
+		} catch {}
+		if (!stale) throw new RegistryBusyError(slug);
+		rmSync(lock, { recursive: true, force: true });
+		try {
+			mkdirSync(lock);
+		} catch {
+			throw new RegistryBusyError(slug);
+		}
+	}
+	try {
+		return await fn();
+	} finally {
+		rmSync(lock, { recursive: true, force: true });
+	}
+}
+
 /** A refresh found its registry disabled after downloading the new adapter. */
 export class RegistryDisabledError extends Error {
 	constructor(slug: string) {

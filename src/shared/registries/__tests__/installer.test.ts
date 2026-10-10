@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, spyOn } from 'bun:test';
 import { createHash } from 'crypto';
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, readFileSync } from 'fs';
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, readFileSync, utimesSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import * as config from '../../config';
@@ -19,6 +19,8 @@ import {
   isValidSlug,
   getInstalledAdapterPath,
   removeInstalledAdapter,
+  withRegistryLock,
+  RegistryBusyError,
 } from '../installer';
 
 const VALID_ADAPTER = `export default {
@@ -305,5 +307,38 @@ describe('installer — pending vs execute', () => {
     expect(p).toBe(join(managedDir, 'roundtrip', 'adapter.ts'));
     removeInstalledAdapter('roundtrip');
     expect(getInstalledAdapterPath('roundtrip')).toBeNull();
+  });
+});
+
+describe('withRegistryLock', () => {
+  let dir: string;
+  let spy: ReturnType<typeof spyOn>;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'capa-registry-lock-'));
+    spy = spyOn(config, 'getManagedRegistriesDir').mockReturnValue(dir);
+  });
+  afterEach(() => {
+    spy.mockRestore();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('refuses while held and releases afterwards', async () => {
+    let inner: Promise<unknown> | undefined;
+    await withRegistryLock('demo', async () => {
+      inner = withRegistryLock('demo', async () => 'never').catch((e) => e);
+    });
+    expect(await inner).toBeInstanceOf(RegistryBusyError);
+    expect(existsSync(join(dir, 'demo.lock'))).toBe(false);
+    expect(await withRegistryLock('demo', async () => 'ok')).toBe('ok');
+  });
+
+  it('takes over a lock left behind by a crashed process', async () => {
+    const lock = join(dir, 'demo.lock');
+    mkdirSync(lock);
+    const old = new Date(Date.now() - 60 * 60 * 1000);
+    utimesSync(lock, old, old);
+    expect(await withRegistryLock('demo', async () => 'ok')).toBe('ok');
+    mkdirSync(lock); // fresh lock: still respected
+    await expect(withRegistryLock('demo', async () => 'x')).rejects.toBeInstanceOf(RegistryBusyError);
   });
 });
