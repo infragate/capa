@@ -601,6 +601,33 @@ describe('hooks-installer — pruneOrphanHooks / cleanHooks', () => {
     expect(bashHooks[0].command).toBe('echo a');
   });
 
+  it('drops the old entry when a changed hook can no longer be installed for a provider', async () => {
+    await installHooks({
+      projectPath,
+      projectId,
+      capabilitiesFilePath: join(projectPath, 'capabilities.yaml'),
+      hooks: [{ id: 'gate', on: 'stop', command: 'echo old' }],
+      providers: ['antigravity', 'claude-code'],
+      db,
+      authFetch: makeAuthFetch(),
+      getRepoSnapshot: stubGetRepoSnapshot,
+    });
+    const hooksJson = join(projectPath, '.agents', 'hooks.json');
+    expect(JSON.parse(readFileSync(hooksJson, 'utf-8'))['capa:gate']).toBeDefined();
+
+    // Antigravity only runs commands, so the prompt version can't replace it.
+    const result = pruneOrphanHooks(
+      projectPath,
+      projectId,
+      [{ id: 'gate', on: 'stop', type: 'prompt', prompt: 'ok?' } as Hook],
+      ['antigravity', 'claude-code'],
+      db,
+    );
+    expect(result.removed).toBe(1);
+    expect(JSON.parse(readFileSync(hooksJson, 'utf-8'))['capa:gate']).toBeUndefined();
+    expect(db.getManagedHooks(projectId).map((r) => r.providerId)).toEqual(['claude-code']);
+  });
+
   it('keeps the managed_hooks row when on-disk prune fails so future runs can retry', async () => {
     // Install a hook, then corrupt the locator so removeManagedHookEntry
     // throws. The DB row should survive the failed prune (warn-but-retry)
