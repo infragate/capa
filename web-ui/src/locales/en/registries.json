@@ -68,6 +68,7 @@
     "actions": {
       "edit": "Edit",
       "refresh": "Refresh",
+      "refreshDisabled": "Enable this registry to refresh it",
       "delete": "Delete",
       "enable": "Enable",
       "disable": "Disable",

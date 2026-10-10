@@ -132,10 +132,10 @@ export function RegistriesTable({
                     </button>
                     <button
                       type="button"
-                      disabled={busy || disabled}
+                      disabled={busy || disabled || !r.enabled}
                       onClick={() => onRefresh(r.slug)}
                       className="inline-flex items-center gap-1 rounded-sm border border-border-secondary bg-bg-tertiary px-2 py-1 text-xs text-text-secondary transition-colors hover:bg-hover-bg disabled:cursor-not-allowed disabled:opacity-50"
-                      title={t('settings.actions.refresh')}
+                      title={r.enabled ? t('settings.actions.refresh') : t('settings.actions.refreshDisabled')}
                     >
                       <RefreshCw className={cn('h-3.5 w-3.5', busy && 'animate-spin')} />
                       <span>{t('settings.actions.refresh')}</span>

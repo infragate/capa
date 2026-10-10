@@ -7,6 +7,7 @@ import { Page } from '../../../components/layout/Page';
 import { Spinner } from '../../../components/common/Spinner';
 import { EmptyState } from '../../../components/common/EmptyState';
 import {
+  useIsRegistryMutating,
   useRegistriesAdmin,
   useRemoveRegistry,
   useRefreshRegistry,
@@ -69,9 +70,11 @@ export function RegistrySettingsPage() {
   );
 
   // Sequential on purpose: each refresh reinstalls into the shared registry
-  // manager, and one failure must not stop the rest.
+  // manager, and one failure must not stop the rest. Enabled registries only:
+  // refreshing runs the latest upstream adapter code, and a disabled registry
+  // is one the user stopped trusting (the server refuses those too).
   const handleRefreshAll = useCallback(async () => {
-    const slugs = (registries ?? []).map((r) => r.slug);
+    const slugs = (registries ?? []).filter((r) => r.enabled).map((r) => r.slug);
     setRefreshingAll(true);
     setFeedback(null);
     const failed: string[] = [];
@@ -99,8 +102,10 @@ export function RegistrySettingsPage() {
     );
   }, [registries, refreshMut, t]);
 
-  // Any running mutation locks every registry action so they cannot overlap.
-  const busy = refreshingAll || busySlug !== null;
+  // Any registry request in flight in this tab (including one from a dialog
+  // closed with Escape) locks every registry action so they cannot overlap.
+  const isMutating = useIsRegistryMutating();
+  const busy = refreshingAll || busySlug !== null || isMutating;
 
   const handleDelete = useCallback(
     async (slug: string) => {
@@ -153,7 +158,7 @@ export function RegistrySettingsPage() {
           <div className="flex items-center gap-2">
             <button
               type="button"
-              disabled={busy || !registries?.length}
+              disabled={busy || !registries?.some((r) => r.enabled)}
               onClick={handleRefreshAll}
               className="inline-flex items-center gap-2 rounded-sm border border-border-secondary bg-bg-tertiary px-3 py-1.5 text-sm text-text-secondary transition-colors hover:bg-hover-bg disabled:cursor-not-allowed disabled:opacity-50"
             >
