@@ -5,6 +5,7 @@
 
 import type { ToolCallKind, ToolCallStatus } from "../types/database";
 import type { CanonicalHookEvent } from "../types/hooks";
+import type { ProviderEventMapping } from "../types/providers";
 import {
 	type ActivityAttributes,
 	extractActivityAttributes,
@@ -106,18 +107,21 @@ export function normalizeActivityHookPayload(
 		}
 	}
 
-	if (event === "afterTool" && afterToolIsCovered(provider, toolNameFrom(obj))) {
+	if (
+		(event === "afterTool" && afterToolIsCovered(provider, toolNameFrom(obj))) ||
+		(event === "afterMcpCall" && sharedAfterToolMapping(provider, "afterMcpCall"))
+	) {
 		return {
 			kind: "agent_tool",
 			toolName: toolNameFrom(obj) || event,
 			status: "ok",
 			source: provider,
 			skip: true,
-			skipReason: "covered by afterFileEdit / afterMcpCall",
+			skipReason: "recorded by another hook for the same tool call",
 		};
 	}
 
-	const kind = kindForEvent(event, obj);
+	const kind = kindForEvent(event, obj, provider);
 	const toolName = nameForEvent(event, kind, obj);
 	const status = statusForEvent(event, obj);
 	const args = argsForEvent(event, obj);
@@ -164,10 +168,41 @@ export function normalizeActivityHookPayload(
 }
 
 /**
- * `afterTool` rows that a more specific outcome hook already records.
- * Claude-like providers fire one PostToolUse for both (scoped by
- * `matcherPrefix`); Cursor fires `postToolUse` next to `afterFileEdit` /
- * `afterMCPExecution`.
+ * The provider's mapping for `canonical` when it rides on the same native
+ * event as `afterTool` (Claude-like providers fire one PostToolUse for both,
+ * scoped by `matcherPrefix`).
+ */
+function sharedAfterToolMapping(
+	provider: string | null,
+	canonical: "afterFileEdit" | "afterMcpCall",
+): ProviderEventMapping | null {
+	const map = provider ? getProvider(provider)?.hooks?.eventMap : undefined;
+	const mapping = map?.[canonical];
+	return mapping && mapping.event === map?.afterTool?.event ? mapping : null;
+}
+
+function sharedMatcherMatches(
+	provider: string | null,
+	canonical: "afterFileEdit" | "afterMcpCall",
+	name: string | null,
+): boolean {
+	const mapping = sharedAfterToolMapping(provider, canonical);
+	return (
+		!!name &&
+		!!mapping &&
+		"matcherPrefix" in mapping &&
+		new RegExp(`^(?:${mapping.matcherPrefix})$`).test(name)
+	);
+}
+
+/**
+ * `afterTool` rows that `afterFileEdit` already records. Cursor fires
+ * `postToolUse` next to `afterFileEdit` / `afterMCPExecution`.
+ *
+ * MCP goes the other way on Claude-like providers: `afterTool` records it (as
+ * `agent_mcp`) and the shared `afterMcpCall` is skipped, because installs
+ * from before the `mcp__.*` matcher fix still carry an `mcp__` hook that
+ * never fires until hooks are re-synced.
  */
 function afterToolIsCovered(
 	provider: string | null,
@@ -175,17 +210,7 @@ function afterToolIsCovered(
 ): boolean {
 	if (!provider || !name) return false;
 	if (provider === "cursor") return name === "Write" || /^MCP:/.test(name);
-	const map = getProvider(provider)?.hooks?.eventMap;
-	const afterTool = map?.afterTool?.event;
-	if (!map || !afterTool) return false;
-	return (["afterFileEdit", "afterMcpCall"] as const).some((canonical) => {
-		const mapping = map[canonical];
-		return (
-			mapping?.event === afterTool &&
-			"matcherPrefix" in mapping &&
-			new RegExp(`^(?:${mapping.matcherPrefix})$`).test(name)
-		);
-	});
+	return sharedMatcherMatches(provider, "afterFileEdit", name);
 }
 
 /** Claude Code loads skills through a `Skill` tool, not by reading SKILL.md. */
@@ -201,6 +226,7 @@ function isEditToolName(name: string | null): boolean {
 function kindForEvent(
 	event: CanonicalHookEvent,
 	obj: Record<string, unknown>,
+	provider: string | null,
 ): ToolCallKind {
 	if (event === "userPromptSubmit") return "prompt";
 	if (event === "beforeShell" || event === "afterShell") return "shell";
@@ -213,6 +239,9 @@ function kindForEvent(
 		event === "afterToolFailure"
 	) {
 		if (skillToolName(obj)) return "skill";
+		if (sharedMatcherMatches(provider, "afterMcpCall", toolNameFrom(obj))) {
+			return "agent_mcp";
+		}
 		if (
 			isSkillMdPath(extractPath(obj)) &&
 			!isEditToolName(toolNameFrom(obj))

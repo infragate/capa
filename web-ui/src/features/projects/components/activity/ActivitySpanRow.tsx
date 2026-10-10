@@ -42,8 +42,11 @@ interface ActivitySpanRowProps {
 function subagentLabel(call: ToolCallRecord): string | null {
   if (!call.agent_id) return null;
   try {
-    const type = JSON.parse(call.attributes_json ?? '{}')?.agent_type;
-    if (typeof type === 'string' && type.trim()) return type.trim();
+    // Claude stores `agent_type` (often empty); Cursor stores `subagent_type`.
+    const attrs = JSON.parse(call.attributes_json ?? '{}');
+    for (const type of [attrs?.agent_type, attrs?.subagent_type]) {
+      if (typeof type === 'string' && type.trim()) return type.trim();
+    }
   } catch {
     /* fall through */
   }

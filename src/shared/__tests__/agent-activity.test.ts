@@ -310,16 +310,39 @@ describe("normalizeActivityHookPayload", () => {
 		).toBe("agent_tool");
 	});
 
-	it("skips afterTool rows that afterFileEdit / afterMcpCall already record", () => {
+	it("records each tool call once when two hooks fire for it", () => {
 		const skipped = (provider: string, tool_name: string) =>
 			normalizeActivityHookPayload("afterTool", { tool_name }, provider).skip;
 		expect(skipped("claude-code", "Edit")).toBe(true);
 		expect(skipped("claude-code", "Write")).toBe(true);
-		expect(skipped("claude-code", "mcp__github__get_issue")).toBe(true);
 		expect(skipped("cursor", "Write")).toBe(true);
 		expect(skipped("cursor", "MCP:get_artifact")).toBe(true);
 		expect(skipped("claude-code", "Read")).toBe(false);
 		expect(skipped("cursor", "Read")).toBe(false);
+		// Claude MCP: afterTool records it (old installs never fire afterMcpCall),
+		// so the shared afterMcpCall is the one skipped.
+		const mcp = normalizeActivityHookPayload(
+			"afterTool",
+			{ tool_name: "mcp__github__get_issue" },
+			"claude-code",
+		);
+		expect(mcp.skip).toBe(false);
+		expect(mcp.kind).toBe("agent_mcp");
+		expect(
+			normalizeActivityHookPayload(
+				"afterMcpCall",
+				{ tool_name: "mcp__github__get_issue" },
+				"claude-code",
+			).skip,
+		).toBe(true);
+		// Cursor fires a separate afterMCPExecution, which stays the record.
+		expect(
+			normalizeActivityHookPayload(
+				"afterMcpCall",
+				{ tool_name: "get_artifact" },
+				"cursor",
+			).skip,
+		).toBe(false);
 		// Failures only arrive on afterToolFailure, so keep them.
 		expect(
 			normalizeActivityHookPayload(

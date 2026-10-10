@@ -361,12 +361,20 @@ describe('collectRunSkillFolders', () => {
     expect(collectRunSkillFolders(events)).toEqual(['debug', 'standup']);
   });
 
-  it('includes Claude Skill spans and /skill prompts', () => {
+  it('includes Claude Skill spans and /skill prompts for known skills', () => {
     const events = [
       call({ id: '1', kind: 'skill', tool_name: 'create-video' }),
-      call({ id: '2', kind: 'prompt', tool_name: '/init-brand infragate' }),
+      call({ id: '2', kind: 'prompt', tool_name: '/init-brand acme' }),
       call({ id: '3', kind: 'prompt', tool_name: 'fix the build' }),
+      call({ id: '4', kind: 'prompt', tool_name: '/clear' }),
+      call({ id: '5', kind: 'prompt', tool_name: '/Users/me/app.ts fails' }),
+      call({ id: '6', kind: 'prompt', tool_name: '/create-video again' }),
     ];
-    expect(collectRunSkillFolders(events)).toEqual(['create-video', 'init-brand']);
+    const isKnownSkill = (name: string) => name === 'init-brand';
+    expect(collectRunSkillFolders(events, { isKnownSkill })).toEqual([
+      'create-video',
+      'init-brand',
+    ]);
+    expect(collectRunSkillFolders(events)).toEqual(['create-video']);
   });
 });
