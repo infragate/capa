@@ -53,7 +53,7 @@ export async function handlePutAgents(
 		return jsonError("Invalid JSON body", 400);
 	}
 
-	if (!("agents" in body)) {
+	if (!body || typeof body !== "object" || !("agents" in body)) {
 		return jsonError(
 			'Body must include an "agents" field (object or null)',
 			400,

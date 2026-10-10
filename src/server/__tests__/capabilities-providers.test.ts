@@ -10,6 +10,7 @@ import {
 	type CapabilitiesRouteDeps,
 	handleCapabilitiesMutation,
 } from "../capabilities-routes";
+import { redactProjectPath } from "../capabilities-route-helpers";
 
 const PROJECT = "proj";
 const PATH = `/api/projects/${PROJECT}/capabilities/providers`;
@@ -89,7 +90,42 @@ describe("PUT /capabilities/providers", () => {
 		await Bun.write(file, "providers: [cursor\n");
 		const res = await put({ providers: ["cursor"] });
 		expect(res?.status).toBe(400);
-		expect(typeof (await res!.json()).error).toBe("string");
+		const { error } = await res!.json();
+		expect(typeof error).toBe("string");
+		expect(error).not.toContain(dir);
+		expect(error).not.toContain(dir.replaceAll("\\", "/"));
+	});
+
+	it("returns a JSON 400 when both capabilities.yaml and .json exist", async () => {
+		await Bun.write(join(dir, "capabilities.json"), "{}");
+		const res = await put({ providers: ["cursor"] });
+		expect(res?.status).toBe(400);
+		expect((await res!.json()).error).toContain("Both capabilities.yaml and capabilities.json");
+	});
+
+	it("PUT /agents rejects a null or non-object body with a 400", async () => {
+		const agentsPath = `/api/projects/${PROJECT}/capabilities/agents`;
+		for (const body of ["null", "1", '"x"', "[]"]) {
+			const res = await handleCapabilitiesMutation(
+				deps,
+				PROJECT,
+				agentsPath,
+				"PUT",
+				new Request(`http://localhost${agentsPath}`, { method: "PUT", body }),
+			);
+			expect(res?.status).toBe(400);
+			expect((await res!.json()).error).toContain('"agents" field');
+		}
+	});
+
+	it("never echoes the project's absolute path in an error", () => {
+		const native = join(dir, "capabilities.yaml");
+		const msg = `ENOENT: no such file or directory, open '${native}'`;
+		expect(redactProjectPath(msg, dir)).toBe(
+			"ENOENT: no such file or directory, open 'capabilities.yaml'",
+		);
+		const slashed = msg.replaceAll("\\", "/");
+		expect(redactProjectPath(slashed, dir)).not.toContain(dir.replaceAll("\\", "/"));
 	});
 
 	it("removes the key when the list is empty", async () => {
