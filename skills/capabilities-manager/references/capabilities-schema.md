@@ -53,7 +53,7 @@ tools:
 - **inline**: Embed SKILL.md content in `def.content`. Use `requires: ['@server_id.tool_id']` for MCP tools, plain ID for command tools.
 - **github**: `def.repo: owner/repo@skill-name` (search) or `owner/repo::path/to/skill-name` (exact). See "Repo string format" below for details.
 - **gitlab**: `def.repo: group/subgroup/repo@skill-name` (search) or `group/subgroup/repo::path/to/skill-name` (exact). Subgroups are supported.
-- **git**: `def.url` is the clone URL of any git host (ends in `.git`); `def.path` is the skill directory inside the repo (default: the root). Pin with `def.version` (tag/branch) or `def.ref` (commit). Unpinned installs take the newest `vX.Y.Z` tag. Private repos use your git credential helper.
+- **git**: `def.url` is the clone URL of any git host (ends in `.git`; `https`, `http`, `ssh` or `file`); `def.path` is the skill directory inside the repo (default: the root). Pin with `def.version` (tag/branch) or `def.ref` (commit). Unpinned installs take the newest `vX.Y.Z` tag. Private repos use your git credential helper.
 - **remote**: `def.url` to a SKILL.md URL.
 - **local**: `def.path` to a directory containing SKILL.md (read on each install).
 - **installed**: User installed the skill elsewhere; capa only records it for tool binding. Declare directly in capabilities.yaml (no CLI shortcut) — set `def.description` and `def.requires` as needed.
