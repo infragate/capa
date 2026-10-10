@@ -21,6 +21,7 @@ import {
   removeInstalledAdapter,
   withRegistryLock,
   RegistryBusyError,
+  setRegistryLockTimingForTests,
 } from '../installer';
 
 const VALID_ADAPTER = `export default {
@@ -340,5 +341,48 @@ describe('withRegistryLock', () => {
     expect(await withRegistryLock('demo', async () => 'ok')).toBe('ok');
     mkdirSync(lock); // fresh lock: still respected
     await expect(withRegistryLock('demo', async () => 'x')).rejects.toBeInstanceOf(RegistryBusyError);
+  });
+
+  it('keeps the lock while a long operation runs past the stale window', async () => {
+    setRegistryLockTimingForTests({ staleMs: 150, heartbeatMs: 30 });
+    try {
+      let competing: Promise<unknown> | undefined;
+      await withRegistryLock('demo', async () => {
+        await Bun.sleep(400);
+        competing = withRegistryLock('demo', async () => 'stolen').catch((e) => e);
+        await Bun.sleep(50);
+      });
+      expect(await competing).toBeInstanceOf(RegistryBusyError);
+      expect(existsSync(join(dir, 'demo.lock'))).toBe(false);
+    } finally {
+      setRegistryLockTimingForTests(null);
+    }
+  });
+
+  it('lets exactly one of two takers claim an abandoned lock', async () => {
+    const lock = join(dir, 'demo.lock');
+    mkdirSync(lock);
+    const dead = Bun.spawnSync([process.execPath, '-e', '']).pid;
+    writeFileSync(join(lock, 'owner'), `${dead} gone`);
+    const old = new Date(Date.now() - 60 * 60 * 1000);
+    utimesSync(lock, old, old);
+    const results = await Promise.allSettled([
+      withRegistryLock('demo', async () => Bun.sleep(50)),
+      withRegistryLock('demo', async () => Bun.sleep(50)),
+    ]);
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    const rejected = results.find((r) => r.status === 'rejected') as PromiseRejectedResult;
+    expect(rejected.reason).toBeInstanceOf(RegistryBusyError);
+  });
+
+  it('never removes a lock another process now owns', async () => {
+    const lock = join(dir, 'demo.lock');
+    await withRegistryLock('demo', async () => {
+      // Simulate the lock having been taken over while this one ran.
+      rmSync(lock, { recursive: true, force: true });
+      mkdirSync(lock);
+      writeFileSync(join(lock, 'owner'), '1 someone-else');
+    });
+    expect(readFileSync(join(lock, 'owner'), 'utf8')).toBe('1 someone-else');
   });
 });
