@@ -114,7 +114,8 @@ export function useRefreshRegistry() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (slug: string) => registriesApi.refresh(slug),
-    onSuccess: () => {
+    // Settled, not success: a failed refresh records its status server-side.
+    onSettled: () => {
       void qc.invalidateQueries({ queryKey: REGISTRIES_KEY });
     },
   });

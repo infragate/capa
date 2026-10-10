@@ -399,6 +399,19 @@ describe('registries-routes', () => {
       expect(existsSync(join(managedDir, 'r', 'adapter.ts'))).toBe(true);
     });
 
+    it('keeps a disabled registry disabled', async () => {
+      allowLocalUrlPolicy();
+      const create = new Request('http://localhost/api/registries', {
+        method: 'POST',
+        body: JSON.stringify({ type: 'url', source: goodUrl, slug: 'off' }),
+      });
+      await createRegistryHandler(db, manager, create);
+      db.setRegistryEnabled('off', false);
+      const res = await refreshRegistryHandler(db, manager, 'off');
+      expect(res.status).toBe(200);
+      expect(db.getRegistry('off')!.enabled).toBe(false);
+    });
+
     it('marks the row as failed when the source is unreachable', async () => {
       db.upsertRegistry({
         slug: 'broken',

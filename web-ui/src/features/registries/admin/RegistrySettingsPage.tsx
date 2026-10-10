@@ -71,7 +71,7 @@ export function RegistrySettingsPage() {
   // Sequential on purpose: each refresh reinstalls into the shared registry
   // manager, and one failure must not stop the rest.
   const handleRefreshAll = useCallback(async () => {
-    const slugs = (registries ?? []).filter((r) => r.enabled).map((r) => r.slug);
+    const slugs = (registries ?? []).map((r) => r.slug);
     setRefreshingAll(true);
     setFeedback(null);
     const failed: string[] = [];
@@ -98,6 +98,9 @@ export function RegistrySettingsPage() {
           },
     );
   }, [registries, refreshMut, t]);
+
+  // Any running mutation locks every registry action so they cannot overlap.
+  const busy = refreshingAll || busySlug !== null;
 
   const handleDelete = useCallback(
     async (slug: string) => {
@@ -150,7 +153,7 @@ export function RegistrySettingsPage() {
           <div className="flex items-center gap-2">
             <button
               type="button"
-              disabled={refreshingAll || !registries?.some((r) => r.enabled)}
+              disabled={busy || !registries?.length}
               onClick={handleRefreshAll}
               className="inline-flex items-center gap-2 rounded-sm border border-border-secondary bg-bg-tertiary px-3 py-1.5 text-sm text-text-secondary transition-colors hover:bg-hover-bg disabled:cursor-not-allowed disabled:opacity-50"
             >
@@ -161,8 +164,9 @@ export function RegistrySettingsPage() {
             </button>
             <button
               type="button"
+              disabled={busy}
               onClick={() => setDialogOpen(true)}
-              className="inline-flex items-center gap-2 rounded-sm border border-accent-primary bg-accent-primary px-3 py-1.5 text-sm font-medium text-bg-secondary transition-opacity hover:opacity-90"
+              className="inline-flex items-center gap-2 rounded-sm border border-accent-primary bg-accent-primary px-3 py-1.5 text-sm font-medium text-bg-secondary transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Plus className="h-4 w-4" />
               <span>{t('settings.addButton')}</span>
@@ -205,6 +209,7 @@ export function RegistrySettingsPage() {
             onDelete={handleDelete}
             onSetEnabled={handleSetEnabled}
             busySlug={busySlug}
+            disabled={busy}
           />
         )}
       </Page>

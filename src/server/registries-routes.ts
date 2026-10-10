@@ -293,6 +293,7 @@ export async function refreshRegistryHandler(
 			manager,
 			{ slug: existing.slug, type: existing.type, source: existing.source },
 			authFetch,
+			{ enabled: existing.enabled },
 		);
 		return jsonOk({ registry: record });
 	} catch (err: any) {
