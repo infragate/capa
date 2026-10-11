@@ -2,6 +2,7 @@ import * as yaml from "js-yaml";
 import type { YAMLMap, YAMLSeq } from "yaml";
 import { isMap, isSeq, parseDocument } from "yaml";
 import { z } from "zod";
+import { PLUGIN_PROVIDERS } from "../types/plugin";
 import type {
 	AgentFileConfig,
 	Capabilities,
@@ -37,7 +38,7 @@ const sourcePluginSchema = z
 	.object({
 		id: z.string(),
 		name: z.string(),
-		provider: z.enum(["cursor", "claude"]),
+		provider: z.enum(PLUGIN_PROVIDERS),
 	})
 	.passthrough();
 

@@ -7,7 +7,9 @@ import type { OAuth2Config, ServerToolExposure } from './capabilities';
  * (e.g. registry id `claude-code` maps to manifest id `claude`). `agent-plugins` is the
  * vendor-neutral root `plugin.json` format (agent-plugins.org), not tied to a provider.
  */
-export type PluginProvider = 'cursor' | 'claude' | 'agent-plugins';
+/** Plugin manifest formats capa reads. The capabilities schema validates against this list. */
+export const PLUGIN_PROVIDERS = ['cursor', 'claude', 'agent-plugins'] as const;
+export type PluginProvider = (typeof PLUGIN_PROVIDERS)[number];
 
 /**
  * Per-server configuration for a plugin entry in capabilities.yaml.
