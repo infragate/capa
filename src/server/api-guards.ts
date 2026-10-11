@@ -1,16 +1,10 @@
-import { requireAuth, isLoopbackHost } from "./auth-middleware";
+import { requireAuth } from "./auth-middleware";
 
 export type GuardResult =
 	| { ok: true }
 	| { ok: false; reason: string; status: number };
 
 const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
-
-export function serverHttpOrigin(host: string, port: number): string {
-	const wrapped =
-		host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
-	return `http://${wrapped}:${port}`;
-}
 
 function isMutating(method: string): boolean {
 	return MUTATING_METHODS.has(method.toUpperCase());
@@ -33,46 +27,17 @@ export function isPublicApiRoute(method: string, pathname: string): boolean {
 	return false;
 }
 
-function defaultPort(protocol: string, explicit: string): string {
-	if (explicit) return explicit;
-	return protocol === "https:" ? "443" : "80";
-}
-
-/** Browsers treat localhost and 127.0.0.1 as different Origins; both are loopback. */
-export function isEquivalentApiOrigin(
-	origin: string,
-	serverOrigin: string,
-): boolean {
-	if (origin === serverOrigin) return true;
-	try {
-		const a = new URL(origin);
-		const b = new URL(serverOrigin);
-		if (a.protocol !== b.protocol) return false;
-		if (
-			defaultPort(a.protocol, a.port) !== defaultPort(b.protocol, b.port)
-		) {
-			return false;
-		}
-		const aHost = a.hostname.replace(/^\[|\]$/g, "");
-		const bHost = b.hostname.replace(/^\[|\]$/g, "");
-		return isLoopbackHost(aHost) && isLoopbackHost(bHost);
-	} catch {
-		return false;
-	}
-}
-
-export function requireApiCsrf(
-	req: Request,
-	serverOrigin: string,
-): GuardResult {
+/**
+ * No Origin match: a reverse proxy (e.g. Orca's *.orca.localhost labels) serves
+ * the UI from an origin we can't predict (#300). The bearer token is the CSRF
+ * defence, since browsers never attach it on their own, and withAllowedHost
+ * stops DNS rebinding from reading it out of the SPA HTML.
+ */
+export function requireApiCsrf(req: Request): GuardResult {
 	if (!isMutating(req.method)) {
 		return { ok: true };
 	}
 	if (req.headers.get("Sec-Fetch-Site") === "cross-site") {
-		return { ok: false, reason: "Forbidden", status: 403 };
-	}
-	const origin = req.headers.get("Origin");
-	if (origin && !isEquivalentApiOrigin(origin, serverOrigin)) {
 		return { ok: false, reason: "Forbidden", status: 403 };
 	}
 	return { ok: true };
@@ -104,7 +69,7 @@ export function authorizeApiRequest(
 	if (!auth.ok) {
 		return auth;
 	}
-	const csrf = requireApiCsrf(req, serverHttpOrigin(bind.host, bind.port));
+	const csrf = requireApiCsrf(req);
 	if (!csrf.ok) {
 		return csrf;
 	}
