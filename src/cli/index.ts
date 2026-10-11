@@ -5,6 +5,7 @@ import { startCommand } from './commands/start';
 import { stopCommand } from './commands/stop';
 import { restartCommand } from './commands/restart';
 import { statusCommand } from './commands/status';
+import { openCommand } from './commands/open';
 import { installCommand } from './commands/install';
 import { cleanCommand } from './commands/clean';
 import { addCommand } from './commands/add';
@@ -270,6 +271,13 @@ if (process.argv[2] === '__server__') {
       .description('Check the health status of the capa server')
       .action(async () => {
         await statusCommand();
+      });
+
+    program
+      .command('open [path]')
+      .description('Open a project in the Web UI (defaults to the current folder; falls back to the dashboard home)')
+      .action(async (path?: string) => {
+        await openCommand(path);
       });
 
     program
