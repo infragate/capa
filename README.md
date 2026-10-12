@@ -119,7 +119,9 @@ Every tool you define is also a CLI command under `capa sh`.
 ### 5. Open the Web UI
 
 ```bash
-capa status    # prints the local URL when the server is up
+capa open             # open this folder's project in the browser
+capa open ../other    # or any other project folder
+capa status           # prints the local URL when the server is up
 ```
 
 Edit skills, tools, rules, hooks, plugins, and agents in the browser. Changes sync live back to `capabilities.yaml`.

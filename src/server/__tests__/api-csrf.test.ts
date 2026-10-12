@@ -4,11 +4,11 @@ import {
   injectHtmlAuthToken,
   requireApiCsrf,
   requireMutatingJsonContentType,
-  serverHttpOrigin,
 } from '../api-guards';
 import { initAuth, _resetAuthStateForTests } from '../auth-middleware';
 
 const SERVER_ORIGIN = 'http://127.0.0.1:5912';
+const PROXY_ORIGIN = 'http://capa-main.orca.localhost:53111';
 const TOKEN = 'test-secret-token';
 
 function apiRequest(
@@ -23,28 +23,17 @@ function apiRequest(
   });
 }
 
-describe('serverHttpOrigin', () => {
-  it('builds the bind origin for IPv4 loopback', () => {
-    expect(serverHttpOrigin('127.0.0.1', 5912)).toBe('http://127.0.0.1:5912');
-  });
-
-  it('brackets IPv6 bind hosts', () => {
-    expect(serverHttpOrigin('::1', 5912)).toBe('http://[::1]:5912');
-  });
-});
-
 describe('requireApiCsrf', () => {
-  it('rejects a mutating request with a foreign Origin', () => {
+  it('accepts a same-origin request from a reverse-proxied UI (#300)', () => {
     const req = apiRequest('/api/registries', {
       method: 'POST',
-      origin: 'http://evil.example',
-      headers: { 'Content-Type': 'application/json' },
+      origin: PROXY_ORIGIN,
+      headers: {
+        'Content-Type': 'application/json',
+        'Sec-Fetch-Site': 'same-origin',
+      },
     });
-    expect(requireApiCsrf(req, SERVER_ORIGIN)).toEqual({
-      ok: false,
-      reason: 'Forbidden',
-      status: 403,
-    });
+    expect(requireApiCsrf(req)).toEqual({ ok: true });
   });
 
   it('rejects a mutating request with Sec-Fetch-Site: cross-site', () => {
@@ -55,7 +44,7 @@ describe('requireApiCsrf', () => {
         'Sec-Fetch-Site': 'cross-site',
       },
     });
-    expect(requireApiCsrf(req, SERVER_ORIGIN)).toEqual({
+    expect(requireApiCsrf(req)).toEqual({
       ok: false,
       reason: 'Forbidden',
       status: 403,
@@ -68,7 +57,7 @@ describe('requireApiCsrf', () => {
       origin: SERVER_ORIGIN,
       headers: { 'Content-Type': 'application/json' },
     });
-    expect(requireApiCsrf(req, SERVER_ORIGIN)).toEqual({ ok: true });
+    expect(requireApiCsrf(req)).toEqual({ ok: true });
   });
 
   it('accepts localhost Origin when the server binds 127.0.0.1', () => {
@@ -77,7 +66,7 @@ describe('requireApiCsrf', () => {
       origin: 'http://localhost:5912',
       headers: { 'Content-Type': 'application/json' },
     });
-    expect(requireApiCsrf(req, SERVER_ORIGIN)).toEqual({ ok: true });
+    expect(requireApiCsrf(req)).toEqual({ ok: true });
   });
 
   it('accepts CLI mutating requests that omit Origin', () => {
@@ -85,7 +74,7 @@ describe('requireApiCsrf', () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
     });
-    expect(requireApiCsrf(req, SERVER_ORIGIN)).toEqual({ ok: true });
+    expect(requireApiCsrf(req)).toEqual({ ok: true });
   });
 
   it('does not apply the CSRF origin gate to GET', () => {
@@ -93,7 +82,7 @@ describe('requireApiCsrf', () => {
       method: 'GET',
       origin: 'http://evil.example',
     });
-    expect(requireApiCsrf(req, SERVER_ORIGIN)).toEqual({ ok: true });
+    expect(requireApiCsrf(req)).toEqual({ ok: true });
   });
 });
 
@@ -177,19 +166,29 @@ describe('authorizeApiRequest', () => {
     expect(authorizeApiRequest(req, bind)).toEqual({ ok: true });
   });
 
-  it('returns 403 when a valid token is paired with a foreign Origin', () => {
+  it('accepts a token-bearing request from a reverse-proxied UI origin (#300)', () => {
     const req = apiRequest('/api/registries', {
       method: 'POST',
-      origin: 'https://attacker.example',
+      origin: PROXY_ORIGIN,
       headers: {
         Authorization: `Bearer ${TOKEN}`,
         'Content-Type': 'application/json',
+        'Sec-Fetch-Site': 'same-origin',
       },
+    });
+    expect(authorizeApiRequest(req, bind)).toEqual({ ok: true });
+  });
+
+  it('returns 401 for a foreign Origin without the token', () => {
+    const req = apiRequest('/api/registries', {
+      method: 'POST',
+      origin: 'https://attacker.example',
+      headers: { 'Content-Type': 'application/json' },
     });
     expect(authorizeApiRequest(req, bind)).toEqual({
       ok: false,
-      reason: 'Forbidden',
-      status: 403,
+      reason: 'Unauthorized',
+      status: 401,
     });
   });
 
