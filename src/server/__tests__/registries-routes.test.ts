@@ -42,6 +42,8 @@ describe('registries-routes', () => {
   let badUrl: string;
   let evilUrl: string;
   let markerPath: string;
+  let adapterRequests: number;
+  let onAdapterRequest: (() => void) | undefined;
   let urlPolicySpy: ReturnType<typeof spyOn> | undefined;
 
   beforeEach(() => {
@@ -62,10 +64,14 @@ describe('registries-routes', () => {
       `import { writeFileSync } from 'fs';\nwriteFileSync(${JSON.stringify(markerPath)}, 'pwned');\n${VALID_ADAPTER}`,
     );
 
+    adapterRequests = 0;
+    onAdapterRequest = undefined;
     server = Bun.serve({
       port: 0,
       fetch(req) {
         const path = new URL(req.url).pathname;
+        adapterRequests++;
+        onAdapterRequest?.();
         if (path.endsWith('/good.ts')) {
           return new Response(readFileSync(goodAdapterFile, 'utf-8'), {
             headers: { 'content-type': 'application/typescript' },
@@ -397,6 +403,88 @@ describe('registries-routes', () => {
       expect(res.status).toBe(200);
       expect(db.getRegistry('r')!.status).toBe('installed');
       expect(existsSync(join(managedDir, 'r', 'adapter.ts'))).toBe(true);
+    });
+
+    it('refuses to refresh a disabled registry without fetching or executing it', async () => {
+      allowLocalUrlPolicy();
+      db.upsertRegistry({
+        slug: 'off',
+        type: 'url',
+        source: evilUrl,
+        status: 'installed',
+        enabled: false,
+      });
+      const res = await refreshRegistryHandler(db, manager, 'off');
+      expect(res.status).toBe(409);
+      expect((await jsonOf(res)).error).toMatch(/enable it first/i);
+      expect(adapterRequests).toBe(0);
+      expect(existsSync(markerPath)).toBe(false);
+      expect(existsSync(join(managedDir, 'off', 'adapter.ts'))).toBe(false);
+      const r = db.getRegistry('off')!;
+      expect(r.enabled).toBe(false);
+      expect(r.status).toBe('installed');
+    });
+
+    it('does not run or re-enable a registry disabled while its adapter is being fetched', async () => {
+      allowLocalUrlPolicy();
+      db.upsertRegistry({
+        slug: 'race',
+        type: 'url',
+        source: evilUrl,
+        status: 'installed',
+        enabled: true,
+      });
+      onAdapterRequest = () => db.setRegistryEnabled('race', false);
+      const res = await refreshRegistryHandler(db, manager, 'race');
+      expect(res.status).toBe(409);
+      expect(adapterRequests).toBe(1);
+      expect(existsSync(markerPath)).toBe(false);
+      expect(db.getRegistry('race')!.enabled).toBe(false);
+    });
+
+    it('keeps the previous adapter loadable after a disable lands mid-refresh', async () => {
+      allowLocalUrlPolicy();
+      const create = new Request('http://localhost/api/registries', {
+        method: 'POST',
+        body: JSON.stringify({ type: 'url', source: goodUrl, slug: 'keep' }),
+      });
+      expect((await createRegistryHandler(db, manager, create)).status).toBe(200);
+      const adapterFile = join(managedDir, 'keep', 'adapter.ts');
+      const original = readFileSync(adapterFile, 'utf8');
+      // Upstream now serves different code; the user disables while it downloads.
+      db.upsertRegistry({ slug: 'keep', type: 'url', source: evilUrl, status: 'installed' });
+      onAdapterRequest = () => db.setRegistryEnabled('keep', false);
+      expect((await refreshRegistryHandler(db, manager, 'keep')).status).toBe(409);
+      expect(readFileSync(adapterFile, 'utf8')).toBe(original);
+      expect(existsSync(markerPath)).toBe(false);
+
+      db.setRegistryEnabled('keep', true);
+      await manager.reload();
+      expect((await manager.list()).some((m) => m.id === 'demo-registry')).toBe(true);
+    });
+
+    it('refuses a second refresh or a delete while one refresh is running', async () => {
+      allowLocalUrlPolicy();
+      const create = new Request('http://localhost/api/registries', {
+        method: 'POST',
+        body: JSON.stringify({ type: 'url', source: goodUrl, slug: 'busy' }),
+      });
+      expect((await createRegistryHandler(db, manager, create)).status).toBe(200);
+      let second: Promise<Response> | undefined;
+      let removal: Promise<Response> | undefined;
+      onAdapterRequest = () => {
+        onAdapterRequest = undefined;
+        second = refreshRegistryHandler(db, manager, 'busy');
+        removal = deleteRegistryHandler(db, manager, 'busy');
+      };
+      expect((await refreshRegistryHandler(db, manager, 'busy')).status).toBe(200);
+      const [r2, r3] = await Promise.all([second!, removal!]);
+      expect(r2.status).toBe(409);
+      expect((await jsonOf(r2)).error).toMatch(/already being installed or refreshed/);
+      expect(r3.status).toBe(409);
+      expect(db.getRegistry('busy')?.status).toBe('installed');
+      // The lock is released once the first refresh finishes.
+      expect((await refreshRegistryHandler(db, manager, 'busy')).status).toBe(200);
     });
 
     it('marks the row as failed when the source is unreachable', async () => {

@@ -127,6 +127,7 @@ async function postEvent(
 				generationId: normalized.generationId ?? null,
 				model: normalized.model ?? null,
 				attributes: normalized.attributes ?? null,
+				agentId: normalized.agentId ?? null,
 			}),
 			signal: AbortSignal.timeout(5000),
 		});

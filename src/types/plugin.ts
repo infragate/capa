@@ -4,9 +4,12 @@ import type { OAuth2Config, ServerToolExposure } from './capabilities';
 
 /**
  * @see ProviderIntegration.pluginProviderId — registry id may differ from this manifest id
- * (e.g. registry id `claude-code` maps to manifest id `claude`).
+ * (e.g. registry id `claude-code` maps to manifest id `claude`). `agent-plugins` is the
+ * vendor-neutral root `plugin.json` format (agent-plugins.org), not tied to a provider.
  */
-export type PluginProvider = 'cursor' | 'claude';
+/** Plugin manifest formats capa reads. The capabilities schema validates against this list. */
+export const PLUGIN_PROVIDERS = ['cursor', 'claude', 'agent-plugins'] as const;
+export type PluginProvider = (typeof PLUGIN_PROVIDERS)[number];
 
 /**
  * Per-server configuration for a plugin entry in capabilities.yaml.
@@ -40,7 +43,7 @@ export interface PluginServerConfig {
 export interface Plugin {
   /** Stable identifier. Defaults to last segment of subpath or repo. */
   id?: string;
-  type: 'github' | 'gitlab';
+  type: 'github' | 'gitlab' | 'git';
   def: PluginDefinition;
   /** Per-server aliasing and tool subset, keyed by the manifest's mcpServers key. */
   servers?: Record<string, PluginServerConfig>;
@@ -51,14 +54,17 @@ export interface PluginDefinition {
    * Repository reference. Three accepted shapes (mirrors skills):
    *   - `owner/repo`               — plugin at the repo root
    *   - `owner/repo@plugin-name`   — recursive search; capa walks the cloned
-   *     snapshot for any directory containing `.claude-plugin/plugin.json` or
-   *     `.cursor-plugin/plugin.json` whose containing-directory basename or
-   *     manifest `name` field equals `plugin-name`. Single segment, no slashes.
+   *     snapshot for any directory containing `.claude-plugin/plugin.json`,
+   *     `.cursor-plugin/plugin.json` or an Agent Plugins `plugin.json` whose
+   *     containing-directory basename or manifest `name` field equals `plugin-name`. Single segment, no slashes.
    *   - `owner/repo::sub/path`     — exact subpath inside the repo
    *
    * GitLab nested groups are supported (`group/subgroup/project[...]`).
+   * Required for github/gitlab; `git` plugins use `url` instead.
    */
-  repo: string;
+  repo?: string;
+  /** Clone URL for `git` plugins (any host). The plugin location goes in `subpath`. */
+  url?: string;
   /**
    * Optional exact subpath inside the repo when you prefer to keep it out of
    * the `repo` string. Equivalent to writing `owner/repo::<subpath>` — capa
@@ -198,6 +204,8 @@ export interface NormalizedPluginMCPServerDef {
   cmd?: string;
   args?: string[];
   env?: Record<string, string>;
+  /** Subprocess working directory as declared (Agent Plugins `mcp.json` only; unexpanded). */
+  cwd?: string;
   /** Remote: HTTP MCP server URL */
   url?: string;
   headers?: Record<string, string>;
@@ -225,4 +233,6 @@ export interface UnifiedPluginManifest {
    * (e.g. `lsp`, `monitors`, `themes`). Surfaced as install warnings.
    */
   skippedArtifacts?: string[];
+  /** Non-fatal manifest / MCP config problems, surfaced as install warnings. */
+  warnings?: string[];
 }

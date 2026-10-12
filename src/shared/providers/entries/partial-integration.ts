@@ -8,24 +8,6 @@ import { home } from "../paths";
 
 export const partialIntegrationProviders: Record<string, ProviderIntegration> =
 	{
-		antigravity: {
-			id: "antigravity",
-			displayName: "Antigravity",
-			skillsDir: ".agents/skills",
-			globalSkillsDir: join(home, ".gemini/config/skills"),
-			detectInstalled: async () =>
-				existsSync(join(process.cwd(), ".agent")) ||
-				existsSync(join(home, ".gemini/antigravity")),
-			// Antigravity IDE has no project-local MCP file; the CLI uses
-			// `.agents/mcp_config.json` with `serverUrl` (not `url`). Holding off
-			// until we either split into antigravity-cli or extend McpIntegration.
-			instructions: { filename: "AGENTS.md" },
-			rules: {
-				dir: ".agents/rules",
-				extension: ".md",
-				frontmatter: "none",
-			},
-		},
 		augment: {
 			id: "augment",
 			displayName: "Augment",

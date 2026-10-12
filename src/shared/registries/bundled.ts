@@ -23,9 +23,9 @@ export const BUNDLED_ADAPTER_PINS: Record<BundledAdapterSlug, string> = {
 	"skills-sh":
 		"4f6b1c7ad0f0ab5a13edb673397602faf073736b86030a9755ab1a0fc87b7a08",
 	"claude-plugins":
-		"e963bb725eb6dfe6ea161d28ae7edbc29802e5c1bcade3ee80db1e0e9c9231f6",
+		"0a5403277c2a42cc5b98703090ac9ab0604a7b38d094c1864218815f60dc275c",
 	"cursor-marketplace":
-		"93fb72fc4c66381f28e7893e9af6b54f270d1fdfdab318838121e802967c0dfd",
+		"cbb34c908638ec30849365665e889b23350c91510045e72de3515e1c69d8265d",
 };
 
 const BUNDLED_ADAPTER_SOURCES: Record<BundledAdapterSlug, string> = {

@@ -19,6 +19,13 @@ describe('safe-remote-url', () => {
       expect(isBlockedHostnameOrIp('169.254.169.254')).toBe(true);
     });
 
+    it('blocks WHATWG-serialized IPv4-mapped IPv6 and trailing-dot names', () => {
+      expect(isBlockedHostnameOrIp(new URL('https://[::ffff:169.254.169.254]/').hostname)).toBe(true);
+      expect(isBlockedHostnameOrIp('[::ffff:a00:1]')).toBe(true);
+      expect(isBlockedHostnameOrIp('[::ffff:808:808]')).toBe(false);
+      expect(isBlockedHostnameOrIp('metadata.google.internal.')).toBe(true);
+    });
+
     it('allows public hostnames and IPs', () => {
       expect(isBlockedHostnameOrIp('example.com')).toBe(false);
       expect(isBlockedHostnameOrIp('8.8.8.8')).toBe(false);

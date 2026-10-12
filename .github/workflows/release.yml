@@ -12,6 +12,9 @@ jobs:
   build:
     name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
+    # Only uploads workflow artifacts; the release job publishes them.
+    permissions:
+      contents: read
     strategy:
       matrix:
         include:
@@ -85,6 +88,21 @@ jobs:
 
       - name: Build web UI
         run: bun run build:web
+
+      # @napi-rs/keyring loads its native addon with a dynamic require that
+      # `bun build --compile` can't follow. Install the target's addon package
+      # (cross-compiled jobs only get the host's by default) and generate a
+      # static require of it so the binary embeds it.
+      - name: Embed keyring addon for target
+        env:
+          BUN_TARGET: ${{ matrix.bun_target }}
+        shell: bash
+        run: |
+          os=$(echo "$BUN_TARGET" | cut -d- -f2)
+          cpu=$(echo "$BUN_TARGET" | cut -d- -f3)
+          if [ "$os" == "windows" ]; then os=win32; fi
+          bun install --os="$os" --cpu="$cpu"
+          bun run scripts/generate-keyring-addon.ts
 
       - name: Build
         env:

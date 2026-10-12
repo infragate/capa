@@ -4,6 +4,12 @@
  */
 
 import { spawnSync } from 'child_process';
+import { type CliSpawn, resolveCliSpawn } from '../wrap/cli-spawn';
+
+// The command comes from registry data. An npm-installed `claude` is a .cmd
+// shim that only runs through cmd.exe, so every token must be a plain word
+// with no spaces, quotes or cmd/shell metacharacters.
+const SAFE_TOKEN = /^[A-Za-z0-9._@:/=+-]+$/;
 
 export interface NativePluginInstall {
   /** Provider ids that understand this install (e.g. `['claude-code']`). */
@@ -13,24 +19,37 @@ export interface NativePluginInstall {
 }
 
 /**
- * Run a native plugin install command. Uses the first token as the binary
- * and the rest as argv (no shell), matching wrap's approach to `claude`.
+ * Validate a native install command and build its spawn call. The first
+ * token is the binary, the rest are argv. Executables are spawned without a
+ * shell; only a resolved .cmd/.bat shim goes through cmd.exe (see wrap's
+ * resolveCliSpawn), and by then every token has passed SAFE_TOKEN.
  */
-export function runNativePluginInstall(command: string): void {
-  const trimmed = command.trim();
-  if (!trimmed) {
+export function nativeInstallSpawn(
+  command: string,
+  platform: NodeJS.Platform = process.platform,
+  which?: (bin: string) => string | null,
+): CliSpawn {
+  const parts = command.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) {
     throw new Error('Native plugin install command is empty.');
   }
+  const unsafe = parts.find((part) => !SAFE_TOKEN.test(part));
+  if (unsafe !== undefined) {
+    throw new Error(`Refusing native plugin install: unsafe token "${unsafe}" in "${command.trim()}".`);
+  }
+  return resolveCliSpawn(parts[0]!, parts.slice(1), platform, which);
+}
 
-  const parts = trimmed.split(/\s+/);
-  const bin = parts[0]!;
-  const args = parts.slice(1);
+/** Run a native plugin install command (see nativeInstallSpawn). */
+export function runNativePluginInstall(command: string): void {
+  const spawn = nativeInstallSpawn(command);
+  const trimmed = command.trim();
+  const bin = trimmed.split(/\s+/)[0]!;
 
   console.log(`  → ${trimmed}`);
-  const result = spawnSync(bin, args, {
+  const result = spawnSync(spawn.command, spawn.args, {
     stdio: 'inherit',
-    // Windows needs shell to resolve .cmd shims for `claude`.
-    shell: process.platform === 'win32',
+    shell: spawn.shell,
     env: process.env,
   });
 

@@ -16,6 +16,8 @@ import {
 import { tryResolveRegistryItem } from './resolve-registry-source';
 import { parseSkillSource, type ParsedSkillSource } from './add-parse-skill';
 import { parsePluginSource, type ParsedPluginSource } from './add-parse-plugin';
+import { pluginSourceOf } from '../../shared/plugin-source';
+import { stripHttpUrlUserinfo } from '../../shared/git-url';
 
 export { parseSkillSource, type ParsedSkillSource } from './add-parse-skill';
 export { parsePluginSource, type ParsedPluginSource } from './add-parse-plugin';
@@ -190,7 +192,7 @@ export async function addCommand(
           (p) =>
             (p as { id?: string }).id === resolved.itemName ||
             (p.type === newPlugin.type &&
-              p.def.repo === newPlugin.def.repo &&
+              pluginSourceOf(p.def) === pluginSourceOf(newPlugin.def) &&
               (p.def.subpath ?? '') === (newPlugin.def.subpath ?? '')),
         );
         if (existing) {
@@ -229,7 +231,7 @@ export async function addCommand(
     const dup = capabilities.plugins.find(p =>
       p.id === id ||
       (p.type === parsed.type
-        && p.def.repo === parsed.def.repo
+        && pluginSourceOf(p.def) === pluginSourceOf(parsed.def)
         && (p.def.subpath ?? '') === (parsed.def.subpath ?? '')));
     if (dup) {
       console.error(`✗ Plugin "${id}" already exists in capabilities file.`);
@@ -246,7 +248,7 @@ export async function addCommand(
 
     console.log(`✓ Added plugin "${id}" to ${capabilitiesFile.path}`);
     console.log(`  Type: ${parsed.type}`);
-    console.log(`  Repo: ${parsed.def.repo}`);
+    console.log(`  Repo: ${stripHttpUrlUserinfo(pluginSourceOf(parsed.def) ?? '')}`);
     if (parsed.def.version) console.log(`  Version: ${parsed.def.version}`);
     if (parsed.def.ref) console.log(`  Ref: ${parsed.def.ref}`);
 
@@ -288,7 +290,7 @@ export async function addCommand(
   if (skillDef.def.repo) {
     console.log(`  Repo: ${skillDef.def.repo}`);
   } else if (skillDef.def.url) {
-    console.log(`  URL: ${skillDef.def.url}`);
+    console.log(`  URL: ${stripHttpUrlUserinfo(skillDef.def.url)}`);
   } else if (skillDef.def.path) {
     console.log(`  Path: ${skillDef.def.path}`);
   }

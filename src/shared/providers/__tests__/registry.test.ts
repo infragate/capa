@@ -168,6 +168,15 @@ describe('Provider registry', () => {
       expect(p?.instructions?.contextConfig?.keyPath).toEqual(['context', 'fileName']);
     });
 
+    it('antigravity uses standalone .agents/hooks.json with antigravity shape', () => {
+      const p = getProvider('antigravity');
+      expect(p?.hooks?.shape).toBe('antigravity');
+      expect(p?.hooks?.storage).toEqual({ kind: 'standalone', configPath: '.agents/hooks.json', format: 'json' });
+      expect(p?.hooks?.eventMap.beforeShell).toEqual({ event: 'PreToolUse', matcherPrefix: 'run_command' });
+      expect(p?.hooks?.eventMap.stop).toEqual({ event: 'Stop' });
+      expect(p?.hooks?.activityCorrelation?.conversationIdFields).toEqual(['conversationId']);
+    });
+
     it('gemini-cli uses inline-config json with gemini shape', () => {
       const p = getProvider('gemini-cli');
       expect(p?.hooks?.shape).toBe('gemini');
@@ -1163,6 +1172,12 @@ interface ExpectedIntegration {
 
 const expandedIntegrations: Record<string, ExpectedIntegration> = {
   // Tier 1 — full project-local integrations
+  antigravity: {
+    // Remote entries need `serverUrl`; `url` / `httpUrl` are not supported.
+    mcp: { configPath: '.agents/mcp_config.json', format: 'json', serversKey: 'mcpServers', entryUrlKey: 'serverUrl' },
+    instructions: 'AGENTS.md',
+    rules: { dir: '.agents/rules', extension: '.md', frontmatter: 'none' },
+  },
   crush: {
     mcp: { configPath: '.crush.json', format: 'json', serversKey: 'mcp', entryUrlKey: 'url', entryType: 'http' },
     instructions: 'AGENTS.md',
@@ -1240,10 +1255,6 @@ const expandedIntegrations: Record<string, ExpectedIntegration> = {
 
   // Tier 2 — instructions-only or partial
   adal: { instructions: 'AGENTS.md' },
-  antigravity: {
-    instructions: 'AGENTS.md',
-    rules: { dir: '.agents/rules', extension: '.md', frontmatter: 'none' },
-  },
   augment: {
     instructions: 'AGENTS.md',
     subagents: { dir: '.augment/agents', extension: '.md', format: 'markdown-frontmatter' },

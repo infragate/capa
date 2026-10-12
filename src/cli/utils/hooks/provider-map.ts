@@ -38,8 +38,10 @@ export function resolveProviderEventName(
 }
 
 function matcherMatchesPrefix(matcher: string, prefix: string): boolean {
-  if (prefix.endsWith('__')) {
-    return matcher.startsWith(prefix) || matcher.includes(prefix);
+  // `mcp__.*` / `mcp_.*`: any matcher naming that tool family maps here.
+  const family = prefix.replace(/\.\*$/, '');
+  if (family.endsWith('_')) {
+    return matcher.includes(family);
   }
   const alts = prefix.split('|').map((a) => a.trim()).filter(Boolean);
   const parts = matcher.split('|').map((a) => a.trim()).filter(Boolean);

@@ -6,6 +6,7 @@ import {
   upsertHookEntry,
   removeHookEntryAt,
 } from '../hook-handlers';
+import { providers } from '../registry';
 import type { HooksIntegration } from '../../../types/providers';
 import type { Hook } from '../../../types/hooks';
 
@@ -145,6 +146,32 @@ describe('hook-handlers — buildHookEntry', () => {
     expect(out.matcher).toBe('Bash');
   });
 
+  it('claude shape keeps a user matcher already inside the canonical family', () => {
+    const build = (matcher: string, matcherPrefix: string) =>
+      buildHookEntry(claudeIntegration, {
+        hook: { id: 'h', on: 'afterMcpCall', command: 'echo', matcher },
+        runReference: '/abs/script',
+        mapping: { event: 'PostToolUse', matcherPrefix },
+      }).matcher;
+    // Unioning with `mcp__.*` would fire for every MCP tool.
+    expect(build('mcp__github__.*', 'mcp__.*')).toBe('mcp__github__.*');
+    expect(build('mcp__github__.*|mcp__jira__.*', 'mcp__.*')).toBe('mcp__github__.*|mcp__jira__.*');
+    expect(build('Write', 'Edit|MultiEdit|Write')).toBe('Write');
+    expect(build('Edit|Write', 'Edit|MultiEdit|Write')).toBe('Edit|Write');
+    // Anchors and a wrapping group don't change the scope.
+    expect(build('^mcp__github__.*$', 'mcp__.*')).toBe('^mcp__github__.*$');
+    expect(build('(?:mcp__github__.*)', 'mcp__.*')).toBe('(?:mcp__github__.*)');
+    expect(build('^mcp__github__.*$|^mcp__jira__.*$', 'mcp__.*')).toBe('^mcp__github__.*$|^mcp__jira__.*$');
+    expect(build('^(Write)$', 'Edit|MultiEdit|Write')).toBe('^(Write)$');
+    expect(build('^(?:mcp__github__.*)$', 'mcp__.*')).toBe('^(?:mcp__github__.*)$');
+    expect(build('(?:^mcp__github__.*$)', 'mcp__.*')).toBe('(?:^mcp__github__.*$)');
+    // Groups other than one wrapping group: can't tell, so union.
+    expect(build('mcp__(github|jira)__.*', 'mcp__.*')).toBe('(?:mcp__.*)|(?:mcp__(github|jira)__.*)');
+    // Anything reaching outside the family still gets the union.
+    expect(build('mcp__github__.*|Bash', 'mcp__.*')).toBe('(?:mcp__.*)|(?:mcp__github__.*|Bash)');
+    expect(build('Write|Bash', 'Edit|MultiEdit|Write')).toBe('(?:Edit|MultiEdit|Write)|(?:Write|Bash)');
+  });
+
   it('codex (claude shape) emits a matcher-grouped name-tagged command entry', () => {
     const hook: Hook = { id: 'audit-shell', on: 'beforeShell', command: 'echo' };
     const out = buildHookEntry(codexIntegration, {
@@ -275,5 +302,75 @@ describe('hook-handlers — name tag helpers', () => {
     expect(isCapaNameTag(tag, 'foo')).toBe(true);
     expect(isCapaNameTag(tag, 'bar')).toBe(false);
     expect(isCapaNameTag('user-named')).toBe(false);
+  });
+});
+
+describe('hook-handlers — antigravity shape', () => {
+  // .agents/hooks.json maps hook NAMES to event configs.
+  // Docs: https://antigravity.google/docs/hooks/
+  const integration = providers.antigravity.hooks!;
+  const build = (hook: Hook) =>
+    buildHookEntry(integration, {
+      hook,
+      runReference: hook.command ?? '',
+      mapping: integration.eventMap[hook.on as keyof typeof integration.eventMap]!,
+    });
+
+  it('keys each capa hook by name tag, matcher-grouped for tool events', () => {
+    const root: Record<string, unknown> = { 'user-hook': { Stop: [{ command: 'u' }] } };
+    const loc = upsertHookEntry(integration, root, build({ id: 'sh', on: 'beforeShell', command: 'check', timeout: 5 }));
+    upsertHookEntry(integration, root, build({ id: 'done', on: 'stop', command: 'bye', matcher: 'ignored' }));
+    expect(loc).toEqual(['capa:sh']);
+    expect(root).toEqual({
+      'user-hook': { Stop: [{ command: 'u' }] },
+      'capa:sh': {
+        PreToolUse: [{ matcher: 'run_command', hooks: [{ type: 'command', command: 'check', timeout: 5 }] }],
+      },
+      // Non-tool events list handlers directly; matcher is dropped.
+      'capa:done': { Stop: [{ type: 'command', command: 'bye' }] },
+    });
+  });
+
+  it('re-install keeps a user enabled:false toggle; remove leaves user hooks', () => {
+    const root: Record<string, unknown> = {};
+    const loc = upsertHookEntry(integration, root, build({ id: 'x', on: 'afterTool', command: 'a' }));
+    (root['capa:x'] as Record<string, unknown>).enabled = false;
+    upsertHookEntry(integration, root, build({ id: 'x', on: 'afterTool', command: 'b' }));
+    expect(root['capa:x']).toEqual({
+      enabled: false,
+      PostToolUse: [{ matcher: '', hooks: [{ type: 'command', command: 'b' }] }],
+    });
+    root.user = { Stop: [] };
+    expect(removeHookEntryAt(integration, root, loc, 'x')).toBe(true);
+    expect(removeHookEntryAt(integration, root, ['stale'], 'x')).toBe(false);
+    expect(root).toEqual({ user: { Stop: [] } });
+  });
+
+  it('passthrough keys are namespaced so they never replace a user hook', () => {
+    const root: Record<string, unknown> = { lint: { Stop: [{ command: 'mine' }] } };
+    const out = buildHookEntry(integration, {
+      hook: { id: 'lint', on: 'stop', command: 'theirs' },
+      runReference: 'theirs',
+      mapping: integration.eventMap.stop!,
+      nameTagPrefix: '',
+    });
+    expect(upsertHookEntry(integration, root, out)).toEqual(['capa-passthrough:lint']);
+    expect(root.lint).toEqual({ Stop: [{ command: 'mine' }] });
+    // Not capa-managed: clean's name-tag fallback must not claim it.
+    expect(removeHookEntryAt(integration, root, ['capa-passthrough:lint'], 'lint')).toBe(false);
+  });
+
+  it('rejects prompt hooks (Antigravity only runs commands)', () => {
+    expect(() => build({ id: 'p', on: 'stop', type: 'prompt', prompt: 'hi' } as Hook)).toThrow();
+  });
+
+  it('rejects an event named "enabled" (it is the on/off toggle key)', () => {
+    expect(() =>
+      buildHookEntry(integration, {
+        hook: { id: 'e', on: 'antigravity:enabled', command: 'x' },
+        runReference: 'x',
+        mapping: { event: 'enabled' },
+      }),
+    ).toThrow(/toggle/);
   });
 });

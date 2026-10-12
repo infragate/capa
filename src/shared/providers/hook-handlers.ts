@@ -101,6 +101,12 @@ export function isCapaNameTag(value: unknown, hookId?: string): boolean {
  * Behaviour:
  *  - prefix only            -> use prefix
  *  - user matcher only      -> use user matcher (no canonical scope to fold in)
+ *  - both, user within prefix -> use user matcher alone. A user matcher that
+ *                              only names tools inside the canonical family
+ *                              (`mcp__github__.*` within `mcp__.*`, `Write`
+ *                              within `Edit|MultiEdit|Write`) is already
+ *                              scoped; unioning would widen it to the whole
+ *                              family.
  *  - both                   -> union them as a regex alternation
  *                              `(?:prefix)|(?:userMatcher)` so the
  *                              canonical tool family is still covered while
@@ -117,6 +123,24 @@ export function isCapaNameTag(value: unknown, hookId?: string): boolean {
  *                              `on: claude-code:PreToolUse`).
  *  - neither                -> empty (shape decides)
  */
+function matcherWithinPrefix(userMatcher: string, prefix: string): boolean {
+	// Ignore anchors and a wrapping group (`^mcp__github__.*$`,
+	// `(?:mcp__github__.*)`); anything with other groups falls back to the union.
+	const unwrap = (s: string) => {
+		const bare = s.replace(/^\^/, "").replace(/\$$/, "");
+		const inner = /^\((?:\?:)?([^()]*)\)$/.exec(bare);
+		return inner ? inner[1]!.replace(/^\^/, "").replace(/\$$/, "") : bare;
+	};
+	const parts = unwrap(userMatcher).split("|").map(unwrap);
+	if (parts.some((p) => /[()]/.test(p))) return false;
+	if (prefix.endsWith(".*")) {
+		const family = prefix.slice(0, -2);
+		return parts.every((p) => p.startsWith(family));
+	}
+	const alts = prefix.split("|");
+	return parts.every((p) => alts.includes(p));
+}
+
 function resolveMatcher(input: HookEntryInput): string {
 	const userMatcher =
 		input.hook.matcher && input.hook.matcher.length > 0
@@ -125,7 +149,10 @@ function resolveMatcher(input: HookEntryInput): string {
 	const prefix =
 		"matcherPrefix" in input.mapping ? input.mapping.matcherPrefix : "";
 	if (prefix && userMatcher) {
-		return prefix === userMatcher ? prefix : `(?:${prefix})|(?:${userMatcher})`;
+		if (prefix === userMatcher || matcherWithinPrefix(userMatcher, prefix)) {
+			return userMatcher;
+		}
+		return `(?:${prefix})|(?:${userMatcher})`;
 	}
 	return userMatcher || prefix;
 }
@@ -183,6 +210,45 @@ function buildCursorEntry(input: HookEntryInput): HookEntryOutput {
 	};
 }
 
+/** Antigravity events that take `{ matcher, hooks }` groups; others list handlers directly. */
+const ANTIGRAVITY_TOOL_EVENTS = new Set(["PreToolUse", "PostToolUse"]);
+
+/**
+ * Antigravity `.agents/hooks.json` maps hook NAMES to event configs:
+ *   { "<name>": { enabled?, PreToolUse: [{ matcher, hooks: [handler] }], Stop: [handler] } }
+ * so the name tag becomes the top-level key and `entry` is one item of the
+ * event array. Handlers only support `type: "command"`.
+ * Docs: https://antigravity.google/docs/hooks/
+ */
+function buildAntigravityEntry(input: HookEntryInput): HookEntryOutput {
+	const { hook, mapping, runReference } = input;
+	if ((hook.type ?? "command") !== "command") {
+		throw new Error('Antigravity hooks only support type "command"');
+	}
+	// `enabled` is the per-hook on/off toggle; an event of that name would replace it.
+	if (mapping.event === "enabled") {
+		throw new Error('"enabled" is the Antigravity hook on/off toggle, not an event name');
+	}
+	const handler: Record<string, unknown> = {
+		type: "command",
+		command: runReference,
+	};
+	if (hook.timeout !== undefined) handler.timeout = hook.timeout;
+	const isToolEvent = ANTIGRAVITY_TOOL_EVENTS.has(mapping.event);
+	const matcher = isToolEvent ? resolveMatcher(input) : "";
+	return {
+		eventName: mapping.event,
+		entry: isToolEvent ? { matcher, hooks: [handler] } : handler,
+		matcher,
+		// The name tag is a whole top-level hook here, so passthrough ('' prefix)
+		// gets its own namespace: a bare id could overwrite a user-authored hook.
+		nameTag: buildNameTag(
+			hook.id,
+			(input.nameTagPrefix ?? NAME_TAG_PREFIX) || "capa-passthrough:",
+		),
+	};
+}
+
 /**
  * Build the shape-specific entry for a single (provider, hook, mapping).
  *
@@ -196,9 +262,10 @@ export function buildHookEntry(
 	switch (integration.shape) {
 		case "claude":
 		case "gemini":
-		case "antigravity":
 		case "windsurf":
 			return buildClaudeLikeEntry(input, integration.supportsNameTag);
+		case "antigravity":
+			return buildAntigravityEntry(input);
 		case "cursor":
 			return buildCursorEntry(input);
 		default:
@@ -220,7 +287,7 @@ export function buildHookEntry(
  * Layout per shape (`hooksRoot` is the inline-config `hooksKey` or the bare
  * standalone document):
  *
- *  - claude/gemini/codex/windsurf/antigravity :
+ *  - claude/gemini/codex/windsurf :
  *                    hooksRoot[<event>] is an array of `{ matcher, hooks: [entry] }`.
  *                    Codex serialises this as TOML's nested array of tables
  *                    (`[[hooks.PreToolUse]]` + `[[hooks.PreToolUse.hooks]]`),
@@ -228,6 +295,9 @@ export function buildHookEntry(
  *                    locator = ['<event>', <matcherIndex>, 'hooks', <entryIndex>]
  *  - cursor        : hooksRoot[<event>] is an array of `entry`.
  *                    locator = ['<event>', <entryIndex>]
+ *  - antigravity   : hooksRoot[<name tag>] is `{ <event>: [entry] }`, one
+ *                    top-level key per capa hook.
+ *                    locator = ['<name tag>']
  *
  * Locators are emitted relative to the hooks root, NOT relative to the file
  * — each shape has a `rootPath` helper for the absolute path, which the
@@ -247,9 +317,20 @@ export function upsertHookEntry(
 	output: HookEntryOutput,
 ): HookLocator {
 	switch (integration.shape) {
+		case "antigravity": {
+			const { eventName, entry, nameTag } = output;
+			if (!nameTag) throw new Error("Antigravity hooks require a name tag");
+			// Keep a user's `enabled: false` toggle across re-installs.
+			const prev = hooksRoot[nameTag];
+			const enabled =
+				isPlainObject(prev) && typeof prev.enabled === "boolean"
+					? { enabled: prev.enabled }
+					: {};
+			hooksRoot[nameTag] = { ...enabled, [eventName]: [entry] };
+			return [nameTag];
+		}
 		case "claude":
 		case "gemini":
-		case "antigravity":
 		case "windsurf": {
 			const { eventName, entry, matcher, nameTag } = output;
 			const events = ensureArray(hooksRoot, eventName);
@@ -323,6 +404,14 @@ function removeByNameTag(
 	hooksRoot: Record<string, unknown>,
 	expectedHookId: string,
 ): boolean {
+	if (integration.shape === "antigravity") {
+		return removeAtLocator(
+			integration,
+			hooksRoot,
+			[buildNameTag(expectedHookId)],
+			expectedHookId,
+		);
+	}
 	for (const [eventName, events] of Object.entries(hooksRoot)) {
 		if (!Array.isArray(events)) continue;
 		for (let i = 0; i < events.length; i++) {
@@ -353,9 +442,17 @@ function removeAtLocator(
 	expectedHookId: string,
 ): boolean {
 	switch (integration.shape) {
+		case "antigravity": {
+			// ['<name tag>']
+			const [key] = locator;
+			if (locator.length !== 1 || typeof key !== "string") return false;
+			if (!isCapaNameTag(key, expectedHookId) || !isPlainObject(hooksRoot[key]))
+				return false;
+			delete hooksRoot[key];
+			return true;
+		}
 		case "claude":
 		case "gemini":
-		case "antigravity":
 		case "windsurf": {
 			// ['<event>', matcherIdx, 'hooks', entryIdx]
 			if (locator.length !== 4) return false;

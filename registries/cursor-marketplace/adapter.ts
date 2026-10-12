@@ -125,16 +125,13 @@ export function pluginDef(
   }
   if (!type || !ownerRepo) return undefined;
 
-  const cleanedPath = (gitPath ?? '')
+  // `.` means the repo root (about a fifth of listings use `"."` or `"./x"`).
+  const segments = (gitPath ?? '')
     .replace(/\\/g, '/')
-    .replace(/^\/+/, '')
-    .replace(/\/+$/, '');
-  if (
-    cleanedPath &&
-    cleanedPath.split('/').some((seg) => !seg || seg === '.' || seg === '..')
-  ) {
-    return undefined;
-  }
+    .split('/')
+    .filter((seg) => seg && seg !== '.');
+  if (segments.includes('..')) return undefined;
+  const cleanedPath = segments.join('/');
 
   const repo = cleanedPath ? `${ownerRepo}::${cleanedPath}` : ownerRepo;
   const def: { repo: string; ref?: string } = { repo };

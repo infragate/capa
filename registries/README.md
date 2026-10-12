@@ -53,7 +53,7 @@ capa registry disable <slug>        # hide a registry without removing it
 capa registry path                  # print ~/.capa/registries-managed/
 ```
 
-Most of those actions also exist in the web UI at `/ui/registries/settings`. The Add dialog includes a **Preview** button that calls `GET /api/registries/preview` and renders the raw adapter source in the dialog so you can audit it before checking *"I trust this code"* and confirming the install.
+While the server is running, `refresh` and `remove` must go through the web UI (the CLI refuses), because the server serializes changes to each registry. Most of those actions also exist in the web UI at `/ui/registries/settings`. The Add dialog includes a **Preview** button that calls `GET /api/registries/preview` and renders the raw adapter source in the dialog so you can audit it before checking *"I trust this code"* and confirming the install.
 
 ## The `RegistryAdapter` interface
 
@@ -265,4 +265,4 @@ export default adapter;
 |------|----------|-------------|-------|
 | `skills-sh/adapter.ts` | [skills.sh](https://skills.sh) | Skills | Server-side search via API |
 | `cursor-marketplace/adapter.ts` | [Cursor Marketplace](https://cursor.com/marketplace) | Plugins | Client-side filtering with in-memory cache |
-| `claude-plugins/adapter.ts` | [Claude Plugins](https://claude.com/plugins) | Plugins | Scrapes the Webflow-rendered directory; resolves source repos via `marketplace.json` |
+| `claude-plugins/adapter.ts` | [Claude Plugins](https://claude.com/marketplace/plugins) | Plugins | Lists and resolves plugins from the official `marketplace.json` |

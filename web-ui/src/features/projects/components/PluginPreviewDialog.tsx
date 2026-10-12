@@ -3,7 +3,7 @@ import { useQueries } from '@tanstack/react-query';
 import * as Dialog from '@radix-ui/react-dialog';
 import { X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import type { AuthoredPlugin, ResolvedPlugin } from '../../../types/api';
+import { pluginSource, type AuthoredPlugin, type ResolvedPlugin } from '../../../types/api';
 import { Spinner } from '../../../components/common/Spinner';
 import { renderMarkdown } from '../../../lib/markdown';
 import { useRegistries } from '../../registries/hooks';
@@ -23,9 +23,9 @@ function buildLocalPluginPreview(
   plugin: AuthoredPlugin,
   resolved: ResolvedPlugin | undefined,
 ): string {
-  const title = resolved?.name || plugin.id || plugin.def.repo;
+  const title = resolved?.name || plugin.id || pluginSource(plugin);
   const parts: string[] = [`# ${title}`, ''];
-  if (plugin.def.repo) parts.push(`**Repository:** \`${plugin.def.repo}\``, '');
+  if (pluginSource(plugin)) parts.push(`**Repository:** \`${pluginSource(plugin)}\``, '');
   if (resolved?.version || plugin.def.version) {
     parts.push(`**Version:** ${resolved?.version || plugin.def.version}`, '');
   }
@@ -53,7 +53,9 @@ function buildLocalPluginPreview(
 
   parts.push('## Install', '');
   parts.push('```');
-  parts.push(`capa add ${plugin.def.repo}`);
+  // A git plugin's subpath lives in def.subpath; `capa add` takes it as `::path`.
+  const gitSubpath = plugin.type === 'git' && plugin.def.subpath ? `::${plugin.def.subpath}` : '';
+  parts.push(`capa add --plugin ${pluginSource(plugin)}${gitSubpath}`);
   parts.push('```');
   parts.push('');
   return parts.join('\n');
@@ -103,7 +105,7 @@ export function PluginPreviewDialog({
   const matchedRegistry =
     matchedRegistryIndex >= 0 ? pluginRegistries[matchedRegistryIndex] : undefined;
 
-  const title = registryDetail?.title || resolved?.name || plugin?.id || plugin?.def.repo || '';
+  const title = registryDetail?.title || resolved?.name || plugin?.id || (plugin ? pluginSource(plugin) : '') || '';
   const description = registryDetail?.description;
   const meta = [
     matchedRegistry?.name,
@@ -127,8 +129,8 @@ export function PluginPreviewDialog({
                 <p className="mt-1 text-xs text-text-secondary">{description}</p>
               )}
               {meta && <p className="mt-1 text-[11px] text-text-tertiary">{meta}</p>}
-              {!description && plugin?.def.repo && (
-                <p className="mt-1 font-mono text-[11px] text-text-tertiary">{plugin.def.repo}</p>
+              {!description && plugin && pluginSource(plugin) && (
+                <p className="mt-1 font-mono text-[11px] text-text-tertiary">{pluginSource(plugin)}</p>
               )}
             </div>
             <Dialog.Close asChild>

@@ -103,6 +103,23 @@ describe('AuthenticatedFetch', () => {
     expect(headers.get('Authorization')).toBe('token gho_test_token');
   });
 
+  it('never hands a token to a plain http URL on a known host', async () => {
+    const authFetch = new AuthenticatedFetch(makeDb(makeIntegration()));
+    const httpUrl = 'http://github.com/owner/repo.git';
+
+    expect(authFetch.hasAuth(httpUrl)).toBe(false);
+    expect(authFetch.getTokenForUrl(httpUrl)).toBeNull();
+    await authFetch.fetch(httpUrl);
+    expect((fetchCalls[0]!.init?.headers as Headers).get('Authorization')).toBeNull();
+    expect(authFetch.getTokenForUrl('https://github.com/owner/repo.git')).toBe('gho_test_token');
+  });
+
+  it('still allows http for a self-managed host on loopback', () => {
+    const integration = makeIntegration({ platform: 'gitlab-self-managed', host: 'localhost' });
+    const authFetch = new AuthenticatedFetch(makeDb(integration));
+    expect(authFetch.getTokenForUrl('http://localhost:8929/group/repo.git')).toBe('gho_test_token');
+  });
+
   it('returns a 200 response unchanged', async () => {
     const db = makeDb(makeIntegration());
     const authFetch = new AuthenticatedFetch(db);

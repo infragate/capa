@@ -34,7 +34,7 @@ describe("extractActivityResult", () => {
 describe("normalizeActivityHookPayload Claude results", () => {
 	it("stores Claude PostToolUse tool_response as resultPreview", () => {
 		const out = normalizeActivityHookPayload(
-			"afterTool",
+			"afterFileEdit",
 			{
 				tool_name: "Write",
 				tool_input: { file_path: "/tmp/a.txt", content: "hi" },

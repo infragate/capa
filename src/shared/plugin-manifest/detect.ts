@@ -11,6 +11,10 @@ import {
 	getProvider,
 	getProviderByPluginProviderId,
 } from "../providers";
+import {
+	isAgentPluginsManifest,
+	parseAgentPluginsManifest,
+} from "./agent-plugins-parser";
 import { parseAgentEntries } from "./agents-parser";
 import { parseClaudeManifest } from "./claude-parser";
 import { discoverDefaultCommands } from "./commands-parser";
@@ -34,6 +38,9 @@ function toPluginProvider(provider: string): PluginProvider | null {
 	return null;
 }
 
+/** Agent Plugins manifest path, relative to the plugin root. */
+const AGENT_PLUGINS_MANIFEST_PATH = "plugin.json";
+
 function getPluginManifestContainerDirs(): Set<string> {
 	return new Set(
 		getAllProviders()
@@ -55,6 +62,9 @@ function getPluginManifestContainerDirs(): Set<string> {
  * forces capa to fall back to its own /api/.../oauth/callback URL, which
  * auth servers reject because the registered redirect URIs only allow the
  * loopback /callback form the Claude config describes.
+ *
+ * The vendor-neutral Agent Plugins root `plugin.json` (agent-plugins.org) is
+ * always tried last, so dual-shipped plugins keep their richer provider manifest.
  *
  * Returns ordered list of (provider, manifestPath).
  */
@@ -103,6 +113,7 @@ function getManifestSearchOrder(
 		}
 	}
 
+	order.push({ provider: "agent-plugins", path: AGENT_PLUGINS_MANIFEST_PATH });
 	return order;
 }
 
@@ -142,6 +153,9 @@ export function detectAndParseManifest(
 				manifest = parseCursorManifest(repoRoot, data, manifestDir);
 			} else if (provider === "claude") {
 				manifest = parseClaudeManifest(repoRoot, data, manifestDir);
+			} else if (provider === "agent-plugins") {
+				// null when the root plugin.json is not an Agent Plugins manifest
+				manifest = parseAgentPluginsManifest(repoRoot, data);
 			}
 			if (manifest) {
 				return mergeSiblingProviderHooks(repoRoot, manifest);
@@ -331,17 +345,24 @@ export function discoverPluginEntries(
 			if (!existsSync(candidate)) continue;
 			const containerKey = relPath || ".";
 			if (seenDirs.has(containerKey)) continue;
-			seenDirs.add(containerKey);
 
 			let manifestName: string | undefined;
+			let data: unknown;
 			try {
-				const content = readFileSync(candidate, "utf-8");
-				const data = JSON.parse(content);
-				if (typeof data?.name === "string" && data.name.length > 0)
-					manifestName = data.name;
+				data = JSON.parse(readFileSync(candidate, "utf-8"));
+				const name = (data as { name?: unknown } | null)?.name;
+				if (typeof name === "string" && name.length > 0) manifestName = name;
 			} catch {
 				// Malformed manifest is treated as if no name was declared.
 			}
+			// A bare plugin.json only counts when it is an Agent Plugins manifest.
+			if (
+				manifestRel === AGENT_PLUGINS_MANIFEST_PATH &&
+				!isAgentPluginsManifest(data)
+			) {
+				continue;
+			}
+			seenDirs.add(containerKey);
 
 			const dirName = relPath
 				? (relPath.split(/[/\\]/).filter(Boolean).pop() ?? "")

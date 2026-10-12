@@ -38,7 +38,7 @@ tools:
 
 # rules: [ { id, type, content?, url?, path?, def?, providers?, appliesTo?, alwaysApply?, description?, visibility?, scope? } ]
 
-# plugins: [ { id?, type: github|gitlab, def: { repo, subpath?, version?, ref?, description? }, servers?: { <manifestKey>: { as?: <serverId>, expose?: all|except|exactly|none, tools?: [<remoteName>] } } } ]
+# plugins: [ { id?, type: github|gitlab|git, def: { repo (github/gitlab) | url (git), subpath?, version?, ref?, description? }, servers?: { <manifestKey>: { as?: <serverId>, expose?: all|except|exactly|none, tools?: [<remoteName>] } } } ]
 # Plugins unpack into skills + servers + rules + sub-agents + hooks (Claude/Cursor manifests).
 # `def.repo` mirrors the skill grammar:
 #   - `owner/repo`                    — manifest at the repo root
@@ -48,11 +48,12 @@ tools:
 # subagents: [ { id, providers?, description?, skills, tools, instructions? } ]
 ```
 
-## Skills Section (seven types)
+## Skills Section (eight types)
 
 - **inline**: Embed SKILL.md content in `def.content`. Use `requires: ['@server_id.tool_id']` for MCP tools, plain ID for command tools.
 - **github**: `def.repo: owner/repo@skill-name` (search) or `owner/repo::path/to/skill-name` (exact). See "Repo string format" below for details.
 - **gitlab**: `def.repo: group/subgroup/repo@skill-name` (search) or `group/subgroup/repo::path/to/skill-name` (exact). Subgroups are supported.
+- **git**: `def.url` is the clone URL of any git host (ends in `.git`; `https`, `http`, `ssh` or `file`); `def.path` is the skill directory inside the repo (default: the root). Pin with `def.version` (tag/branch) or `def.ref` (commit). Unpinned installs take the newest `vX.Y.Z` tag. Private repos use your git credential helper.
 - **remote**: `def.url` to a SKILL.md URL.
 - **local**: `def.path` to a directory containing SKILL.md (read on each install).
 - **installed**: User installed the skill elsewhere; capa only records it for tool binding. Declare directly in capabilities.yaml (no CLI shortcut) — set `def.description` and `def.requires` as needed.
@@ -473,6 +474,7 @@ Per provider, hook entries land in:
 | `cursor` | `.cursor/hooks.json` (standalone) | `{ version: 1, hooks: { ... } }` envelope | `name: capa:<id>` |
 | `codex` | `.codex/config.toml` → `[hooks]` | TOML's nested array-of-tables (`[[hooks.<Event>]] matcher = "..."` + `[[hooks.<Event>.hooks]] type = "command" command = "..."`) — same matcher-grouped envelope as Claude | `name: capa:<id>` (Codex's serde deserialiser ignores unknown fields, so the tag round-trips safely) |
 | `gemini-cli` | `.gemini/settings.json` → `hooks` | JSON map (claude-style) | `name: capa:<id>` |
+| `antigravity` | `.agents/hooks.json` (standalone) | JSON map keyed by hook name → `{ <Event>: [...] }`; tool events use `{ matcher, hooks }` groups. Command hooks only. | top-level key `capa:<id>` |
 
 Providers without a hooks integration (most of the rest of the registry) emit a warning and skip — `capa install` never fails on unsupported hooks. `capa clean` and `capa install` (via the `prune-orphan-hooks` task) keep their own entries in sync without disturbing entries you authored by hand.
 
@@ -480,7 +482,7 @@ Providers without a hooks integration (most of the rest of the registry) emit a 
 
 Remote plugin packages that capa **unpacks** into the same primitives as everything else: skills, servers/tools, rules, sub-agents, and hooks. Capa does **not** install plugins as opaque units.
 
-Supported manifests today: **Claude** (`.claude-plugin/`) and **Cursor** (`.cursor-plugin/`). If no manifest is found, discover-mode still scans `skills/`, `commands/`, `agents/`, `hooks/`, `rules/`, and `.mcp.json`. Unsupported artifacts (LSP, themes, monitors, …) produce install warnings and are skipped.
+Supported manifests today: **Claude** (`.claude-plugin/`), **Cursor** (`.cursor-plugin/`), and **[Agent Plugins](https://agent-plugins.org/specification)** (root `plugin.json` with `"$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"`), tried in that order. An Agent Plugins package contributes only `skills/` and `mcp.json` servers (`stdio` and `streamable-http`; `sse` is skipped). Manifest or `mcp.json` problems are install warnings, and a broken `mcp.json` never blocks the skills. `${PLUGIN_ROOT}` / `${PLUGIN_DATA}` expand in `args`, `env` values and `cwd`; `${PLUGIN_DATA}` is `~/.capa/plugin-data/<projectId>/<pluginId>/` and survives plugin updates. If no manifest is found, discover-mode still scans `skills/`, `commands/`, `agents/`, `hooks/`, `rules/`, and `.mcp.json`. Unsupported artifacts (LSP, themes, monitors, …) produce install warnings and are skipped.
 
 Plugin tools and skills are NOT auto-exposed to the agent — declare the tools you want under the top-level `tools` section and the skills you want under `skills` with `type: plugin`. Plugin-sourced rules / hooks / sub-agents flow through the normal install tasks (shown locked/badged in the Web UI).
 
@@ -543,6 +545,14 @@ plugins:
     def:
       repo: acme/platform/team/services/devops-skills
       version: v1.0.1
+
+  # Any other git host: the clone URL, plus an optional subpath.
+  - id: deploy-tools
+    type: git
+    def:
+      url: https://git.example.com/team/tools.git
+      subpath: plugins/deploy
+      version: v2.0.0
 ```
 
 Plugins are resolved during `capa install`. The plugin manifest is fetched from the repository; skill files are copied onto disk for each provider; MCP servers are registered; rules / sub-agents / hooks from the plugin are merged into the install pipeline (`${CLAUDE_PLUGIN_ROOT}` in hook scripts is rewritten to the stable plugin copy under `~/.capa/plugins/<projectId>/`). Plugin tools must be declared explicitly in the top-level `tools` section using `@server-id` references; plugin skills are activated via `type: plugin` skill entries (capa warns when a `type: plugin` skill id does not match any plugin manifest skill).

@@ -9,14 +9,14 @@ import {
   writeFileSync,
   cpSync,
 } from 'fs';
-import { join, resolve } from 'path';
+import { basename, dirname, join, resolve } from 'path';
 import type { Capabilities, Skill, MCPServer, SourcePlugin, ResolvedPluginInfo, OAuth2Config, SubAgent } from '../../types/capabilities';
 import type { UnifiedPluginManifest } from '../../types/plugin';
 import type { Rule } from '../../types/rules';
 import type { Hook } from '../../types/hooks';
 import type { CapaDatabase } from '../../db/database';
 import type { AuthenticatedFetch } from '../../shared/authenticated-fetch';
-import { validatePluginDef, getPluginInstallId } from '../../shared/plugin-source';
+import { validatePluginDef, getPluginInstallId, pluginSourceOf } from '../../shared/plugin-source';
 import {
   detectAndParseManifest,
   discoverPluginEntries,
@@ -24,9 +24,11 @@ import {
   resolveNestedPluginById,
   resolvePluginServerDef,
   resolvePluginRootInString,
+  resolveAgentPluginsServerDef,
   materializeCommandAsSkill,
+  stripControlChars,
 } from '../../shared/plugin-manifest';
-import { getProjectPluginsDir } from '../../shared/plugin-paths';
+import { getPluginDataId, getProjectPluginDataDir, getProjectPluginsDir } from '../../shared/plugin-paths';
 import { getProvider } from '../../shared/providers';
 import { getGitProvider } from '../../shared/git-providers/registry';
 import { assertSafeRepoPath } from '../../shared/repo-file';
@@ -63,8 +65,8 @@ export function resolvePluginManifestRoot(
 }
 
 /** Map plugin provider id to capa provider id for hook scoping. */
-function pluginProviderToCapaId(provider: 'claude' | 'cursor'): string {
-  return provider === 'claude' ? 'claude-code' : 'cursor';
+function pluginProviderToCapaId(provider: UnifiedPluginManifest['provider']): string {
+  return provider === 'cursor' ? 'cursor' : 'claude-code';
 }
 
 function copyPluginToStable(tempDir: string, pluginStablePath: string): void {
@@ -211,7 +213,7 @@ export type GetRepoSnapshotFn = (
   platform: CachePlatform,
   repoPath: string,
   authFetch: AuthenticatedFetch,
-  opts?: { version?: string; ref?: string; pinnedSha?: string; noCache?: boolean }
+  opts?: { version?: string; ref?: string; pinnedSha?: string; noCache?: boolean; repoUrl?: string }
 ) => Promise<GetSnapshotResult>;
 
 /**
@@ -233,6 +235,8 @@ export async function resolvePlugins(
     noCache?: boolean;
     trackManaged?: boolean;
     pluginsBaseDir?: string;
+    /** Override for `${PLUGIN_DATA}` dirs; defaults to `~/.capa/plugin-data/<projectId>/`. */
+    pluginDataBaseDir?: string;
     /**
      * When true (default), copy each plugin skill into every provider's
      * project-local skills dir (e.g. `.claude/skills`, `.cursor/skills`).
@@ -268,10 +272,13 @@ export async function resolvePlugins(
 
   // Same unpack root for install, wrap, and passthrough: ~/.capa/plugins/<projectId>/
   const pluginsBase = options.pluginsBaseDir ?? getProjectPluginsDir(projectId);
+  const pluginDataBase = options.pluginDataBaseDir ?? getProjectPluginDataDir(projectId);
   const currentPluginIds = new Set<string>();
   // Declared plugins that failed this run: keep their existing copies for the
   // next successful resolve instead of sweeping them as undeclared.
   const failedPluginIds = new Set<string>();
+  // `${PLUGIN_DATA}` dir names of every declared plugin, failed or not.
+  const declaredDataIds = new Set<string>();
   const warnings: string[] = [];
 
   const registeredServerIds = new Set(mergedServers.map(s => s.id));
@@ -358,10 +365,9 @@ export async function resolvePlugins(
   let allowedCharacters: string | null = null;
 
   for (const pluginRef of plugins) {
-    if (!getGitProvider(pluginRef.type)) continue;
-    if (!pluginRef.def?.repo) continue;
-
-    const pluginLabel = pluginRef.id ?? pluginRef.def.repo;
+    if (pluginRef.type !== 'git' && !getGitProvider(pluginRef.type)) continue;
+    // An entry without a source still goes on to validatePluginDef, which reports it.
+    const pluginLabel = pluginRef.id ?? pluginSourceOf(pluginRef.def) ?? `(${pluginRef.type} plugin)`;
     // Isolate per-plugin failures so one bad entry (marketplace repo root,
     // missing manifest, clone error, …) cannot wipe expansions from the rest.
     let pluginInstallId: string | undefined;
@@ -385,7 +391,14 @@ export async function resolvePlugins(
         );
       }
 
-      const { platform, repoPath, subpath, search, version, ref } = validated;
+      const { platform, repoPath, subpath, search, version, ref, repoUrl } = validated;
+      // Keyed by the declared source rather than the plugin's own name, and
+      // known before fetching so a failed resolve still keeps its data.
+      const pluginDataId = getPluginDataId(
+        pluginRef.id ?? search ?? basename(subpath || repoPath),
+        JSON.stringify([platform, repoPath, subpath ?? '', search ?? '', pluginRef.id ?? '']),
+      );
+      declaredDataIds.add(pluginDataId);
 
       let snapshot: GetSnapshotResult;
       let previousLock: LockPluginEntry | null = null;
@@ -414,16 +427,19 @@ export async function resolvePlugins(
             },
           );
         }
+        // A git pin only holds for the clone URL it was resolved from.
+        if (repoUrl && previousLock && previousLock.url !== repoUrl) previousLock = null;
         const pinnedSha = previousLock?.resolvedRef;
         snapshot = await getRepoSnapshot(platform, repoPath, authFetch, {
           version,
           ref,
           pinnedSha,
           noCache,
+          repoUrl,
         });
       } catch (err: any) {
         throw new Error(
-          `Failed to clone plugin ${repoPath}: ${err.message}`
+          `Failed to clone plugin ${repoUrl ?? repoPath}: ${err.message}`
         );
       }
 
@@ -484,18 +500,33 @@ export async function resolvePlugins(
       if (!manifest) {
         throw new Error(
           `No plugin manifest found in ${repoPath}${subpath ? `/${subpath}` : ''}.\n` +
-          `    Expected one of: .claude-plugin/plugin.json, .cursor-plugin/plugin.json.` +
-          (pluginRef.id
+          `    Expected one of: .claude-plugin/plugin.json, .cursor-plugin/plugin.json, plugin.json (Agent Plugins).` +
+          (repoUrl
+            ? `\n    Tip: if the plugin is not at the repository root, set def.subpath to its directory.`
+            : pluginRef.id
             ? `\n    Tip: for monorepos, pin the plugin with "${repoPath}@${pluginRef.id}" or "${repoPath}::${pluginRef.id}".`
             : '')
         );
       }
     }
 
-    pluginInstallId = getPluginInstallId(pluginRef.id ?? manifest.name);
+    // A name like "!!!" maps to an empty id, which would point the stable copy
+    // at the shared plugins dir itself. Fall back to the source dir name.
+    const installId =
+      getPluginInstallId(pluginRef.id ?? manifest.name) ||
+      getPluginInstallId(basename(resolvedSubpath || repoPath));
+    if (!installId) {
+      throw new Error(
+        `Cannot derive a plugin id from "${pluginRef.id ?? manifest.name}"; set "id" on the plugin entry.`,
+      );
+    }
+    pluginInstallId = installId;
     currentPluginIds.add(pluginInstallId);
 
     const pluginStablePath = resolve(join(pluginsBase, pluginInstallId));
+    if (dirname(pluginStablePath) !== resolve(pluginsBase)) {
+      throw new Error(`Refusing to use ${pluginStablePath} as a plugin copy: not a direct child of ${pluginsBase}`);
+    }
     // Serialize resolvers of this plugin across processes (CLI install, the
     // server's background re-resolve, wrap). Everything below that reads the
     // stable copy is synchronous and runs while the lock is held.
@@ -516,6 +547,7 @@ export async function resolvePlugins(
       id: pluginInstallId,
       source: platform,
       repo: repoPath,
+      ...(repoUrl && { url: repoUrl }),
       subpath: resolvedSubpath || null,
       requestedSearchName: search ?? null,
       requestedVersion: version ?? null,
@@ -530,7 +562,10 @@ export async function resolvePlugins(
     const refish = ref ?? version ?? 'HEAD';
     const gp = getGitProvider(platform);
     const host = gp?.host ?? `${platform}.com`;
-    const repository = resolvedSubpath
+    // Any other git host has no known web URL scheme, so link the clone URL.
+    const repository = repoUrl
+      ? repoUrl
+      : resolvedSubpath
       ? `https://${host}/${repoPath}/tree/${refish}/${resolvedSubpath}`
       : `https://${host}/${repoPath}`;
     const sourcePlugin: SourcePlugin = {
@@ -568,6 +603,9 @@ export async function resolvePlugins(
       warnings.push(
         `Plugin "${manifest.name}" contains unsupported artifacts that were skipped: ${manifest.skippedArtifacts.join(', ')}`,
       );
+    }
+    for (const w of manifest.warnings ?? []) {
+      warnings.push(`Plugin "${manifest.name}": ${w}`);
     }
 
     // Materialize legacy commands/ into skill dirs on the stable plugin copy
@@ -645,10 +683,32 @@ export async function resolvePlugins(
         );
         continue;
       }
+      let resolvedDef: ReturnType<typeof resolvePluginServerDef> & { cwd?: string };
+      if (manifest.provider === 'agent-plugins') {
+        const pluginDataPath = resolve(join(pluginDataBase, pluginDataId));
+        try {
+          resolvedDef = resolveAgentPluginsServerDef(serverDef, pluginStablePath, pluginDataPath);
+          if (resolvedDef.cmd && resolvedDef.cwd) {
+            // A `${PLUGIN_DATA}/…` cwd is already contained in the data dir,
+            // so creating it creates the data dir too.
+            const inData = serverDef.cwd?.startsWith('${PLUGIN_DATA}');
+            mkdirSync(inData ? resolvedDef.cwd : pluginDataPath, { recursive: true });
+            if (!inData && !existsSync(resolvedDef.cwd)) {
+              warnings.push(
+                `Plugin "${manifest.name}": server "${serverKey}" cwd ${resolvedDef.cwd} does not exist in the plugin.`,
+              );
+            }
+          }
+        } catch (err) {
+          warnings.push(`Plugin "${manifest.name}": server "${serverKey}" skipped: ${(err as Error).message}`);
+          continue;
+        }
+      } else {
+        resolvedDef = { ...resolvePluginServerDef(serverDef, pluginStablePath), cwd: pluginStablePath };
+      }
       registeredServerIds.add(serverId);
       pluginServerIds.push(serverId);
 
-      const resolvedDef = resolvePluginServerDef(serverDef, pluginStablePath);
       if (resolvedDef.url) {
         mergedServers.push({
           id: serverId,
@@ -672,7 +732,7 @@ export async function resolvePlugins(
             cmd: resolvedDef.cmd,
             args: resolvedDef.args,
             env: resolvedDef.env,
-            cwd: pluginStablePath,
+            cwd: resolvedDef.cwd,
           },
           sourcePlugin,
           sourcePluginServerKey: serverKey,
@@ -893,6 +953,22 @@ export async function resolvePlugins(
     }
   }
 
+  // Drop data dirs of plugins no longer declared. Only a full install sees the
+  // project's whole plugin list (passthrough adds resolve a single plugin).
+  if (trackManaged) {
+    try {
+      for (const d of readdirSync(pluginDataBase, { withFileTypes: true })) {
+        if (!d.isDirectory() || declaredDataIds.has(d.name)) continue;
+        rmSync(join(pluginDataBase, d.name), { recursive: true, force: true });
+      }
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT') {
+        console.warn(`Failed to clean up plugin data directories: ${(err as Error).message}`);
+      }
+    }
+  }
+
   const mergedCapabilities: Capabilities = {
     ...capabilities,
     skills: mergedSkills,
@@ -904,5 +980,6 @@ export async function resolvePlugins(
     resolvedPlugins,
   };
 
-  return { mergedCapabilities, tempDirsToCleanup: tempDirs, warnings };
+  // Warnings carry plugin-supplied names and keys: strip terminal controls.
+  return { mergedCapabilities, tempDirsToCleanup: tempDirs, warnings: warnings.map(stripControlChars) };
 }

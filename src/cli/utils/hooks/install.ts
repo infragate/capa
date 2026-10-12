@@ -165,7 +165,7 @@ export async function installHooks(opts: InstallHooksOptions): Promise<InstallHo
           ...(nameTagPrefix !== undefined ? { nameTagPrefix } : {}),
         });
 
-        const { configPath, locator } = applyHookEntryToConfig({
+        const { configPath, locator, disabled } = applyHookEntryToConfig({
           projectPath,
           integration: provider.hooks,
           output: out,
@@ -183,6 +183,10 @@ export async function installHooks(opts: InstallHooksOptions): Promise<InstallHo
             locator: JSON.stringify(locator),
             scriptPath,
           });
+        }
+        if (disabled) {
+          const rel = relativePath(projectPath, configPath).split(pathSep).join('/');
+          warnings.push(`capa hook ${hook.id} is disabled in ${rel}; capa left it disabled`);
         }
         installed++;
         if (!opts.quiet) {

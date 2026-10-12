@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, writeFileSync, rmSync } from 'fs';
-import { resolve, join, dirname, basename } from 'path';
+import { resolve, join, dirname, basename, relative } from 'path';
+import { gitRepoKey, stripHttpUrlUserinfo } from '../../../../shared/git-url';
 import type { Skill, Capabilities } from '../../../../types/capabilities';
 import type { CapaDatabase } from '../../../../db/database';
 import { createAuthenticatedFetch, AuthenticatedFetch } from '../../../../shared/authenticated-fetch';
@@ -32,10 +33,16 @@ import * as repoSnapshot from './repo-snapshot';
 import { findSkillsInDirectory, readSkillFromDirectory } from './skill-discovery';
 import type { SkillInstallOutcome } from '../context';
 
+/** An HTML document (e.g. a repository web page), which is never a SKILL.md. */
+export function looksLikeHtml(text: string): boolean {
+  const head = text.trimStart().slice(0, 200).toLowerCase();
+  return head.startsWith('<!doctype') || head.startsWith('<html');
+}
+
 function buildInvalidSkillMessage(skill: Skill): string {
   const lines = [`Invalid skill definition: ${skill.id}`];
-  if (!skill.type || !['inline', 'remote', 'github', 'gitlab', 'local', 'installed', 'plugin'].includes(skill.type)) {
-    lines.push(`  Invalid or missing 'type'. Must be one of: 'inline', 'remote', 'github', 'gitlab', 'local', 'installed', 'plugin'`);
+  if (!skill.type || !['inline', 'remote', 'github', 'gitlab', 'git', 'local', 'installed', 'plugin'].includes(skill.type)) {
+    lines.push(`  Invalid or missing 'type'. Must be one of: 'inline', 'remote', 'github', 'gitlab', 'git', 'local', 'installed', 'plugin'`);
     lines.push(`  Current value: ${skill.type || '(not set)'}`);
   } else if (skill.type === 'inline') {
     lines.push(`  Type is 'inline' but 'def.content' is missing`);
@@ -49,6 +56,8 @@ function buildInvalidSkillMessage(skill: Skill): string {
     if (skill.def.repo) lines.push(`  Current value: '${skill.def.repo}'`);
   } else if (skill.type === 'remote') {
     lines.push(`  Type is 'remote' but 'def.url' is missing`);
+  } else if (skill.type === 'git') {
+    lines.push(`  Type is 'git' but 'def.url' (the clone URL) is missing`);
   }
   return lines.join('\n');
 }
@@ -77,6 +86,7 @@ export async function installOneSkill(
   let skillMarkdown: string;
   let additionalFiles: Map<string, string> = new Map();
   let skillSourceDir: string | null = null;
+  let pendingLock: LockSkillEntry | null = null;
 
   if (skill.type === 'installed') {
     return 'skipped';
@@ -228,6 +238,70 @@ export async function installOneSkill(
     } catch (error: any) {
       throw error instanceof Error ? error : new Error(String(error));
     }
+  } else if (skill.type === 'git' && skill.def.url) {
+    // Any git host: `def.url` is the clone URL, `def.path` the directory
+    // holding SKILL.md (the repo root when unset). Credentials come from the
+    // user's git credential helper.
+    // Credentials in the URL are never used for the clone; keep them out of
+    // the lockfile and messages too.
+    const url = stripHttpUrlUserinfo(skill.def.url);
+    let repoPath: string;
+    try {
+      repoPath = gitRepoKey(url);
+    } catch (err) {
+      const why = err instanceof TypeError ? '' : ` (${(err as Error).message})`;
+      throw new Error(`Invalid git clone URL for skill "${skill.id}": ${url}${why}`);
+    }
+    const skillPath = (skill.def.path ?? '').replace(/^\/+|\/+$/g, '');
+    const version = skill.def.version;
+    const ref = skill.def.ref;
+
+    const repoKey = `git:${url}${version ? ':' + version : ''}${ref ? '#' + ref : ''}`;
+    let snapshot = resolvedRepos.get(repoKey);
+    const lockHit = noCache ? null : lockBuilder.findSkill(skill.id, version ?? null, ref ?? null);
+    // A pin from another source (the URL changed under the same id) must not be reused.
+    const previousLock = lockHit?.source === 'git' && lockHit.url === url ? lockHit : null;
+    if (!snapshot) {
+      snapshot = await repoSnapshot.getRepoSnapshot('git', repoPath, authFetch, {
+        version,
+        ref,
+        pinnedSha: previousLock?.resolvedRef,
+        noCache,
+        repoUrl: url,
+      });
+      resolvedRepos.set(repoKey, snapshot);
+    }
+
+    // Recorded once the skill is on disk, so a failed install leaves no pin behind.
+    pendingLock = {
+      id: skill.id,
+      source: 'git',
+      repo: repoPath,
+      url,
+      skillName: skillPath,
+      requestedVersion: version ?? null,
+      requestedRef: ref ?? null,
+      resolvedRef: snapshot.resolvedSha,
+      resolvedVersion: preserveResolvedVersion(snapshot, previousLock),
+    };
+
+    const skillDir = skillPath ? assertSafeRepoPath(snapshot.snapshotDir, skillPath) : snapshot.snapshotDir;
+    const skillMdPath = join(skillDir, 'SKILL.md');
+    if (!existsSync(skillMdPath)) {
+      const available = Array.from(findSkillsInDirectory(snapshot.snapshotDir).values())
+        .map((p) => relative(snapshot!.snapshotDir, dirname(p)).replace(/\\/g, '/') || '.')
+        .sort();
+      throw new Error(
+        `SKILL.md not found at ${skillPath ? `"${skillPath}/SKILL.md"` : 'the repository root'}.\n` +
+          `    Repository: ${url}\n` +
+          `    Skills in this repository: ${available.join(', ') || 'none'}\n` +
+          `    Tip: set def.path to the skill's directory, or add it with "${url}::<path>".`
+      );
+    }
+    const skillData = readSkillFromDirectory(skillMdPath);
+    skillSourceDir = skillDir;
+    skillMarkdown = skillData.markdown;
+    additionalFiles = skillData.additionalFiles;
   } else if (skill.type === 'remote' && skill.def.url) {
     try {
       const response = await authFetch.fetch(skill.def.url);
@@ -247,6 +321,14 @@ export async function installOneSkill(
         throw new Error(`Failed to fetch: ${response.statusText}`);
       }
       skillMarkdown = await response.text();
+      // A web page is never a SKILL.md: usually a repository page or a clone URL
+      // missing its .git suffix. Installing it would hand the agent HTML.
+      if (looksLikeHtml(skillMarkdown)) {
+        throw new Error(
+          `${skill.def.url} returned a web page, not a SKILL.md. ` +
+            `For a git repository, use its clone URL ending in .git (type: git).`
+        );
+      }
     } catch (error: any) {
       throw new Error(`Failed to fetch skill ${skill.id}: ${error.message || error}`);
     }
@@ -360,5 +442,6 @@ export async function installOneSkill(
     }
   }
 
+  if (pendingLock) lockBuilder.upsertSkill(pendingLock);
   return 'installed';
 }

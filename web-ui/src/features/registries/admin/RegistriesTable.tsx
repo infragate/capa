@@ -10,6 +10,7 @@ interface RegistriesTableProps {
   onDelete: (slug: string) => void;
   onSetEnabled: (slug: string, enabled: boolean) => void;
   busySlug?: string | null;
+  disabled?: boolean;
 }
 
 function statusTone(record: RegistryAdminRecord): { label: string; tone: string } {
@@ -32,6 +33,7 @@ export function RegistriesTable({
   onDelete,
   onSetEnabled,
   busySlug,
+  disabled,
 }: RegistriesTableProps) {
   const { t } = useTranslation('registries');
 
@@ -104,7 +106,7 @@ export function RegistriesTable({
                   <div className="flex items-center justify-end gap-2">
                     <button
                       type="button"
-                      disabled={busy}
+                      disabled={busy || disabled}
                       onClick={() => onSetEnabled(r.slug, !r.enabled)}
                       className="inline-flex items-center gap-1 rounded-sm border border-border-secondary bg-bg-tertiary px-2 py-1 text-xs text-text-secondary transition-colors hover:bg-hover-bg disabled:cursor-not-allowed disabled:opacity-50"
                       title={r.enabled ? t('settings.actions.disable') : t('settings.actions.enable')}
@@ -120,7 +122,7 @@ export function RegistriesTable({
                     </button>
                     <button
                       type="button"
-                      disabled={busy}
+                      disabled={busy || disabled}
                       onClick={() => onEdit(r)}
                       className="inline-flex items-center gap-1 rounded-sm border border-border-secondary bg-bg-tertiary px-2 py-1 text-xs text-text-secondary transition-colors hover:bg-hover-bg disabled:cursor-not-allowed disabled:opacity-50"
                       title={t('settings.actions.edit')}
@@ -130,17 +132,17 @@ export function RegistriesTable({
                     </button>
                     <button
                       type="button"
-                      disabled={busy}
+                      disabled={busy || disabled || !r.enabled}
                       onClick={() => onRefresh(r.slug)}
                       className="inline-flex items-center gap-1 rounded-sm border border-border-secondary bg-bg-tertiary px-2 py-1 text-xs text-text-secondary transition-colors hover:bg-hover-bg disabled:cursor-not-allowed disabled:opacity-50"
-                      title={t('settings.actions.refresh')}
+                      title={r.enabled ? t('settings.actions.refresh') : t('settings.actions.refreshDisabled')}
                     >
                       <RefreshCw className={cn('h-3.5 w-3.5', busy && 'animate-spin')} />
                       <span>{t('settings.actions.refresh')}</span>
                     </button>
                     <button
                       type="button"
-                      disabled={busy}
+                      disabled={busy || disabled}
                       onClick={() => onDelete(r.slug)}
                       className="inline-flex items-center gap-1 rounded-sm border border-error-border bg-error-bg px-2 py-1 text-xs text-error-text transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                       title={t('settings.actions.delete')}

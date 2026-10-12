@@ -32,8 +32,8 @@ tools include `Bash` and `apply_patch`, and MCP tools follow the
 `beforeShell → PreToolUse` + `matcher: Bash`,
 `afterShell → PostToolUse` + `matcher: Bash`,
 `afterFileEdit → PostToolUse` + `matcher: apply_patch`,
-`beforeMcpCall → PreToolUse` + `matcher: mcp__`,
-`afterMcpCall → PostToolUse` + `matcher: mcp__`,
+`beforeMcpCall → PreToolUse` + `matcher: mcp__.*`,
+`afterMcpCall → PostToolUse` + `matcher: mcp__.*`,
 `subagentStart → SubagentStart`, `subagentStop → SubagentStop`,
 `preCompact → PreCompact`, `stop → Stop`. Codex does not expose a
 `sessionEnd` or `beforeFileRead` equivalent — those canonical hooks are

@@ -96,6 +96,18 @@ describe("install-path-guard", () => {
 		expect(existsSync(join(projectDir, ".cursor", "skills"))).toBe(false);
 	});
 
+	it("treats a name starting with two dots as inside, but not .. itself", () => {
+		expect(assertInsideProjectRoot(projectDir, join(projectDir, "..cache", "x"))).toBe(
+			"..cache/x",
+		);
+		expect(() => assertInsideProjectRoot(projectDir, join(projectDir, ".."))).toThrow(
+			/outside the project root/i,
+		);
+		expect(() =>
+			assertInsideProjectRoot(projectDir, join(projectDir, "..", "x")),
+		).toThrow(/outside the project root/i);
+	});
+
 	it("rejects cross-drive destinations on Windows paths", () => {
 		const ops = {
 			resolve: win32.resolve,

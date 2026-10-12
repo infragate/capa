@@ -8,7 +8,22 @@ import {
   removeInstalledAdapter,
   deriveSlug,
   isValidSlug,
+  RegistryDisabledError,
 } from '../../shared/registries/installer';
+import { getServerStatus } from '../utils/server-manager';
+
+/**
+ * While the capa server runs it owns registry files (it serializes changes
+ * per registry), so the CLI leaves refreshing and removing to it.
+ */
+async function refuseWhileServerRuns(action: string): Promise<void> {
+  if ((await getServerStatus()).running) {
+    error(
+      `The capa server is running and manages registries while it does. ${action} from the web UI (Registries > Manage registries), or stop the server first (capa stop).`,
+    );
+    process.exit(1);
+  }
+}
 import { createAuthenticatedFetch } from '../../shared/authenticated-fetch';
 import type { RegistrySourceType } from '../../types/database';
 import type { RegistryCapability, RegistryItemSummary } from '../../types/registry';
@@ -355,6 +370,7 @@ export async function registryRemoveCommand(slug: string): Promise<void> {
       error(`Registry "${slug}" not found.`);
       process.exit(1);
     }
+    await refuseWhileServerRuns(`Remove "${slug}"`);
 
     header('Remove registry');
     const tasks: Task<RemoveCtx>[] = [
@@ -404,6 +420,13 @@ export async function registryRefreshCommand(
       error(`Registry "${slug}" not found.`);
       process.exit(1);
     }
+    // Refreshing downloads and executes the latest adapter; never do that for
+    // a registry the user disabled.
+    if (!existing.enabled) {
+      error(`Registry "${slug}" is disabled. Enable it first (capa registry enable ${slug}) to refresh it.`);
+      process.exit(1);
+    }
+    await refuseWhileServerRuns(`Refresh "${slug}"`);
 
     header(`Refresh registry "${slug}"`);
     const tasks: Task<RefreshCtx>[] = [
@@ -419,7 +442,13 @@ export async function registryRefreshCommand(
             const result = await installRegistry(
               { slug: ctx.slug, type: existing.type, source: existing.source },
               authFetch,
-              { noCache: ctx.noCache },
+              {
+                noCache: ctx.noCache,
+                // A disable can land while the new adapter downloads.
+                beforeExecute: () => {
+                  if (!ctx.db.getRegistry(ctx.slug)?.enabled) throw new RegistryDisabledError(ctx.slug);
+                },
+              },
             );
             ctx.resolvedRef = result.resolvedRef;
             ctx.manifestName = result.manifest.name;
@@ -427,7 +456,7 @@ export async function registryRefreshCommand(
             task.title = `Fetched "${result.manifest.name}"`;
           } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
-            ctx.db.setRegistryStatus(ctx.slug, 'failed', message);
+            if (!(err instanceof RegistryDisabledError)) ctx.db.setRegistryStatus(ctx.slug, 'failed', message);
             throw err;
           }
         },
@@ -440,7 +469,7 @@ export async function registryRefreshCommand(
             type: existing.type,
             source: existing.source,
             status: 'installed',
-            enabled: true,
+            // No `enabled`: upsert keeps the current value.
             lastError: null,
             resolvedRef: ctx.resolvedRef,
             installedAt: Date.now(),

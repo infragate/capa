@@ -2,6 +2,7 @@ import * as yaml from "js-yaml";
 import type { YAMLMap, YAMLSeq } from "yaml";
 import { isMap, isSeq, parseDocument } from "yaml";
 import { z } from "zod";
+import { PLUGIN_PROVIDERS } from "../types/plugin";
 import type {
 	AgentFileConfig,
 	Capabilities,
@@ -37,7 +38,7 @@ const sourcePluginSchema = z
 	.object({
 		id: z.string(),
 		name: z.string(),
-		provider: z.enum(["cursor", "claude"]),
+		provider: z.enum(PLUGIN_PROVIDERS),
 	})
 	.passthrough();
 
@@ -62,6 +63,7 @@ const skillSchema = z
 			"remote",
 			"github",
 			"gitlab",
+			"git",
 			"local",
 			"installed",
 			"plugin",
@@ -216,7 +218,9 @@ const toolSchema = z.discriminatedUnion("type", [
 
 const pluginDefSchema = z
 	.object({
-		repo: z.string(),
+		// github/gitlab use `repo`; git uses `url` (validatePluginDef checks which).
+		repo: z.string().optional(),
+		url: z.string().optional(),
 		subpath: z.string().optional(),
 		version: z.string().optional(),
 		ref: z.string().optional(),
@@ -227,7 +231,7 @@ const pluginDefSchema = z
 const pluginSchema = z
 	.object({
 		id: z.string().optional(),
-		type: z.enum(["github", "gitlab"]),
+		type: z.enum(["github", "gitlab", "git"]),
 		def: pluginDefSchema,
 		servers: z
 			.record(
@@ -242,7 +246,17 @@ const pluginSchema = z
 			)
 			.optional(),
 	})
-	.passthrough();
+	.passthrough()
+	.superRefine((plugin, ctx) => {
+		const field = plugin.type === "git" ? "url" : "repo";
+		if (!plugin.def[field]) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["def", field],
+				message: `${plugin.type} plugin${plugin.id ? ` "${plugin.id}"` : ""} requires def.${field}`,
+			});
+		}
+	});
 
 const optionsSchema = z
 	.object({
@@ -820,32 +834,56 @@ export async function upsertOptions(
 }
 
 /**
- * Replace (or remove) the top-level `agents` object.
- * Pass `null` to delete the key. YAML path preserves unrelated comments/keys.
+ * Replace (or remove) a top-level key. Pass `null` to delete the key.
+ * YAML path preserves unrelated comments/keys.
  */
-export async function upsertAgents(
+async function setTopLevelKey(
 	path: string,
 	format: CapabilitiesFormat,
-	agents: AgentFileConfig | null,
+	key: string,
+	value: unknown,
 ): Promise<void> {
 	const content = await Bun.file(path).text();
 
 	if (format === "json") {
 		const data = JSON.parse(content) as Record<string, unknown>;
-		if (agents === null) {
-			delete data.agents;
+		if (value === null) {
+			delete data[key];
 		} else {
-			data.agents = agents;
+			data[key] = value;
 		}
 		await Bun.write(path, JSON.stringify(data, null, 2) + "\n");
 		return;
 	}
 
 	const doc = parseDocument(content);
-	if (agents === null) {
-		doc.delete("agents");
+	if (value === null) {
+		doc.delete(key);
 	} else {
-		doc.set("agents", doc.createNode(agents));
+		doc.set(key, doc.createNode(value));
 	}
 	await Bun.write(path, doc.toString());
+}
+
+/** Replace (or remove, with `null`) the top-level `agents` object. */
+export function upsertAgents(
+	path: string,
+	format: CapabilitiesFormat,
+	agents: AgentFileConfig | null,
+): Promise<void> {
+	return setTopLevelKey(path, format, "agents", agents);
+}
+
+/** Replace the top-level `providers` list; an empty list removes the key. */
+export function upsertProviders(
+	path: string,
+	format: CapabilitiesFormat,
+	providers: string[],
+): Promise<void> {
+	return setTopLevelKey(
+		path,
+		format,
+		"providers",
+		providers.length > 0 ? providers : null,
+	);
 }

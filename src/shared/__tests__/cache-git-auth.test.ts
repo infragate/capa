@@ -162,6 +162,25 @@ describe('cache git auth (F10)', () => {
       }
     });
 
+    it('does not inject the token for a plain http URL on the token host', async () => {
+      const calls: { args: string[]; env?: NodeJS.ProcessEnv }[] = [];
+      const execFileSpy = spyOn(childProcess, 'execFile').mockImplementation(
+        ((_cmd: string, args: string[], opts: object, cb: (err: null, stdout: string, stderr: string) => void) => {
+          calls.push({ args, env: (opts as { env?: NodeJS.ProcessEnv }).env });
+          cb(null, '', '');
+        }) as typeof childProcess.execFile,
+      );
+
+      try {
+        await ensureMirrorClone('github', 'owner/repo', authFetch, 'http://github.com/owner/repo.git');
+        const cloneCall = calls.find((c) => c.args.includes('clone'));
+        expect(cloneCall).toBeDefined();
+        expect(envCarriesOutOfBandAuth(cloneCall!.env)).toBe(false);
+      } finally {
+        execFileSpy.mockRestore();
+      }
+    });
+
     it('does not inject auth env for public clones', async () => {
       const calls: { args: string[]; env?: NodeJS.ProcessEnv }[] = [];
       const execFileSpy = spyOn(childProcess, 'execFile').mockImplementation(

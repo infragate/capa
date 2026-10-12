@@ -24,7 +24,7 @@ interface ApplyEntryArgs {
  * Handles JSON / TOML, `cursor-v1` envelope, and inline-config vs
  * standalone storage.
  */
-export function applyHookEntryToConfig(args: ApplyEntryArgs): { configPath: string; locator: HookLocator } {
+export function applyHookEntryToConfig(args: ApplyEntryArgs): { configPath: string; locator: HookLocator; disabled?: boolean } {
   const { projectPath, integration, output } = args;
   const configPath = getHookConfigPath(integration, projectPath);
 
@@ -59,7 +59,10 @@ export function applyHookEntryToConfig(args: ApplyEntryArgs): { configPath: stri
 
   const locator = upsertHookEntry(integration, hooksRoot, output);
   writeJsonFile(configPath, config);
-  return { configPath, locator };
+  // Antigravity keeps a user's `enabled: false` across installs; report it so it isn't silent.
+  const placed = integration.shape === 'antigravity' ? hooksRoot[String(locator[0])] : undefined;
+  const disabled = (placed as { enabled?: unknown } | undefined)?.enabled === false;
+  return { configPath, locator, ...(disabled ? { disabled } : {}) };
 }
 
 /**

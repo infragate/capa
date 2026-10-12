@@ -8,6 +8,11 @@ import {
 } from "fs";
 import { join } from "path";
 import type { AuthenticatedFetch } from "../authenticated-fetch";
+import {
+	isHttpsOrLoopback,
+	stripHttpUrlUserinfo,
+	stripUserinfoFromHttpUrl,
+} from "../git-url";
 import { git, gitHttpCredentialEnv } from "./git-cli";
 import {
 	type CachePlatform,
@@ -22,36 +27,23 @@ function publicHttpsRepoUrl(
 	repoPath: string,
 ): string {
 	validateRepoPath(repoPath);
-	return `https://${platform}.com/${repoPath}.git`;
-}
-
-/** Strip userinfo from an http(s) URL. Returns null when there is none or the value is not an http(s) URL. */
-function stripUserinfoFromHttpUrl(raw: string): string | null {
-	const trimmed = raw.trim().replace(/^["']|["']$/g, "");
-	try {
-		const u = new URL(trimmed);
-		if (u.protocol !== "http:" && u.protocol !== "https:") return null;
-		if (!u.username && !u.password) return null;
-		u.username = "";
-		u.password = "";
-		let out = u.toString();
-		if (!trimmed.endsWith("/") && out.endsWith("/")) {
-			out = out.slice(0, -1);
-		}
-		return out;
-	} catch {
-		return null;
+	if (platform === "git") {
+		throw new Error(`A clone URL is required for git repository ${repoPath}`);
 	}
-}
-
-function stripHttpUrlUserinfo(url: string): string {
-	return stripUserinfoFromHttpUrl(url) ?? url;
+	return `https://${platform}.com/${repoPath}.git`;
 }
 
 function credentialEnvFor(
 	url: string,
-	authFetch: AuthenticatedFetch,
+	authFetch: AuthenticatedFetch | undefined,
 ): Record<string, string> | undefined {
+	if (!authFetch) return undefined;
+	// Never hand a stored token to a cleartext (non-loopback http) remote.
+	try {
+		if (!isHttpsOrLoopback(new URL(url))) return undefined;
+	} catch {
+		return undefined;
+	}
 	if (!authFetch.hasAuth(url)) return undefined;
 	const token = authFetch.getTokenForUrl(url);
 	if (!token) return undefined;
@@ -126,6 +118,21 @@ export function scrubCachedMirrorAuthUrls(): void {
 }
 
 /**
+ * A generic git cache key is derived from the clone URL, so a mirror whose
+ * origin is a different URL means the cache was tampered with or keyed by an
+ * older capa. Refuse it rather than serve another repository's content.
+ */
+async function assertMirrorOrigin(mirrorDir: string, url: string): Promise<void> {
+	const { stdout } = await git(["-C", mirrorDir, "remote", "get-url", "origin"]);
+	if (stdout.trim() !== url) {
+		throw new Error(
+			`Cached mirror at ${mirrorDir} is for ${stdout.trim()}, not ${url}. ` +
+				`Run \`capa cache clean\` and try again.`,
+		);
+	}
+}
+
+/**
  * Ensure a mirror clone exists for the given repo. If it doesn't, perform a
  * bare clone. If it does, leave it as-is — callers can request a fetch via
  * `fetchMirror()` when they need newer refs.
@@ -135,7 +142,7 @@ export function scrubCachedMirrorAuthUrls(): void {
 export async function ensureMirrorClone(
 	platform: CachePlatform,
 	repoPath: string,
-	authFetch: AuthenticatedFetch,
+	authFetch: AuthenticatedFetch | undefined,
 	repoUrl?: string,
 ): Promise<string> {
 	validateRepoPath(repoPath);
@@ -143,6 +150,9 @@ export async function ensureMirrorClone(
 	const mirrorDir = getRepoMirrorDir(platform, repoPath);
 	if (existsSync(mirrorDir)) {
 		scrubMirrorConfigFile(mirrorDir);
+		if (platform === "git" && repoUrl) {
+			await assertMirrorOrigin(mirrorDir, stripHttpUrlUserinfo(repoUrl));
+		}
 		return mirrorDir;
 	}
 	mkdirSync(getRepoCacheDir(platform, repoPath), { recursive: true });
@@ -165,7 +175,7 @@ export async function ensureMirrorClone(
 	//
 	// Requires git >= 2.19. Servers without partial-clone support degrade
 	// gracefully to a full clone (git warns and ignores the filter).
-	await git(["clone", "--mirror", "--filter=blob:none", url, mirrorDir], {
+	await git(["clone", "--mirror", "--filter=blob:none", "--", url, mirrorDir], {
 		env,
 	});
 	await git(["-C", mirrorDir, "remote", "set-url", "origin", url]);

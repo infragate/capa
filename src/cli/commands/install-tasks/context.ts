@@ -111,5 +111,5 @@ export type GetRepoSnapshotFn = (
   platform: CachePlatform,
   repoPath: string,
   authFetch: AuthenticatedFetch,
-  opts?: { version?: string; ref?: string; pinnedSha?: string; noCache?: boolean }
+  opts?: { version?: string; ref?: string; pinnedSha?: string; noCache?: boolean; repoUrl?: string }
 ) => Promise<GetSnapshotResult>

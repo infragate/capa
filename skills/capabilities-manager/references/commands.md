@@ -48,7 +48,7 @@ Reads the capabilities file and:
 
 Before any changes run, capa prints the **executable surface** (MCP stdio servers, hooks, command tools, plugins) and asks for confirmation. Re-running install with an unchanged surface skips the prompt. In CI or other non-interactive environments, pass `--yes`. Use `--dry-run` to preview the surface without installing.
 
-Project secrets (`${VarName}`) are encrypted at rest in `~/.capa/capa.db` with AES-256-GCM. The 256-bit master key prefers the OS keyring (`@napi-rs/keyring`: macOS Keychain, Windows Credential Manager/DPAPI, Linux Secret Service) and falls back to `~/.capa/master.key` (documented file tier — typical on headless Linux / CI). Token refresh re-encrypts rows in SQLite and never rewrites the keyring item. `capa status` and `/health` report the active tier (`keychain` | `dpapi` | `libsecret` | `file`). Force the file tier with `CAPA_SECRET_STORE=file`. The Web UI and HTTP API return `{ isSet, hint }` metadata only — never raw values.
+Project secrets (`${VarName}`) are encrypted at rest in `~/.capa/capa.db` with AES-256-GCM. The 256-bit master key prefers the OS keyring (`@napi-rs/keyring`: macOS Keychain, Windows Credential Manager/DPAPI, Linux Secret Service) and falls back to `~/.capa/master.key` (documented file tier, typical on headless Linux / CI). Only new installs use the keyring (a file copy is kept for rollback); an install that already has `~/.capa/master.key` keeps the file tier and is never migrated. Release binaries on macOS stay on the file tier until they are code signed. Token refresh re-encrypts rows in SQLite and never rewrites the keyring item. `capa status` and `/health` report the active tier (`keychain` | `dpapi` | `libsecret` | `file`). Force the file tier with `CAPA_SECRET_STORE=file`. The Web UI and HTTP API return `{ isSet, hint }` metadata only — never raw values.
 
 MCP `env` / `headers` may also use on-demand sources (`fromEnv` / `fromCommand` / `fromFile`) that are resolved at connect time and are never stored by capa — see the capabilities schema.
 
@@ -112,6 +112,7 @@ Add an entry to `capabilities.yaml` (default) or write provider-native files imm
 - **Pinning** (works with both `@` and `::`): append `:v1.2.3` for a tag/branch or `#abc1234` for a commit SHA — e.g. `capa add owner/repo@skill:v1.2.3`, `capa add gitlab:group/repo::skills/x/y#abc1234`.
 - **Registry**: `capa add <registryId>:<itemId>` — resolve the skill from a configured registry adapter. Example: `capa add skills-sh:vercel-labs/skills/find-skills`.
 - **Installed (no CLI)**: declare `type: installed` directly in `capabilities.yaml` — capa only records the skill for tool binding, it does not fetch or install anything. Set `def.description` and `def.requires` on the entry. Same pattern for `type: plugin` (skills shipped by a configured plugin).
+- **Any git host**: `capa add https://git.example.com/team/skills.git` — a clone URL ending in `.git`, stored as type `git` with `def.url`. Installs the `SKILL.md` at the repo root; add `::path/to/skill` for another directory, and `:v1.2.3` / `#abc1234` to pin. `https://`, `http://`, `ssh://` and `file://` URLs work. Private repos use your git credential helper or SSH key (clone once with `git` to sign in).
 - **Remote URL**: `capa add https://example.com/path/to/SKILL.md`
 - **Local path**: `capa add ./path/to/skill` — directory must contain `SKILL.md`; stored as type `local` so the file is read on each install
 
@@ -123,6 +124,7 @@ Use `--plugin` to add a plugin entry (skills, MCP, rules, sub-agents, hooks) ins
 - **GitHub subpath**: `capa add --plugin anthropics/claude-plugins-official::plugins/frontend-design`
 - **GitLab (nested groups)**: `capa add --plugin gitlab:acme/platform/team/services/devops-skills:v1.0.1`
 - **URL**: `capa add --plugin https://github.com/anthropics/claude-plugins-official/tree/main/plugins/code-review`
+- **Any git host**: `capa add --plugin https://git.example.com/team/plugin.git[::path/to/plugin]` — stored as type `git` with `def.url` (and `def.subpath`)
 - **Registry**: `capa add claude-plugins:frontend-design` — the registry adapter determines whether the item is a skill or plugin.
 
 ### Servers, tools, rules, hooks
@@ -320,6 +322,8 @@ capa registry refresh <slug>                               # Re-fetch the adapte
 capa registry enable <slug>                                # Re-enable a previously-disabled registry
 capa registry disable <slug>                               # Hide a registry without removing it
 ```
+
+While the capa server is running, `capa registry refresh` and `capa registry remove` refuse and point to the web UI (Registries > Manage registries), because the server serializes changes to each registry. Refreshing a disabled registry is refused too: enable it first.
 
 Registries let you browse and install skills and plugins from third-party sources (e.g. skills.sh, Cursor Marketplace, Claude plugins, Claude marketplaces, internal company registries). Each registry is tracked in capa's database.
 
