@@ -39,11 +39,11 @@ if ($env:CAPA_PRINT_QUIET -eq "1") {
 }
 
 # Colors
-$ColorReset = "`e[0m"
-$ColorRed = "`e[31m"
-$ColorGreen = "`e[32m"
-$ColorYellow = "`e[33m"
-$ColorBlue = "`e[34m"
+$ColorReset = "$([char]27)[0m"
+$ColorRed = "$([char]27)[31m"
+$ColorGreen = "$([char]27)[32m"
+$ColorYellow = "$([char]27)[33m"
+$ColorBlue = "$([char]27)[34m"
 
 function Show-Usage {
     Write-Host @"
@@ -108,7 +108,7 @@ function Write-Info {
 function Write-Success {
     param([string]$Message)
     if (-not $Quiet) {
-        Write-Host "${ColorGreen}✓${ColorReset} $Message"
+        Write-Host "${ColorGreen}OK${ColorReset} $Message"
     }
 }
 
@@ -250,9 +250,9 @@ function Install-Capa {
     $bannerPad = [Math]::Max(1, $bannerInner - $bannerTitle.Length)
     $bannerSpaces = " " * $bannerPad
     Write-Host ""
-    Write-Host "${ColorGreen}╔═══════════════════════════════════════╗${ColorReset}"
-    Write-Host "${ColorGreen}║${bannerTitle}${bannerSpaces}║${ColorReset}"
-    Write-Host "${ColorGreen}╚═══════════════════════════════════════╝${ColorReset}"
+    Write-Host "${ColorGreen}+---------------------------------------+${ColorReset}"
+    Write-Host "${ColorGreen}|${bannerTitle}${bannerSpaces}|${ColorReset}"
+    Write-Host "${ColorGreen}+---------------------------------------+${ColorReset}"
     Write-Host ""
     
     # Detect architecture
@@ -321,13 +321,13 @@ function Install-Capa {
     # Replace existing binary (fixes #19). On Windows a running .exe is locked
     # and cannot be overwritten, but it *can* be renamed within the same
     # directory while it runs (the OS keeps the file handle regardless of name).
-    # So move the old binary aside first — that frees $destPath — then drop the
+    # So move the old binary aside first (that frees $destPath), then drop the
     # new binary in. This makes the upgrade succeed even if the previous capa
     # process hasn't fully exited yet, instead of relying on a timing race.
     $backupPath = "$destPath.old"
     if (Test-Path $destPath) {
         # Remove any leftover backup from a prior upgrade (best-effort; harmless
-        # if it's still locked — it'll be cleaned on the next run).
+        # if it's still locked; it'll be cleaned on the next run).
         if (Test-Path $backupPath) {
             Remove-Item -LiteralPath $backupPath -Force -ErrorAction SilentlyContinue
         }
@@ -375,7 +375,7 @@ function Install-Capa {
     }
 
     # New binary is in place; clean up the old one. This will fail silently if
-    # the previous capa process is still running (the file stays locked) — the
+    # the previous capa process is still running (the file stays locked); the
     # leftover .old is then removed by the next upgrade.
     if (Test-Path $backupPath) {
         Remove-Item -LiteralPath $backupPath -Force -ErrorAction SilentlyContinue
@@ -388,9 +388,9 @@ function Install-Capa {
     
     # Print success message
     Write-Host ""
-    Write-Host "${ColorGreen}╔═══════════════════════════════════════╗${ColorReset}"
-    Write-Host "${ColorGreen}║  CAPA installed successfully! 🎉      ║${ColorReset}"
-    Write-Host "${ColorGreen}╚═══════════════════════════════════════╝${ColorReset}"
+    Write-Host "${ColorGreen}+---------------------------------------+${ColorReset}"
+    Write-Host "${ColorGreen}|  CAPA installed successfully!         |${ColorReset}"
+    Write-Host "${ColorGreen}+---------------------------------------+${ColorReset}"
     Write-Host ""
     Write-Host "To get started, run:"
     Write-Host "  ${ColorBlue}capa init${ColorReset}     # Initialize a new project"
