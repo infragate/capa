@@ -28,7 +28,7 @@
 
 Declare skills, tools, rules, sub-agents, MCP servers, hooks, and plugins once in `capabilities.yaml`. Run `capa install`. CAPA writes them into Cursor, Claude Code, Codex, Windsurf, GitHub Copilot, and 35+ other agents — native formats, pinned SHAs, zero manual sync. At runtime it is also the **MCP gateway**: every agent talks to one local endpoint; CAPA proxies upstream servers, lazy-loads tools, and scopes what each sub-agent can call.
 
-https://github.com/user-attachments/assets/98442d19-44c9-43e6-b2c2-88156b189d5e
+https://github.com/user-attachments/assets/200a8cf9-7236-4cc0-a9e4-332bb6664b41
 
 ## Why CAPA?
 
