@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'bun:test';
 import { createHash } from 'crypto';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import {
   assertSha256Match,
   formatUpgradePreview,
@@ -130,5 +132,12 @@ describe('capa upgrade planning', () => {
     const digest = 'a'.repeat(64);
     const map = parseSha256Sums(`${digest}  install.sh\n`);
     expect(map.get('install.sh')).toBe(digest);
+  });
+
+  // `capa upgrade` runs install.ps1 via Windows PowerShell 5.1, which reads a
+  // BOM-less file as Windows-1252; any non-ASCII byte can break parsing.
+  it('keeps install.ps1 ASCII-only so Windows PowerShell 5.1 can parse it', () => {
+    const bytes = readFileSync(join(import.meta.dir, '../../../../install.ps1'));
+    expect(bytes.findIndex((b) => b > 0x7f)).toBe(-1);
   });
 });
