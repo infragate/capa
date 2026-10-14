@@ -128,7 +128,8 @@ export async function getOrCreateSnapshot(
 
 	// Fast path: pinned SHA with an existing snapshot — fully offline.
 	if (opts.pinnedSha && !noCache) {
-		const fullSha = opts.pinnedSha.length === 40 ? opts.pinnedSha : null;
+		// A lockfile pin becomes a path segment here, so it must be a real SHA.
+		const fullSha = /^[0-9a-f]{40}$/i.test(opts.pinnedSha) ? opts.pinnedSha : null;
 		if (fullSha) {
 			const snapshotDir = getSnapshotDir(platform, repoPath, fullSha);
 			if (existsSync(snapshotDir)) {
