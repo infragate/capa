@@ -184,6 +184,17 @@ describe('cache', () => {
       ).rejects.toThrow();
     });
 
+    it('rejects version/ref values that are not plain ref names (#308)', async () => {
+      const mirrorDir = await seedMirrorFromFixture('github', 'owner/repo', fixture.url);
+      for (const bad of ['--output=/tmp/x', 'HEAD~1', 'main@{1}', ':/fix', 'v1..v2', 'a b']) {
+        await expect(resolveRef(mirrorDir, { version: bad })).rejects.toThrow(/Invalid version/);
+        await expect(resolveRef(mirrorDir, { ref: bad })).rejects.toThrow(/Invalid ref/);
+      }
+      // Plain names still resolve, and semver build metadata is allowed.
+      expect((await resolveRef(mirrorDir, { version: 'v1.0.0' })).sha).toBe(fixture.firstSha);
+      await expect(resolveRef(mirrorDir, { version: 'v1.0.0+build.1' })).rejects.toThrow(/not found/);
+    });
+
     it('snapshot is idempotent when called twice', async () => {
       const mirrorDir = await seedMirrorFromFixture('github', 'owner/repo', fixture.url);
       const dir1 = await materializeSnapshot(mirrorDir, 'github', 'owner/repo', fixture.firstSha);

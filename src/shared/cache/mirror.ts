@@ -273,6 +273,21 @@ export interface ResolveResult {
 }
 
 /**
+ * Only plain tag/branch names and commit SHAs reach `git rev-parse`. Its
+ * revision syntax (`HEAD~2`, `main@{1}`, `:/text`, `a..b`) and anything that
+ * looks like an option are rejected.
+ */
+const GIT_REF_NAME = /^(?!-)(?!.*\.\.)[A-Za-z0-9._/+-]{1,200}$/;
+
+export function assertGitRefName(field: string, value: string | undefined): void {
+	if (value && !GIT_REF_NAME.test(value)) {
+		throw new Error(
+			`Invalid ${field} "${value}": use a tag, branch or commit SHA (letters, digits, . _ / + -; no leading "-", no "..").`,
+		);
+	}
+}
+
+/**
  * Resolve a (version|ref|pinned|HEAD) request to a concrete commit SHA against
  * a mirror clone. Will fetch the mirror at most once if the ref is unknown.
  */
@@ -282,6 +297,9 @@ export async function resolveRef(
 	authFetch?: AuthenticatedFetch,
 ): Promise<ResolveResult> {
 	const { version, ref, pinnedSha } = opts;
+	assertGitRefName("version", version);
+	assertGitRefName("ref", ref);
+	assertGitRefName("pinned commit", pinnedSha);
 
 	if (pinnedSha) {
 		const sha = await tryResolveRefInMirror(mirrorDir, pinnedSha);
