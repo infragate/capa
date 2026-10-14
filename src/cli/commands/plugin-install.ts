@@ -69,13 +69,23 @@ function pluginProviderToCapaId(provider: UnifiedPluginManifest['provider']): st
   return provider === 'cursor' ? 'cursor' : 'claude-code';
 }
 
-function copyPluginToStable(tempDir: string, pluginStablePath: string): void {
+/**
+ * Copy a plugin out of its snapshot. Symlinks are replaced by what they point
+ * to, which may be anywhere in the snapshot (e.g. GitLab's plugins link
+ * `skills/<name>` to the repo's top-level `skills/`), so the copy stands alone.
+ */
+function copyPluginToStable(
+  manifestRoot: string,
+  pluginStablePath: string,
+  snapshotRoot: string,
+): void {
   mkdirSync(resolve(pluginStablePath, '..'), { recursive: true });
-  try {
-    cpSync(tempDir, pluginStablePath, { recursive: true });
-  } catch {
-    copySkillTree({ src: tempDir, dst: pluginStablePath });
-  }
+  copySkillTree({
+    src: manifestRoot,
+    dst: pluginStablePath,
+    root: snapshotRoot,
+    maxFileBytes: Number.POSITIVE_INFINITY,
+  });
 }
 
 /** Records which source a stable plugin copy was made from. */
@@ -101,6 +111,7 @@ export function ensureStablePluginCopy(
   manifestRoot: string,
   pluginStablePath: string,
   stamp: string,
+  snapshotRoot: string = manifestRoot,
 ): boolean {
   if (readPluginStamp(pluginStablePath) === stamp) return false;
 
@@ -108,7 +119,7 @@ export function ensureStablePluginCopy(
   const staging = `${pluginStablePath}.staging-${unique}`;
   const old = `${pluginStablePath}.old-${unique}`;
   try {
-    copyPluginToStable(manifestRoot, staging);
+    copyPluginToStable(manifestRoot, staging, snapshotRoot);
     writeFileSync(join(staging, PLUGIN_STAMP_FILE), stamp, 'utf-8');
 
     if (existsSync(pluginStablePath)) renameSync(pluginStablePath, old);
@@ -534,7 +545,7 @@ export async function resolvePlugins(
     releasePluginLock = await acquireFileLock(join(pluginsBase, `.${pluginInstallId}.lock`));
     const stamp = `${platform}:${repoPath}@${snapshot.resolvedSha}:${resolvedSubpath || ''}`;
     try {
-      if (ensureStablePluginCopy(manifestRoot, pluginStablePath, stamp)) {
+      if (ensureStablePluginCopy(manifestRoot, pluginStablePath, stamp, snapshot.snapshotDir)) {
         publishedStamp = stamp;
       }
     } catch (err: any) {

@@ -55,7 +55,8 @@ export function getSkillEntriesFromPath(
 	try {
 		const items = readdirSync(fullPath, { withFileTypes: true });
 		for (const item of items) {
-			if (!item.isDirectory()) continue;
+			// Symlinked skill dirs count too; existsSync below follows the link.
+			if (!item.isDirectory() && !item.isSymbolicLink()) continue;
 			const subPath = join(relativePath, item.name).replace(/\\/g, "/");
 			const subSkillMd = join(repoRoot, subPath, "SKILL.md");
 			if (existsSync(subSkillMd)) {

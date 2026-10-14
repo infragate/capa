@@ -73,6 +73,30 @@ describe("claude-marketplace parse", () => {
 		expect(coords?.subpath).toBe("plugins/formatter");
 	});
 
+	it("keeps dot directories in relative sources (#312)", () => {
+		const catalog = parseMarketplaceJson({
+			name: "gitlab-skills",
+			plugins: [
+				{ name: "glab", source: "./.claude-plugin/plugins/glab" },
+				{ name: "dotted", source: ".agents/dotted" },
+				{ name: "root", source: "." },
+			],
+		});
+		const subpaths = catalog.plugins.map(
+			(p) =>
+				sourceToInstallCoords(p.source, {
+					source: "gitlab-org/ai/skills",
+					host: "gitlab",
+					ownerRepo: "gitlab-org/ai/skills",
+				})?.subpath,
+		);
+		expect(subpaths).toEqual([
+			".claude-plugin/plugins/glab",
+			".agents/dotted",
+			"",
+		]);
+	});
+
 	it("rejects catalogs without plugins", () => {
 		expect(() =>
 			parseMarketplaceJson({ name: "empty", plugins: [] }),

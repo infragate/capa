@@ -70,6 +70,25 @@ describe('copySkillTree', () => {
     expect(() => copySkillTree({ src, dst })).toThrow(/outside the source directory/);
   });
 
+  it('copies a symlinked dir that resolves inside root (#312)', () => {
+    // GitLab layout: .claude-plugin/plugins/glab/skills/glab -> skills/glab
+    const repo = join(workDir, 'repo');
+    const plugin = join(repo, '.claude-plugin', 'plugins', 'glab');
+    const dst = join(workDir, 'dst-link');
+    mkdirSync(join(repo, 'skills', 'glab'), { recursive: true });
+    writeFileSync(join(repo, 'skills', 'glab', 'SKILL.md'), '# glab');
+    mkdirSync(join(plugin, 'skills'), { recursive: true });
+    // Junctions need no symlink privilege on Windows; the type is ignored elsewhere.
+    symlinkSync(join(repo, 'skills', 'glab'), join(plugin, 'skills', 'glab'), 'junction');
+    // A link back to an ancestor must not recurse forever.
+    symlinkSync(join(repo, 'skills'), join(repo, 'skills', 'glab', 'loop'), 'junction');
+
+    expect(() => copySkillTree({ src: plugin, dst })).toThrow(/outside the source directory/);
+
+    copySkillTree({ src: plugin, dst, root: repo });
+    expect(readFileSync(join(dst, 'skills', 'glab', 'SKILL.md'), 'utf-8')).toBe('# glab');
+  });
+
   it('honours maxFileBytes (rejects files larger than the limit)', () => {
     const src = join(workDir, 'src-limit');
     const dst = join(workDir, 'dst-limit');

@@ -16,6 +16,11 @@ export interface SkillCopyOptions {
 	/** Optional max bytes per file (default 50MB). */
 	maxFileBytes?: number;
 	/**
+	 * Symlinks may resolve anywhere inside this directory (default `src`) and
+	 * are copied as the files/directories they point to.
+	 */
+	root?: string;
+	/**
 	 * When set, invoked for each file instead of the default binary copy.
 	 * Used by plugin install security checks; omit for a verbatim tree copy.
 	 */
@@ -75,6 +80,8 @@ function walkSkillEntries(
 		isDirectory: boolean;
 		size: number;
 	}) => void,
+	linkRoot: string = srcRoot,
+	ancestors: Set<string> = new Set(),
 ): void {
 	const normalizedRel = normalizeRelPath(relPath);
 	const srcPath = normalizedRel ? join(srcRoot, normalizedRel) : srcRoot;
@@ -92,9 +99,13 @@ function walkSkillEntries(
 	const realPath = stat.isSymbolicLink()
 		? realpathSync(srcPath)
 		: resolve(srcPath);
-	assertPathInsideRoot(srcRoot, realPath);
+	assertPathInsideRoot(linkRoot, realPath);
+	// Decide file vs directory by what a symlink points to.
+	if (stat.isSymbolicLink()) stat = statSync(realPath);
 
 	if (stat.isDirectory()) {
+		// A link back to an enclosing directory would recurse forever.
+		if (ancestors.has(realPath)) return;
 		visit({
 			relPath: normalizedRel,
 			srcPath,
@@ -107,7 +118,15 @@ function walkSkillEntries(
 			const childRel = normalizedRel
 				? join(normalizedRel, entry.name)
 				: entry.name;
-			walkSkillEntries(srcRoot, dstRoot, childRel, maxFileBytes, visit);
+			walkSkillEntries(
+				srcRoot,
+				dstRoot,
+				childRel,
+				maxFileBytes,
+				visit,
+				linkRoot,
+				new Set([...ancestors, realPath]),
+			);
 		}
 		return;
 	}
@@ -116,9 +135,8 @@ function walkSkillEntries(
 		return;
 	}
 
-	const fileStat = stat.isSymbolicLink() ? statSync(realPath) : stat;
 	checkFileSize(
-		fileStat.size,
+		stat.size,
 		maxFileBytes,
 		normalizedRel || basenameOf(srcPath),
 	);
@@ -129,7 +147,7 @@ function walkSkillEntries(
 		destPath,
 		realPath,
 		isDirectory: false,
-		size: fileStat.size,
+		size: stat.size,
 	});
 }
 
@@ -166,7 +184,7 @@ export function forEachSkillFile(
 
 /**
  * Recursively copy files from `src` to `dst`, rejecting any path that
- * resolves (via symlink) outside `src`. Used by `capa install` (skill
+ * resolves (via symlink) outside `root` (default `src`). Used by `capa install` (skill
  * payloads) and `capa add` (plugin payloads).
  */
 export function copySkillTree(opts: SkillCopyOptions): { filesCopied: number } {
@@ -176,6 +194,7 @@ export function copySkillTree(opts: SkillCopyOptions): { filesCopied: number } {
 	mkdirSync(dstRoot, { recursive: true });
 
 	let filesCopied = 0;
+	const linkRoot = opts.root ? resolveSrcRoot(opts.root) : srcRoot;
 
 	walkSkillEntries(srcRoot, dstRoot, "", maxFileBytes, (entry) => {
 		if (entry.isDirectory) {
@@ -197,7 +216,7 @@ export function copySkillTree(opts: SkillCopyOptions): { filesCopied: number } {
 			copyFileSync(entry.realPath, entry.destPath);
 		}
 		filesCopied++;
-	});
+	}, linkRoot);
 
 	return { filesCopied };
 }
