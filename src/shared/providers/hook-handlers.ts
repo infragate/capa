@@ -396,6 +396,7 @@ function removeTaggedElsewhere(
 	const isTagged = (e: unknown) => isPlainObject(e) && e.name === nameTag;
 	for (const [eventName, events] of Object.entries(hooksRoot)) {
 		if (!Array.isArray(events)) continue;
+		const before = events.length;
 		for (let i = events.length - 1; i >= 0; i--) {
 			const item = events[i];
 			if (integration.shape === "cursor") {
@@ -409,7 +410,8 @@ function removeTaggedElsewhere(
 			if (kept.length === 0) events.splice(i, 1);
 			else item.hooks = kept;
 		}
-		if (events.length === 0) delete hooksRoot[eventName];
+		// Only drop an event this call emptied; leave a user's own `[]` alone.
+		if (before > 0 && events.length === 0) delete hooksRoot[eventName];
 	}
 }
 
