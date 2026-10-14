@@ -314,6 +314,13 @@ describe('hook-handlers — upsertHookEntry / removeHookEntryAt', () => {
       expect(root.PreToolUse).toEqual([{ matcher: 'Bash', hooks: [{ type: 'command', command: 'user.sh' }] }]);
     });
 
+    it('leaves event arrays the user left empty', () => {
+      const root: Record<string, unknown> = { Stop: [], disabled: [] };
+      place(claudeIntegration, root, { id: 'guard', on: 'beforeShell', command: 'x' }, 'PreToolUse', 'Bash');
+      expect(root.Stop).toEqual([]);
+      expect(root.disabled).toEqual([]);
+    });
+
     it('claude: matcher change', () => {
       const root: Record<string, unknown> = {};
       place(claudeIntegration, root, { id: 'guard', on: 'beforeTool', command: 'x', matcher: 'Bash' }, 'PreToolUse');
