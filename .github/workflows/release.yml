@@ -15,6 +15,9 @@ jobs:
     # Only uploads workflow artifacts; the release job publishes them.
     permissions:
       contents: read
+    env:
+      # Secrets can't be read in a step `if`; expose whether signing is set up.
+      MACOS_SIGNING_ENABLED: ${{ secrets.MACOS_CERTIFICATE_P12 != '' }}
     strategy:
       matrix:
         include:
@@ -114,6 +117,49 @@ jobs:
             bun build src/cli/index.ts --compile --target=$BUN_TARGET --outfile dist/capa --icon logo.ico
           fi
         shell: bash
+
+      # Sign macOS binaries with a stable Developer ID so the Keychain keeps
+      # trusting capa across upgrades (#307). Skipped until the signing
+      # secrets are configured, so releases still build without them.
+      - name: Sign and notarize (macOS)
+        if: runner.os == 'macOS' && env.MACOS_SIGNING_ENABLED == 'true'
+        env:
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD=$(openssl rand -hex 24)
+          echo "$MACOS_CERTIFICATE_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          rm "$RUNNER_TEMP/cert.p12"
+
+          # Hardened runtime needs the JIT entitlements Bun's runtime uses.
+          codesign --force --timestamp --options runtime \
+            --identifier co.infragate.capa \
+            --entitlements .github/macos-entitlements.plist \
+            --sign "$MACOS_SIGNING_IDENTITY" --keychain "$KEYCHAIN" dist/capa
+          codesign --verify --strict --verbose=2 dist/capa
+
+          # A bare binary can't be stapled; notarizing still registers the
+          # ticket so Gatekeeper accepts it online.
+          ditto -c -k dist/capa "$RUNNER_TEMP/capa.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/capa.zip" \
+            --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" \
+            --wait | tee "$RUNNER_TEMP/notary.log"
+          grep -q "status: Accepted" "$RUNNER_TEMP/notary.log"
+
+          security delete-keychain "$KEYCHAIN"
 
       - name: Rename artifact
         shell: bash
