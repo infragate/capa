@@ -276,7 +276,7 @@ describe('resolvePlugins isolates per-plugin failures', () => {
     // A copy from the same source already exists (e.g. written by the server).
     const existing = join(pluginsBase, 'fail-late');
     writeMinimalClaudePlugin(existing, 'fail-late');
-    writeFileSync(join(existing, '.capa-plugin-stamp'), `github:owner/fail-late@${'a'.repeat(40)}:`);
+    writeFileSync(join(existing, '.capa-plugin-stamp'), `copy-v2|github:owner/fail-late@${'a'.repeat(40)}:`);
 
     const lockBuilder = new LockfileBuilder(null);
     lockBuilder.upsertPlugin = () => {

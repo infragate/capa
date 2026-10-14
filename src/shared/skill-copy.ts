@@ -21,6 +21,12 @@ export interface SkillCopyOptions {
 	 */
 	root?: string;
 	/**
+	 * When set, a symlink that is broken, points outside `root`, or points at a
+	 * directory already copied is skipped and reported here. Without it, a
+	 * broken or escaping link throws.
+	 */
+	onSkippedLink?: (relPath: string, reason: string) => void;
+	/**
 	 * When set, invoked for each file instead of the default binary copy.
 	 * Used by plugin install security checks; omit for a verbatim tree copy.
 	 */
@@ -67,25 +73,52 @@ function checkFileSize(
 	}
 }
 
+interface WalkEntry {
+	relPath: string;
+	srcPath: string;
+	destPath: string;
+	realPath: string;
+	isDirectory: boolean;
+	size: number;
+}
+
+interface WalkContext {
+	srcRoot: string;
+	dstRoot: string;
+	maxFileBytes: number;
+	/** Symlinks must resolve inside this directory. */
+	linkRoot: string;
+	/** Real paths of every directory entered so far, across the whole walk. */
+	visited: Set<string>;
+	/** Symlinks found but not followed yet (see `walkTree`). */
+	pendingLinks: string[];
+	/** When set, bad links are skipped and reported here instead of throwing. */
+	onSkippedLink?: (relPath: string, reason: string) => void;
+	visit: (entry: WalkEntry) => void;
+}
+
+/**
+ * Walk the real tree first, then follow symlinks (including ones found inside
+ * linked directories). Each real directory is entered once: a link to a
+ * directory already copied is skipped, which stops cycles and the exponential
+ * fan-out of links pointing at each other, and a real directory always lands
+ * at its own path even when a link to it comes earlier in the listing.
+ */
+function walkTree(ctx: WalkContext): void {
+	walkSkillEntries(ctx, "", false);
+	for (let i = 0; i < ctx.pendingLinks.length; i++) {
+		walkSkillEntries(ctx, ctx.pendingLinks[i]!, true);
+	}
+}
+
 function walkSkillEntries(
-	srcRoot: string,
-	dstRoot: string,
+	ctx: WalkContext,
 	relPath: string,
-	maxFileBytes: number,
-	visit: (entry: {
-		relPath: string;
-		srcPath: string;
-		destPath: string;
-		realPath: string;
-		isDirectory: boolean;
-		size: number;
-	}) => void,
-	linkRoot: string = srcRoot,
-	ancestors: Set<string> = new Set(),
+	followLink: boolean,
 ): void {
 	const normalizedRel = normalizeRelPath(relPath);
-	const srcPath = normalizedRel ? join(srcRoot, normalizedRel) : srcRoot;
-	const destPath = normalizedRel ? join(dstRoot, normalizedRel) : dstRoot;
+	const srcPath = normalizedRel ? join(ctx.srcRoot, normalizedRel) : ctx.srcRoot;
+	const destPath = normalizedRel ? join(ctx.dstRoot, normalizedRel) : ctx.dstRoot;
 
 	let stat;
 	try {
@@ -96,17 +129,36 @@ function walkSkillEntries(
 		);
 	}
 
-	const realPath = stat.isSymbolicLink()
-		? realpathSync(srcPath)
-		: resolve(srcPath);
-	assertPathInsideRoot(linkRoot, realPath);
-	// Decide file vs directory by what a symlink points to.
-	if (stat.isSymbolicLink()) stat = statSync(realPath);
+	const isLink = stat.isSymbolicLink();
+	if (isLink && !followLink) {
+		ctx.pendingLinks.push(normalizedRel);
+		return;
+	}
+	let realPath: string;
+	try {
+		realPath = isLink ? realpathSync(srcPath) : resolve(srcPath);
+		assertPathInsideRoot(ctx.linkRoot, realPath);
+		// Decide file vs directory by what a symlink points to.
+		if (isLink) stat = statSync(realPath);
+	} catch (err: any) {
+		if (!isLink || !ctx.onSkippedLink) throw err;
+		ctx.onSkippedLink(
+			normalizedRel,
+			err?.code === "ENOENT" ? "broken link" : "points outside the repository",
+		);
+		return;
+	}
 
 	if (stat.isDirectory()) {
-		// A link back to an enclosing directory would recurse forever.
-		if (ancestors.has(realPath)) return;
-		visit({
+		const dirKey = isLink ? realPath : realpathSync(srcPath);
+		if (ctx.visited.has(dirKey)) {
+			// Only reachable through a link; a plain subdirectory of a linked
+			// directory that was already copied is skipped quietly.
+			if (isLink) ctx.onSkippedLink?.(normalizedRel, "directory already copied");
+			return;
+		}
+		ctx.visited.add(dirKey);
+		ctx.visit({
 			relPath: normalizedRel,
 			srcPath,
 			destPath,
@@ -115,17 +167,10 @@ function walkSkillEntries(
 			size: 0,
 		});
 		for (const entry of readdirSync(srcPath, { withFileTypes: true })) {
-			const childRel = normalizedRel
-				? join(normalizedRel, entry.name)
-				: entry.name;
 			walkSkillEntries(
-				srcRoot,
-				dstRoot,
-				childRel,
-				maxFileBytes,
-				visit,
-				linkRoot,
-				new Set([...ancestors, realPath]),
+				ctx,
+				normalizedRel ? join(normalizedRel, entry.name) : entry.name,
+				false,
 			);
 		}
 		return;
@@ -137,11 +182,11 @@ function walkSkillEntries(
 
 	checkFileSize(
 		stat.size,
-		maxFileBytes,
+		ctx.maxFileBytes,
 		normalizedRel || basenameOf(srcPath),
 	);
 
-	visit({
+	ctx.visit({
 		relPath: normalizedRel,
 		srcPath,
 		destPath,
@@ -170,15 +215,22 @@ export function forEachSkillFile(
 	opts?: { maxFileBytes?: number },
 ): void {
 	const srcRoot = resolveSrcRoot(src);
-	const maxFileBytes = opts?.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
-	walkSkillEntries(srcRoot, srcRoot, "", maxFileBytes, (entry) => {
-		if (!entry.isDirectory) {
-			visitor({
-				relPath: entry.relPath,
-				srcPath: entry.srcPath,
-				realPath: entry.realPath,
-			});
-		}
+	walkTree({
+		srcRoot,
+		dstRoot: srcRoot,
+		maxFileBytes: opts?.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES,
+		linkRoot: srcRoot,
+		visited: new Set(),
+		pendingLinks: [],
+		visit: (entry) => {
+			if (!entry.isDirectory) {
+				visitor({
+					relPath: entry.relPath,
+					srcPath: entry.srcPath,
+					realPath: entry.realPath,
+				});
+			}
+		},
 	});
 }
 
@@ -190,13 +242,10 @@ export function forEachSkillFile(
 export function copySkillTree(opts: SkillCopyOptions): { filesCopied: number } {
 	const srcRoot = resolveSrcRoot(opts.src);
 	const dstRoot = resolve(opts.dst);
-	const maxFileBytes = opts.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
 	mkdirSync(dstRoot, { recursive: true });
 
 	let filesCopied = 0;
-	const linkRoot = opts.root ? resolveSrcRoot(opts.root) : srcRoot;
-
-	walkSkillEntries(srcRoot, dstRoot, "", maxFileBytes, (entry) => {
+	const visit = (entry: WalkEntry) => {
 		if (entry.isDirectory) {
 			mkdirSync(entry.destPath, { recursive: true });
 			return;
@@ -216,7 +265,18 @@ export function copySkillTree(opts: SkillCopyOptions): { filesCopied: number } {
 			copyFileSync(entry.realPath, entry.destPath);
 		}
 		filesCopied++;
-	}, linkRoot);
+	};
+
+	walkTree({
+		srcRoot,
+		dstRoot,
+		maxFileBytes: opts.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES,
+		linkRoot: opts.root ? resolveSrcRoot(opts.root) : srcRoot,
+		visited: new Set(),
+		pendingLinks: [],
+		onSkippedLink: opts.onSkippedLink,
+		visit,
+	});
 
 	return { filesCopied };
 }
