@@ -190,9 +190,13 @@ describe('cache', () => {
         await expect(resolveRef(mirrorDir, { version: bad })).rejects.toThrow(/Invalid version/);
         await expect(resolveRef(mirrorDir, { ref: bad })).rejects.toThrow(/Invalid ref/);
       }
-      // Plain names still resolve, and semver build metadata is allowed.
+      await expect(resolveRef(mirrorDir, { pinnedSha: '../../../../etc/x' })).rejects.toThrow(/Invalid pinned commit/);
+      // Plain names still resolve; anything git accepts as a ref name passes
+      // validation (and then fails only because the fixture lacks the tag).
       expect((await resolveRef(mirrorDir, { version: 'v1.0.0' })).sha).toBe(fixture.firstSha);
-      await expect(resolveRef(mirrorDir, { version: 'v1.0.0+build.1' })).rejects.toThrow(/not found/);
+      for (const ok of ['v1.0.0+build.1', '@scope/pkg@1.2.3', 'pkg@1.2.3', 'release/1.0', 'feature#12', 'café']) {
+        await expect(resolveRef(mirrorDir, { version: ok })).rejects.toThrow(/not found/);
+      }
     });
 
     it('snapshot is idempotent when called twice', async () => {

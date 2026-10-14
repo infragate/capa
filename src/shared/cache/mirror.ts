@@ -273,16 +273,19 @@ export interface ResolveResult {
 }
 
 /**
- * Only plain tag/branch names and commit SHAs reach `git rev-parse`. Its
- * revision syntax (`HEAD~2`, `main@{1}`, `:/text`, `a..b`) and anything that
- * looks like an option are rejected.
+ * Only names git itself accepts as a ref (`git check-ref-format`) or a commit
+ * SHA reach `git rev-parse`. That rules out its revision syntax (`HEAD~2`,
+ * `main@{1}`, `:/text`, `a..b`) and anything that looks like an option, while
+ * monorepo tags such as `@scope/pkg@1.2.3` still work.
  */
-const GIT_REF_NAME = /^(?!-)(?!.*\.\.)[A-Za-z0-9._/+-]{1,200}$/;
+const GIT_REF_FORBIDDEN =
+	// biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what we reject
+	/[\x00-\x20\x7f~^:?*[\\]|\.\.|@\{|^[-/.]|\/$|\/\/|\/\.|\.$|\.lock(?:\/|$)|^@$/;
 
 export function assertGitRefName(field: string, value: string | undefined): void {
-	if (value && !GIT_REF_NAME.test(value)) {
+	if (value && (value.length > 255 || GIT_REF_FORBIDDEN.test(value))) {
 		throw new Error(
-			`Invalid ${field} "${value}": use a tag, branch or commit SHA (letters, digits, . _ / + -; no leading "-", no "..").`,
+			`Invalid ${field} "${value}": use a tag, branch or commit SHA (no spaces, ~ ^ : ? * [ \\, "..", "@{", or leading "-").`,
 		);
 	}
 }
