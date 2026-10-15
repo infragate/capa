@@ -1,6 +1,6 @@
-import { existsSync } from 'fs';
+import { existsSync, realpathSync } from 'fs';
 import { rm } from 'fs/promises';
-import { isAbsolute, join, relative, resolve } from 'path';
+import { isAbsolute, join, relative, resolve, sep } from 'path';
 import { isCapaOwnedInstallPath } from '../../shared/install-path-guard';
 import { isUnderWrapWorkspacesDir } from '../../shared/workspaces/paths';
 import { canonicalizePath, detectCapabilitiesFile } from '../../shared/paths';
@@ -70,6 +70,7 @@ async function cleanSkillInstallDirs(
   projectPath: string,
   providers: string[],
   skillIds: string[],
+  localSources: string[],
   warnings: string[],
 ): Promise<number> {
   let removed = 0;
@@ -97,6 +98,9 @@ async function cleanSkillInstallDirs(
       const skillDir = join(skillsRoot, skillId);
       if (!existsSync(skillDir)) continue;
       if (!isCapaOwnedInstallPath(projectPath, skillDir)) continue;
+      // A provider whose skills dir is the project's own `skills/` (OpenClaw)
+      // would otherwise point at a `type: local` skill's committed source.
+      if (overlapsAny(skillDir, localSources)) continue;
       try {
         await rm(skillDir, { recursive: true, force: true });
         removed++;
@@ -111,6 +115,29 @@ async function cleanSkillInstallDirs(
   }
 
   return removed;
+}
+
+/** True when `dir` is, contains, or sits inside one of `paths`. */
+function overlapsAny(dir: string, paths: string[]): boolean {
+  // Compare real locations too, so a source declared through a symlinked
+  // folder (vendor/foo with vendor -> skills) still matches skills/foo.
+  const forms = (p: string) => {
+    const lexical = resolve(p);
+    try {
+      return [lexical, realpathSync(lexical)];
+    } catch {
+      return [lexical];
+    }
+  };
+  // `..source` is a child named "..source", not the parent directory.
+  const inside = (rel: string) =>
+    rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+  const dirForms = forms(dir);
+  return paths.some((p) =>
+    forms(p).some((b) =>
+      dirForms.some((a) => inside(relative(a, b)) || inside(relative(b, a))),
+    ),
+  );
 }
 
 /** Managed artifacts recorded under the real project tree (not wrap shadow paths). */
@@ -171,13 +198,34 @@ export async function cleanProject(opts: CleanProjectOptions): Promise<CleanProj
     managedFiles.length > 0 && realManagedFiles.length === 0;
 
   const skillIds = (capabilities?.skills ?? []).map((s) => s.id);
+  const localSkillSources = (capabilities?.skills ?? [])
+    .filter((s) => s.type === 'local' && typeof s.def?.path === 'string')
+    .map((s) => resolve(projectPath, s.def.path as string));
+  // Deleting skill dirs is destructive. With no providers on record (e.g.
+  // after a passthrough install), only sweep providers whose skills dir is
+  // their own dot directory (`.claude/skills`); the every-provider fallback
+  // also included OpenClaw, whose skills dir is the project's `skills/` (#324).
+  const skillProviders =
+    resolvedProviders.length > 0
+      ? resolvedProviders
+      : providers.filter((id) => getProvider(id)?.skillsDir?.startsWith('.'));
   const skillDirsRemoved = wrapOnlyManagedArtifacts
     ? 0
-    : await cleanSkillInstallDirs(projectPath, providers, skillIds, warnings);
+    : await cleanSkillInstallDirs(
+        projectPath,
+        skillProviders,
+        skillIds,
+        localSkillSources,
+        warnings,
+      );
 
   let managedFilesRemoved = 0;
   for (const filePath of managedFiles) {
-    if (existsSync(filePath)) {
+    // A recorded path that is now (or holds) a type: local source stays; only
+    // its stale record is dropped.
+    if (overlapsAny(filePath, localSkillSources)) {
+      warnings.push(`Kept ${filePath}: it is a local skill source declared in the capabilities file.`);
+    } else if (existsSync(filePath)) {
       try {
         await rm(filePath, { recursive: true, force: true });
         managedFilesRemoved++;
