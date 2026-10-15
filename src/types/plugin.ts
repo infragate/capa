@@ -169,6 +169,8 @@ export interface UnifiedHookEntry {
   event: string;
   type: 'command' | 'prompt';
   command?: string;
+  /** Exec-form arguments (`command` + `args`, no shell). */
+  args?: string[];
   prompt?: string;
   matcher?: string;
   timeout?: number;

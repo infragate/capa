@@ -14,12 +14,16 @@ export function pluginHookMergeKey(hook: {
   on: string;
   type?: string;
   command?: string;
+  args?: string[];
   prompt?: string;
 }): string {
   return [
     hook.on,
     hook.type ?? 'command',
     normalizeHookBodyForDedupe(hook.command),
+    // `node a.js` and `node b.js` share a command but are different hooks.
+    // JSON keeps argument boundaries: ["a b"] is not ["a", "b"].
+    JSON.stringify((hook.args ?? []).map(normalizeHookBodyForDedupe)),
     normalizeHookBodyForDedupe(hook.prompt),
   ].join('\0');
 }

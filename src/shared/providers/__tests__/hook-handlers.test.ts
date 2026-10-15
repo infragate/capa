@@ -427,3 +427,67 @@ describe('hook-handlers — antigravity shape', () => {
     ).toThrow(/toggle/);
   });
 });
+
+describe('hook-handlers — exec-form args (#325)', () => {
+  const hook: Hook = {
+    id: 'seo',
+    on: 'afterFileEdit',
+    command: 'node',
+    args: ['/plugins/seo/hooks/run.js', '${tool_input.file_path}', "it's"],
+  };
+
+  it('keeps args as an array for providers with exec form', () => {
+    const out = buildHookEntry(
+      { ...claudeIntegration, supportsExecArgs: true },
+      { hook, runReference: 'node', mapping: { event: 'PostToolUse' } },
+    );
+    expect(out.entry.command).toBe('node');
+    expect(out.entry.args).toEqual(hook.args);
+  });
+
+  it('appends args shell-quoted for providers that only take a command string', () => {
+    const expected = "node /plugins/seo/hooks/run.js '${tool_input.file_path}' 'it'\\''s'";
+    const claudeLike = buildHookEntry(claudeIntegration, {
+      hook,
+      runReference: 'node',
+      mapping: { event: 'PostToolUse' },
+    });
+    expect(claudeLike.entry.command).toBe(expected);
+    expect(claudeLike.entry.args).toBeUndefined();
+    const cursor = buildHookEntry(cursorIntegration, {
+      hook,
+      runReference: 'node',
+      mapping: { event: 'afterFileEdit' },
+    });
+    expect(cursor.entry.command).toBe(expected);
+  });
+});
+
+describe('hook-handlers — exec form with spaces in the plugin path', () => {
+  const hook: Hook = {
+    id: 'spaced',
+    on: 'afterFileEdit',
+    command: 'C:/Users/Jane Doe/.capa/plugins/p/bin/run',
+    args: ['C:/Users/Jane Doe/.capa/plugins/p/a.js'],
+  };
+
+  it('quotes the executable too for command-string providers', () => {
+    const out = buildHookEntry(cursorIntegration, {
+      hook,
+      runReference: hook.command!,
+      mapping: { event: 'afterFileEdit' },
+    });
+    expect(out.entry.command).toBe(
+      "'C:/Users/Jane Doe/.capa/plugins/p/bin/run' 'C:/Users/Jane Doe/.capa/plugins/p/a.js'",
+    );
+  });
+
+  it('keeps unquoted values for exec form', () => {
+    const out = buildHookEntry(
+      { ...claudeIntegration, supportsExecArgs: true },
+      { hook, runReference: hook.command!, mapping: { event: 'PostToolUse' } },
+    );
+    expect(out.entry.command).toBe(hook.command);
+    expect(out.entry.args).toEqual(hook.args);
+  });
+});

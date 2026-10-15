@@ -264,6 +264,11 @@ export interface HooksIntegration {
    */
   supportsNameTag: boolean;
   /**
+   * True when command entries accept exec form (`command` + `args`, spawned
+   * without a shell). Otherwise `args` are appended to `command` shell-quoted.
+   */
+  supportsExecArgs?: boolean;
+  /**
    * Maps provider hook stdin fields → capa activity conversation/generation
    * ids. Omit until the provider's payload keys are known.
    */
