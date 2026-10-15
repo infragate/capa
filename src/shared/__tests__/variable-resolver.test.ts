@@ -308,13 +308,13 @@ describe('variable-resolver', () => {
             description: 'Runs ${NOT_TOOL_DESC}',
             def: {
               init: { cmd: 'login --token ${DEPLOY_TOKEN}' },
-              run: { cmd: 'deploy {env}', env: { REGION: '${REGION}' }, args: [{ name: 'env', type: 'string', description: 'e.g. ${NOT_ARG}' }] },
+              run: { cmd: 'deploy {env}', env: { REGION: '${REGION}' }, args: [{ name: 'env', type: 'string', description: 'e.g. ${NOT_ARG}', default: '${DEFAULT_ENV}' }] },
             },
           },
         ],
         skills: [{ id: 'bash', type: 'inline', def: { content: 'Use ${HOME} in scripts' } }],
       };
-      expect(extractRequiredVariables(caps).sort()).toEqual(['API_KEY', 'DEPLOY_TOKEN', 'REGION']);
+      expect(extractRequiredVariables(caps).sort()).toEqual(['API_KEY', 'DEFAULT_ENV', 'DEPLOY_TOKEN', 'REGION']);
     });
   });
 });

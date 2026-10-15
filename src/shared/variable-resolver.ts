@@ -161,7 +161,14 @@ export function extractRequiredVariables(capabilities: {
 			continue;
 		}
 		for (const spec of [tool.def.init, tool.def.run]) {
-			if (isPlainObject(spec)) fields.push(spec.cmd, spec.dir, spec.env);
+			if (!isPlainObject(spec)) continue;
+			fields.push(spec.cmd, spec.dir, spec.env);
+			// Argument defaults are substituted too; their descriptions are prose.
+			if (Array.isArray(spec.args)) {
+				for (const arg of spec.args) {
+					if (isPlainObject(arg)) fields.push(arg.default);
+				}
+			}
 		}
 	}
 	return extractAllVariables(fields);
