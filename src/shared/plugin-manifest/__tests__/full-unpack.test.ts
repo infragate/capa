@@ -388,6 +388,30 @@ describe("plugin full unpack parsers", () => {
 		expect(new Set(entries.map((e) => e.idHint)).size).toBe(2);
 	});
 
+	it("keeps the args of exec-form hooks (#325)", () => {
+		const entries = parseHookEntries(root, {
+			hooks: {
+				PostToolUse: [
+					{
+						matcher: "Edit|Write",
+						hooks: [
+							{
+								type: "command",
+								command: "node",
+								args: ["${CLAUDE_PLUGIN_ROOT}/hooks/run.js", "--fix"],
+							},
+							{ type: "command", command: "node", args: [1, 2] },
+						],
+					},
+				],
+			},
+		});
+		expect(entries[0].command).toBe("node");
+		expect(entries[0].args).toEqual(["${CLAUDE_PLUGIN_ROOT}/hooks/run.js", "--fix"]);
+		// Non-string args are not an argument vector.
+		expect(entries[1].args).toBeUndefined();
+	});
+
 	it("concatenates overlapping events when hooks is an array of sources", () => {
 		mkdirSync(join(root, "hooks"), { recursive: true });
 		writeFileSync(

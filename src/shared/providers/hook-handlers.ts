@@ -157,6 +157,12 @@ function resolveMatcher(input: HookEntryInput): string {
 	return userMatcher || prefix;
 }
 
+/** Quote one argument for sh/bash (Git Bash on Windows): verbatim, no expansion. */
+export function shellQuoteArg(arg: string): string {
+	if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(arg)) return arg;
+	return `'${arg.replace(/'/g, `'\\''`)}'`;
+}
+
 // ---------------------------------------------------------------------------
 // Shape serialisers
 // ---------------------------------------------------------------------------
@@ -257,13 +263,28 @@ function buildAntigravityEntry(input: HookEntryInput): HookEntryOutput {
  */
 export function buildHookEntry(
 	integration: HooksIntegration,
-	input: HookEntryInput,
+	rawInput: HookEntryInput,
 ): HookEntryOutput {
+	const args =
+		(rawInput.hook.type ?? "command") === "command" ? rawInput.hook.args : undefined;
+	const execArgs = !!args?.length && integration.supportsExecArgs === true;
+	// Without exec form the provider runs one shell string: append the
+	// arguments POSIX-quoted, so each stays one verbatim argument.
+	const input: HookEntryInput =
+		args?.length && !execArgs
+			? {
+					...rawInput,
+					runReference: [rawInput.runReference, ...args.map(shellQuoteArg)].join(" "),
+				}
+			: rawInput;
 	switch (integration.shape) {
 		case "claude":
 		case "gemini":
-		case "windsurf":
-			return buildClaudeLikeEntry(input, integration.supportsNameTag);
+		case "windsurf": {
+			const out = buildClaudeLikeEntry(input, integration.supportsNameTag);
+			if (execArgs) out.entry.args = [...args!];
+			return out;
+		}
 		case "antigravity":
 			return buildAntigravityEntry(input);
 		case "cursor":

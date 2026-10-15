@@ -812,11 +812,16 @@ export async function resolvePlugins(
         hookEntry.event,
         hookEntry.matcher,
       );
+      // Exec form (`command` + `args`) never goes through a shell, so paths
+      // are expanded unquoted; the writer quotes them for shell-only providers.
       const command = hookEntry.command
         ? resolvePluginRootInString(hookEntry.command, pluginStablePath, {
-            shellQuote: true,
+            shellQuote: !hookEntry.args,
           })
         : undefined;
+      const args = hookEntry.args?.map((arg) =>
+        resolvePluginRootInString(arg, pluginStablePath),
+      );
       const prompt = hookEntry.prompt
         ? resolvePluginRootInString(hookEntry.prompt, pluginStablePath, {
             shellQuote: true,
@@ -830,6 +835,7 @@ export async function resolvePlugins(
         on,
         type: hookEntry.type,
         command,
+        ...(args ? { args } : {}),
         prompt,
         matcher: hookEntry.matcher,
         timeout: hookEntry.timeout,

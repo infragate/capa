@@ -49,6 +49,8 @@ export const claudeCode: ProviderIntegration = {
 		},
 		shape: "claude",
 		supportsNameTag: true,
+		// https://code.claude.com/docs/en/hooks: `args` spawns without a shell.
+		supportsExecArgs: true,
 		// Claude common hook stdin: session_id (chat) + prompt_id (turn).
 		// Docs: https://code.claude.com/docs/en/hooks
 		activityCorrelation: {
