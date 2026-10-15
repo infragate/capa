@@ -292,6 +292,59 @@ describe('hook-handlers — upsertHookEntry / removeHookEntryAt', () => {
     });
     expect(root.PostToolUse).toBeUndefined();
   });
+
+  describe('a changed event or matcher replaces the old entry (#306)', () => {
+    const place = (integration: HooksIntegration, root: Record<string, unknown>, hook: Hook, event: string, matcherPrefix?: string) =>
+      upsertHookEntry(
+        integration,
+        root,
+        buildHookEntry(integration, { hook, runReference: './guard.sh', mapping: { event, matcherPrefix } }),
+      );
+    const tags = (root: Record<string, unknown>) => JSON.stringify(root).match(/capa:guard/g)?.length ?? 0;
+
+    it('claude: event change', () => {
+      const root: Record<string, unknown> = {
+        PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'user.sh' }] }],
+      };
+      place(claudeIntegration, root, { id: 'guard', on: 'beforeShell', command: 'x' }, 'PreToolUse', 'Bash');
+      place(claudeIntegration, root, { id: 'guard', on: 'afterFileEdit', command: 'x' }, 'PostToolUse', 'Edit|MultiEdit|Write');
+      expect(tags(root)).toBe(1);
+      expect(root.PostToolUse).toBeDefined();
+      // The user's own entry in the old group is untouched.
+      expect(root.PreToolUse).toEqual([{ matcher: 'Bash', hooks: [{ type: 'command', command: 'user.sh' }] }]);
+    });
+
+    it('leaves event arrays the user left empty', () => {
+      const root: Record<string, unknown> = { Stop: [], disabled: [] };
+      place(claudeIntegration, root, { id: 'guard', on: 'beforeShell', command: 'x' }, 'PreToolUse', 'Bash');
+      expect(root.Stop).toEqual([]);
+      expect(root.disabled).toEqual([]);
+    });
+
+    it('claude: matcher change', () => {
+      const root: Record<string, unknown> = {};
+      place(claudeIntegration, root, { id: 'guard', on: 'beforeTool', command: 'x', matcher: 'Bash' }, 'PreToolUse');
+      place(claudeIntegration, root, { id: 'guard', on: 'beforeTool', command: 'x', matcher: 'Read' }, 'PreToolUse');
+      expect(root.PreToolUse).toEqual([
+        { matcher: 'Read', hooks: [{ type: 'command', command: './guard.sh', name: 'capa:guard' }] },
+      ]);
+    });
+
+    it('claude: re-install keeps sibling order', () => {
+      const root: Record<string, unknown> = {};
+      for (const id of ['a', 'b', 'a', 'b']) place(claudeIntegration, root, { id, on: 'beforeTool', command: id }, 'PreToolUse');
+      const names = ((root.PreToolUse as any[])[0].hooks as any[]).map((h) => h.name);
+      expect(names).toEqual(['capa:a', 'capa:b']);
+    });
+
+    it('cursor: event change', () => {
+      const root: Record<string, unknown> = {};
+      place(cursorIntegration, root, { id: 'guard', on: 'beforeShell', command: 'x' }, 'beforeShellExecution');
+      place(cursorIntegration, root, { id: 'guard', on: 'afterFileEdit', command: 'x' }, 'afterFileEdit');
+      expect(tags(root)).toBe(1);
+      expect(root.beforeShellExecution).toBeUndefined();
+    });
+  });
 });
 
 describe('hook-handlers — name tag helpers', () => {

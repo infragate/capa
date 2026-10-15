@@ -43,14 +43,24 @@ function decryptCiphertext(value: string): string {
 	);
 }
 
-/** Canonical on-disk form: ciphertext, or encrypt legacy / colliding plaintext. */
-export function canonicalizeStoredSecret(value: string): string {
-	if (!value.startsWith(SECRET_CIPHER_PREFIX)) return encryptSecret(value);
+/**
+ * Canonical on-disk form: encrypt legacy plaintext, keep ciphertext as is.
+ * Ciphertext that does not decrypt (wrong master key) is never re-encrypted:
+ * that would lock it under the wrong key for good. It stays byte-identical
+ * and is reported as `undecryptable`, so restoring the right key recovers it.
+ */
+export function canonicalizeStoredSecret(value: string): {
+	value: string;
+	undecryptable: boolean;
+} {
+	if (!value.startsWith(SECRET_CIPHER_PREFIX)) {
+		return { value: encryptSecret(value), undecryptable: false };
+	}
 	try {
 		decryptCiphertext(value);
-		return value;
+		return { value, undecryptable: false };
 	} catch {
-		return encryptSecret(value);
+		return { value, undecryptable: true };
 	}
 }
 

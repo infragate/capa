@@ -40,7 +40,7 @@ export async function statusCommand(): Promise<void> {
       if (response.ok) {
         const data = (await response.json()) as {
           uptime?: number;
-          secretStorage?: { tier?: string };
+          secretStorage?: { tier?: string; undecryptable?: number };
         };
         console.log('Health: ✓ Healthy');
 
@@ -50,6 +50,12 @@ export async function statusCommand(): Promise<void> {
 
         const tier = data.secretStorage?.tier ?? localTier;
         console.log(`Secret storage: ${formatSecretTier(tier)}`);
+        const undecryptable = data.secretStorage?.undecryptable ?? 0;
+        if (undecryptable > 0) {
+          console.log(
+            `⚠ ${undecryptable} stored secret(s) can't be decrypted with the current master key (left untouched)`,
+          );
+        }
       } else {
         console.log('Health: ⚠ Responding but unhealthy');
         console.log(`Secret storage: ${formatSecretTier(localTier)}`);

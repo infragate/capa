@@ -63,6 +63,8 @@ export class CapaDatabase {
 	private subAgents: SubAgentsRepo;
 	private mcpSubprocesses: MCPSubprocessesRepo;
 	private registries: RegistriesRepo;
+	/** Stored secrets that don't decrypt with the current master key (#305). */
+	readonly undecryptableSecrets: number;
 
 	constructor(dbPath: string) {
 		// Ensure parent directory exists before creating database
@@ -76,7 +78,7 @@ export class CapaDatabase {
 		this.db.run(`PRAGMA busy_timeout = ${DATABASE_BUSY_TIMEOUT_MS}`);
 		restrictDatabaseFileMode(dbPath);
 		initSchema(this.db);
-		migrateSecretsAtRest(this.db);
+		this.undecryptableSecrets = migrateSecretsAtRest(this.db).undecryptable;
 
 		this.projects = new ProjectsRepo(this.db);
 		this.sessions = new SessionsRepo(this.db);
