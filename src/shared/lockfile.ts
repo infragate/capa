@@ -531,11 +531,13 @@ export class LockfileBuilder {
 				? { providerConfig: sortProviderConfig(this.providerConfig) }
 				: {}),
 		};
-		// Only bump generatedAt when pins/generator actually changed.
+		// Only restamp generator/generatedAt when the pins changed, so a no-op
+		// install after a capa upgrade leaves the lockfile untouched.
 		if (
 			this.initialSemanticKey === null ||
 			lockfileSemanticKey(lockfile) !== this.initialSemanticKey
 		) {
+			lockfile.generator = `capa@${VERSION}`;
 			lockfile.generatedAt = new Date().toISOString();
 		}
 		return lockfile;

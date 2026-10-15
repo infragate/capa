@@ -282,6 +282,21 @@ describe('lockfile', () => {
       expect(b.build().generatedAt).not.toBe('2026-01-01T00:00:00.000Z');
     });
 
+    it('stamps the current generator only when a pin changes (#310)', () => {
+      const initial: Lockfile = {
+        ...emptyLockfile(),
+        generator: 'capa@2.2.0',
+        skills: [sampleSkill],
+      };
+      const unchanged = new LockfileBuilder(initial);
+      unchanged.upsertSkill(sampleSkill);
+      expect(unchanged.build().generator).toBe('capa@2.2.0');
+
+      const added = new LockfileBuilder(initial);
+      added.upsertSkill({ ...sampleSkill, id: 'new-skill' });
+      expect(added.build().generator).toBe(emptyLockfile().generator);
+    });
+
     it('starts empty when given null', () => {
       const b = new LockfileBuilder(null);
       const lf = b.build();
