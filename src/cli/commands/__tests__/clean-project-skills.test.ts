@@ -57,6 +57,51 @@ describe('cleanProject skill directories', () => {
     expect(result.skillDirsRemoved).toBe(1);
   });
 
+  it('keeps project skill sources under skills/ when no providers are on record (#324)', async () => {
+    // After a passthrough install: no providers in capabilities or the DB.
+    const write = (rel: string) => {
+      mkdirSync(join(tempDir, rel), { recursive: true });
+      writeFileSync(join(tempDir, rel, 'SKILL.md'), '# skill\n', 'utf-8');
+    };
+    write('skills/create-pull-request'); // a type: local source
+    write('skills/remote-skill'); // unrelated project folder with a skill's id
+    write('.claude/skills/remote-skill'); // what passthrough wrote
+
+    const capabilities: Capabilities = {
+      skills: [
+        { id: 'create-pull-request', type: 'local', def: { path: 'skills/create-pull-request' } },
+        { id: 'remote-skill', type: 'github', def: { repo: 'owner/repo@remote-skill' } },
+      ],
+      servers: [],
+      tools: [],
+    } as Capabilities;
+
+    const db = new CapaDatabase(dbPath);
+    await cleanProject({ projectPath: tempDir, projectId: 'capa-clean-324', db, capabilities });
+    db.close();
+
+    expect(existsSync(join(tempDir, 'skills', 'create-pull-request', 'SKILL.md'))).toBe(true);
+    expect(existsSync(join(tempDir, 'skills', 'remote-skill', 'SKILL.md'))).toBe(true);
+    expect(existsSync(join(tempDir, '.claude', 'skills', 'remote-skill'))).toBe(false);
+  });
+
+  it('never deletes a local skill source, even for a resolved provider that installs into skills/', async () => {
+    mkdirSync(join(tempDir, 'skills', 'mine'), { recursive: true });
+    writeFileSync(join(tempDir, 'skills', 'mine', 'SKILL.md'), '# mine\n', 'utf-8');
+    const capabilities: Capabilities = {
+      providers: ['openclaw'],
+      skills: [{ id: 'mine', type: 'local', def: { path: './skills/mine' } }],
+      servers: [],
+      tools: [],
+    } as Capabilities;
+
+    const db = new CapaDatabase(dbPath);
+    await cleanProject({ projectPath: tempDir, projectId: 'capa-clean-324b', db, capabilities });
+    db.close();
+
+    expect(existsSync(join(tempDir, 'skills', 'mine', 'SKILL.md'))).toBe(true);
+  });
+
   it('does not delete vendored skills when .cursor/skills symlinks to ../skills', async () => {
     mkdirSync(join(tempDir, 'skills', 'ci-monitor'), { recursive: true });
     writeFileSync(
