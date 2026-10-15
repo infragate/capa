@@ -2,7 +2,7 @@ import { existsSync } from 'fs';
 import { resolve } from 'path';
 import type { Task } from '../../ui';
 import { parseEnvFile } from '../../../shared/env-parser';
-import { extractAllVariables } from '../../../shared/variable-resolver';
+import { extractRequiredVariables } from '../../../shared/variable-resolver';
 import type { InstallCtx } from './context';
 import { raiseInstallError } from './install-error-policy';
 
@@ -39,7 +39,7 @@ export function loadEnvTask(): Task<InstallCtx> {
       }
 
       // Authored file only — plugin-merged content must not invent credentials.
-      const requiredVars = extractAllVariables(ctx.capabilities);
+      const requiredVars = extractRequiredVariables(ctx.capabilities);
       for (const varName of requiredVars) {
         if (envVariables[varName]) {
           ctx.db.setVariable(ctx.projectId, varName, envVariables[varName]);
