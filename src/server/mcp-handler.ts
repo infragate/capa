@@ -18,6 +18,10 @@ import {
 	searchTools,
 	suggestToolNames,
 } from "../shared/tool-search";
+import {
+	effectiveExpose,
+	serverIdsWithDeclaredTools,
+} from "../shared/server-tool-exposure";
 import type {
 	Capabilities,
 	MCPServerDefinition,
@@ -113,23 +117,41 @@ export function unknownToolMessage(
 ): string {
 	const mode: ToolExposureMode =
 		capabilities?.options?.toolExposure || "expose-all";
-	const norm = (s: string) => normalizeToolName(s).toLowerCase();
-	for (const server of capabilities?.servers ?? []) {
-		if (server.type !== "mcp") continue;
-		const prefix = `${server.id}.`;
-		const qualified = name.startsWith(prefix);
-		const remote = qualified ? name.slice(prefix.length) : name;
-		const listed = (server.tools ?? []).some((t) => norm(t) === norm(remote));
-		const hidden =
-			(server.expose === "except" && listed) ||
-			(server.expose === "exactly" && qualified && !listed);
-		if (hidden) {
-			return `Tool "${name}" is not exposed by this project: servers.${server.id} uses "expose: ${server.expose}", which leaves it out. It can only be called after the user changes that in the capabilities file.`;
+	const tools = capabilities ? searchableTools(capabilities) : [];
+	const callable = exactNameMatches(tools, name);
+	let policyNote = "";
+
+	// Only servers whose `expose` is in effect: hand-written `tools:` entries
+	// turn the policy off. A callable match elsewhere in the catalog wins.
+	if (capabilities && callable.length === 0) {
+		const declared = serverIdsWithDeclaredTools(capabilities);
+		const norm = (s: string) => normalizeToolName(s).toLowerCase();
+		for (const server of capabilities.servers ?? []) {
+			if (declared.has(server.id)) continue;
+			const expose = effectiveExpose(server);
+			const prefix = `${server.id}.`;
+			const qualified = name.startsWith(prefix);
+			const remote = qualified ? name.slice(prefix.length) : name;
+			const listed = (server.tools ?? []).some((t) => norm(t) === norm(remote));
+			// Listed in a denylist: the user named it, so the tool exists.
+			if (expose === "except" && listed) {
+				return `Tool "${name}" is not exposed by this project: servers.${server.id} lists it under "expose: except". It can only be called after the user changes that in the capabilities file.`;
+			}
+			// Under exactly/none we can't tell a hidden tool from a typo, so
+			// add the policy as context next to the normal answer.
+			if (qualified && (expose === "none" || (expose === "exactly" && !listed))) {
+				policyNote =
+					expose === "none"
+						? ` Note: servers.${server.id} uses "expose: none", so none of its tools are exposed.`
+						: ` Note: servers.${server.id} uses "expose: exactly", so only the tools it lists are exposed; if "${remote}" is one of its tools, the user has to add it there.`;
+			}
 		}
 	}
 
-	const tools = capabilities ? searchableTools(capabilities) : [];
-	const suggestions = suggestToolNames(tools, name);
+	const suggestions = [
+		...callable.map((t) => t.qualifiedName),
+		...suggestToolNames(tools, name),
+	].filter((n, i, all) => all.indexOf(n) === i).slice(0, 3);
 	const didYouMean =
 		suggestions.length > 0 ? ` Closest names: ${suggestions.join(", ")}.` : "";
 	const next =
@@ -140,7 +162,7 @@ export function unknownToolMessage(
 				: mode === "none"
 					? ' Run "capa sh" to list the tools this project provides.'
 					: " Call one of the tools in your tool list.";
-	return `Tool not found: "${name}" is not in this project's capa tool catalog.${didYouMean}${next}`;
+	return `Tool not found: "${name}" is not in this project's capa tool catalog.${didYouMean}${policyNote}${next}`;
 }
 
 export class CapaMCPServer {

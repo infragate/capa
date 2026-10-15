@@ -999,6 +999,7 @@ describe('handleMessage > search meta-tool outside search mode', () => {
 });
 
 describe('unknownToolMessage', () => {
+  // `@github` has a hand-written tool, so its own expose policy is off.
   const caps = (mode: string, servers: unknown[] = []) =>
     ({
       providers: ['claude-code'],
@@ -1007,20 +1008,43 @@ describe('unknownToolMessage', () => {
       servers,
       tools: [
         { id: 'get_issue', type: 'mcp', def: { server: '@github', tool: 'get_issue' } },
+        { id: 'shared', type: 'mcp', fromServerExpose: true, def: { server: '@public', tool: 'shared' } },
       ],
     }) as unknown as Capabilities;
+  const srv = (id: string, expose: string, tools: string[] = []) => ({
+    id,
+    type: 'mcp',
+    def: { url: 'https://x' },
+    expose,
+    tools,
+  });
 
-  it('says when a server expose policy hides the tool', () => {
-    const except = caps('search', [
-      { id: 'github', type: 'mcp', def: { url: 'https://x' }, expose: 'except', tools: ['delete_repo'] },
-    ]);
-    expect(unknownToolMessage('github.delete_repo', except)).toMatch(/servers\.github uses "expose: except"/);
-    expect(unknownToolMessage('delete_repo', except)).toMatch(/not exposed by this project/);
+  it('says a tool listed under an active expose: except is hidden', () => {
+    const c = caps('search', [srv('gitlab', 'except', ['delete_repo'])]);
+    expect(unknownToolMessage('gitlab.delete_repo', c)).toMatch(/servers\.gitlab lists it under "expose: except"/);
+    expect(unknownToolMessage('delete_repo', c)).toMatch(/not exposed by this project/);
+  });
 
-    const exactly = caps('search', [
-      { id: 'github', type: 'mcp', def: { url: 'https://x' }, expose: 'exactly', tools: ['get_issue'] },
-    ]);
-    expect(unknownToolMessage('github.list_issues', exactly)).toMatch(/"expose: exactly"/);
+  it('ignores a policy that hand-written tools turn off', () => {
+    const c = caps('search', [srv('github', 'except', ['list_issues'])]);
+    const msg = unknownToolMessage('github.list_issues', c);
+    expect(msg).toMatch(/^Tool not found/);
+    expect(msg).not.toMatch(/expose/);
+  });
+
+  it('treats exactly/none as context, not proof the tool exists', () => {
+    const exactly = unknownToolMessage('gitlab.list_isues', caps('search', [srv('gitlab', 'exactly', ['get_mr'])]));
+    expect(exactly).toMatch(/^Tool not found/);
+    expect(exactly).toMatch(/servers\.gitlab uses "expose: exactly"/);
+    const none = unknownToolMessage('gitlab.get_mr', caps('search', [srv('gitlab', 'none')]));
+    expect(none).toMatch(/servers\.gitlab uses "expose: none"/);
+  });
+
+  it('suggests a callable tool instead of blaming another server', () => {
+    const c = caps('search', [srv('private', 'except', ['shared'])]);
+    const msg = unknownToolMessage('shared', c);
+    expect(msg).toMatch(/Closest names: public\.shared/);
+    expect(msg).not.toMatch(/not exposed/);
   });
 
   it('gives the next step for each exposure mode', () => {
