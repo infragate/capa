@@ -12,7 +12,7 @@ import {
 import { trustStdioServers } from "../shared/stdio-allowlist";
 import { projectUiUrl } from "../shared/ui-urls";
 import { mcpServerIdsPendingCredentials } from "../shared/secret-value";
-import { extractAllVariables } from "../shared/variable-resolver";
+import { extractRequiredVariables } from "../shared/variable-resolver";
 import type { Capabilities } from "../types/capabilities";
 import type { OAuth2Config } from "../types/oauth";
 import type { CapabilitiesFileWatcher } from "./capabilities-watcher";
@@ -371,7 +371,7 @@ export async function runProjectConfigure(
 	// -- Required variables ---------------------------------------------
 	// Authored capabilities only — plugin-merged subagents/skills/etc. can
 	// contain `${…}` as prose and must not become required credentials.
-	const requiredVars = extractAllVariables(capabilities);
+	const requiredVars = extractRequiredVariables(capabilities);
 	apiLogger.info(`Required variables: ${requiredVars.join(", ")}`);
 
 	const missingVars: string[] = [];

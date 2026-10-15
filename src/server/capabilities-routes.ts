@@ -1,6 +1,6 @@
 import type { ArrayCapabilitySection } from "../shared/capabilities";
 import { secretHint } from "../shared/secret-crypto";
-import { extractAllVariables } from "../shared/variable-resolver";
+import { extractRequiredVariables } from "../shared/variable-resolver";
 import type { Capabilities } from "../types/capabilities";
 import {
 	handleAppend,
@@ -117,7 +117,7 @@ export function buildVariablesResponse(
 	secrets: Array<{ name: string; isSet: boolean; hint: string }>;
 } {
 	const required = (
-		capabilities ? extractAllVariables(capabilities) : []
+		capabilities ? extractRequiredVariables(capabilities) : []
 	).filter((name) => !INTERNAL_OAUTH_VAR.test(name));
 	const catalog = Object.keys(values)
 		.filter((name) => !INTERNAL_OAUTH_VAR.test(name))

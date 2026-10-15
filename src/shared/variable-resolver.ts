@@ -132,3 +132,37 @@ export function extractAllVariables(obj: unknown): string[] {
 	extract(obj);
 	return Array.from(variables);
 }
+
+/**
+ * Variables a project must set: `${…}` placeholders in the fields capa
+ * actually substitutes, i.e. MCP server defs (`resolveMcpServerDef`) and
+ * command tool `init` / `run` specs (`tool-executor`). Descriptions, skill
+ * bodies, tools synthesized from a server's `expose` policy (which carry the
+ * remote server's own descriptions) and plugin-sourced entries are prose, so
+ * a `${var:regex}` in them never becomes a required variable.
+ */
+export function extractRequiredVariables(capabilities: {
+	servers?: unknown[];
+	tools?: unknown[];
+}): string[] {
+	const fields: unknown[] = [];
+	for (const server of capabilities.servers ?? []) {
+		if (isPlainObject(server) && !isPluginSourcedObject(server)) {
+			fields.push(server.def);
+		}
+	}
+	for (const tool of capabilities.tools ?? []) {
+		if (
+			!isPlainObject(tool) ||
+			isPluginSourcedObject(tool) ||
+			tool.type !== "command" ||
+			!isPlainObject(tool.def)
+		) {
+			continue;
+		}
+		for (const spec of [tool.def.init, tool.def.run]) {
+			if (isPlainObject(spec)) fields.push(spec.cmd, spec.dir, spec.env);
+		}
+	}
+	return extractAllVariables(fields);
+}

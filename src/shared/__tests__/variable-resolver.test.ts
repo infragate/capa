@@ -5,6 +5,7 @@ import {
   resolveVariablesInObject,
   hasUnresolvedVariables,
   extractAllVariables,
+  extractRequiredVariables,
 } from '../variable-resolver';
 
 describe('variable-resolver', () => {
@@ -288,6 +289,32 @@ describe('variable-resolver', () => {
         ],
       };
       expect(extractAllVariables(caps)).toEqual(['API_KEY']);
+    });
+  });
+
+  describe('extractRequiredVariables', () => {
+    it('only reads fields capa substitutes, not prose', () => {
+      const caps = {
+        servers: [
+          { id: 'api', type: 'mcp', description: 'Uses ${NOT_DESC}', def: { url: 'https://x', headers: { Authorization: 'Bearer ${API_KEY}' } } },
+          { id: 'plug', type: 'mcp', sourcePlugin: { id: 'p', name: 'p', provider: 'claude' }, def: { env: { K: '${PLUGIN_VAR}' } } },
+        ],
+        tools: [
+          // Synthesized from `expose: all`: carries the remote tool's own description.
+          { id: 'grafana_panel', type: 'mcp', fromServerExpose: true, description: 'Format with ${var:regex}', def: { server: '@api', tool: 'panel' } },
+          {
+            id: 'deploy',
+            type: 'command',
+            description: 'Runs ${NOT_TOOL_DESC}',
+            def: {
+              init: { cmd: 'login --token ${DEPLOY_TOKEN}' },
+              run: { cmd: 'deploy {env}', env: { REGION: '${REGION}' }, args: [{ name: 'env', type: 'string', description: 'e.g. ${NOT_ARG}' }] },
+            },
+          },
+        ],
+        skills: [{ id: 'bash', type: 'inline', def: { content: 'Use ${HOME} in scripts' } }],
+      };
+      expect(extractRequiredVariables(caps).sort()).toEqual(['API_KEY', 'DEPLOY_TOKEN', 'REGION']);
     });
   });
 });
