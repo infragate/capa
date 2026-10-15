@@ -157,3 +157,12 @@ describe('pluginHookMergeKey with exec-form args (#325)', () => {
     );
   });
 });
+
+describe('pluginHookMergeKey argument boundaries', () => {
+  it('keeps ["a b"] and ["a", "b"] apart', () => {
+    const base = { on: 'stop', type: 'command' as const, command: 'run' };
+    expect(pluginHookMergeKey({ ...base, args: ['a b'] })).not.toBe(
+      pluginHookMergeKey({ ...base, args: ['a', 'b'] }),
+    );
+  });
+});

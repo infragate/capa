@@ -462,3 +462,32 @@ describe('hook-handlers — exec-form args (#325)', () => {
     expect(cursor.entry.command).toBe(expected);
   });
 });
+
+describe('hook-handlers — exec form with spaces in the plugin path', () => {
+  const hook: Hook = {
+    id: 'spaced',
+    on: 'afterFileEdit',
+    command: 'C:/Users/Jane Doe/.capa/plugins/p/bin/run',
+    args: ['C:/Users/Jane Doe/.capa/plugins/p/a.js'],
+  };
+
+  it('quotes the executable too for command-string providers', () => {
+    const out = buildHookEntry(cursorIntegration, {
+      hook,
+      runReference: hook.command!,
+      mapping: { event: 'afterFileEdit' },
+    });
+    expect(out.entry.command).toBe(
+      "'C:/Users/Jane Doe/.capa/plugins/p/bin/run' 'C:/Users/Jane Doe/.capa/plugins/p/a.js'",
+    );
+  });
+
+  it('keeps unquoted values for exec form', () => {
+    const out = buildHookEntry(
+      { ...claudeIntegration, supportsExecArgs: true },
+      { hook, runReference: hook.command!, mapping: { event: 'PostToolUse' } },
+    );
+    expect(out.entry.command).toBe(hook.command);
+    expect(out.entry.args).toEqual(hook.args);
+  });
+});
