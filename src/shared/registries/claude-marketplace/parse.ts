@@ -20,7 +20,9 @@ function asOwner(raw: unknown): MarketplaceOwner | undefined {
  */
 export function classifyMarketplaceSource(raw: unknown): MarketplaceSource {
 	if (typeof raw === "string") {
-		return { kind: "monorepo-local", path: raw.replace(/^\.\/?/, "") };
+		// Strip only a leading "./" (or a bare "."): "./.claude-plugin/x" keeps
+		// its dot directory.
+		return { kind: "monorepo-local", path: raw.replace(/^\.(?:\/|$)/, "") };
 	}
 	if (raw && typeof raw === "object") {
 		const o = raw as Record<string, unknown>;
@@ -92,7 +94,7 @@ export function parseMarketplaceJson(data: unknown): ParsedMarketplace {
 	const pluginRootRaw =
 		typeof metadata?.pluginRoot === "string" ? metadata.pluginRoot : undefined;
 	const pluginRoot = pluginRootRaw
-		? pluginRootRaw.replace(/^\.\/?/, "").replace(/\/+$/, "")
+		? pluginRootRaw.replace(/^\.(?:\/|$)/, "").replace(/\/+$/, "")
 		: undefined;
 
 	const plugins: MarketplacePluginEntry[] = [];

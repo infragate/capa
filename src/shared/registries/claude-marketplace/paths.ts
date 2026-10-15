@@ -6,6 +6,7 @@ import { createAuthenticatedFetch } from "../../authenticated-fetch";
 import { getOrCreateSnapshot } from "../../cache";
 import { getManagedRegistriesDir } from "../../config";
 import { logger } from "../../logger";
+import { assertSafeRepoPath } from "../../repo-file";
 import { detectAndParseManifest } from "../../plugin-manifest";
 import { createClaudeMarketplaceAdapter } from "./adapter";
 import { summarizeUnifiedManifest } from "./plugin-contents";
@@ -57,8 +58,9 @@ export function createPluginInspector(db: CapaDatabase) {
 				version: coords.ref,
 				ref: coords.sha,
 			});
+			// Same `..` / absolute-path check as install (throws, caught below).
 			const root = coords.subpath
-				? join(snapshot.snapshotDir, coords.subpath)
+				? assertSafeRepoPath(snapshot.snapshotDir, coords.subpath)
 				: snapshot.snapshotDir;
 			if (!existsSync(root)) {
 				inspectLog.debug(

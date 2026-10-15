@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { ensureStablePluginCopy, PLUGIN_STAMP_FILE } from '../plugin-install';
+import { detectAndParseManifest } from '../../../shared/plugin-manifest';
 
 describe('ensureStablePluginCopy', () => {
   let dir: string;
@@ -55,5 +56,24 @@ describe('ensureStablePluginCopy', () => {
     ensureStablePluginCopy(src('v1', { 'skills/a/SKILL.md': 'A' }), dest, 'sha1');
     expect(existsSync(join(dest, 'partial'))).toBe(false);
     expect(existsSync(join(dest, 'skills/a/SKILL.md'))).toBe(true);
+  });
+  it('resolves a plugin whose skills link into the rest of the repo (#312)', () => {
+    // gitlab-org/ai/skills: .claude-plugin/plugins/glab/skills/glab -> skills/glab,
+    // next to a root plugin.json that is not an Agent Plugins manifest.
+    const repo = src('repo', {
+      'skills/glab/SKILL.md': '# glab',
+      '.claude-plugin/plugins/glab/plugin.json': '{"name":"glab","skills":"./"}',
+    });
+    const plugin = join(repo, '.claude-plugin', 'plugins', 'glab');
+    mkdirSync(join(plugin, 'skills'));
+    symlinkSync(join(repo, 'skills', 'glab'), join(plugin, 'skills', 'glab'), 'junction');
+
+    const manifest = detectAndParseManifest(plugin, ['claude-code']);
+    expect(manifest?.skillEntries.map((s) => s.id)).toEqual(['glab']);
+
+    const dest = join(dir, 'plugins', 'glab');
+    ensureStablePluginCopy(plugin, dest, 'sha1', repo);
+    expect(lstatSync(join(dest, 'skills', 'glab')).isSymbolicLink()).toBe(false);
+    expect(readFileSync(join(dest, 'skills', 'glab', 'SKILL.md'), 'utf8')).toBe('# glab');
   });
 });

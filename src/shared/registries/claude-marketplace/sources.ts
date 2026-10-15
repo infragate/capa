@@ -45,7 +45,7 @@ function joinPluginRoot(
 	pluginRoot: string | undefined,
 	relPath: string,
 ): string {
-	const cleaned = relPath.replace(/^\.\/?/, "").replace(/^\/+/, "");
+	const cleaned = relPath.replace(/^\.(?:\/|$)/, "").replace(/^\/+/, "");
 	if (!pluginRoot) return cleaned;
 	return `${pluginRoot.replace(/\/+$/, "")}/${cleaned}`;
 }

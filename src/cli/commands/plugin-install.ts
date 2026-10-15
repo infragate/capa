@@ -69,13 +69,27 @@ function pluginProviderToCapaId(provider: UnifiedPluginManifest['provider']): st
   return provider === 'cursor' ? 'cursor' : 'claude-code';
 }
 
-function copyPluginToStable(tempDir: string, pluginStablePath: string): void {
+/**
+ * Copy a plugin out of its snapshot. Symlinks are replaced by what they point
+ * to, which may be anywhere in the snapshot (e.g. GitLab's plugins link
+ * `skills/<name>` to the repo's top-level `skills/`), so the copy stands alone.
+ */
+function copyPluginToStable(
+  manifestRoot: string,
+  pluginStablePath: string,
+  snapshotRoot: string,
+  onSkippedLink?: (relPath: string, reason: string) => void,
+): void {
   mkdirSync(resolve(pluginStablePath, '..'), { recursive: true });
-  try {
-    cpSync(tempDir, pluginStablePath, { recursive: true });
-  } catch {
-    copySkillTree({ src: tempDir, dst: pluginStablePath });
-  }
+  copySkillTree({
+    src: manifestRoot,
+    dst: pluginStablePath,
+    root: snapshotRoot,
+    // No per-file cap, as with the old cpSync copy. Each directory is copied
+    // at most once, so links can't multiply the size.
+    maxFileBytes: Number.POSITIVE_INFINITY,
+    onSkippedLink,
+  });
 }
 
 /** Records which source a stable plugin copy was made from. */
@@ -101,6 +115,8 @@ export function ensureStablePluginCopy(
   manifestRoot: string,
   pluginStablePath: string,
   stamp: string,
+  snapshotRoot: string = manifestRoot,
+  onSkippedLink?: (relPath: string, reason: string) => void,
 ): boolean {
   if (readPluginStamp(pluginStablePath) === stamp) return false;
 
@@ -108,7 +124,7 @@ export function ensureStablePluginCopy(
   const staging = `${pluginStablePath}.staging-${unique}`;
   const old = `${pluginStablePath}.old-${unique}`;
   try {
-    copyPluginToStable(manifestRoot, staging);
+    copyPluginToStable(manifestRoot, staging, snapshotRoot, onSkippedLink);
     writeFileSync(join(staging, PLUGIN_STAMP_FILE), stamp, 'utf-8');
 
     if (existsSync(pluginStablePath)) renameSync(pluginStablePath, old);
@@ -532,9 +548,13 @@ export async function resolvePlugins(
     // stable copy is synchronous and runs while the lock is held.
     mkdirSync(pluginsBase, { recursive: true });
     releasePluginLock = await acquireFileLock(join(pluginsBase, `.${pluginInstallId}.lock`));
-    const stamp = `${platform}:${repoPath}@${snapshot.resolvedSha}:${resolvedSubpath || ''}`;
+    // `copy-v2`: symlinks are dereferenced since #312. Older copies kept
+    // broken relative links, so they are made again once.
+    const stamp = `copy-v2|${platform}:${repoPath}@${snapshot.resolvedSha}:${resolvedSubpath || ''}`;
     try {
-      if (ensureStablePluginCopy(manifestRoot, pluginStablePath, stamp)) {
+      const onSkippedLink = (relPath: string, reason: string) =>
+        warnings.push(`Plugin "${pluginInstallId}": skipped symlink "${relPath}" (${reason}).`);
+      if (ensureStablePluginCopy(manifestRoot, pluginStablePath, stamp, snapshot.snapshotDir, onSkippedLink)) {
         publishedStamp = stamp;
       }
     } catch (err: any) {

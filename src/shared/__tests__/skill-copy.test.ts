@@ -70,6 +70,75 @@ describe('copySkillTree', () => {
     expect(() => copySkillTree({ src, dst })).toThrow(/outside the source directory/);
   });
 
+  it('copies a symlinked dir that resolves inside root (#312)', () => {
+    // GitLab layout: .claude-plugin/plugins/glab/skills/glab -> skills/glab
+    const repo = join(workDir, 'repo');
+    const plugin = join(repo, '.claude-plugin', 'plugins', 'glab');
+    const dst = join(workDir, 'dst-link');
+    mkdirSync(join(repo, 'skills', 'glab'), { recursive: true });
+    writeFileSync(join(repo, 'skills', 'glab', 'SKILL.md'), '# glab');
+    mkdirSync(join(plugin, 'skills'), { recursive: true });
+    // Junctions need no symlink privilege on Windows; the type is ignored elsewhere.
+    symlinkSync(join(repo, 'skills', 'glab'), join(plugin, 'skills', 'glab'), 'junction');
+    // A link back to an ancestor must not recurse forever.
+    symlinkSync(join(repo, 'skills'), join(repo, 'skills', 'glab', 'loop'), 'junction');
+
+    expect(() => copySkillTree({ src: plugin, dst })).toThrow(/outside the source directory/);
+
+    copySkillTree({ src: plugin, dst, root: repo });
+    expect(readFileSync(join(dst, 'skills', 'glab', 'SKILL.md'), 'utf-8')).toBe('# glab');
+    // The loop link points at a directory already being copied: skipped.
+    expect(existsSync(join(dst, 'skills', 'glab', 'loop', 'glab'))).toBe(false);
+  });
+
+  it('copies each linked directory once, so link fan-out stays linear', () => {
+    // d0/{a,b} -> d1, d1/{a,b} -> d2, ... used to copy 2^N trees.
+    const src = join(workDir, 'fan');
+    const dst = join(workDir, 'dst-fan');
+    const depth = 12;
+    for (let i = 0; i <= depth; i++) mkdirSync(join(src, `d${i}`), { recursive: true });
+    writeFileSync(join(src, `d${depth}`, 'leaf.txt'), 'x');
+    for (let i = 0; i < depth; i++) {
+      for (const name of ['a', 'b']) {
+        symlinkSync(join(src, `d${i + 1}`), join(src, `d${i}`, name), 'junction');
+      }
+    }
+    const skipped: string[] = [];
+    const { filesCopied } = copySkillTree({
+      src: join(src, 'd0'),
+      dst,
+      root: src,
+      onSkippedLink: (rel) => skipped.push(rel),
+    });
+    expect(filesCopied).toBe(1);
+    expect(skipped.length).toBe(depth);
+  });
+
+  it('skips broken and escaping links when onSkippedLink is set', () => {
+    const repo = join(workDir, 'repo-skip');
+    const outside = join(workDir, 'outside-skip');
+    const dst = join(workDir, 'dst-skip');
+    mkdirSync(join(repo, 'plugin'), { recursive: true });
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(repo, 'plugin', 'SKILL.md'), '# ok');
+    writeFileSync(join(outside, 'secret.txt'), 'secret');
+    symlinkSync(outside, join(repo, 'plugin', 'escape'), 'junction');
+    symlinkSync(join(repo, 'missing'), join(repo, 'plugin', 'dangling'), 'junction');
+
+    const skipped: Record<string, string> = {};
+    copySkillTree({
+      src: join(repo, 'plugin'),
+      dst,
+      root: repo,
+      onSkippedLink: (rel, reason) => (skipped[rel] = reason),
+    });
+    expect(readFileSync(join(dst, 'SKILL.md'), 'utf-8')).toBe('# ok');
+    expect(existsSync(join(dst, 'escape'))).toBe(false);
+    expect(skipped).toEqual({ escape: 'points outside the repository', dangling: 'broken link' });
+    // Without the callback an escaping link still fails the copy.
+    expect(() => copySkillTree({ src: join(repo, 'plugin'), dst: `${dst}2`, root: repo })).toThrow();
+  });
+
   it('honours maxFileBytes (rejects files larger than the limit)', () => {
     const src = join(workDir, 'src-limit');
     const dst = join(workDir, 'dst-limit');
