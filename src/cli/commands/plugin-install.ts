@@ -9,7 +9,7 @@ import {
   writeFileSync,
   cpSync,
 } from 'fs';
-import { basename, dirname, join, resolve } from 'path';
+import { basename, dirname, join, posix, resolve } from 'path';
 import type { Capabilities, Skill, MCPServer, SourcePlugin, ResolvedPluginInfo, OAuth2Config, SubAgent } from '../../types/capabilities';
 import type { UnifiedPluginManifest } from '../../types/plugin';
 import type { Rule } from '../../types/rules';
@@ -142,6 +142,67 @@ function windowsWithoutBash(): boolean {
   if (process.platform !== 'win32') return false;
   if (Bun.which('bash') || process.env.CLAUDE_CODE_GIT_BASH_PATH) return false;
   return !existsSync('C:\\Program Files\\Git\\bin\\bash.exe');
+}
+
+/** Owner label for skills declared in the capabilities file itself. */
+const AUTHORED_SKILL_OWNER = '';
+
+type PluginSkillRef = {
+  platform: string;
+  repoPath: string;
+  repoUrl?: string;
+  pluginSubpath?: string;
+  relativePath: string;
+};
+
+/**
+ * Where one plugin skill lives as a standalone skill source: `repo` in the
+ * `owner/repo::path` form, or `url` + `path` for plain git. A plugin is a
+ * repo, so its skills are reachable like any other (#330). Null for skills
+ * capa made from a plugin's `commands/` files, which have no folder to point at.
+ */
+export function pluginSkillSource(
+  opts: PluginSkillRef,
+): { repo: string } | { url: string; path?: string } | null {
+  const rel = opts.relativePath.replace(/\\/g, '/');
+  if (rel === '.capa-commands' || rel.startsWith('.capa-commands/')) return null;
+  const path = posix
+    .normalize([opts.pluginSubpath, rel].filter(Boolean).join('/'))
+    // normalize already dropped "./"; keep dot folders like ".claude-plugin".
+    .replace(/^\.$|\/$/g, '');
+  if (opts.repoUrl) return path ? { url: opts.repoUrl, path } : { url: opts.repoUrl };
+  return { repo: path ? `${opts.repoPath}::${path}` : opts.repoPath };
+}
+
+/** `skills:` entry that installs one plugin skill on its own, under `id`. */
+export function pluginSkillSnippet(
+  opts: PluginSkillRef & { id: string; version?: string; ref?: string },
+): string | null {
+  const source = pluginSkillSource(opts);
+  if (!source) return null;
+  const lines = [`- id: ${opts.id}`, `  type: ${opts.platform}`, '  def:'];
+  if ('repo' in source) {
+    lines.push(`    repo: ${source.repo}`);
+  } else {
+    lines.push(`    url: ${source.url}`);
+    if (source.path) lines.push(`    path: ${source.path}`);
+  }
+  if (opts.version) lines.push(`    version: ${opts.version}`);
+  if (opts.ref) lines.push(`    ref: ${opts.ref}`);
+  return lines.join('\n');
+}
+
+/** True when a declared skill already installs this plugin skill on its own. */
+function declaredSeparately(skills: Skill[], platform: string, ref: PluginSkillRef): boolean {
+  const source = pluginSkillSource(ref);
+  if (!source) return false;
+  return skills.some((s) => {
+    if (s.sourcePlugin || s.type !== platform) return false;
+    const def = (s.def ?? {}) as { repo?: string; url?: string; path?: string };
+    return 'repo' in source
+      ? def.repo === source.repo
+      : def.url === source.url && (def.path ?? '') === (source.path ?? '');
+  });
 }
 
 /** Records which source a stable plugin copy was made from. */
@@ -358,9 +419,15 @@ export async function resolvePlugins(
   // to these when a matching plugin manifest skill is found, and avoid auto-adding
   // a duplicate auto-merged entry for the same id.
   const userPluginSkills = new Map<string, Skill>();
+  // Who installs each skill id. The capabilities file's own skills come
+  // first, then plugins in the order they are listed; a later plugin never
+  // overwrites an earlier owner's files (#330).
+  const skillOwners = new Map<string, string>();
   for (const skill of mergedSkills) {
     if (skill.type === 'plugin') {
       userPluginSkills.set(skill.id, skill);
+    } else {
+      skillOwners.set(skill.id, AUTHORED_SKILL_OWNER);
     }
   }
 
@@ -718,6 +785,46 @@ export async function resolvePlugins(
       const srcSkillDir = join(pluginStablePath, entry.relativePath);
       if (!existsSync(join(srcSkillDir, 'SKILL.md'))) continue;
 
+      const owner = skillOwners.get(entry.id);
+      const skillRef = {
+        platform,
+        repoPath,
+        repoUrl,
+        pluginSubpath: resolvedSubpath,
+        relativePath: entry.relativePath,
+      };
+      // Already installed on its own under another id: the user chose, stay quiet.
+      if (owner !== undefined && declaredSeparately(mergedSkills, platform, skillRef)) {
+        continue;
+      }
+      if (owner !== undefined) {
+        const snippet = pluginSkillSnippet({
+          id: `${pluginInstallId}-${entry.id}`,
+          platform,
+          repoPath,
+          repoUrl,
+          pluginSubpath: resolvedSubpath,
+          relativePath: entry.relativePath,
+          version,
+          ref,
+        });
+        const head =
+          owner === AUTHORED_SKILL_OWNER
+            ? `Plugin "${pluginInstallId}" also provides skill "${entry.id}", which the capabilities file already declares; kept that one and skipped the plugin's.`
+            : `Skill "${entry.id}" is provided by plugins "${owner}" and "${pluginInstallId}"; installed the one from "${owner}" (listed first) and skipped "${pluginInstallId}"'s.`;
+        const install = snippet
+          ? `\n  To also install ${pluginInstallId}'s version, add it as its own skill with a different id:\n` +
+            snippet.replace(/^/gm, '    ')
+          : '';
+        const reorder =
+          owner === AUTHORED_SKILL_OWNER
+            ? ''
+            : `\n  Or list "${pluginInstallId}" before "${owner}" in the capabilities file to make its version the default.`;
+        warnings.push(`${head}${install}${reorder}`);
+        continue;
+      }
+      skillOwners.set(entry.id, pluginInstallId);
+
       pluginSkillIds.push(entry.id);
       if (materializeProjectSkills) {
         installSkillTree(entry.id, srcSkillDir, manifest.name);
@@ -726,13 +833,6 @@ export async function resolvePlugins(
       const userEntry = userPluginSkills.get(entry.id);
       if (userEntry) {
         userEntry.sourcePlugin = sourcePlugin;
-        continue;
-      }
-
-      if (mergedSkills.some((s) => s.id === entry.id)) {
-        warnings.push(
-          `Plugin skill id "${entry.id}" collides with an existing skill; skipping auto-merge.`,
-        );
         continue;
       }
 
