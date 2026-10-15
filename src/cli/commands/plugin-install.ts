@@ -30,6 +30,7 @@ import {
 } from '../../shared/plugin-manifest';
 import { getPluginDataId, getProjectPluginDataDir, getProjectPluginsDir } from '../../shared/plugin-paths';
 import { getProvider } from '../../shared/providers';
+import { shellQuoteArg } from '../../shared/providers/hook-handlers';
 import { getGitProvider } from '../../shared/git-providers/registry';
 import { assertSafeRepoPath } from '../../shared/repo-file';
 import { assertCapaOwnedInstallPath } from '../../shared/install-path-guard';
@@ -90,6 +91,30 @@ function copyPluginToStable(
     maxFileBytes: Number.POSITIVE_INFINITY,
     onSkippedLink,
   });
+}
+
+/**
+ * Hooks that read the `CLAUDE_PLUGIN_ROOT` environment variable at runtime
+ * (`process.env.CLAUDE_PLUGIN_ROOT`, `$CLAUDE_PLUGIN_ROOT`) break once capa
+ * writes them into project settings: Claude Code only sets it for hooks of an
+ * installed plugin (#326). `${CLAUDE_PLUGIN_ROOT}` placeholders were already
+ * expanded, so any name left is such a read: set the variable in front of the
+ * command. Exec form can't set env, so it becomes one shell command.
+ */
+export function withPluginRootEnv(
+  command: string | undefined,
+  args: string[] | undefined,
+  pluginRoot: string,
+): { command: string | undefined; args: string[] | undefined } {
+  const readsEnv = (v: string) => /\bCLAUDE_PLUGIN_ROOT\b/.test(v);
+  if (!command || !(readsEnv(command) || (args ?? []).some(readsEnv))) {
+    return { command, args };
+  }
+  const shellCommand = args?.length
+    ? [shellQuoteArg(command), ...args.map(shellQuoteArg)].join(' ')
+    : command;
+  const root = shellQuoteArg(pluginRoot.replace(/\\/g, '/'));
+  return { command: `CLAUDE_PLUGIN_ROOT=${root} ${shellCommand}`, args: undefined };
 }
 
 /** Records which source a stable plugin copy was made from. */
@@ -814,14 +839,16 @@ export async function resolvePlugins(
       );
       // Exec form (`command` + `args`) never goes through a shell, so paths
       // are expanded unquoted; the writer quotes them for shell-only providers.
-      const command = hookEntry.command
-        ? resolvePluginRootInString(hookEntry.command, pluginStablePath, {
-            shellQuote: !hookEntry.args,
-          })
-        : undefined;
-      const args = hookEntry.args?.map((arg) =>
-        resolvePluginRootInString(arg, pluginStablePath),
+      const resolved = withPluginRootEnv(
+        hookEntry.command
+          ? resolvePluginRootInString(hookEntry.command, pluginStablePath, {
+              shellQuote: !hookEntry.args,
+            })
+          : undefined,
+        hookEntry.args?.map((arg) => resolvePluginRootInString(arg, pluginStablePath)),
+        pluginStablePath,
       );
+      const { command, args } = resolved;
       const prompt = hookEntry.prompt
         ? resolvePluginRootInString(hookEntry.prompt, pluginStablePath, {
             shellQuote: true,
