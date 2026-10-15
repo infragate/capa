@@ -102,6 +102,45 @@ describe('cleanProject skill directories', () => {
     expect(existsSync(join(tempDir, 'skills', 'mine', 'SKILL.md'))).toBe(true);
   });
 
+  it('keeps local sources declared through a symlinked folder, nested oddly, or recorded as managed', async () => {
+    const write = (rel: string) => {
+      mkdirSync(join(tempDir, rel), { recursive: true });
+      writeFileSync(join(tempDir, rel, 'SKILL.md'), '# skill\n', 'utf-8');
+    };
+    write('skills/aliased');
+    // vendor -> skills, and the skill is declared as vendor/aliased.
+    symlinkSync(join(tempDir, 'skills'), join(tempDir, 'vendor'), 'junction');
+    // A child literally named "..source" under a provider skill dir.
+    write('.claude/skills/odd/..source');
+    // Recorded by an earlier OpenClaw install, now a declared local source.
+    write('skills/recorded');
+
+    const capabilities: Capabilities = {
+      providers: ['openclaw', 'claude-code'],
+      skills: [
+        { id: 'aliased', type: 'local', def: { path: 'vendor/aliased' } },
+        { id: 'odd', type: 'local', def: { path: '.claude/skills/odd/..source' } },
+        { id: 'recorded', type: 'local', def: { path: 'skills/recorded' } },
+      ],
+      servers: [],
+      tools: [],
+    } as Capabilities;
+
+    const db = new CapaDatabase(dbPath);
+    const projectId = 'capa-clean-324c';
+    db.upsertProject({ id: projectId, path: tempDir });
+    db.addManagedFile(projectId, join(tempDir, 'skills', 'recorded'));
+    const result = await cleanProject({ projectPath: tempDir, projectId, db, capabilities });
+    const remaining = db.getManagedFiles(projectId);
+    db.close();
+
+    expect(existsSync(join(tempDir, 'skills', 'aliased', 'SKILL.md'))).toBe(true);
+    expect(existsSync(join(tempDir, '.claude', 'skills', 'odd', '..source', 'SKILL.md'))).toBe(true);
+    expect(existsSync(join(tempDir, 'skills', 'recorded', 'SKILL.md'))).toBe(true);
+    expect(remaining).toEqual([]);
+    expect(result.warnings.some((w) => w.includes('local skill source'))).toBe(true);
+  });
+
   it('does not delete vendored skills when .cursor/skills symlinks to ../skills', async () => {
     mkdirSync(join(tempDir, 'skills', 'ci-monitor'), { recursive: true });
     writeFileSync(

@@ -1,6 +1,6 @@
-import { existsSync } from 'fs';
+import { existsSync, realpathSync } from 'fs';
 import { rm } from 'fs/promises';
-import { isAbsolute, join, relative, resolve } from 'path';
+import { isAbsolute, join, relative, resolve, sep } from 'path';
 import { isCapaOwnedInstallPath } from '../../shared/install-path-guard';
 import { isUnderWrapWorkspacesDir } from '../../shared/workspaces/paths';
 import { canonicalizePath, detectCapabilitiesFile } from '../../shared/paths';
@@ -119,14 +119,25 @@ async function cleanSkillInstallDirs(
 
 /** True when `dir` is, contains, or sits inside one of `paths`. */
 function overlapsAny(dir: string, paths: string[]): boolean {
-  const a = resolve(dir);
-  return paths.some((p) => {
-    const b = resolve(p);
-    const ab = relative(a, b);
-    const ba = relative(b, a);
-    const inside = (rel: string) => rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
-    return inside(ab) || inside(ba);
-  });
+  // Compare real locations too, so a source declared through a symlinked
+  // folder (vendor/foo with vendor -> skills) still matches skills/foo.
+  const forms = (p: string) => {
+    const lexical = resolve(p);
+    try {
+      return [lexical, realpathSync(lexical)];
+    } catch {
+      return [lexical];
+    }
+  };
+  // `..source` is a child named "..source", not the parent directory.
+  const inside = (rel: string) =>
+    rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+  const dirForms = forms(dir);
+  return paths.some((p) =>
+    forms(p).some((b) =>
+      dirForms.some((a) => inside(relative(a, b)) || inside(relative(b, a))),
+    ),
+  );
 }
 
 /** Managed artifacts recorded under the real project tree (not wrap shadow paths). */
@@ -210,7 +221,11 @@ export async function cleanProject(opts: CleanProjectOptions): Promise<CleanProj
 
   let managedFilesRemoved = 0;
   for (const filePath of managedFiles) {
-    if (existsSync(filePath)) {
+    // A recorded path that is now (or holds) a type: local source stays; only
+    // its stale record is dropped.
+    if (overlapsAny(filePath, localSkillSources)) {
+      warnings.push(`Kept ${filePath}: it is a local skill source declared in the capabilities file.`);
+    } else if (existsSync(filePath)) {
       try {
         await rm(filePath, { recursive: true, force: true });
         managedFilesRemoved++;
