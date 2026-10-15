@@ -136,14 +136,20 @@ export interface SearchPayload {
 export function buildSearchPayload(
 	query: string,
 	matches: SearchMatch[],
+	opts: { unknownName?: boolean } = {},
 ): SearchPayload {
+	// A tool name that matches nothing exactly isn't in this project's catalog;
+	// say so instead of letting loosely related matches look like it.
+	const unknown = opts.unknownName
+		? `No tool named "${query.trim()}" is exposed by this project. `
+		: "";
 	return {
 		success: true,
 		query,
 		message:
 			matches.length > 0
-				? `${matches.length} tool(s) matched and are now callable with call_tool.`
-				: "No tools matched. Try different words, or fewer of them.",
+				? `${unknown}${matches.length} tool(s) matched and are now callable with call_tool.`
+				: `${unknown}No tools matched. Try different words, or fewer of them.`,
 		matches,
 		hint:
 			"Tools are listed as `name(required, optional?)`. " +
