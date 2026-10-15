@@ -173,6 +173,9 @@ export function searchTools(
 			.map((tool) => ({ tool, score: 0, matchedTerms: 0 }));
 	}
 
+	// Searching a tool's exact name (as a description or another tool named
+	// it) must put that tool first, not rank it among every tool sharing a word.
+	const exact = new Set(exactNameMatches(tools, query));
 	const hits: ToolSearchHit[] = [];
 	for (const tool of tools) {
 		let score = 0;
@@ -193,11 +196,54 @@ export function searchTools(
 	// Field weights only break ties within the same coverage.
 	hits.sort(
 		(a, b) =>
+			Number(exact.has(b.tool)) - Number(exact.has(a.tool)) ||
 			b.matchedTerms - a.matchedTerms ||
 			b.score - a.score ||
 			a.tool.qualifiedName.localeCompare(b.tool.qualifiedName),
 	);
 	return hits.slice(0, capped);
+}
+
+/** Lowercase, with `.`/`-` treated like `_` (`github.get_issue` = `github_get_issue`). */
+function normalizeName(name: string): string {
+	return name.trim().toLowerCase().replace(/[.-]/g, "_");
+}
+
+/** True when a query reads as a tool name (`get_issue`, `github.get_issue`). */
+export function isToolNameQuery(query: string): boolean {
+	const q = query.trim();
+	return /^[\p{L}\p{N}_.-]+$/u.test(q) && /[_.-]/.test(q);
+}
+
+/**
+ * Tools whose qualified name, local id or remote name is exactly `name`. A
+ * bare remote name (`get_issue`, as a server's own descriptions call it)
+ * finds the qualified tool (`github.get_issue`).
+ */
+export function exactNameMatches(
+	tools: SearchableTool[],
+	name: string,
+): SearchableTool[] {
+	const wanted = normalizeName(name);
+	if (!wanted) return [];
+	return tools.filter((t) =>
+		[t.qualifiedName, t.id, t.remoteName].some(
+			(n) => n !== undefined && normalizeName(n) === wanted,
+		),
+	);
+}
+
+/** Up to `limit` qualified names to suggest for a tool name that isn't there. */
+export function suggestToolNames(
+	tools: SearchableTool[],
+	name: string,
+	limit = 3,
+): string[] {
+	const names = [
+		...exactNameMatches(tools, name),
+		...searchTools(tools, name, limit).map((h) => h.tool),
+	].map((t) => t.qualifiedName);
+	return [...new Set(names)].slice(0, limit);
 }
 
 /** The project's tools in the shape `searchTools` scores. */

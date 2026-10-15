@@ -8,7 +8,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { CapaDatabase } from '../../db/database';
 import { SessionManager } from '../session-manager';
-import { CapaMCPServer } from '../mcp-handler';
+import { CapaMCPServer, unknownToolMessage } from '../mcp-handler';
 import type { Capabilities } from '../../types/capabilities';
 
 const PROJECT_ID = 'test-proj';
@@ -880,6 +880,33 @@ describe('handleMessage > search mode', () => {
     expect(payload.message).toMatch(/No tools matched/);
   });
 
+  it('says a searched tool name is not exposed instead of passing off loose matches', async () => {
+    const payload = parseToolText((await call('search', { query: 'github.list_issues' })).result);
+    expect(payload.message).toMatch(/No tool named "github.list_issues" is exposed by this project/);
+    // An exact name is found and listed first.
+    const exact = parseToolText((await call('search', { query: 'create_issue' })).result);
+    expect(exact.message).not.toMatch(/No tool named/);
+    expect(exact.matches[0].tool).toBe('github.create_issue');
+  });
+
+  it('explains an unknown call_tool name without pointing at setup_tools', async () => {
+    const payload = parseToolText(
+      (await call('call_tool', { name: 'create_issue', data: {} })).result,
+    );
+    expect(payload.error).toMatch(/Tool not found: "create_issue" is not in this project's capa tool catalog/);
+    expect(payload.error).toMatch(/Closest names: github\.create_issue/);
+    expect(payload.error).toMatch(/search\(/);
+    expect(payload.error).not.toMatch(/setup_tools/);
+  });
+
+  it('tells the agent to search the exact name when a tool is not activated yet', async () => {
+    const payload = parseToolText(
+      (await call('call_tool', { name: 'github.create_issue', data: {} })).result,
+    );
+    expect(payload.error).toMatch(/not activated/);
+    expect(payload.error).toMatch(/search\("github\.create_issue"\)/);
+  });
+
   it('rejects a search call with no query instead of listing everything', async () => {
     const resp = await call('search', {});
     const payload = parseToolText(resp.result);
@@ -968,5 +995,39 @@ describe('handleMessage > search meta-tool outside search mode', () => {
       params: { name: 'search', arguments: { query: 'anything' } },
     });
     expect(JSON.stringify(resp)).toMatch(/only available in search mode/);
+  });
+});
+
+describe('unknownToolMessage', () => {
+  const caps = (mode: string, servers: unknown[] = []) =>
+    ({
+      providers: ['claude-code'],
+      options: { toolExposure: mode },
+      skills: [],
+      servers,
+      tools: [
+        { id: 'get_issue', type: 'mcp', def: { server: '@github', tool: 'get_issue' } },
+      ],
+    }) as unknown as Capabilities;
+
+  it('says when a server expose policy hides the tool', () => {
+    const except = caps('search', [
+      { id: 'github', type: 'mcp', def: { url: 'https://x' }, expose: 'except', tools: ['delete_repo'] },
+    ]);
+    expect(unknownToolMessage('github.delete_repo', except)).toMatch(/servers\.github uses "expose: except"/);
+    expect(unknownToolMessage('delete_repo', except)).toMatch(/not exposed by this project/);
+
+    const exactly = caps('search', [
+      { id: 'github', type: 'mcp', def: { url: 'https://x' }, expose: 'exactly', tools: ['get_issue'] },
+    ]);
+    expect(unknownToolMessage('github.list_issues', exactly)).toMatch(/"expose: exactly"/);
+  });
+
+  it('gives the next step for each exposure mode', () => {
+    expect(unknownToolMessage('nope', caps('search'))).toMatch(/Call search\(/);
+    expect(unknownToolMessage('nope', caps('on-demand'))).toMatch(/setup_tools/);
+    expect(unknownToolMessage('nope', caps('none'))).toMatch(/capa sh/);
+    expect(unknownToolMessage('nope', caps('expose-all'))).toMatch(/your tool list/);
+    expect(unknownToolMessage('get_issue', caps('search'))).toMatch(/Closest names: github\.get_issue/);
   });
 });
