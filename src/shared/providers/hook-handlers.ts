@@ -274,7 +274,8 @@ export function buildHookEntry(
 		args?.length && !execArgs
 			? {
 					...rawInput,
-					runReference: [rawInput.runReference, ...args.map(shellQuoteArg)].join(" "),
+					// With args, the command is one executable (a path may contain spaces).
+					runReference: [rawInput.runReference, ...args].map(shellQuoteArg).join(" "),
 				}
 			: rawInput;
 	switch (integration.shape) {
