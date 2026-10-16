@@ -116,6 +116,18 @@ describe('plugin skills with the same name (#330)', () => {
     expect(result.warnings.some((w) => w.includes('"handoff"'))).toBe(false);
   });
 
+  it('suggests an id no other skill uses', async () => {
+    const result = await run({
+      skills: [{ id: 'paad-handoff', type: 'inline', def: { content: 'unrelated' } }],
+      plugins: [
+        { id: 'mattpocock-skills', type: 'github', def: { repo: 'mattpocock/skills' } },
+        { id: 'paad', type: 'github', def: { repo: 'Ovid/paad::plugins/paad' } },
+      ],
+    });
+    const warning = result.warnings.find((w) => w.includes('"handoff"'));
+    expect(warning).toContain('- id: paad-handoff-2');
+  });
+
   it('never replaces a skill the capabilities file declares', async () => {
     const result = await run({
       skills: [{ id: 'handoff', type: 'inline', def: { content: 'mine' } }],
@@ -156,7 +168,7 @@ describe('pluginSkillSnippet', () => {
         repoPath: 'o/r',
         relativePath: '.',
       }),
-    ).toBe(['- id: p-root', '  type: github', '  def:', '    repo: o/r'].join('\n'));
+    ).toBe(['- id: p-root', '  type: github', '  def:', '    repo: o/r::.'].join('\n'));
     expect(
       pluginSkillSnippet({
         id: 'x-y',

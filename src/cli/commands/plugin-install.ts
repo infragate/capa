@@ -171,7 +171,8 @@ export function pluginSkillSource(
     // normalize already dropped "./"; keep dot folders like ".claude-plugin".
     .replace(/^\.$|\/$/g, '');
   if (opts.repoUrl) return path ? { url: opts.repoUrl, path } : { url: opts.repoUrl };
-  return { repo: path ? `${opts.repoPath}::${path}` : opts.repoPath };
+  // A skill repo always needs a target; `::.` is the repo root.
+  return { repo: `${opts.repoPath}::${path || '.'}` };
 }
 
 /** `skills:` entry that installs one plugin skill on its own, under `id`. */
@@ -190,6 +191,14 @@ export function pluginSkillSnippet(
   if (opts.version) lines.push(`    version: ${opts.version}`);
   if (opts.ref) lines.push(`    ref: ${opts.ref}`);
   return lines.join('\n');
+}
+
+/** `base`, or `base-2`, `base-3`, ... when a skill already uses that id. */
+function unusedSkillId(base: string, skills: Skill[], owners: Map<string, string>): string {
+  const taken = (id: string) => owners.has(id) || skills.some((s) => s.id === id);
+  let id = base;
+  for (let n = 2; taken(id); n++) id = `${base}-${n}`;
+  return id;
 }
 
 /** True when a declared skill already installs this plugin skill on its own. */
@@ -799,7 +808,7 @@ export async function resolvePlugins(
       }
       if (owner !== undefined) {
         const snippet = pluginSkillSnippet({
-          id: `${pluginInstallId}-${entry.id}`,
+          id: unusedSkillId(`${pluginInstallId}-${entry.id}`, mergedSkills, skillOwners),
           platform,
           repoPath,
           repoUrl,
