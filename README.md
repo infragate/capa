@@ -14,6 +14,7 @@
   <a href="https://github.com/infragate/capa/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/infragate/capa/release.yml?style=flat-square&label=release&logo=github" alt="Release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License: MIT"></a>
   <a href="https://github.com/infragate/capa/releases/latest"><img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey?style=flat-square" alt="Platforms"></a>
+  <a href="https://x.com/InfragateAI"><img src="https://img.shields.io/badge/follow-%40InfragateAI-000000?style=flat-square&logo=x&logoColor=white" alt="Follow @InfragateAI on X"></a>
 </p>
 
 <p align="center">
@@ -23,7 +24,8 @@
   <a href="#quick-start">Quick start</a> ·
   <a href="#capa-wrap">Wrap</a> ·
   <a href="#web-ui--observability">Web UI</a> ·
-  <a href="#documentation">Docs</a>
+  <a href="#documentation">Docs</a> ·
+  <a href="#community">Community</a>
 </p>
 
 Declare skills, tools, rules, sub-agents, MCP servers, hooks, and plugins once in `capabilities.yaml`. Run `capa install`. CAPA writes them into Cursor, Claude Code, Codex, Windsurf, GitHub Copilot, and 35+ other agents — native formats, pinned SHAs, zero manual sync. At runtime it is also the **MCP gateway**: every agent talks to one local endpoint; CAPA proxies upstream servers, lazy-loads tools, and scopes what each sub-agent can call.
@@ -231,3 +233,10 @@ Guides, the full schema reference, and the registry catalog:
 **[https://capa.sh](https://capa.sh/getting-started/introduction/)**
 
 Maintainer-oriented internals (install pipeline, provider matrix, lockfile semantics) live in [`docs/`](./docs/README.md).
+
+## Community
+
+- **[@InfragateAI](https://x.com/InfragateAI)**: release notes, new providers, and CAPA tips
+- **[@AntonioZaitoun](https://x.com/AntonioZaitoun)**: built by Antonio Zaitoun; follow along for what's next
+
+Questions or bugs? [Open an issue](https://github.com/infragate/capa/issues).
