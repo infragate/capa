@@ -11,11 +11,17 @@ import { detectCapabilitiesFile } from "./paths";
  */
 export async function computeInstallFingerprint(
 	projectPath: string,
+	/** The capabilities text an install applied; read from disk when omitted. */
+	capabilitiesText?: string,
 ): Promise<string | null> {
-	const file = await detectCapabilitiesFile(projectPath);
-	if (!file) return null;
+	let text = capabilitiesText;
+	if (text === undefined) {
+		const file = await detectCapabilitiesFile(projectPath);
+		if (!file) return null;
+		text = readFileSync(file.path, "utf8");
+	}
 	// Line endings only: a checkout with different autocrlf isn't an edit.
-	const capabilities = readFileSync(file.path, "utf8").replace(/\r\n/g, "\n");
+	const capabilities = text.replace(/\r\n/g, "\n");
 	let lock: string;
 	try {
 		const lockfile = await loadLockfile(projectPath);

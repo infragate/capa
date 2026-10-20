@@ -8,6 +8,8 @@ import { generateProjectId } from '../../../shared/paths';
 import { VERSION } from '../../../version';
 import { resetSecretCryptoForTests } from '../../../shared/secret-crypto';
 import { collectProjectReport } from '../status';
+import { redactUrlSecrets } from '../install';
+import { runTasks } from '../../ui';
 
 const CAPS = `providers: [claude-code]
 skills:
@@ -65,6 +67,8 @@ describe('capa status: project report (#332)', () => {
       completed: outcome.completed ?? true,
       failed: outcome.failed ?? 0,
       errors: outcome.errors ?? [],
+      // As install records them: merged capabilities, plugin items included.
+      counts: { skills: 7, plugins: 1, servers: 2, hooks: 0 },
     });
     return { db, id };
   }
@@ -104,6 +108,7 @@ describe('capa status: project report (#332)', () => {
     let report = await collectProjectReport(projectPath, dbPath);
     expect(report.state).toBe('installed');
     expect(report.providers).toEqual(['claude-code']);
+    expect(report.counts).toEqual({ skills: 7, plugins: 1, servers: 2, hooks: 0 });
     expect(report.problems).toEqual(['Variables without a value: API_TOKEN.']);
 
     const db2 = new CapaDatabase(dbPath);
@@ -142,5 +147,54 @@ describe('capa status: project report (#332)', () => {
       'The last install stopped before finishing.',
       'Plugin "x" failed to resolve',
     ]);
+  });
+
+  it('only reads: no ~/.capa, no settings, no secret migration', async () => {
+    writeFileSync(join(projectPath, 'capabilities.yaml'), CAPS);
+    // No database yet: nothing is created to find that out.
+    await collectProjectReport(projectPath);
+    expect(require('fs').existsSync(join(dir, '.capa'))).toBe(false);
+
+    const { db, id } = await install();
+    db.close();
+    // A legacy plaintext secret stays as it is (CapaDatabase would encrypt it).
+    const raw = new (require('bun:sqlite').Database)(dbPath);
+    raw.run('INSERT INTO variables (project_id, key, value, created_at) VALUES (?, ?, ?, ?)', [id, 'API_TOKEN', 'plain', Date.now()]);
+    raw.close();
+    const report = await collectProjectReport(projectPath, dbPath);
+    expect(report.problems).toEqual([]);
+    const check = new (require('bun:sqlite').Database)(dbPath, { readonly: true });
+    const row = check.query('SELECT value FROM variables WHERE key = ?').get('API_TOKEN') as { value: string };
+    check.close();
+    expect(row.value).toBe('plain');
+  });
+
+  it('reports an ambiguous capabilities file as a problem instead of failing', async () => {
+    writeFileSync(join(projectPath, 'capabilities.yaml'), CAPS);
+    writeFileSync(join(projectPath, 'capabilities.json'), '{}');
+    const report = await collectProjectReport(projectPath, dbPath);
+    expect(report.problems[0]).toContain('ambiguous');
+  });
+});
+
+describe('install records for status', () => {
+  it('redacts URL credentials and query strings', () => {
+    expect(
+      redactUrlSecrets('Failed to fetch https://user:tok3n@example.com/skill.md?token=abc&x=1: got HTML'),
+    ).toBe('Failed to fetch https://example.com/skill.md?<redacted>: got HTML');
+    expect(redactUrlSecrets('plain message')).toBe('plain message');
+  });
+
+  it('reports a task that crashed when not stopping on errors', async () => {
+    const seen: string[] = [];
+    await runTasks(
+      [
+        { title: 'Boom', task: async () => { throw new Error('crashed'); } },
+        { title: 'After', task: async () => { seen.push('after ran'); } },
+      ],
+      { exitOnError: false, onError: (title, err) => seen.push(`${title}: ${(err as Error).message}`) },
+      {},
+    );
+    expect(seen).toEqual(['Boom: crashed', 'after ran']);
   });
 });

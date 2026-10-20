@@ -175,6 +175,7 @@ export function initSchema(db: Database): void {
         completed INTEGER NOT NULL,
         failed INTEGER NOT NULL,
         errors_json TEXT NOT NULL,
+        counts_json TEXT NOT NULL DEFAULT '{}',
         FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
       )
     `);

@@ -204,6 +204,8 @@ export interface ProjectInstallState {
   completed: boolean;
   failed: number;
   errors: string[];
+  /** Item counts of the merged capabilities (plugin-provided items included). */
+  counts: { skills: number; plugins: number; servers: number; hooks: number };
 }
 
 export interface ServerSettings {

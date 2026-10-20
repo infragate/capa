@@ -1,8 +1,9 @@
 import { existsSync } from 'fs';
 import { resolve } from 'path';
-import { CapaDatabase } from '../../db/database';
+import { Database } from 'bun:sqlite';
+import { readInstallState } from '../../db/projects';
 import { parseCapabilitiesFile } from '../../shared/capabilities';
-import { getDatabasePath, loadSettings } from '../../shared/config';
+import { peekDatabasePath } from '../../shared/config';
 import { computeInstallFingerprint, fingerprintChanges } from '../../shared/install-fingerprint';
 import { detectCapabilitiesFile, generateProjectId } from '../../shared/paths';
 import { peekSecretStorageTier } from '../../shared/secret-crypto';
@@ -50,9 +51,19 @@ export async function statusCommand(
   const json = opts.json || getFlags().json;
   if (!json) console.log('Checking capa status...\n');
 
+  const projectPath = resolve(opts.cwd ?? process.cwd());
   const [server, project] = await Promise.all([
     collectServerReport(),
-    collectProjectReport(resolve(opts.cwd ?? process.cwd())),
+    // Never let a project problem hide the server section.
+    collectProjectReport(projectPath).catch(
+      (err): ProjectReport => ({
+        path: projectPath,
+        state: 'not-initialized',
+        reasons: [],
+        providers: [],
+        problems: [`The project could not be checked: ${err instanceof Error ? err.message : String(err)}`],
+      }),
+    ),
   ]);
 
   if (json) {
@@ -106,7 +117,17 @@ export async function collectProjectReport(
   dbPath?: string,
 ): Promise<ProjectReport> {
   const report: ProjectReport = { path: projectPath, state: 'not-initialized', reasons: [], providers: [], problems: [] };
-  const file = await detectCapabilitiesFile(projectPath);
+  const problem = (prefix: string, err: unknown) =>
+    report.problems.push(`${prefix}: ${err instanceof Error ? err.message : String(err)}`);
+
+  let file: Awaited<ReturnType<typeof detectCapabilitiesFile>>;
+  try {
+    file = await detectCapabilitiesFile(projectPath);
+  } catch (err) {
+    // e.g. both capabilities.yaml and capabilities.json in one folder.
+    problem('The capabilities file is ambiguous', err);
+    return report;
+  }
   if (!file) return report;
   report.capabilitiesFile = file.path;
   report.state = 'not-installed';
@@ -121,19 +142,29 @@ export async function collectProjectReport(
       hooks: capabilities.hooks?.length ?? 0,
     };
   } catch (err) {
-    report.problems.push(
-      `The capabilities file can't be read: ${err instanceof Error ? err.message : String(err)}`,
-    );
+    problem("The capabilities file can't be read", err);
   }
 
-  // Don't create ~/.capa just to look: no database means nothing was installed.
-  const path = dbPath ?? getDatabasePath(await loadSettings());
+  // Read-only: no ~/.capa, settings, schema setup or secret migration just to look.
+  const path = dbPath ?? peekDatabasePath();
   if (!existsSync(path)) return report;
-  const db = new CapaDatabase(path);
+  let db: Database;
+  try {
+    db = new Database(path, { readonly: true });
+  } catch (err) {
+    problem("capa's database can't be opened", err);
+    return report;
+  }
   try {
     const projectId = generateProjectId(projectPath);
-    report.providers = db.getProjectProviders(projectId);
-    const installed = db.getProjectInstallState(projectId);
+    report.providers = queryOr(db, [], (d) =>
+      (
+        d
+          .query('SELECT provider_id FROM project_providers WHERE project_id = ? ORDER BY rowid')
+          .all(projectId) as Array<{ provider_id: string }>
+      ).map((r) => r.provider_id),
+    );
+    const installed = readInstallState(db, projectId);
     if (!installed) {
       // Only `capa install` records providers: installed before installs were recorded.
       if (report.providers.length > 0) {
@@ -147,6 +178,8 @@ export async function collectProjectReport(
 
     report.installedAt = installed.installedAt;
     report.installedWith = installed.capaVersion;
+    // What the install produced, plugin-provided items included.
+    report.counts = installed.counts;
     const current = await computeInstallFingerprint(projectPath);
     for (const change of current ? fingerprintChanges(installed.fingerprint, current) : []) {
       report.reasons.push(
@@ -168,17 +201,35 @@ export async function collectProjectReport(
     report.problems.push(...installed.errors);
 
     if (capabilities) {
+      // Presence only: values stay encrypted, nothing is decrypted to check.
       const missing = extractRequiredVariables(capabilities).filter(
-        (name) => !db.getVariable(projectId, name),
+        (name) =>
+          !queryOr(db, false, (d) => {
+            const row = d
+              .query('SELECT value FROM variables WHERE project_id = ? AND key = ?')
+              .get(projectId, name) as { value: string | null } | null;
+            return !!row?.value;
+          }),
       );
       if (missing.length > 0) {
         report.problems.push(`Variables without a value: ${missing.join(', ')}.`);
       }
     }
+  } catch (err) {
+    problem("capa's database can't be read", err);
   } finally {
     db.close();
   }
   return report;
+}
+
+/** Run a query, or return `fallback` when the table doesn't exist yet. */
+function queryOr<T>(db: Database, fallback: T, run: (db: Database) => T): T {
+  try {
+    return run(db);
+  } catch {
+    return fallback;
+  }
 }
 
 function printServer(server: ServerReport): void {
