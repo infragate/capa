@@ -6,7 +6,8 @@ import { Database } from 'bun:sqlite';
 import { CapaDatabase } from '../../../db/database';
 import { initSchema } from '../../../db/schema';
 import { LockfileBuilder } from '../../../shared/lockfile';
-import { pluginSkillSnippet, resolvePlugins } from '../plugin-install';
+import { resolvePlugins, setSkillMdName } from '../plugin-install';
+import { resolveSkillContent } from '../../../server/skill-content';
 import type { Capabilities } from '../../../types/capabilities';
 
 /** A Claude plugin at `root/<subdir>` with one `handoff` skill saying `body`. */
@@ -73,126 +74,86 @@ describe('plugin skills with the same name (#330)', () => {
     );
   }
 
-  const installed = () =>
-    readFileSync(join(projectPath, '.claude', 'skills', 'handoff', 'SKILL.md'), 'utf8');
+  const skillMd = (id: string) =>
+    readFileSync(join(projectPath, '.claude', 'skills', id, 'SKILL.md'), 'utf8');
 
-  it('keeps the first plugin\'s skill and says how to install the other one', async () => {
-    const result = await run({
-      plugins: [
-        { id: 'mattpocock-skills', type: 'github', def: { repo: 'mattpocock/skills' } },
-        { id: 'paad', type: 'github', def: { repo: 'Ovid/paad::plugins/paad' } },
-      ],
-    });
+  const bothPlugins = [
+    { id: 'mattpocock-skills', type: 'github' as const, def: { repo: 'mattpocock/skills' } },
+    { id: 'paad', type: 'github' as const, def: { repo: 'Ovid/paad::plugins/paad' } },
+  ];
 
-    // On disk and in the catalog: the first plugin's skill, not overwritten.
-    expect(installed()).toContain('from matt');
-    const skill = result.mergedCapabilities.skills.find((s) => s.id === 'handoff');
-    expect(skill?.sourcePlugin?.id).toBe('mattpocock-skills');
+  it('keeps the first plugin\'s skill and installs the other under a prefix, with a warning', async () => {
+    const result = await run({ plugins: bothPlugins });
 
-    const warning = result.warnings.find((w) => w.includes('"handoff"'));
-    expect(warning).toContain(
-      'Skill "handoff" is provided by plugins "mattpocock-skills" and "paad"; installed the one from "mattpocock-skills"',
+    // Not overwritten: /handoff is the first plugin's.
+    expect(skillMd('handoff')).toContain('from matt');
+    // The second is installed as paad-handoff, named to match its folder.
+    expect(skillMd('paad-handoff')).toContain('from paad');
+    expect(skillMd('paad-handoff')).toContain('name: paad-handoff');
+
+    const skills = result.mergedCapabilities.skills;
+    expect(skills.find((s) => s.id === 'handoff')?.sourcePlugin?.id).toBe('mattpocock-skills');
+    const renamed = skills.find((s) => s.id === 'paad-handoff');
+    expect(renamed?.sourcePlugin?.id).toBe('paad');
+    expect(renamed?.def).toEqual({ path: 'skills/handoff' });
+
+    expect(result.warnings).toContain(
+      'Skill "handoff" is provided by plugins "mattpocock-skills" and "paad"; "/handoff" is mattpocock-skills\'s, ' +
+        'and paad\'s is installed as "/paad-handoff". To make paad\'s version "/handoff", list it before "mattpocock-skills" in the capabilities file.',
     );
-    expect(warning).toContain('- id: paad-handoff');
-    expect(warning).toContain('repo: Ovid/paad::plugins/paad/skills/handoff');
-    expect(warning).toContain('list "paad" before "mattpocock-skills"');
   });
 
-  it('stays quiet once the other version is declared as its own skill', async () => {
-    const result = await run({
-      skills: [
-        {
-          id: 'paad-handoff',
-          type: 'github',
-          def: { repo: 'Ovid/paad::plugins/paad/skills/handoff' },
-        },
-      ],
-      plugins: [
-        { id: 'mattpocock-skills', type: 'github', def: { repo: 'mattpocock/skills' } },
-        { id: 'paad', type: 'github', def: { repo: 'Ovid/paad::plugins/paad' } },
-      ],
-    });
-    expect(installed()).toContain('from matt');
-    expect(result.warnings.some((w) => w.includes('"handoff"'))).toBe(false);
+  it('shows the renamed skill\'s content in the viewer', async () => {
+    const result = await run({ plugins: bothPlugins });
+    const renamed = result.mergedCapabilities.skills.find((s) => s.id === 'paad-handoff')!;
+    const content = resolveSkillContent(projectPath, renamed, [], { pluginsBaseDir: pluginsBase });
+    expect(content?.content ?? JSON.stringify(content)).toContain('from paad');
   });
 
-  it('suggests an id no other skill uses', async () => {
+  it('uses the next free id when the prefixed one is taken', async () => {
     const result = await run({
       skills: [{ id: 'paad-handoff', type: 'inline', def: { content: 'unrelated' } }],
-      plugins: [
-        { id: 'mattpocock-skills', type: 'github', def: { repo: 'mattpocock/skills' } },
-        { id: 'paad', type: 'github', def: { repo: 'Ovid/paad::plugins/paad' } },
-      ],
+      plugins: bothPlugins,
     });
-    const warning = result.warnings.find((w) => w.includes('"handoff"'));
-    expect(warning).toContain('- id: paad-handoff-2');
+    expect(result.warnings.some((w) => w.includes('installed as "/paad-handoff-2"'))).toBe(true);
+    expect(skillMd('paad-handoff-2')).toContain('from paad');
   });
 
   it('never replaces a skill the capabilities file declares', async () => {
     const result = await run({
       skills: [{ id: 'handoff', type: 'inline', def: { content: 'mine' } }],
-      plugins: [{ id: 'paad', type: 'github', def: { repo: 'Ovid/paad::plugins/paad' } }],
+      plugins: [bothPlugins[1]!],
     });
     const warning = result.warnings.find((w) => w.includes('"handoff"'));
-    expect(warning).toContain('which the capabilities file already declares');
-    expect(warning).toContain('- id: paad-handoff');
-    expect(warning).not.toContain('list "paad" before');
+    expect(warning).toBe(
+      'Plugin "paad" also provides skill "handoff", which the capabilities file already declares; "/handoff" stays yours, and paad\'s is installed as "/paad-handoff".',
+    );
     expect(result.mergedCapabilities.skills.filter((s) => s.id === 'handoff')).toHaveLength(1);
+    expect(skillMd('paad-handoff')).toContain('from paad');
   });
 });
 
-describe('pluginSkillSnippet', () => {
-  it('builds github, gitlab and git entries, keeping dot folders and pins', () => {
-    expect(
-      pluginSkillSnippet({
-        id: 'glab-glab',
-        platform: 'gitlab',
-        repoPath: 'gitlab-org/ai/skills',
-        pluginSubpath: '.claude-plugin/plugins/glab',
-        relativePath: 'skills/glab',
-        version: 'v1.2.0',
-      }),
-    ).toBe(
-      [
-        '- id: glab-glab',
-        '  type: gitlab',
-        '  def:',
-        '    repo: gitlab-org/ai/skills::.claude-plugin/plugins/glab/skills/glab',
-        '    version: v1.2.0',
-      ].join('\n'),
-    );
-    expect(
-      pluginSkillSnippet({
-        id: 'p-root',
-        platform: 'github',
-        repoPath: 'o/r',
-        relativePath: '.',
-      }),
-    ).toBe(['- id: p-root', '  type: github', '  def:', '    repo: o/r::.'].join('\n'));
-    expect(
-      pluginSkillSnippet({
-        id: 'x-y',
-        platform: 'git',
-        repoPath: 'git.example.com/o/r',
-        repoUrl: 'https://git.example.com/o/r.git',
-        relativePath: 'skills\\y',
-        ref: 'a'.repeat(40),
-      }),
-    ).toBe(
-      [
-        '- id: x-y',
-        '  type: git',
-        '  def:',
-        '    url: https://git.example.com/o/r.git',
-        '    path: skills/y',
-        `    ref: ${'a'.repeat(40)}`,
-      ].join('\n'),
-    );
+describe('setSkillMdName', () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'capa-skill-name-'));
   });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-  it('returns null for skills made from plugin commands', () => {
-    expect(
-      pluginSkillSnippet({ id: 'p-c', platform: 'github', repoPath: 'o/r', relativePath: '.capa-commands/c' }),
-    ).toBeNull();
+  const roundTrip = (text: string) => {
+    const file = join(dir, 'SKILL.md');
+    writeFileSync(file, text);
+    setSkillMdName(file, 'paad-handoff');
+    return readFileSync(file, 'utf8');
+  };
+
+  it('replaces, adds or creates the name field', () => {
+    expect(roundTrip('---\nname: handoff\ndescription: d\n---\n\nBody name: handoff\n')).toBe(
+      '---\nname: paad-handoff\ndescription: d\n---\n\nBody name: handoff\n',
+    );
+    expect(roundTrip('---\ndescription: d\n---\nBody\n')).toBe(
+      '---\nname: paad-handoff\ndescription: d\n---\nBody\n',
+    );
+    expect(roundTrip('Just a body\n')).toBe('---\nname: paad-handoff\n---\n\nJust a body\n');
   });
 });

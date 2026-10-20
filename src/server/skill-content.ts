@@ -265,7 +265,18 @@ function resolvePluginSkillContent(
 	}
 	if (!existsSync(pluginRoot)) return null;
 
-	const skillMdPath = findPluginSkillMd(pluginRoot, skill.id);
+	// A skill installed under another id after a name clash (#330) records
+	// where it lives inside the plugin.
+	let skillMdPath: string | null = null;
+	if (skill.def?.path) {
+		try {
+			const candidate = join(assertSafeRepoPath(pluginRoot, skill.def.path), "SKILL.md");
+			if (existsSync(candidate)) skillMdPath = candidate;
+		} catch {
+			return null;
+		}
+	}
+	skillMdPath ??= findPluginSkillMd(pluginRoot, skill.id);
 	if (!skillMdPath) return null;
 
 	try {
