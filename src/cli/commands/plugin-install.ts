@@ -144,6 +144,36 @@ function windowsWithoutBash(): boolean {
   return !existsSync('C:\\Program Files\\Git\\bin\\bash.exe');
 }
 
+/** Owner label for skills declared in the capabilities file itself. */
+const AUTHORED_SKILL_OWNER = '';
+
+/** `base`, or `base-2`, `base-3`, ... when a skill already uses that id. */
+function unusedSkillId(base: string, skills: Skill[], owners: Map<string, string>): string {
+  const taken = (id: string) => owners.has(id) || skills.some((s) => s.id === id);
+  let id = base;
+  for (let n = 2; taken(id); n++) id = `${base}-${n}`;
+  return id;
+}
+
+/**
+ * Point a copied SKILL.md's `name` at the id it was installed under, so a
+ * renamed skill doesn't show up under the other skill's name (Claude Code's
+ * `/` menu uses `name`; the Agent Skills spec wants it to match the folder).
+ */
+export function setSkillMdName(skillMdPath: string, name: string): void {
+  const text = readFileSync(skillMdPath, 'utf-8');
+  const fm = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  let next: string;
+  if (!fm) {
+    next = `---\nname: ${name}\n---\n\n${text}`;
+  } else if (/^name:.*$/m.test(fm[1]!)) {
+    next = text.replace(fm[0], fm[0].replace(/^name:.*$/m, `name: ${name}`));
+  } else {
+    next = text.replace(/^---\r?\n/, (open) => `${open}name: ${name}\n`);
+  }
+  writeFileSync(skillMdPath, next, 'utf-8');
+}
+
 /** Records which source a stable plugin copy was made from. */
 export const PLUGIN_STAMP_FILE = '.capa-plugin-stamp';
 
@@ -358,13 +388,24 @@ export async function resolvePlugins(
   // to these when a matching plugin manifest skill is found, and avoid auto-adding
   // a duplicate auto-merged entry for the same id.
   const userPluginSkills = new Map<string, Skill>();
+  // Who installs each skill id. The capabilities file's own skills come
+  // first, then plugins in the order they are listed; a later plugin never
+  // overwrites an earlier owner's files (#330).
+  const skillOwners = new Map<string, string>();
   for (const skill of mergedSkills) {
     if (skill.type === 'plugin') {
       userPluginSkills.set(skill.id, skill);
+    } else {
+      skillOwners.set(skill.id, AUTHORED_SKILL_OWNER);
     }
   }
 
-  function installSkillTree(entryId: string, srcSkillDir: string, pluginName: string): void {
+  function installSkillTree(
+    entryId: string,
+    srcSkillDir: string,
+    pluginName: string,
+    renamed = false,
+  ): void {
     if (!existsSync(join(srcSkillDir, 'SKILL.md'))) return;
     if (!isSafeCapabilityId(entryId)) {
       warnings.push(
@@ -415,6 +456,7 @@ export async function resolvePlugins(
             copySkillTree({ src: srcSkillDir, dst: destSkillDir });
           }
         }
+        if (renamed) setSkillMdName(join(destSkillDir, 'SKILL.md'), entryId);
         if (trackManaged) {
           db.addManagedFile(projectId, destSkillDir);
         }
@@ -718,28 +760,43 @@ export async function resolvePlugins(
       const srcSkillDir = join(pluginStablePath, entry.relativePath);
       if (!existsSync(join(srcSkillDir, 'SKILL.md'))) continue;
 
-      pluginSkillIds.push(entry.id);
+      // First claim wins: the capabilities file's own skills, then plugins in
+      // the order they are listed. A later plugin's skill with a taken name is
+      // installed as "<plugin id>-<skill>" instead of overwriting it (#330).
+      const owner = skillOwners.get(entry.id);
+      const skillId =
+        owner === undefined
+          ? entry.id
+          : unusedSkillId(`${pluginInstallId}-${entry.id}`, mergedSkills, skillOwners);
+      if (owner !== undefined) {
+        const kept =
+          owner === AUTHORED_SKILL_OWNER
+            ? `Plugin "${pluginInstallId}" also provides skill "${entry.id}", which the capabilities file already declares; "/${entry.id}" stays yours`
+            : `Skill "${entry.id}" is provided by plugins "${owner}" and "${pluginInstallId}"; "/${entry.id}" is ${owner}'s`;
+        const reorder =
+          owner === AUTHORED_SKILL_OWNER
+            ? ''
+            : ` To make ${pluginInstallId}'s version "/${entry.id}", list it before "${owner}" in the capabilities file.`;
+        warnings.push(`${kept}, and ${pluginInstallId}'s is installed as "/${skillId}".${reorder}`);
+      }
+      skillOwners.set(skillId, pluginInstallId);
+
+      pluginSkillIds.push(skillId);
       if (materializeProjectSkills) {
-        installSkillTree(entry.id, srcSkillDir, manifest.name);
+        installSkillTree(skillId, srcSkillDir, manifest.name, skillId !== entry.id);
       }
 
-      const userEntry = userPluginSkills.get(entry.id);
+      const userEntry = skillId === entry.id ? userPluginSkills.get(entry.id) : undefined;
       if (userEntry) {
         userEntry.sourcePlugin = sourcePlugin;
         continue;
       }
 
-      if (mergedSkills.some((s) => s.id === entry.id)) {
-        warnings.push(
-          `Plugin skill id "${entry.id}" collides with an existing skill; skipping auto-merge.`,
-        );
-        continue;
-      }
-
       mergedSkills.push({
-        id: entry.id,
+        id: skillId,
         type: 'plugin',
-        def: {},
+        // A renamed skill records where it lives inside the plugin.
+        def: skillId === entry.id ? {} : { path: entry.relativePath.replace(/\\/g, '/') },
         sourcePlugin,
       });
     }
