@@ -50,6 +50,8 @@ export interface InstallCtx {
   skipped: number;
   warnings: string[];
   errors: string[];
+  /** Message of every recorded failure, in either error mode (for `capa status`). */
+  failures: string[];
   /** warn (default): continue on operational errors; stop: exit non-zero. */
   installErrorMode: InstallErrorMode;
 }

@@ -16,6 +16,7 @@ export function shouldStopOnInstallError(ctx: InstallCtx): boolean {
 /** Record a single failure. Throws in `stop` mode. */
 export function raiseInstallError(ctx: InstallCtx, message: string): void {
   ctx.failed++;
+  (ctx.failures ??= []).push(message);
   if (shouldStopOnInstallError(ctx)) {
     throw new Error(message);
   }
@@ -25,6 +26,7 @@ export function raiseInstallError(ctx: InstallCtx, message: string): void {
 /** Record a failure during a batch (e.g. per-skill). Does not throw until batch finish. */
 export function recordInstallFailure(ctx: InstallCtx, message: string): void {
   ctx.failed++;
+  (ctx.failures ??= []).push(message);
   if (shouldStopOnInstallError(ctx)) {
     ctx.errors.push(message);
   } else {

@@ -194,6 +194,20 @@ export interface RegistryRecord {
   updatedAt: number;
 }
 
+/** Outcome of the last `capa install` of a project, for `capa status`. */
+export interface ProjectInstallState {
+  /** Hash of the capabilities file and lockfile as installed. */
+  fingerprint: string;
+  capaVersion: string;
+  installedAt: number;
+  /** False when the install stopped part-way. */
+  completed: boolean;
+  failed: number;
+  errors: string[];
+  /** Item counts of the merged capabilities (plugin-provided items included). */
+  counts: { skills: number; plugins: number; servers: number; hooks: number };
+}
+
 export interface ServerSettings {
   version: string;
   server: {

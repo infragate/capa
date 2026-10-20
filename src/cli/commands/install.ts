@@ -1,3 +1,4 @@
+import { readFileSync } from 'fs';
 import { resolve } from 'path';
 import { detectCapabilitiesFile, generateProjectId } from '../../shared/paths';
 import { parseCapabilitiesFile } from '../../shared/capabilities';
@@ -10,6 +11,7 @@ import {
   validateProvider,
 } from '../../shared/providers/resolve';
 import { LockfileBuilder, loadLockfile } from '../../shared/lockfile';
+import { computeInstallFingerprint } from '../../shared/install-fingerprint';
 import { runTasks, summary, info, warn, error, setFlags, getFlags } from '../ui';
 import { buildInstallTasks } from './install-tasks';
 import type { InstallCtx, InstallOptions } from './install-tasks';
@@ -171,6 +173,8 @@ async function installCommandBody(opts: {
     failExit('No capabilities file found. Run "capa init" first.', exitProcess);
   }
 
+  // The text this install applies, for the status fingerprint.
+  const capabilitiesText = readFileSync(capabilitiesFile.path, 'utf8');
   const capabilities = await parseCapabilitiesFile(
     capabilitiesFile.path,
     capabilitiesFile.format,
@@ -287,13 +291,21 @@ async function installCommandBody(opts: {
     skipped: 0,
     warnings: [],
     errors: [],
+    failures: [],
     installErrorMode,
   };
 
   try {
     const ctx = await runTasks(
       buildInstallTasks(reqCmds, { skipPrerequisites, skipCredentialOpen }),
-      { exitOnError: installErrorMode === 'stop' },
+      {
+        exitOnError: installErrorMode === 'stop',
+        // A task that crashed in warn mode is a failure, not a clean run.
+        onError: (title, err) => {
+          initialCtx.failed++;
+          initialCtx.failures.push(`${title}: ${err instanceof Error ? err.message : String(err)}`);
+        },
+      },
       initialCtx,
     );
 
@@ -310,11 +322,24 @@ async function installCommandBody(opts: {
       skipped: ctx.skipped,
       elapsedMs: Date.now() - startedAt,
     });
+    if (!isWrapInstall) {
+      await recordInstallState(db, projectId, projectPath, capabilitiesText, {
+        completed: true,
+        ctx,
+      });
+    }
     // Exit non-zero on accumulated failures only when configured to stop.
     if (installErrorMode === 'stop' && ctx.failed > 0) {
       failExit(`Install completed with ${ctx.failed} failure(s).`, exitProcess);
     }
   } catch (err: unknown) {
+    if (!isWrapInstall) {
+      await recordInstallState(db, projectId, projectPath, capabilitiesText, {
+        completed: false,
+        ctx: initialCtx,
+        extraError: err instanceof Error ? err.message : String(err),
+      });
+    }
     for (const e of initialCtx.errors) error(e);
     for (const w of initialCtx.warnings) warn(w);
     summary({
@@ -342,4 +367,55 @@ async function installCommandBody(opts: {
       db.close();
     } catch {}
   }
+}
+
+/**
+ * Remember what this install installed and how it went, so `capa status`
+ * can report the project's state (#332). Never fails the install.
+ * `capabilitiesText` is the file as parsed for this install, so an edit made
+ * while it ran still shows as out of date.
+ */
+async function recordInstallState(
+  db: CapaDatabase,
+  projectId: string,
+  projectPath: string,
+  capabilitiesText: string,
+  outcome: { completed: boolean; ctx: InstallCtx; extraError?: string },
+): Promise<void> {
+  try {
+    const fingerprint = await computeInstallFingerprint(projectPath, capabilitiesText);
+    if (!fingerprint) return;
+    const { ctx } = outcome;
+    const messages = [...ctx.failures, ...ctx.errors];
+    if (outcome.extraError) messages.push(outcome.extraError);
+    const caps = ctx.capabilitiesToUse;
+    db.setProjectInstallState(projectId, {
+      fingerprint,
+      capaVersion: VERSION,
+      installedAt: Date.now(),
+      completed: outcome.completed,
+      failed: ctx.failed,
+      errors: [...new Set(messages)].slice(0, 20).map(redactUrlSecrets),
+      // Merged capabilities, so plugin-provided items count too.
+      counts: {
+        skills: caps.skills?.length ?? 0,
+        plugins: caps.plugins?.length ?? 0,
+        servers: caps.servers?.length ?? 0,
+        hooks: caps.hooks?.length ?? 0,
+      },
+    });
+  } catch {
+    // Status bookkeeping only.
+  }
+}
+
+/**
+ * Stored errors are shown again by `capa status --json` (often in CI logs):
+ * drop URL credentials and query strings, which can carry tokens.
+ */
+export function redactUrlSecrets(message: string): string {
+  return message
+    .replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi, '$1')
+    // Up to whitespace, leaving sentence punctuation after the URL alone.
+    .replace(/(\b[a-z][a-z0-9+.-]*:\/\/[^\s?#"'<>]*)\?[^\s#"'<>]*?(?=[.,:;)]?(?:\s|$))/gi, '$1?<redacted>');
 }

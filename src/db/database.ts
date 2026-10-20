@@ -8,6 +8,7 @@ import type {
 	OAuthFlowStateRow,
 	OAuthTokenRow,
 	Project,
+	ProjectInstallState,
 	RegistryRecord,
 	RegistryStatus,
 	Session,
@@ -120,6 +121,14 @@ export class CapaDatabase {
 	// Project provider operations
 	setProjectProviders(projectId: string, providers: string[]): void {
 		return this.projects.setProviders(projectId, providers);
+	}
+
+	setProjectInstallState(projectId: string, state: ProjectInstallState): void {
+		this.projects.setInstallState(projectId, state);
+	}
+
+	getProjectInstallState(projectId: string): ProjectInstallState | null {
+		return this.projects.getInstallState(projectId);
 	}
 
 	getProjectProviders(projectId: string): string[] {
