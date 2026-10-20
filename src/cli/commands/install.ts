@@ -10,6 +10,7 @@ import {
   validateProvider,
 } from '../../shared/providers/resolve';
 import { LockfileBuilder, loadLockfile } from '../../shared/lockfile';
+import { computeInstallFingerprint } from '../../shared/install-fingerprint';
 import { runTasks, summary, info, warn, error, setFlags, getFlags } from '../ui';
 import { buildInstallTasks } from './install-tasks';
 import type { InstallCtx, InstallOptions } from './install-tasks';
@@ -310,11 +311,25 @@ async function installCommandBody(opts: {
       skipped: ctx.skipped,
       elapsedMs: Date.now() - startedAt,
     });
+    if (!isWrapInstall) {
+      await recordInstallState(db, projectId, projectPath, {
+        completed: true,
+        failed: ctx.failed,
+        errors: ctx.errors,
+      });
+    }
     // Exit non-zero on accumulated failures only when configured to stop.
     if (installErrorMode === 'stop' && ctx.failed > 0) {
       failExit(`Install completed with ${ctx.failed} failure(s).`, exitProcess);
     }
   } catch (err: unknown) {
+    if (!isWrapInstall) {
+      await recordInstallState(db, projectId, projectPath, {
+        completed: false,
+        failed: initialCtx.failed,
+        errors: [...initialCtx.errors, err instanceof Error ? err.message : String(err)],
+      });
+    }
     for (const e of initialCtx.errors) error(e);
     for (const w of initialCtx.warnings) warn(w);
     summary({
@@ -341,5 +356,31 @@ async function installCommandBody(opts: {
     try {
       db.close();
     } catch {}
+  }
+}
+
+/**
+ * Remember what this install installed and how it went, so `capa status`
+ * can report the project's state (#332). Never fails the install.
+ */
+async function recordInstallState(
+  db: CapaDatabase,
+  projectId: string,
+  projectPath: string,
+  outcome: { completed: boolean; failed: number; errors: string[] },
+): Promise<void> {
+  try {
+    const fingerprint = await computeInstallFingerprint(projectPath);
+    if (!fingerprint) return;
+    db.setProjectInstallState(projectId, {
+      fingerprint,
+      capaVersion: VERSION,
+      installedAt: Date.now(),
+      completed: outcome.completed,
+      failed: outcome.failed,
+      errors: outcome.errors.slice(0, 20),
+    });
+  } catch {
+    // Status bookkeeping only.
   }
 }

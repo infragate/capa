@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import type { Project } from "../types/database";
+import type { Project, ProjectInstallState } from "../types/database";
 
 export class ProjectsRepo {
 	constructor(private db: Database) {}
@@ -62,6 +62,7 @@ export class ProjectsRepo {
 			]);
 			this.db.run("DELETE FROM sub_agents WHERE project_id = ?", [id]);
 			this.db.run("DELETE FROM project_providers WHERE project_id = ?", [id]);
+			this.db.run("DELETE FROM project_install_state WHERE project_id = ?", [id]);
 			this.db.run("DELETE FROM tool_calls WHERE project_id = ?", [id]);
 			this.db.run("DELETE FROM projects WHERE id = ?", [id]);
 		});
@@ -82,6 +83,58 @@ export class ProjectsRepo {
 				[projectId, pid, now],
 			);
 		}
+	}
+
+	/** Record the outcome of a `capa install` (read back by `capa status`). */
+	setInstallState(projectId: string, state: ProjectInstallState): void {
+		this.db.run(
+			`INSERT INTO project_install_state
+         (project_id, fingerprint, capa_version, installed_at, completed, failed, errors_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(project_id) DO UPDATE SET
+         fingerprint = excluded.fingerprint,
+         capa_version = excluded.capa_version,
+         installed_at = excluded.installed_at,
+         completed = excluded.completed,
+         failed = excluded.failed,
+         errors_json = excluded.errors_json`,
+			[
+				projectId,
+				state.fingerprint,
+				state.capaVersion,
+				state.installedAt,
+				state.completed ? 1 : 0,
+				state.failed,
+				JSON.stringify(state.errors),
+			],
+		);
+	}
+
+	getInstallState(projectId: string): ProjectInstallState | null {
+		const row = this.db
+			.query("SELECT * FROM project_install_state WHERE project_id = ?")
+			.get(projectId) as {
+			fingerprint: string;
+			capa_version: string;
+			installed_at: number;
+			completed: number;
+			failed: number;
+			errors_json: string;
+		} | null;
+		if (!row) return null;
+		let errors: string[] = [];
+		try {
+			const parsed = JSON.parse(row.errors_json);
+			if (Array.isArray(parsed)) errors = parsed.filter((e) => typeof e === "string");
+		} catch {}
+		return {
+			fingerprint: row.fingerprint,
+			capaVersion: row.capa_version,
+			installedAt: row.installed_at,
+			completed: row.completed === 1,
+			failed: row.failed,
+			errors,
+		};
 	}
 
 	getProviders(projectId: string): string[] {

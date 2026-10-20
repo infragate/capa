@@ -167,6 +167,19 @@ export function initSchema(db: Database): void {
     `);
 
 	db.run(`
+      CREATE TABLE IF NOT EXISTS project_install_state (
+        project_id TEXT PRIMARY KEY,
+        fingerprint TEXT NOT NULL,
+        capa_version TEXT NOT NULL,
+        installed_at INTEGER NOT NULL,
+        completed INTEGER NOT NULL,
+        failed INTEGER NOT NULL,
+        errors_json TEXT NOT NULL,
+        FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+      )
+    `);
+
+	db.run(`
       CREATE TABLE IF NOT EXISTS project_providers (
         project_id TEXT NOT NULL,
         provider_id TEXT NOT NULL,
