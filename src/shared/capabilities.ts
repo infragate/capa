@@ -345,9 +345,11 @@ export const capabilitiesSchema = z
  * bare `description:` as absent, so editors must not flag it.
  */
 export function buildCapabilitiesJsonSchema(): Record<string, unknown> {
-	const orNull = (s: z.core.JSONSchema.JSONSchema) => ({
-		anyOf: [s, { type: "null" as const }],
-	});
+	// A boolean schema already decides null by itself.
+	const orNull = (
+		s: z.core.JSONSchema._JSONSchema,
+	): z.core.JSONSchema._JSONSchema =>
+		typeof s === "boolean" ? s : { anyOf: [s, { type: "null" }] };
 	const schema = z.toJSONSchema(capabilitiesSchema, {
 		target: "draft-7",
 		io: "input",
