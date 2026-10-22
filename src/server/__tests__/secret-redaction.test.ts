@@ -35,6 +35,58 @@ describe("redactServerForApi", () => {
 		expect(redacted.oauth2?.clientSecret).toBeUndefined();
 		expect(redacted.oauth2?.clientId).toBe("public-client");
 	});
+
+	it("shows env placeholders and plain literals, blanks credential literals (#349)", () => {
+		const redacted = redactServerForApi({
+			id: "env-probe",
+			env: {
+				GHIDRA_INSTALL_DIR: "${PROBE_INSTALL_DIR}",
+				API_KEY: "${OPENAI_KEY}",
+				REA_ANALYSIS_PROVIDER: "ghidra",
+				GITHUB_PAT: "ghp_literal",
+				AUTH_HEADER: "Bearer ${TOKEN}",
+				DATABASE_URL: "postgres://u:hunter2@db/x",
+			},
+		});
+		expect(redacted.env).toEqual({
+			GHIDRA_INSTALL_DIR: "${PROBE_INSTALL_DIR}",
+			API_KEY: "${OPENAI_KEY}",
+			REA_ANALYSIS_PROVIDER: "ghidra",
+			GITHUB_PAT: "",
+			AUTH_HEADER: "",
+			DATABASE_URL: "",
+		});
+	});
+
+	it("blanks credential-shaped literals under generic names", () => {
+		const redacted = redactServerForApi({
+			id: "svc",
+			env: {
+				DB_PASS: "hunter2",
+				GITHUB_PAT_VALUE: "abc",
+				UPSTREAM: "Bearer actual-token",
+				CONFIG: "Basic dXNlcjpwYXNz",
+				OPENAI: "sk-proj-abc",
+				GH: "ghp_abc",
+				OPAQUE: "a8f3c9d2e1b7a6f5c4d3e2f1a0b9",
+				PATH_HINT: "/opt/ghidra_11.0.3_PUBLIC/support/analyzeHeadless",
+				WIN_DIR: "C:\\Program Files\\Ghidra\\ghidra_11.0.3_PUBLIC",
+				MODE: "production",
+			},
+		});
+		expect(redacted.env).toEqual({
+			DB_PASS: "",
+			GITHUB_PAT_VALUE: "",
+			UPSTREAM: "",
+			CONFIG: "",
+			OPENAI: "",
+			GH: "",
+			OPAQUE: "",
+			PATH_HINT: "/opt/ghidra_11.0.3_PUBLIC/support/analyzeHeadless",
+			WIN_DIR: "C:\\Program Files\\Ghidra\\ghidra_11.0.3_PUBLIC",
+			MODE: "production",
+		});
+	});
 });
 
 describe("redactOAuth2ConfigForApi", () => {
@@ -142,7 +194,7 @@ describe("redactServerForApi secret sources", () => {
 	it("keeps fromEnv/fromCommand/fromFile pointers while blanking literals", () => {
 		const redacted = redactServerForApi({
 			env: {
-				LITERAL: "secret-literal",
+				SERVICE_TOKEN: "secret-literal",
 				EXT: { fromEnv: "EXT_VAR" },
 			},
 			headers: {
@@ -151,7 +203,7 @@ describe("redactServerForApi secret sources", () => {
 			},
 		});
 		expect(redacted.env).toEqual({
-			LITERAL: "",
+			SERVICE_TOKEN: "",
 			EXT: { fromEnv: "EXT_VAR" },
 		});
 		expect(redacted.headers).toEqual({
