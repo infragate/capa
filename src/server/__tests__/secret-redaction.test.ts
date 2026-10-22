@@ -35,6 +35,28 @@ describe("redactServerForApi", () => {
 		expect(redacted.oauth2?.clientSecret).toBeUndefined();
 		expect(redacted.oauth2?.clientId).toBe("public-client");
 	});
+
+	it("shows env placeholders and plain literals, blanks credential literals (#349)", () => {
+		const redacted = redactServerForApi({
+			id: "env-probe",
+			env: {
+				GHIDRA_INSTALL_DIR: "${PROBE_INSTALL_DIR}",
+				API_KEY: "${OPENAI_KEY}",
+				REA_ANALYSIS_PROVIDER: "ghidra",
+				GITHUB_PAT: "ghp_literal",
+				AUTH_HEADER: "Bearer ${TOKEN}",
+				DATABASE_URL: "postgres://u:hunter2@db/x",
+			},
+		});
+		expect(redacted.env).toEqual({
+			GHIDRA_INSTALL_DIR: "${PROBE_INSTALL_DIR}",
+			API_KEY: "${OPENAI_KEY}",
+			REA_ANALYSIS_PROVIDER: "ghidra",
+			GITHUB_PAT: "",
+			AUTH_HEADER: "",
+			DATABASE_URL: "",
+		});
+	});
 });
 
 describe("redactOAuth2ConfigForApi", () => {
@@ -142,7 +164,7 @@ describe("redactServerForApi secret sources", () => {
 	it("keeps fromEnv/fromCommand/fromFile pointers while blanking literals", () => {
 		const redacted = redactServerForApi({
 			env: {
-				LITERAL: "secret-literal",
+				SERVICE_TOKEN: "secret-literal",
 				EXT: { fromEnv: "EXT_VAR" },
 			},
 			headers: {
@@ -151,7 +173,7 @@ describe("redactServerForApi secret sources", () => {
 			},
 		});
 		expect(redacted.env).toEqual({
-			LITERAL: "",
+			SERVICE_TOKEN: "",
 			EXT: { fromEnv: "EXT_VAR" },
 		});
 		expect(redacted.headers).toEqual({

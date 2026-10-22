@@ -40,8 +40,29 @@ function clearEmptyOAuthEndpoint(
 	for (const alias of aliases) delete oauth2[alias];
 }
 
+/** Env names are `SNAKE_CASE`, so `API_KEY` / `GITHUB_PAT` need their own net. */
+const SENSITIVE_ENV =
+	/token|key|secret|passw|pwd|pat$|credential|auth|cookie|session|private|dsn/i;
+
+/** `scheme://user:pass@host` carries a password even under a harmless name. */
+const URL_CREDENTIALS = /:\/\/[^/\s:@]+:[^/\s@]+@/;
+
+const PLACEHOLDER = /\$\{[^}]+\}/g;
+
 export function isSensitiveHeaderName(name: string): boolean {
 	return SENSITIVE_HEADER.test(name);
+}
+
+/**
+ * Env values are returned as configured: `${VAR}` placeholders are references
+ * (resolved only at spawn) and plain literals are config. A literal is blanked
+ * when its name reads like a credential or it embeds URL credentials.
+ */
+function redactEnvValue(name: string, value: string): string {
+	const literal = value.replace(PLACEHOLDER, "").trim();
+	if (!literal) return value;
+	if (SENSITIVE_ENV.test(name) || URL_CREDENTIALS.test(value)) return "";
+	return value;
 }
 
 export interface ApiServerSecrets {
@@ -61,7 +82,9 @@ export function redactServerForApi<T extends ApiServerSecrets>(server: T): T {
 		const next: Record<string, SecretValue> = {};
 		for (const [key, value] of Object.entries(env)) {
 			// Keep external source pointers; blank only literal secret strings.
-			next[key] = isSecretValueObject(value) ? value : "";
+			next[key] = isSecretValueObject(value)
+				? value
+				: redactEnvValue(key, value);
 		}
 		env = next;
 	}
