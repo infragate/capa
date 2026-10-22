@@ -100,6 +100,12 @@ describe('capabilities', () => {
       expect(committed).toEqual(buildCapabilitiesJsonSchema());
     });
 
+    it('lets optional fields be null in the JSON Schema, as stripNulls does', () => {
+      const servers = (buildCapabilitiesJsonSchema().properties as any).servers.anyOf[0].items;
+      expect(servers.properties.description.anyOf).toContainEqual({ type: 'null' });
+      expect(servers.properties.id).toEqual({ type: 'string' });
+    });
+
     it('passes through a fully populated valid capabilities object unchanged', () => {
       const capabilities: Capabilities = {
         providers: ['cursor'],

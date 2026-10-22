@@ -341,12 +341,27 @@ export const capabilitiesSchema = z
  * JSON Schema for editor autocomplete and validation. It describes what may be
  * authored (`io: "input"`), so the custom refinements (url or cmd, expose
  * tools lists, unknown providers) are still only caught by capa itself.
+ * Optional fields and map values also accept null: {@link stripNulls} reads a
+ * bare `description:` as absent, so editors must not flag it.
  */
 export function buildCapabilitiesJsonSchema(): Record<string, unknown> {
+	const orNull = (s: z.core.JSONSchema.JSONSchema) => ({
+		anyOf: [s, { type: "null" as const }],
+	});
 	const schema = z.toJSONSchema(capabilitiesSchema, {
 		target: "draft-7",
 		io: "input",
 		unrepresentable: "any",
+		override: ({ jsonSchema: s }) => {
+			const required = new Set(s.required ?? []);
+			for (const [key, prop] of Object.entries(s.properties ?? {})) {
+				if (!required.has(key)) s.properties![key] = orNull(prop);
+			}
+			const extra = s.additionalProperties;
+			if (typeof extra === "object" && Object.keys(extra).length > 0) {
+				s.additionalProperties = orNull(extra);
+			}
+		},
 	}) as Record<string, unknown>;
 	const { $schema, ...rest } = schema;
 	return {

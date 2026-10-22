@@ -8,337 +8,303 @@
       "type": "string"
     },
     "providers": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "skills": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "type": {
-            "type": "string",
-            "enum": [
-              "inline",
-              "remote",
-              "github",
-              "gitlab",
-              "git",
-              "local",
-              "installed",
-              "plugin"
-            ]
-          },
-          "def": {
-            "default": {},
-            "type": "object",
-            "properties": {
-              "description": {
-                "type": "string"
-              },
-              "requires": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "url": {
-                "type": "string"
-              },
-              "repo": {
-                "type": "string"
-              },
-              "content": {
-                "type": "string"
-              },
-              "path": {
-                "type": "string"
-              },
-              "version": {
-                "type": "string"
-              },
-              "ref": {
-                "type": "string"
-              }
-            },
-            "additionalProperties": {}
-          },
-          "sourcePlugin": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
             "type": "object",
             "properties": {
               "id": {
                 "type": "string"
               },
-              "name": {
-                "type": "string"
-              },
-              "provider": {
+              "type": {
                 "type": "string",
                 "enum": [
-                  "cursor",
-                  "claude",
-                  "agent-plugins"
+                  "inline",
+                  "remote",
+                  "github",
+                  "gitlab",
+                  "git",
+                  "local",
+                  "installed",
+                  "plugin"
                 ]
-              }
-            },
-            "required": [
-              "id",
-              "name",
-              "provider"
-            ],
-            "additionalProperties": {}
-          }
-        },
-        "required": [
-          "id",
-          "type"
-        ],
-        "additionalProperties": {}
-      }
-    },
-    "servers": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "type": {
-            "type": "string",
-            "const": "mcp"
-          },
-          "def": {
-            "type": "object",
-            "properties": {
-              "url": {
-                "type": "string"
               },
-              "headers": {
-                "type": "object",
-                "propertyNames": {
-                  "type": "string"
-                },
-                "additionalProperties": {
-                  "anyOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "fromEnv": {
-                          "type": "string",
-                          "minLength": 1
-                        }
+              "def": {
+                "anyOf": [
+                  {
+                    "default": {},
+                    "type": "object",
+                    "properties": {
+                      "description": {
+                        "anyOf": [
+                          {
+                            "anyOf": [
+                              {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
                       },
-                      "required": [
-                        "fromEnv"
-                      ],
-                      "additionalProperties": false
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "fromCommand": {
-                          "type": "string",
-                          "minLength": 1
-                        }
+                      "requires": {
+                        "anyOf": [
+                          {
+                            "anyOf": [
+                              {
+                                "anyOf": [
+                                  {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
                       },
-                      "required": [
-                        "fromCommand"
-                      ],
-                      "additionalProperties": false
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "fromFile": {
-                          "type": "string",
-                          "minLength": 1
-                        }
+                      "url": {
+                        "anyOf": [
+                          {
+                            "anyOf": [
+                              {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
                       },
-                      "required": [
-                        "fromFile"
-                      ],
-                      "additionalProperties": false
-                    }
-                  ]
-                }
-              },
-              "tlsSkipVerify": {
-                "type": "boolean"
-              },
-              "cmd": {
-                "type": "string"
-              },
-              "args": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "env": {
-                "type": "object",
-                "propertyNames": {
-                  "type": "string"
-                },
-                "additionalProperties": {
-                  "anyOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "fromEnv": {
-                          "type": "string",
-                          "minLength": 1
-                        }
+                      "repo": {
+                        "anyOf": [
+                          {
+                            "anyOf": [
+                              {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
                       },
-                      "required": [
-                        "fromEnv"
-                      ],
-                      "additionalProperties": false
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "fromCommand": {
-                          "type": "string",
-                          "minLength": 1
-                        }
+                      "content": {
+                        "anyOf": [
+                          {
+                            "anyOf": [
+                              {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
                       },
-                      "required": [
-                        "fromCommand"
-                      ],
-                      "additionalProperties": false
-                    },
-                    {
-                      "type": "object",
-                      "properties": {
-                        "fromFile": {
-                          "type": "string",
-                          "minLength": 1
-                        }
+                      "path": {
+                        "anyOf": [
+                          {
+                            "anyOf": [
+                              {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
                       },
-                      "required": [
-                        "fromFile"
-                      ],
-                      "additionalProperties": false
-                    }
-                  ]
-                }
-              },
-              "cwd": {
-                "type": "string"
-              },
-              "oauth2": {}
-            },
-            "additionalProperties": {}
-          },
-          "expose": {
-            "type": "string",
-            "enum": [
-              "all",
-              "except",
-              "exactly",
-              "none"
-            ]
-          },
-          "tools": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "sourcePlugin": {
-            "type": "object",
-            "properties": {
-              "id": {
-                "type": "string"
-              },
-              "name": {
-                "type": "string"
-              },
-              "provider": {
-                "type": "string",
-                "enum": [
-                  "cursor",
-                  "claude",
-                  "agent-plugins"
+                      "version": {
+                        "anyOf": [
+                          {
+                            "anyOf": [
+                              {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "ref": {
+                        "anyOf": [
+                          {
+                            "anyOf": [
+                              {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "additionalProperties": {}
+                  },
+                  {
+                    "type": "null"
+                  }
                 ]
-              }
-            },
-            "required": [
-              "id",
-              "name",
-              "provider"
-            ],
-            "additionalProperties": {}
-          },
-          "sourcePluginServerKey": {
-            "type": "string"
-          },
-          "displayName": {
-            "type": "string"
-          },
-          "description": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "type",
-          "def"
-        ],
-        "additionalProperties": {}
-      }
-    },
-    "tools": {
-      "type": "array",
-      "items": {
-        "oneOf": [
-          {
-            "type": "object",
-            "properties": {
-              "id": {
-                "type": "string"
               },
               "sourcePlugin": {
-                "type": "object",
-                "properties": {
-                  "id": {
-                    "type": "string"
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "provider": {
+                        "type": "string",
+                        "enum": [
+                          "cursor",
+                          "claude",
+                          "agent-plugins"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "name",
+                      "provider"
+                    ],
+                    "additionalProperties": {}
                   },
-                  "name": {
-                    "type": "string"
-                  },
-                  "provider": {
-                    "type": "string",
-                    "enum": [
-                      "cursor",
-                      "claude",
-                      "agent-plugins"
-                    ]
+                  {
+                    "type": "null"
                   }
-                },
-                "required": [
-                  "id",
-                  "name",
-                  "provider"
-                ],
-                "additionalProperties": {}
-              },
-              "description": {
-                "type": "string"
-              },
-              "group": {
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "type"
+            ],
+            "additionalProperties": {}
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "servers": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
                 "type": "string"
               },
               "type": {
@@ -348,40 +314,306 @@
               "def": {
                 "type": "object",
                 "properties": {
-                  "server": {
-                    "type": "string"
-                  },
-                  "tool": {
-                    "type": "string"
-                  },
-                  "defaults": {
-                    "type": "object",
-                    "propertyNames": {
-                      "type": "string"
-                    },
-                    "additionalProperties": {}
-                  },
-                  "formatter": {
-                    "type": "object",
-                    "properties": {
-                      "cmd": {
+                  "url": {
+                    "anyOf": [
+                      {
                         "type": "string"
                       },
-                      "timeout": {
-                        "type": "number"
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "headers": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "additionalProperties": {
+                          "anyOf": [
+                            {
+                              "anyOf": [
+                                {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "fromEnv": {
+                                          "type": "string",
+                                          "minLength": 1
+                                        }
+                                      },
+                                      "required": [
+                                        "fromEnv"
+                                      ],
+                                      "additionalProperties": false
+                                    },
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "fromCommand": {
+                                          "type": "string",
+                                          "minLength": 1
+                                        }
+                                      },
+                                      "required": [
+                                        "fromCommand"
+                                      ],
+                                      "additionalProperties": false
+                                    },
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "fromFile": {
+                                          "type": "string",
+                                          "minLength": 1
+                                        }
+                                      },
+                                      "required": [
+                                        "fromFile"
+                                      ],
+                                      "additionalProperties": false
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "tlsSkipVerify": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "cmd": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "args": {
+                    "anyOf": [
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "env": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "additionalProperties": {
+                          "anyOf": [
+                            {
+                              "anyOf": [
+                                {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "fromEnv": {
+                                          "type": "string",
+                                          "minLength": 1
+                                        }
+                                      },
+                                      "required": [
+                                        "fromEnv"
+                                      ],
+                                      "additionalProperties": false
+                                    },
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "fromCommand": {
+                                          "type": "string",
+                                          "minLength": 1
+                                        }
+                                      },
+                                      "required": [
+                                        "fromCommand"
+                                      ],
+                                      "additionalProperties": false
+                                    },
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "fromFile": {
+                                          "type": "string",
+                                          "minLength": 1
+                                        }
+                                      },
+                                      "required": [
+                                        "fromFile"
+                                      ],
+                                      "additionalProperties": false
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "cwd": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "oauth2": {
+                    "anyOf": [
+                      {},
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "additionalProperties": {}
+              },
+              "expose": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "all",
+                      "except",
+                      "exactly",
+                      "none"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "tools": {
+                "anyOf": [
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "sourcePlugin": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "provider": {
+                        "type": "string",
+                        "enum": [
+                          "cursor",
+                          "claude",
+                          "agent-plugins"
+                        ]
                       }
                     },
                     "required": [
-                      "cmd"
+                      "id",
+                      "name",
+                      "provider"
                     ],
                     "additionalProperties": {}
+                  },
+                  {
+                    "type": "null"
                   }
-                },
-                "required": [
-                  "server",
-                  "tool"
-                ],
-                "additionalProperties": {}
+                ]
+              },
+              "sourcePluginServerKey": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "displayName": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
             },
             "required": [
@@ -390,404 +622,1054 @@
               "def"
             ],
             "additionalProperties": {}
-          },
-          {
-            "type": "object",
-            "properties": {
-              "id": {
-                "type": "string"
-              },
-              "sourcePlugin": {
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "tools": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
                 "type": "object",
                 "properties": {
                   "id": {
                     "type": "string"
                   },
-                  "name": {
-                    "type": "string"
-                  },
-                  "provider": {
-                    "type": "string",
-                    "enum": [
-                      "cursor",
-                      "claude",
-                      "agent-plugins"
+                  "sourcePlugin": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "provider": {
+                            "type": "string",
+                            "enum": [
+                              "cursor",
+                              "claude",
+                              "agent-plugins"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name",
+                          "provider"
+                        ],
+                        "additionalProperties": {}
+                      },
+                      {
+                        "type": "null"
+                      }
                     ]
+                  },
+                  "description": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "group": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "type": {
+                    "type": "string",
+                    "const": "mcp"
+                  },
+                  "def": {
+                    "type": "object",
+                    "properties": {
+                      "server": {
+                        "type": "string"
+                      },
+                      "tool": {
+                        "type": "string"
+                      },
+                      "defaults": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "propertyNames": {
+                              "type": "string"
+                            },
+                            "additionalProperties": {}
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "formatter": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "cmd": {
+                                "type": "string"
+                              },
+                              "timeout": {
+                                "anyOf": [
+                                  {
+                                    "anyOf": [
+                                      {
+                                        "type": "number"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              }
+                            },
+                            "required": [
+                              "cmd"
+                            ],
+                            "additionalProperties": {}
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "server",
+                      "tool"
+                    ],
+                    "additionalProperties": {}
                   }
                 },
                 "required": [
                   "id",
-                  "name",
-                  "provider"
+                  "type",
+                  "def"
                 ],
                 "additionalProperties": {}
               },
-              "description": {
-                "type": "string"
-              },
-              "group": {
-                "type": "string"
-              },
-              "type": {
-                "type": "string",
-                "const": "command"
-              },
-              "def": {
+              {
                 "type": "object",
                 "properties": {
-                  "init": {
-                    "type": "object",
-                    "properties": {
-                      "cmd": {
-                        "type": "string"
-                      },
-                      "args": {
-                        "type": "array",
-                        "items": {
-                          "type": "object",
-                          "properties": {
-                            "name": {
-                              "type": "string"
-                            },
-                            "type": {
-                              "type": "string",
-                              "enum": [
-                                "string",
-                                "number",
-                                "boolean",
-                                "object",
-                                "array"
-                              ]
-                            },
-                            "description": {
-                              "type": "string"
-                            },
-                            "required": {
-                              "type": "boolean"
-                            },
-                            "default": {}
-                          },
-                          "required": [
-                            "name",
-                            "type"
-                          ],
-                          "additionalProperties": {}
-                        }
-                      },
-                      "dir": {
-                        "type": "string"
-                      },
-                      "env": {
-                        "type": "object",
-                        "propertyNames": {
-                          "type": "string"
-                        },
-                        "additionalProperties": {
-                          "type": "string"
-                        }
-                      },
-                      "allowShellPlaceholders": {
-                        "type": "boolean"
-                      }
-                    },
-                    "required": [
-                      "cmd"
-                    ],
-                    "additionalProperties": {}
+                  "id": {
+                    "type": "string"
                   },
-                  "run": {
+                  "sourcePlugin": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "provider": {
+                            "type": "string",
+                            "enum": [
+                              "cursor",
+                              "claude",
+                              "agent-plugins"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name",
+                          "provider"
+                        ],
+                        "additionalProperties": {}
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "description": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "group": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "type": {
+                    "type": "string",
+                    "const": "command"
+                  },
+                  "def": {
                     "type": "object",
                     "properties": {
-                      "cmd": {
-                        "type": "string"
-                      },
-                      "args": {
-                        "type": "array",
-                        "items": {
-                          "type": "object",
-                          "properties": {
-                            "name": {
-                              "type": "string"
+                      "init": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "cmd": {
+                                "type": "string"
+                              },
+                              "args": {
+                                "anyOf": [
+                                  {
+                                    "anyOf": [
+                                      {
+                                        "type": "array",
+                                        "items": {
+                                          "type": "object",
+                                          "properties": {
+                                            "name": {
+                                              "type": "string"
+                                            },
+                                            "type": {
+                                              "type": "string",
+                                              "enum": [
+                                                "string",
+                                                "number",
+                                                "boolean",
+                                                "object",
+                                                "array"
+                                              ]
+                                            },
+                                            "description": {
+                                              "anyOf": [
+                                                {
+                                                  "type": "string"
+                                                },
+                                                {
+                                                  "type": "null"
+                                                }
+                                              ]
+                                            },
+                                            "required": {
+                                              "anyOf": [
+                                                {
+                                                  "type": "boolean"
+                                                },
+                                                {
+                                                  "type": "null"
+                                                }
+                                              ]
+                                            },
+                                            "default": {
+                                              "anyOf": [
+                                                {},
+                                                {
+                                                  "type": "null"
+                                                }
+                                              ]
+                                            }
+                                          },
+                                          "required": [
+                                            "name",
+                                            "type"
+                                          ],
+                                          "additionalProperties": {}
+                                        }
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "dir": {
+                                "anyOf": [
+                                  {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "env": {
+                                "anyOf": [
+                                  {
+                                    "anyOf": [
+                                      {
+                                        "type": "object",
+                                        "propertyNames": {
+                                          "type": "string"
+                                        },
+                                        "additionalProperties": {
+                                          "anyOf": [
+                                            {
+                                              "anyOf": [
+                                                {
+                                                  "type": "string"
+                                                },
+                                                {
+                                                  "type": "null"
+                                                }
+                                              ]
+                                            },
+                                            {
+                                              "type": "null"
+                                            }
+                                          ]
+                                        }
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "allowShellPlaceholders": {
+                                "anyOf": [
+                                  {
+                                    "anyOf": [
+                                      {
+                                        "type": "boolean"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              }
                             },
-                            "type": {
-                              "type": "string",
-                              "enum": [
-                                "string",
-                                "number",
-                                "boolean",
-                                "object",
-                                "array"
-                              ]
-                            },
-                            "description": {
-                              "type": "string"
-                            },
-                            "required": {
-                              "type": "boolean"
-                            },
-                            "default": {}
+                            "required": [
+                              "cmd"
+                            ],
+                            "additionalProperties": {}
                           },
-                          "required": [
-                            "name",
-                            "type"
-                          ],
-                          "additionalProperties": {}
-                        }
+                          {
+                            "type": "null"
+                          }
+                        ]
                       },
-                      "dir": {
-                        "type": "string"
-                      },
-                      "env": {
+                      "run": {
                         "type": "object",
-                        "propertyNames": {
-                          "type": "string"
+                        "properties": {
+                          "cmd": {
+                            "type": "string"
+                          },
+                          "args": {
+                            "anyOf": [
+                              {
+                                "anyOf": [
+                                  {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "name": {
+                                          "type": "string"
+                                        },
+                                        "type": {
+                                          "type": "string",
+                                          "enum": [
+                                            "string",
+                                            "number",
+                                            "boolean",
+                                            "object",
+                                            "array"
+                                          ]
+                                        },
+                                        "description": {
+                                          "anyOf": [
+                                            {
+                                              "type": "string"
+                                            },
+                                            {
+                                              "type": "null"
+                                            }
+                                          ]
+                                        },
+                                        "required": {
+                                          "anyOf": [
+                                            {
+                                              "type": "boolean"
+                                            },
+                                            {
+                                              "type": "null"
+                                            }
+                                          ]
+                                        },
+                                        "default": {
+                                          "anyOf": [
+                                            {},
+                                            {
+                                              "type": "null"
+                                            }
+                                          ]
+                                        }
+                                      },
+                                      "required": [
+                                        "name",
+                                        "type"
+                                      ],
+                                      "additionalProperties": {}
+                                    }
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "dir": {
+                            "anyOf": [
+                              {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "env": {
+                            "anyOf": [
+                              {
+                                "anyOf": [
+                                  {
+                                    "type": "object",
+                                    "propertyNames": {
+                                      "type": "string"
+                                    },
+                                    "additionalProperties": {
+                                      "anyOf": [
+                                        {
+                                          "anyOf": [
+                                            {
+                                              "type": "string"
+                                            },
+                                            {
+                                              "type": "null"
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "allowShellPlaceholders": {
+                            "anyOf": [
+                              {
+                                "anyOf": [
+                                  {
+                                    "type": "boolean"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
                         },
-                        "additionalProperties": {
-                          "type": "string"
-                        }
-                      },
-                      "allowShellPlaceholders": {
-                        "type": "boolean"
+                        "required": [
+                          "cmd"
+                        ],
+                        "additionalProperties": {}
                       }
                     },
                     "required": [
-                      "cmd"
+                      "run"
                     ],
                     "additionalProperties": {}
                   }
                 },
                 "required": [
-                  "run"
+                  "id",
+                  "type",
+                  "def"
                 ],
                 "additionalProperties": {}
               }
+            ]
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "plugins": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "github",
+                  "gitlab",
+                  "git"
+                ]
+              },
+              "def": {
+                "type": "object",
+                "properties": {
+                  "repo": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "url": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "subpath": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "version": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "ref": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "description": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "additionalProperties": {}
+              },
+              "servers": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {
+                      "anyOf": [
+                        {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "as": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "expose": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "all",
+                                        "except",
+                                        "exactly",
+                                        "none"
+                                      ]
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "tools": {
+                                  "anyOf": [
+                                    {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              "additionalProperties": {}
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
             },
             "required": [
-              "id",
               "type",
               "def"
             ],
             "additionalProperties": {}
           }
-        ]
-      }
-    },
-    "plugins": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "type": {
-            "type": "string",
-            "enum": [
-              "github",
-              "gitlab",
-              "git"
-            ]
-          },
-          "def": {
-            "type": "object",
-            "properties": {
-              "repo": {
-                "type": "string"
-              },
-              "url": {
-                "type": "string"
-              },
-              "subpath": {
-                "type": "string"
-              },
-              "version": {
-                "type": "string"
-              },
-              "ref": {
-                "type": "string"
-              },
-              "description": {
-                "type": "string"
-              }
-            },
-            "additionalProperties": {}
-          },
-          "servers": {
-            "type": "object",
-            "propertyNames": {
-              "type": "string"
-            },
-            "additionalProperties": {
-              "type": "object",
-              "properties": {
-                "as": {
-                  "type": "string"
-                },
-                "expose": {
-                  "type": "string",
-                  "enum": [
-                    "all",
-                    "except",
-                    "exactly",
-                    "none"
-                  ]
-                },
-                "tools": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                }
-              },
-              "additionalProperties": {}
-            }
-          }
         },
-        "required": [
-          "type",
-          "def"
-        ],
-        "additionalProperties": {}
-      }
+        {
+          "type": "null"
+        }
+      ]
     },
     "options": {
-      "type": "object",
-      "properties": {
-        "toolExposure": {
-          "type": "string",
-          "enum": [
-            "expose-all",
-            "on-demand",
-            "search",
-            "none"
-          ]
-        },
-        "agentActivity": {
-          "type": "boolean"
-        },
-        "security": {
+      "anyOf": [
+        {
           "type": "object",
           "properties": {
-            "blockedPhrases": {
+            "toolExposure": {
               "anyOf": [
                 {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "expose-all",
+                        "on-demand",
+                        "search",
+                        "none"
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 {
-                  "type": "object",
-                  "properties": {
-                    "file": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "file"
-                  ],
-                  "additionalProperties": {}
+                  "type": "null"
                 }
               ]
             },
-            "allowedCharacters": {
-              "type": "string"
+            "agentActivity": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "security": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "blockedPhrases": {
+                          "anyOf": [
+                            {
+                              "anyOf": [
+                                {
+                                  "anyOf": [
+                                    {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "file": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "file"
+                                      ],
+                                      "additionalProperties": {}
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "allowedCharacters": {
+                          "anyOf": [
+                            {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "additionalProperties": {}
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "requiresCommands": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "cli": {
+                            "type": "string"
+                          },
+                          "description": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "cli"
+                        ],
+                        "additionalProperties": {}
+                      }
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "onInstallError": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "warn",
+                        "stop"
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "rules": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "conflicts": {
+                          "anyOf": [
+                            {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "warn",
+                                    "error"
+                                  ]
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "additionalProperties": {}
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           },
           "additionalProperties": {}
         },
-        "requiresCommands": {
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "agents": {
+      "anyOf": [
+        {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "subagents": {
+      "anyOf": [
+        {
           "type": "array",
           "items": {
             "type": "object",
             "properties": {
-              "cli": {
-                "type": "string"
+              "providers": {
+                "anyOf": [
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
-              "description": {
-                "type": "string"
+              "nativeTools": {
+                "anyOf": [
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "model": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
             },
-            "required": [
-              "cli"
-            ],
             "additionalProperties": {}
           }
         },
-        "onInstallError": {
-          "type": "string",
-          "enum": [
-            "warn",
-            "stop"
-          ]
-        },
-        "rules": {
-          "type": "object",
-          "properties": {
-            "conflicts": {
-              "type": "string",
-              "enum": [
-                "warn",
-                "error"
-              ]
-            }
-          },
-          "additionalProperties": {}
+        {
+          "type": "null"
         }
-      },
-      "additionalProperties": {}
-    },
-    "agents": {
-      "type": "object",
-      "propertyNames": {
-        "type": "string"
-      },
-      "additionalProperties": {}
-    },
-    "subagents": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "providers": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "nativeTools": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "model": {
-            "type": "string"
-          }
-        },
-        "additionalProperties": {}
-      }
+      ]
     },
     "rules": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "propertyNames": {
-          "type": "string"
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
         },
-        "additionalProperties": {}
-      }
+        {
+          "type": "null"
+        }
+      ]
     },
     "hooks": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "propertyNames": {
-          "type": "string"
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
         },
-        "additionalProperties": {}
-      }
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "additionalProperties": {}
