@@ -1,0 +1,794 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://raw.githubusercontent.com/infragate/capa/main/schema/capabilities.schema.json",
+  "title": "capa capabilities file",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "providers": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "skills": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "inline",
+              "remote",
+              "github",
+              "gitlab",
+              "git",
+              "local",
+              "installed",
+              "plugin"
+            ]
+          },
+          "def": {
+            "default": {},
+            "type": "object",
+            "properties": {
+              "description": {
+                "type": "string"
+              },
+              "requires": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "url": {
+                "type": "string"
+              },
+              "repo": {
+                "type": "string"
+              },
+              "content": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              },
+              "ref": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": {}
+          },
+          "sourcePlugin": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "provider": {
+                "type": "string",
+                "enum": [
+                  "cursor",
+                  "claude",
+                  "agent-plugins"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "provider"
+            ],
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "id",
+          "type"
+        ],
+        "additionalProperties": {}
+      }
+    },
+    "servers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "const": "mcp"
+          },
+          "def": {
+            "type": "object",
+            "properties": {
+              "url": {
+                "type": "string"
+              },
+              "headers": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "fromEnv": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "fromEnv"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "fromCommand": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "fromCommand"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "fromFile": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "fromFile"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              },
+              "tlsSkipVerify": {
+                "type": "boolean"
+              },
+              "cmd": {
+                "type": "string"
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "env": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "fromEnv": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "fromEnv"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "fromCommand": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "fromCommand"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "fromFile": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "fromFile"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              },
+              "cwd": {
+                "type": "string"
+              },
+              "oauth2": {}
+            },
+            "additionalProperties": {}
+          },
+          "expose": {
+            "type": "string",
+            "enum": [
+              "all",
+              "except",
+              "exactly",
+              "none"
+            ]
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "sourcePlugin": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "provider": {
+                "type": "string",
+                "enum": [
+                  "cursor",
+                  "claude",
+                  "agent-plugins"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "provider"
+            ],
+            "additionalProperties": {}
+          },
+          "sourcePluginServerKey": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "def"
+        ],
+        "additionalProperties": {}
+      }
+    },
+    "tools": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "sourcePlugin": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "provider": {
+                    "type": "string",
+                    "enum": [
+                      "cursor",
+                      "claude",
+                      "agent-plugins"
+                    ]
+                  }
+                },
+                "required": [
+                  "id",
+                  "name",
+                  "provider"
+                ],
+                "additionalProperties": {}
+              },
+              "description": {
+                "type": "string"
+              },
+              "group": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "const": "mcp"
+              },
+              "def": {
+                "type": "object",
+                "properties": {
+                  "server": {
+                    "type": "string"
+                  },
+                  "tool": {
+                    "type": "string"
+                  },
+                  "defaults": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  "formatter": {
+                    "type": "object",
+                    "properties": {
+                      "cmd": {
+                        "type": "string"
+                      },
+                      "timeout": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "cmd"
+                    ],
+                    "additionalProperties": {}
+                  }
+                },
+                "required": [
+                  "server",
+                  "tool"
+                ],
+                "additionalProperties": {}
+              }
+            },
+            "required": [
+              "id",
+              "type",
+              "def"
+            ],
+            "additionalProperties": {}
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "sourcePlugin": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "provider": {
+                    "type": "string",
+                    "enum": [
+                      "cursor",
+                      "claude",
+                      "agent-plugins"
+                    ]
+                  }
+                },
+                "required": [
+                  "id",
+                  "name",
+                  "provider"
+                ],
+                "additionalProperties": {}
+              },
+              "description": {
+                "type": "string"
+              },
+              "group": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "const": "command"
+              },
+              "def": {
+                "type": "object",
+                "properties": {
+                  "init": {
+                    "type": "object",
+                    "properties": {
+                      "cmd": {
+                        "type": "string"
+                      },
+                      "args": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "name": {
+                              "type": "string"
+                            },
+                            "type": {
+                              "type": "string",
+                              "enum": [
+                                "string",
+                                "number",
+                                "boolean",
+                                "object",
+                                "array"
+                              ]
+                            },
+                            "description": {
+                              "type": "string"
+                            },
+                            "required": {
+                              "type": "boolean"
+                            },
+                            "default": {}
+                          },
+                          "required": [
+                            "name",
+                            "type"
+                          ],
+                          "additionalProperties": {}
+                        }
+                      },
+                      "dir": {
+                        "type": "string"
+                      },
+                      "env": {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "additionalProperties": {
+                          "type": "string"
+                        }
+                      },
+                      "allowShellPlaceholders": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "cmd"
+                    ],
+                    "additionalProperties": {}
+                  },
+                  "run": {
+                    "type": "object",
+                    "properties": {
+                      "cmd": {
+                        "type": "string"
+                      },
+                      "args": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "name": {
+                              "type": "string"
+                            },
+                            "type": {
+                              "type": "string",
+                              "enum": [
+                                "string",
+                                "number",
+                                "boolean",
+                                "object",
+                                "array"
+                              ]
+                            },
+                            "description": {
+                              "type": "string"
+                            },
+                            "required": {
+                              "type": "boolean"
+                            },
+                            "default": {}
+                          },
+                          "required": [
+                            "name",
+                            "type"
+                          ],
+                          "additionalProperties": {}
+                        }
+                      },
+                      "dir": {
+                        "type": "string"
+                      },
+                      "env": {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "additionalProperties": {
+                          "type": "string"
+                        }
+                      },
+                      "allowShellPlaceholders": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "cmd"
+                    ],
+                    "additionalProperties": {}
+                  }
+                },
+                "required": [
+                  "run"
+                ],
+                "additionalProperties": {}
+              }
+            },
+            "required": [
+              "id",
+              "type",
+              "def"
+            ],
+            "additionalProperties": {}
+          }
+        ]
+      }
+    },
+    "plugins": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "github",
+              "gitlab",
+              "git"
+            ]
+          },
+          "def": {
+            "type": "object",
+            "properties": {
+              "repo": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "subpath": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              },
+              "ref": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": {}
+          },
+          "servers": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "as": {
+                  "type": "string"
+                },
+                "expose": {
+                  "type": "string",
+                  "enum": [
+                    "all",
+                    "except",
+                    "exactly",
+                    "none"
+                  ]
+                },
+                "tools": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "additionalProperties": {}
+            }
+          }
+        },
+        "required": [
+          "type",
+          "def"
+        ],
+        "additionalProperties": {}
+      }
+    },
+    "options": {
+      "type": "object",
+      "properties": {
+        "toolExposure": {
+          "type": "string",
+          "enum": [
+            "expose-all",
+            "on-demand",
+            "search",
+            "none"
+          ]
+        },
+        "agentActivity": {
+          "type": "boolean"
+        },
+        "security": {
+          "type": "object",
+          "properties": {
+            "blockedPhrases": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "file": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "file"
+                  ],
+                  "additionalProperties": {}
+                }
+              ]
+            },
+            "allowedCharacters": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": {}
+        },
+        "requiresCommands": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "cli": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "cli"
+            ],
+            "additionalProperties": {}
+          }
+        },
+        "onInstallError": {
+          "type": "string",
+          "enum": [
+            "warn",
+            "stop"
+          ]
+        },
+        "rules": {
+          "type": "object",
+          "properties": {
+            "conflicts": {
+              "type": "string",
+              "enum": [
+                "warn",
+                "error"
+              ]
+            }
+          },
+          "additionalProperties": {}
+        }
+      },
+      "additionalProperties": {}
+    },
+    "agents": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {}
+    },
+    "subagents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "providers": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "nativeTools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "model": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": {}
+      }
+    },
+    "rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "propertyNames": {
+          "type": "string"
+        },
+        "additionalProperties": {}
+      }
+    },
+    "hooks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "propertyNames": {
+          "type": "string"
+        },
+        "additionalProperties": {}
+      }
+    }
+  },
+  "additionalProperties": {}
+}
