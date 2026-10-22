@@ -57,6 +57,36 @@ describe("redactServerForApi", () => {
 			DATABASE_URL: "",
 		});
 	});
+
+	it("blanks credential-shaped literals under generic names", () => {
+		const redacted = redactServerForApi({
+			id: "svc",
+			env: {
+				DB_PASS: "hunter2",
+				GITHUB_PAT_VALUE: "abc",
+				UPSTREAM: "Bearer actual-token",
+				CONFIG: "Basic dXNlcjpwYXNz",
+				OPENAI: "sk-proj-abc",
+				GH: "ghp_abc",
+				OPAQUE: "a8f3c9d2e1b7a6f5c4d3e2f1a0b9",
+				PATH_HINT: "/opt/ghidra_11.0.3_PUBLIC/support/analyzeHeadless",
+				WIN_DIR: "C:\\Program Files\\Ghidra\\ghidra_11.0.3_PUBLIC",
+				MODE: "production",
+			},
+		});
+		expect(redacted.env).toEqual({
+			DB_PASS: "",
+			GITHUB_PAT_VALUE: "",
+			UPSTREAM: "",
+			CONFIG: "",
+			OPENAI: "",
+			GH: "",
+			OPAQUE: "",
+			PATH_HINT: "/opt/ghidra_11.0.3_PUBLIC/support/analyzeHeadless",
+			WIN_DIR: "C:\\Program Files\\Ghidra\\ghidra_11.0.3_PUBLIC",
+			MODE: "production",
+		});
+	});
 });
 
 describe("redactOAuth2ConfigForApi", () => {

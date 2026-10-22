@@ -42,10 +42,19 @@ function clearEmptyOAuthEndpoint(
 
 /** Env names are `SNAKE_CASE`, so `API_KEY` / `GITHUB_PAT` need their own net. */
 const SENSITIVE_ENV =
-	/token|key|secret|passw|pwd|pat$|credential|auth|cookie|session|private|dsn/i;
+	/token|key|secret|pass|pwd|(^|_)pat(_|$)|credential|auth|cookie|session|private|dsn/i;
 
-/** `scheme://user:pass@host` carries a password even under a harmless name. */
-const URL_CREDENTIALS = /:\/\/[^/\s:@]+:[^/\s@]+@/;
+/**
+ * Values that read as a credential whatever the name: URL userinfo
+ * (`scheme://user:pass@host`), an auth scheme, a well-known token prefix, or a
+ * long run of mixed letters and digits with no path separator or whitespace.
+ */
+const CREDENTIAL_VALUE = [
+	/:\/\/[^/\s:@]+:[^/\s@]+@/,
+	/\b(bearer|basic)\s+\S/i,
+	/^(sk|pk|rk)[-_]|^(ghp|gho|ghu|ghs|ghr|github_pat|glpat|xox[abpors]|AKIA|ASIA|AIza|npm_|pypi-)/,
+	/^(?=[^/\\\s]*\d)(?=[^/\\\s]*[A-Za-z])[^/\\\s]{24,}$/,
+];
 
 const PLACEHOLDER = /\$\{[^}]+\}/g;
 
@@ -56,12 +65,15 @@ export function isSensitiveHeaderName(name: string): boolean {
 /**
  * Env values are returned as configured: `${VAR}` placeholders are references
  * (resolved only at spawn) and plain literals are config. A literal is blanked
- * when its name reads like a credential or it embeds URL credentials.
+ * when its name or its value reads like a credential.
  */
 function redactEnvValue(name: string, value: string): string {
 	const literal = value.replace(PLACEHOLDER, "").trim();
 	if (!literal) return value;
-	if (SENSITIVE_ENV.test(name) || URL_CREDENTIALS.test(value)) return "";
+	if (SENSITIVE_ENV.test(name)) return "";
+	if (CREDENTIAL_VALUE.some((re) => re.test(value) || re.test(literal))) {
+		return "";
+	}
 	return value;
 }
 
