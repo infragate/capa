@@ -10,10 +10,12 @@ import {
   reorderCapabilityEntries,
   upsertOptions,
   upsertAgents,
+  buildCapabilitiesJsonSchema,
+  CAPABILITIES_SCHEMA_URL,
 } from '../capabilities';
 import { logger } from '../logger';
 import { mkdtempSync, rmSync } from 'fs';
-import { writeFile } from 'fs/promises';
+import { readFile, writeFile } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import type { Capabilities } from '../../types/capabilities';
@@ -81,6 +83,27 @@ describe('capabilities', () => {
         'capabilities: unknown top-level key "unknownKey"'
       );
       warnSpy.mockRestore();
+    });
+
+    it('drops the $schema editor reference without warning', () => {
+      const warnSpy = spyOn(logger, 'warn').mockImplementation(() => {});
+      const result = normalizeCapabilities({ $schema: CAPABILITIES_SCHEMA_URL, skills: [] });
+      expect('$schema' in result).toBe(false);
+      expect(warnSpy).not.toHaveBeenCalled();
+      warnSpy.mockRestore();
+    });
+
+    it('keeps schema/capabilities.schema.json in sync (run scripts/generate-schema.ts)', async () => {
+      const committed = JSON.parse(
+        await readFile(join(import.meta.dir, '../../../schema/capabilities.schema.json'), 'utf-8'),
+      );
+      expect(committed).toEqual(buildCapabilitiesJsonSchema());
+    });
+
+    it('lets optional fields be null in the JSON Schema, as stripNulls does', () => {
+      const servers = (buildCapabilitiesJsonSchema().properties as any).servers.anyOf[0].items;
+      expect(servers.properties.description.anyOf).toContainEqual({ type: 'null' });
+      expect(servers.properties.id).toEqual({ type: 'string' });
     });
 
     it('passes through a fully populated valid capabilities object unchanged', () => {
@@ -437,6 +460,11 @@ describe('capabilities', () => {
       
       await writeCapabilitiesFile(filePath, 'yaml', capabilities);
       const parsed = await parseCapabilitiesFile(filePath, 'yaml');
+
+      expect(await readFile(filePath, 'utf-8')).toStartWith(
+        `# yaml-language-server: $schema=${CAPABILITIES_SCHEMA_URL}
+`,
+      );
 
       expect(parsed).toEqual({
         ...capabilities,

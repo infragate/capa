@@ -81,6 +81,12 @@ capa init
 
 Creates `capabilities.yaml` and registers the project with the local CAPA server (default `http://localhost:5912`).
 
+The new file points at the [JSON Schema](./schema/capabilities.schema.json), so editors with YAML/JSON language support autocomplete and validate it. For an existing file, add this first line:
+
+```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/infragate/capa/main/schema/capabilities.schema.json
+```
+
 ### 2. Add capabilities
 
 ```bash

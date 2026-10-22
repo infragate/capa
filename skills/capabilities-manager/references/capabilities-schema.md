@@ -2,6 +2,8 @@
 
 Full reference for `capabilities.yaml` / `capabilities.json` structure: basic layout, skills (all seven types), servers, tools, rules (including `type: local`), plugins (full unpack), security, `agentActivity`, `requiresCommands`, the `agents` section, and sub-agents.
 
+A machine-readable JSON Schema lives at `https://raw.githubusercontent.com/infragate/capa/main/schema/capabilities.schema.json`. `capa init` references it (a `# yaml-language-server: $schema=…` first line in YAML, a `$schema` key in JSON) so editors autocomplete and validate the file.
+
 ## Basic Structure (YAML)
 
 ```yaml
