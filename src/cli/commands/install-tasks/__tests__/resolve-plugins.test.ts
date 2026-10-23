@@ -20,7 +20,7 @@ function ctx(declared: number, resolved: number, mode: 'warn' | 'stop' = 'warn')
 describe('reportPluginResults', () => {
   it('counts a failed plugin as a failure when the others resolved', () => {
     const c = ctx(2, 1);
-    expect(reportPluginResults(c, [FAILED, NOTE])).toBe(true);
+    expect(reportPluginResults(c, { warnings: [FAILED, NOTE], failures: [FAILED] })).toBe(true);
     expect(c.failed).toBe(1);
     expect(c.failures).toEqual([FAILED]);
     // Reported once: as the failure, plus the unrelated warning.
@@ -29,21 +29,30 @@ describe('reportPluginResults', () => {
 
   it('fails the plugin step when every plugin failed, without repeating the message', () => {
     const c = ctx(1, 0);
-    expect(reportPluginResults(c, [FAILED])).toBe(false);
+    expect(reportPluginResults(c, { warnings: [FAILED], failures: [FAILED] })).toBe(false);
     expect(c.failed).toBe(1);
     expect(c.warnings).toEqual([FAILED]);
   });
 
   it('leaves a clean resolve alone', () => {
     const c = ctx(2, 2);
-    expect(reportPluginResults(c, [NOTE])).toBe(true);
+    expect(reportPluginResults(c, { warnings: [NOTE], failures: [] })).toBe(true);
     expect(c.failed).toBe(0);
     expect(c.warnings).toEqual([NOTE]);
   });
 
+  it('keeps a warning that only mentions the words as a warning', () => {
+    // A resolved plugin's own diagnostic can echo any text, e.g. an mcp.json key.
+    const echo = 'Plugin "ok" mcp.json: unknown field "failed to resolve and was skipped"';
+    const c = ctx(1, 1);
+    expect(reportPluginResults(c, { warnings: [echo], failures: [] })).toBe(true);
+    expect(c.failed).toBe(0);
+    expect(c.warnings).toEqual([echo]);
+  });
+
   it('records the failure as an error in stop mode, so install exits non-zero', () => {
     const c = ctx(2, 1, 'stop');
-    expect(reportPluginResults(c, [FAILED])).toBe(true);
+    expect(reportPluginResults(c, { warnings: [FAILED], failures: [FAILED] })).toBe(true);
     expect(c.errors).toEqual([FAILED]);
   });
 });
