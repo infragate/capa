@@ -18,9 +18,13 @@ import { raiseInstallError, recordInstallFailure } from './install-error-policy'
  * failed: the install has failed. Otherwise the plugins that resolved still
  * install (isolation).
  */
-export function reportPluginResults(ctx: InstallCtx, pluginWarnings: string[]): boolean {
-  const failures = pluginWarnings.filter((w) => w.includes('failed to resolve and was skipped'));
-  ctx.warnings.push(...pluginWarnings.filter((w) => !failures.includes(w)));
+export function reportPluginResults(
+  ctx: InstallCtx,
+  { warnings, failures }: { warnings: string[]; failures: string[] },
+): boolean {
+  // `failures` are also in `warnings`; match them exactly, never by wording.
+  const failed = new Set(failures);
+  ctx.warnings.push(...warnings.filter((w) => !failed.has(w)));
   const declared = ctx.capabilities.plugins?.length ?? 0;
   const resolved = ctx.capabilitiesToUse.resolvedPlugins?.length ?? 0;
   if (declared > 0 && resolved === 0 && failures.length > 0) {
@@ -37,7 +41,7 @@ export function resolvePluginsTask(): Task<InstallCtx> {
     task: async (ctx) => {
       const authFetch = createAuthenticatedFetch(ctx.db);
       try {
-        const { mergedCapabilities, tempDirsToCleanup, warnings: pluginWarnings } =
+        const { mergedCapabilities, tempDirsToCleanup, warnings, failures } =
           await resolvePlugins(
             ctx.capabilities,
             ctx.projectPath,
@@ -50,7 +54,7 @@ export function resolvePluginsTask(): Task<InstallCtx> {
             { noCache: ctx.noCache },
           );
         ctx.capabilitiesToUse = mergedCapabilities;
-        if (!reportPluginResults(ctx, pluginWarnings)) return;
+        if (!reportPluginResults(ctx, { warnings, failures })) return;
         for (const dir of tempDirsToCleanup) {
           try {
             rmSync(dir, { recursive: true, force: true });
