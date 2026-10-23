@@ -101,6 +101,9 @@ describe("redactOAuth2ConfigForApi", () => {
 				AWS_SECRET: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
 				SERVICE_URL: "https://api.example.com/v1?region=eu",
 				TOOL_PATH: "/usr/local/lib/node_modules/some-tool/bin/cli.js",
+				LETTER_TOKEN_URL: "https://abcdefghijklmnop@host.example/repo",
+				UNPADDED_B64: "AbcdEFGH/ijkLMNO1234567890QRSTUV",
+				SERVICE_DIR: "services/payments/api/v2/handlers",
 			},
 		});
 		expect(out.env).toEqual({
@@ -108,6 +111,9 @@ describe("redactOAuth2ConfigForApi", () => {
 			REPO_URL: "",
 			CONN: "",
 			AWS_SECRET: "",
+			LETTER_TOKEN_URL: "",
+			UNPADDED_B64: "",
+			SERVICE_DIR: "services/payments/api/v2/handlers",
 			SERVICE_URL: "https://api.example.com/v1?region=eu",
 			GIT_REMOTE: "ssh://git@github.com/org/repo.git",
 			REL_PATH: "opt/ghidra11/support/analyzeHeadless",
