@@ -1095,4 +1095,16 @@ describe('exposurePolicyReason for a sub-agent', () => {
     // A sub-agent that can't see public.shared gets the except explanation.
     expect(exposurePolicyReason('shared', caps, [])?.hidden).toMatch(/servers\.private lists it under "expose: except"/);
   });
+
+  it('still explains a hidden tool once the server\'s other tools are synthesized', () => {
+    // What the running server holds after configure: the policy's own tools.
+    const caps = {
+      providers: ['claude-code'],
+      options: { toolExposure: 'search' },
+      skills: [],
+      servers: [{ id: 'billing', type: 'mcp', def: { cmd: 'node' }, expose: 'except', tools: ['delete_invoice'] }],
+      tools: [{ id: 'lookup_invoice', type: 'mcp', fromServerExpose: true, def: { server: '@billing', tool: 'lookup_invoice' } }],
+    } as unknown as Capabilities;
+    expect(exposurePolicyReason('delete_invoice', caps)?.hidden).toMatch(/servers\.billing lists it under "expose: except"/);
+  });
 });
