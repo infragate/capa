@@ -67,11 +67,17 @@ const CREDENTIAL_VALUE = [
  * relative path can look the same (`opt/ghidra11/support/analyzeHeadless`),
  * so tell them apart by randomness, as secret scanners do: path segments are
  * words (about 4 bits per character), random keys are not (4.5 and up).
+ * `+` or `=`, or the 40 mixed-case characters of an AWS secret key, count
+ * whatever the entropy.
  */
 function isBase64Secret(value: string): boolean {
 	if (!/^(?!\/)[A-Za-z0-9+/]{30,}={0,2}$/.test(value)) return false;
 	if (!/\d/.test(value) || !/[A-Za-z]/.test(value)) return false;
-	return /[+=]/.test(value) || shannonEntropy(value) >= 4.3;
+	if (/[+=]/.test(value)) return true;
+	if (value.length === 40 && /[A-Z]/.test(value) && /[a-z]/.test(value)) {
+		return true;
+	}
+	return shannonEntropy(value) >= 4.3;
 }
 
 /** Bits per character. */
