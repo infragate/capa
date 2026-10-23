@@ -12,6 +12,7 @@ import { logger } from "../shared/logger";
 import { CAPA_SERVER_ICONS } from "../shared/mcp-icons";
 import { projectNameFromId } from "../shared/paths";
 import {
+	type SearchableTool,
 	exactNameMatches,
 	isToolNameQuery,
 	searchableTools,
@@ -106,12 +107,6 @@ function toolTextError(message: string): {
 }
 
 /**
- * Error text for a tool name that isn't in the project's catalog. Says whether
- * a server's `expose` policy hides it, suggests close names (a bare remote
- * name such as `get_issue` maps to `github.get_issue`), and gives the next
- * step for this exposure mode, so it can't read as a skills/setup problem.
- */
-/**
  * Why a tool name that isn't in the catalog may be missing, from the servers'
  * `expose` policies. `hidden` is definite (the name is in an active `except`
  * list, so the tool exists); `note` is context under `exactly` / `none`,
@@ -121,9 +116,12 @@ function toolTextError(message: string): {
 export function exposurePolicyReason(
 	name: string,
 	capabilities: Capabilities | null,
+	/** Tools the caller can call (a sub-agent sees fewer); defaults to all. */
+	visible?: SearchableTool[],
 ): { hidden?: string; note?: string } | null {
 	if (!capabilities) return null;
-	if (exactNameMatches(searchableTools(capabilities), name).length > 0) return null;
+	const callable = visible ?? searchableTools(capabilities);
+	if (exactNameMatches(callable, name).length > 0) return null;
 	// Only servers whose `expose` is in effect: hand-written `tools:` entries
 	// turn the policy off.
 	const declared = serverIdsWithDeclaredTools(capabilities);
@@ -151,6 +149,12 @@ export function exposurePolicyReason(
 	return note ? { note } : null;
 }
 
+/**
+ * Error text for a tool name that isn't in the project's catalog. Says whether
+ * a server's `expose` policy hides it, suggests close names (a bare remote
+ * name such as `get_issue` maps to `github.get_issue`), and gives the next
+ * step for this exposure mode, so it can't read as a skills/setup problem.
+ */
 export function unknownToolMessage(
 	name: string,
 	capabilities: Capabilities | null,
@@ -717,10 +721,12 @@ export class CapaMCPServer {
 			const unknownName =
 				isToolNameQuery(query) && exactNameMatches(candidates, query).length === 0;
 			// Say why a named tool is missing when an `expose` policy explains it.
-			const policy = unknownName ? exposurePolicyReason(query.trim(), capabilities) : null;
+			const policy = unknownName
+				? exposurePolicyReason(query.trim(), capabilities, candidates)
+				: null;
 			const payload = buildSearchPayload(query, matches, {
 				unknownName,
-				...(policy ? { detail: policy.hidden ?? policy.note } : {}),
+				...(policy ?? {}),
 			});
 			const result = {
 				content: [{ type: "text", text: JSON.stringify(payload) }],

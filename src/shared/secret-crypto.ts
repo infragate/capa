@@ -43,8 +43,8 @@ function decryptCiphertext(value: string): string {
 	);
 }
 
-/** IV (12) + auth tag (16) + at least one byte of data, base64 after the prefix. */
-const MIN_CIPHER_BYTES = 12 + 16 + 1;
+/** IV (12) + auth tag (16), base64 after the prefix; an empty secret has no data. */
+const MIN_CIPHER_BYTES = 12 + 16;
 
 /** True when `value` has the shape encryptSecret produces (not whether it decrypts). */
 function isCipherEnvelope(value: string): boolean {

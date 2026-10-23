@@ -50,17 +50,47 @@ const SENSITIVE_ENV =
  * long run of mixed letters and digits with no path separator or whitespace.
  */
 const CREDENTIAL_VALUE = [
-	// Any URL userinfo, `user:pass@` or a token alone (`https://TOKEN@host`).
-	/:\/\/[^/\s@]+@/,
+	// URL userinfo with a password (`user:pass@`) ...
+	/:\/\/[^/\s:@]+:[^/\s@]+@/,
+	// ... or a token alone (`https://TOKEN@host`): 16 characters or more. A
+	// short username such as `ssh://git@github.com` is not a credential.
+	/:\/\/[^/\s:@]{16,}@/,
 	// Credential parameters in a query string or connection string.
 	/(^|[?&;\s])(password|passwd|pwd|secret|token|access[-_]?token|api[-_]?key|access[-_]?key|sig|signature)=[^&;\s]/i,
 	/\b(bearer|basic)\s+\S/i,
 	/^(sk|pk|rk)[-_]|^(ghp|gho|ghu|ghs|ghr|github_pat|glpat|xox[abpors]|AKIA|ASIA|AIza|npm_|pypi-)/,
 	/^(?=[^/\\\s]*\d)(?=[^/\\\s]*[A-Za-z])[^/\\\s]{24,}$/,
-	// Base64-style secrets (AWS secret keys) contain `/` and `+`; real paths
-	// start with `/` or carry `.`, `-` or `_`, so they don't match.
-	/^(?!\/)(?=.*\d)(?=.*[A-Za-z])[A-Za-z0-9+/]{30,}={0,2}$/,
 ];
+
+/**
+ * Base64-style secrets contain `/` and `+`, so the rule above misses them. A
+ * relative path can look the same (`opt/ghidra11/support/analyzeHeadless`),
+ * so tell them apart by randomness, as secret scanners do: path segments are
+ * words (about 4 bits per character), random keys are not (4.5 and up).
+ * `+` or `=`, or the 40 mixed-case characters of an AWS secret key, count
+ * whatever the entropy.
+ */
+function isBase64Secret(value: string): boolean {
+	if (!/^(?!\/)[A-Za-z0-9+/]{30,}={0,2}$/.test(value)) return false;
+	if (!/\d/.test(value) || !/[A-Za-z]/.test(value)) return false;
+	if (/[+=]/.test(value)) return true;
+	if (value.length === 40 && /[A-Z]/.test(value) && /[a-z]/.test(value)) {
+		return true;
+	}
+	return shannonEntropy(value) >= 4.3;
+}
+
+/** Bits per character. */
+function shannonEntropy(value: string): number {
+	const counts = new Map<string, number>();
+	for (const ch of value) counts.set(ch, (counts.get(ch) ?? 0) + 1);
+	let bits = 0;
+	for (const n of counts.values()) {
+		const p = n / value.length;
+		bits -= p * Math.log2(p);
+	}
+	return bits;
+}
 
 const PLACEHOLDER = /\$\{[^}]+\}/g;
 
@@ -77,7 +107,10 @@ function redactEnvValue(name: string, value: string): string {
 	const literal = value.replace(PLACEHOLDER, "").trim();
 	if (!literal) return value;
 	if (SENSITIVE_ENV.test(name)) return "";
-	if (CREDENTIAL_VALUE.some((re) => re.test(value) || re.test(literal))) {
+	if (
+		CREDENTIAL_VALUE.some((re) => re.test(value) || re.test(literal)) ||
+		isBase64Secret(literal)
+	) {
 		return "";
 	}
 	return value;
