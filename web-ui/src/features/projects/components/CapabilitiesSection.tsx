@@ -26,7 +26,6 @@ import { matchesSearch } from '../../../lib/utils';
 import { CapabilityCollapsible } from './CapabilityCollapsible';
 import { SkillsList } from './SkillsList';
 import { ToolsSection } from './ToolsSection';
-import { authoredTools } from '../../../lib/serverExposure';
 import { RulesList } from './RulesList';
 import { HooksList } from './HooksList';
 import { SubagentsList } from './SubagentsList';
@@ -246,7 +245,9 @@ export function CapabilitiesSection({
       <CapabilityCollapsible
         title={t('detail.toolsSection')}
         icon={Wrench}
-        count={servers.length + authoredTools(tools).length}
+        // Every tool the project exposes: authored entries plus the tools
+        // synthesized from each server's `expose` policy. Not the server count.
+        count={tools.length}
         forceOpen={forceOpen.tools}
         suggestOpen={needsOAuthCount > 0}
         keepMounted={addServerOpen || editServerOpen || addCommandToolOpen}
