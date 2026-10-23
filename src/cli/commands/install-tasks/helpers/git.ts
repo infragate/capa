@@ -57,11 +57,6 @@ function explainGenericGitError(error: any, errorMessage: string, repoUrl: strin
         `remembers the credentials, then re-run \`capa install\`.`
     );
   }
-  // The cache's own ref errors ("Tag/branch "v2" not found", "Commit … not
-  // found", "Pinned commit …") already name the cause; keep them.
-  if (/^(Tag\/branch |Commit |Pinned commit )/.test(error?.message ?? '')) {
-    return error instanceof Error ? error : new Error(errorMessage);
-  }
   if (/repository '.*' not found/.test(errorMessage) || errorMessage.includes('does not appear to be a git repository')) {
     return new Error(`Repository not found: ${repoUrl}\nCheck the URL, or sign in with git if it is private.`);
   }
@@ -83,6 +78,10 @@ export function explainGitError(
   hasAuth: boolean,
   cloneUrl?: string
 ): Error {
+  // The cache's own errors (an invalid ref or pin, a missing tag or commit)
+  // already name the cause. Only a failed git process (execFile sets `cmd`,
+  // a spawn failure sets `code`) needs explaining.
+  if (error instanceof Error && !('cmd' in error) && !('code' in error)) return error;
   const errorMessage: string = error?.stderr || error?.message || '';
   const host = cloneUrl ? hostOf(cloneUrl) : `${platform}.com`;
   const platformName = getGitProvider(platform)?.displayName ?? host;
