@@ -103,6 +103,18 @@ describe('plugin skills with the same name (#330)', () => {
     );
   });
 
+  it('keeps a renamed skill in the plugin agent that uses it', async () => {
+    const agents = join(snapshots['Ovid/paad']!, 'plugins', 'paad', 'agents');
+    mkdirSync(agents, { recursive: true });
+    writeFileSync(
+      join(agents, 'helper.md'),
+      '---\nname: helper\ndescription: helps\nskills: [handoff]\n---\n\nHelp.\n',
+    );
+    const result = await run({ plugins: bothPlugins });
+    const helper = result.mergedCapabilities.subagents?.find((a) => a.id === 'helper');
+    expect(helper?.skills).toEqual(['paad-handoff']);
+  });
+
   it('shows the renamed skill\'s content in the viewer', async () => {
     const result = await run({ plugins: bothPlugins });
     const renamed = result.mergedCapabilities.skills.find((s) => s.id === 'paad-handoff')!;

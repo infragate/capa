@@ -90,6 +90,40 @@ describe("redactServerForApi", () => {
 });
 
 describe("redactOAuth2ConfigForApi", () => {
+	// Generic names only: a name like `*_TOKEN` is blanked before the value is checked.
+	it("blanks credentials in URLs, connection strings and base64 tokens", () => {
+		const out = redactServerForApi({
+			env: {
+				DATABASE_URL: "postgres://db.internal/app?sslmode=require&password=x",
+				REPO_URL: "https://ghp_16C7e42F292c6912E7710c838347Ae178B4a@github.com/o/r.git",
+				GIT_REMOTE: "ssh://git@github.com/org/repo.git",
+				REL_PATH: "opt/ghidra11/support/analyzeHeadless",
+				CONN: "Server=db;Database=app;Pwd=hunter2",
+				AWS_VALUE: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+				LOW_ENTROPY_40: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/a1B2",
+				SERVICE_URL: "https://api.example.com/v1?region=eu",
+				TOOL_PATH: "/usr/local/lib/node_modules/some-tool/bin/cli.js",
+				MIRROR_URL: "https://abcdefghijklmnop@host.example/repo",
+				UNPADDED_B64: "AbcdEFGH/ijkLMNO1234567890QRSTUV",
+				SERVICE_DIR: "services/payments/api/v2/handlers",
+			},
+		});
+		expect(out.env).toEqual({
+			DATABASE_URL: "",
+			REPO_URL: "",
+			CONN: "",
+			AWS_VALUE: "",
+			LOW_ENTROPY_40: "",
+			MIRROR_URL: "",
+			UNPADDED_B64: "",
+			SERVICE_DIR: "services/payments/api/v2/handlers",
+			SERVICE_URL: "https://api.example.com/v1?region=eu",
+			GIT_REMOTE: "ssh://git@github.com/org/repo.git",
+			REL_PATH: "opt/ghidra11/support/analyzeHeadless",
+			TOOL_PATH: "/usr/local/lib/node_modules/some-tool/bin/cli.js",
+		});
+	});
+
 	it("strips clientSecret and client_secret from oauth2 listing payloads", () => {
 		const redacted = redactOAuth2ConfigForApi({
 			client_id: "public-client",

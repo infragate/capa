@@ -302,7 +302,13 @@ export async function resolveRef(
 	const { version, ref, pinnedSha } = opts;
 	assertGitRefName("version", version);
 	assertGitRefName("ref", ref);
-	assertGitRefName("pinned commit", pinnedSha);
+	// A lockfile pin is a commit SHA (full, or abbreviated if hand-edited);
+	// a branch or tag name there would silently float.
+	if (pinnedSha && !/^[0-9a-f]{7,40}$/i.test(pinnedSha)) {
+		throw new Error(
+			`Invalid pinned commit "${pinnedSha}" in capabilities.lock: expected a commit SHA. Remove the entry or run "capa install --no-cache" to re-pin.`,
+		);
+	}
 
 	if (pinnedSha) {
 		const sha = await tryResolveRefInMirror(mirrorDir, pinnedSha);
