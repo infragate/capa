@@ -136,16 +136,20 @@ export interface SearchPayload {
 export function buildSearchPayload(
 	query: string,
 	matches: SearchMatch[],
-	/** `detail`: why it's missing, when a server's `expose` policy explains it. */
-	opts: { unknownName?: boolean; detail?: string } = {},
+	/**
+	 * `hidden`: a server's `expose: except` list hides the tool (replaces the
+	 * generic sentence); `note`: policy context to add to it.
+	 */
+	opts: { unknownName?: boolean; hidden?: string; note?: string } = {},
 ): SearchPayload {
 	// A tool name that matches nothing exactly isn't in this project's catalog;
 	// say so instead of letting loosely related matches look like it.
-	const unknown = opts.unknownName
-		? opts.detail?.startsWith("Tool ")
-			? `${opts.detail} `
-			: `No tool named "${query.trim()}" is exposed by this project. ${opts.detail ? `${opts.detail} ` : ""}`
-		: "";
+	let unknown = "";
+	if (opts.unknownName) {
+		unknown = opts.hidden
+			? `${opts.hidden} `
+			: `No tool named "${query.trim()}" is exposed by this project. ${opts.note ? `${opts.note} ` : ""}`;
+	}
 	return {
 		success: true,
 		query,

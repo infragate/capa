@@ -50,17 +50,30 @@ const SENSITIVE_ENV =
  * long run of mixed letters and digits with no path separator or whitespace.
  */
 const CREDENTIAL_VALUE = [
-	// Any URL userinfo, `user:pass@` or a token alone (`https://TOKEN@host`).
-	/:\/\/[^/\s@]+@/,
+	// URL userinfo with a password (`user:pass@`) ...
+	/:\/\/[^/\s:@]+:[^/\s@]+@/,
+	// ... or a token alone (`https://TOKEN@host`): long, letters and digits.
+	// A plain username such as `ssh://git@github.com` is not a credential.
+	/:\/\/(?=[^/\s:@]*\d)(?=[^/\s:@]*[A-Za-z])[^/\s:@]{16,}@/,
 	// Credential parameters in a query string or connection string.
 	/(^|[?&;\s])(password|passwd|pwd|secret|token|access[-_]?token|api[-_]?key|access[-_]?key|sig|signature)=[^&;\s]/i,
 	/\b(bearer|basic)\s+\S/i,
 	/^(sk|pk|rk)[-_]|^(ghp|gho|ghu|ghs|ghr|github_pat|glpat|xox[abpors]|AKIA|ASIA|AIza|npm_|pypi-)/,
 	/^(?=[^/\\\s]*\d)(?=[^/\\\s]*[A-Za-z])[^/\\\s]{24,}$/,
-	// Base64-style secrets (AWS secret keys) contain `/` and `+`; real paths
-	// start with `/` or carry `.`, `-` or `_`, so they don't match.
-	/^(?!\/)(?=.*\d)(?=.*[A-Za-z])[A-Za-z0-9+/]{30,}={0,2}$/,
 ];
+
+/**
+ * Base64-style secrets contain `/` and `+`, so the rule above misses them. A
+ * relative path can look the same (`opt/ghidra11/support/analyzeHeadless`),
+ * so require a strong sign: `+` or `=` padding, or exactly the 40 mixed-case
+ * characters of an AWS secret key.
+ */
+function isBase64Secret(value: string): boolean {
+	if (!/^(?!\/)[A-Za-z0-9+/]{30,}={0,2}$/.test(value)) return false;
+	if (!/\d/.test(value) || !/[A-Za-z]/.test(value)) return false;
+	if (/[+=]/.test(value)) return true;
+	return value.length === 40 && /[A-Z]/.test(value) && /[a-z]/.test(value);
+}
 
 const PLACEHOLDER = /\$\{[^}]+\}/g;
 
@@ -77,7 +90,10 @@ function redactEnvValue(name: string, value: string): string {
 	const literal = value.replace(PLACEHOLDER, "").trim();
 	if (!literal) return value;
 	if (SENSITIVE_ENV.test(name)) return "";
-	if (CREDENTIAL_VALUE.some((re) => re.test(value) || re.test(literal))) {
+	if (
+		CREDENTIAL_VALUE.some((re) => re.test(value) || re.test(literal)) ||
+		isBase64Secret(literal)
+	) {
 		return "";
 	}
 	return value;

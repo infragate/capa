@@ -100,6 +100,28 @@ describe("credential at-rest encryption", () => {
 		expect(row.value).not.toContain("plain-to-migrate");
 	});
 
+	it("keeps an encrypted empty secret as it is across reopens", () => {
+		db.setVariable("p1", "EMPTY", "");
+		db.close();
+		const stored = () => {
+			const raw = new Database(dbPath, { readonly: true });
+			const row = raw
+				.query("SELECT value FROM variables WHERE key = ?")
+				.get("EMPTY") as { value: string } | null;
+			raw.close();
+			return row?.value;
+		};
+		const before = stored();
+		for (let i = 0; i < 2; i++) {
+			db = new CapaDatabase(dbPath);
+			expect(db.undecryptableSecrets).toBe(0);
+			db.close();
+		}
+		expect(stored()).toBe(before);
+		db = new CapaDatabase(dbPath);
+		expect(db.getVariable("p1", "EMPTY") ?? "").toBe("");
+	});
+
 	it("encrypts legacy plaintext that only looks like the cipher prefix", () => {
 		db.close();
 		const raw = new Database(dbPath);

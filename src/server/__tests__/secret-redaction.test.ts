@@ -94,7 +94,9 @@ describe("redactOAuth2ConfigForApi", () => {
 		const out = redactServerForApi({
 			env: {
 				DATABASE_URL: "postgres://db.internal/app?sslmode=require&password=x",
-				REPO_URL: "https://ghp_token123@github.com/o/r.git",
+				REPO_URL: "https://ghp_16C7e42F292c6912E7710c838347Ae178B4a@github.com/o/r.git",
+				GIT_REMOTE: "ssh://git@github.com/org/repo.git",
+				REL_PATH: "opt/ghidra11/support/analyzeHeadless",
 				CONN: "Server=db;Database=app;Pwd=hunter2",
 				AWS_SECRET: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
 				SERVICE_URL: "https://api.example.com/v1?region=eu",
@@ -107,6 +109,8 @@ describe("redactOAuth2ConfigForApi", () => {
 			CONN: "",
 			AWS_SECRET: "",
 			SERVICE_URL: "https://api.example.com/v1?region=eu",
+			GIT_REMOTE: "ssh://git@github.com/org/repo.git",
+			REL_PATH: "opt/ghidra11/support/analyzeHeadless",
 			TOOL_PATH: "/usr/local/lib/node_modules/some-tool/bin/cli.js",
 		});
 	});

@@ -484,6 +484,8 @@ export async function resolvePlugins(
     let releasePluginLock: (() => void) | undefined;
     /** Stamp of a copy this resolver swapped in during this run (for failure cleanup). */
     let publishedStamp: string | undefined;
+    // Skill-name claims before this entry, restored if it fails.
+    const ownersSnap = new Map(skillOwners);
     const mergeSnap = {
       skills: mergedSkills.length,
       servers: mergedServers.length,
@@ -1037,10 +1039,10 @@ export async function resolvePlugins(
         currentPluginIds.delete(pluginInstallId);
         failedPluginIds.add(pluginInstallId);
         lockBuilder.removePlugin(pluginInstallId);
-        // Release the skill names this plugin claimed, so a later plugin keeps them.
-        for (const [id, owner] of skillOwners) {
-          if (owner === pluginInstallId) skillOwners.delete(id);
-        }
+        // Release the skill names this entry claimed, so a later plugin keeps
+        // them. Restored from the snapshot: another entry may share this id.
+        skillOwners.clear();
+        for (const [id, owner] of ownersSnap) skillOwners.set(id, owner);
         mergedSkills.length = mergeSnap.skills;
         mergedServers.length = mergeSnap.servers;
         mergedTools.length = mergeSnap.tools;
