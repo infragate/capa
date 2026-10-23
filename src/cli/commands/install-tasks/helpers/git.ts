@@ -2,6 +2,7 @@ import * as childProcess from 'child_process';
 import { promisify } from 'util';
 import { getGitProvider } from '../../../../shared/git-providers/registry';
 import type { CachePlatform } from '../../../../shared/cache';
+import { isGitProcessError } from '../../../../shared/cache/git-cli';
 
 export async function checkGitInstalled(): Promise<boolean> {
   try {
@@ -79,9 +80,8 @@ export function explainGitError(
   cloneUrl?: string
 ): Error {
   // The cache's own errors (an invalid ref or pin, a missing tag or commit)
-  // already name the cause. Only a failed git process (execFile sets `cmd`,
-  // a spawn failure sets `code`) needs explaining.
-  if (error instanceof Error && !('cmd' in error) && !('code' in error)) return error;
+  // already name the cause. Only a failed git process needs explaining.
+  if (error instanceof Error && !isGitProcessError(error)) return error;
   const errorMessage: string = error?.stderr || error?.message || '';
   const host = cloneUrl ? hostOf(cloneUrl) : `${platform}.com`;
   const platformName = getGitProvider(platform)?.displayName ?? host;

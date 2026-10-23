@@ -1,6 +1,7 @@
 import { describe, it, expect, spyOn } from 'bun:test';
 import * as childProcess from 'child_process';
 import { checkGitInstalled, explainGitError } from '../git';
+import { git } from '../../../../../shared/cache/git-cli';
 
 describe('explainGitError', () => {
   it("keeps the cache's own messages instead of reporting an unknown clone error", () => {
@@ -15,11 +16,22 @@ describe('explainGitError', () => {
     }
   });
 
-  it('still explains a failed git process', () => {
-    const failed = Object.assign(new Error('Command failed: git clone\nfatal: unable to access host'), { cmd: 'git clone', code: 128 });
+  it('still explains an error from running git', async () => {
+    // The error shape is whatever the runtime gives; only its origin matters.
+    const fromGit = async (err: Error) => {
+      const spy = spyOn(childProcess, 'execFile').mockImplementation(
+        ((_cmd: string, _args: unknown, _opts: unknown, cb: (err: Error) => void) => cb(err)) as unknown as typeof childProcess.execFile,
+      );
+      try {
+        return await git(['clone', 'x']).then(() => null, (e: Error) => e);
+      } finally {
+        spy.mockRestore();
+      }
+    };
+    const failed = await fromGit(new Error('Command failed: git clone\nfatal: unable to access host'));
     expect(explainGitError(failed, 'github', 'o/r', false).message).toMatch(/^Network error/);
-    const spawn = Object.assign(new Error('spawn git ENOENT'), { code: 'ENOENT' });
-    expect(explainGitError(spawn, 'git', 'o/r', false, 'https://h/o/r.git').message).toMatch(/^Git is not installed/);
+    const missing = await fromGit(Object.assign(new Error('spawn git ENOENT'), { code: 'ENOENT' }));
+    expect(explainGitError(missing, 'git', 'o/r', false, 'https://h/o/r.git').message).toMatch(/^Git is not installed/);
   });
 });
 
