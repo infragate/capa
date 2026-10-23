@@ -688,6 +688,8 @@ export async function resolvePlugins(
       provider: manifest.provider,
     };
     const pluginSkillIds: string[] = [];
+    /** Manifest skill id -> id it was installed under (differs after a name clash). */
+    const installedSkillIds = new Map<string, string>();
     const pluginServerIds: string[] = [];
     const pluginSubagentIds: string[] = [];
     const pluginHookIds: string[] = [];
@@ -782,6 +784,7 @@ export async function resolvePlugins(
       skillOwners.set(skillId, pluginInstallId);
 
       pluginSkillIds.push(skillId);
+      installedSkillIds.set(entry.id, skillId);
       if (materializeProjectSkills) {
         installSkillTree(skillId, srcSkillDir, manifest.name, skillId !== entry.id);
       }
@@ -873,7 +876,6 @@ export async function resolvePlugins(
     }
 
     const capaProviderId = pluginProviderToCapaId(manifest.provider);
-    const pluginSkillIdSet = new Set(pluginSkillIds);
 
     for (const agent of manifest.agentEntries ?? []) {
       if (!isSafeCapabilityId(agent.id)) {
@@ -895,7 +897,10 @@ export async function resolvePlugins(
       }
       registeredSubagentIds.add(agent.id);
       pluginSubagentIds.push(agent.id);
-      const skillIds = agent.skillIds.filter((id) => pluginSkillIdSet.has(id));
+      // Follow renames: an agent's `handoff` may be installed as `<plugin>-handoff`.
+      const skillIds = agent.skillIds
+        .map((id) => installedSkillIds.get(id))
+        .filter((id): id is string => id !== undefined);
       mergedSubagents.push({
         id: agent.id,
         description: agent.description,
@@ -1032,6 +1037,10 @@ export async function resolvePlugins(
         currentPluginIds.delete(pluginInstallId);
         failedPluginIds.add(pluginInstallId);
         lockBuilder.removePlugin(pluginInstallId);
+        // Release the skill names this plugin claimed, so a later plugin keeps them.
+        for (const [id, owner] of skillOwners) {
+          if (owner === pluginInstallId) skillOwners.delete(id);
+        }
         mergedSkills.length = mergeSnap.skills;
         mergedServers.length = mergeSnap.servers;
         mergedTools.length = mergeSnap.tools;

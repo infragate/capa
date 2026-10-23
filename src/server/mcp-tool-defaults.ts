@@ -136,12 +136,15 @@ export interface SearchPayload {
 export function buildSearchPayload(
 	query: string,
 	matches: SearchMatch[],
-	opts: { unknownName?: boolean } = {},
+	/** `detail`: why it's missing, when a server's `expose` policy explains it. */
+	opts: { unknownName?: boolean; detail?: string } = {},
 ): SearchPayload {
 	// A tool name that matches nothing exactly isn't in this project's catalog;
 	// say so instead of letting loosely related matches look like it.
 	const unknown = opts.unknownName
-		? `No tool named "${query.trim()}" is exposed by this project. `
+		? opts.detail?.startsWith("Tool ")
+			? `${opts.detail} `
+			: `No tool named "${query.trim()}" is exposed by this project. ${opts.detail ? `${opts.detail} ` : ""}`
 		: "";
 	return {
 		success: true,

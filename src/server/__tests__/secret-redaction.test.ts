@@ -90,6 +90,27 @@ describe("redactServerForApi", () => {
 });
 
 describe("redactOAuth2ConfigForApi", () => {
+	it("blanks credentials in URLs, connection strings and base64 tokens", () => {
+		const out = redactServerForApi({
+			env: {
+				DATABASE_URL: "postgres://db.internal/app?sslmode=require&password=x",
+				REPO_URL: "https://ghp_token123@github.com/o/r.git",
+				CONN: "Server=db;Database=app;Pwd=hunter2",
+				AWS_SECRET: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+				SERVICE_URL: "https://api.example.com/v1?region=eu",
+				TOOL_PATH: "/usr/local/lib/node_modules/some-tool/bin/cli.js",
+			},
+		});
+		expect(out.env).toEqual({
+			DATABASE_URL: "",
+			REPO_URL: "",
+			CONN: "",
+			AWS_SECRET: "",
+			SERVICE_URL: "https://api.example.com/v1?region=eu",
+			TOOL_PATH: "/usr/local/lib/node_modules/some-tool/bin/cli.js",
+		});
+	});
+
 	it("strips clientSecret and client_secret from oauth2 listing payloads", () => {
 		const redacted = redactOAuth2ConfigForApi({
 			client_id: "public-client",

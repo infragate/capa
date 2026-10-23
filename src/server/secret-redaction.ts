@@ -50,10 +50,16 @@ const SENSITIVE_ENV =
  * long run of mixed letters and digits with no path separator or whitespace.
  */
 const CREDENTIAL_VALUE = [
-	/:\/\/[^/\s:@]+:[^/\s@]+@/,
+	// Any URL userinfo, `user:pass@` or a token alone (`https://TOKEN@host`).
+	/:\/\/[^/\s@]+@/,
+	// Credential parameters in a query string or connection string.
+	/(^|[?&;\s])(password|passwd|pwd|secret|token|access[-_]?token|api[-_]?key|access[-_]?key|sig|signature)=[^&;\s]/i,
 	/\b(bearer|basic)\s+\S/i,
 	/^(sk|pk|rk)[-_]|^(ghp|gho|ghu|ghs|ghr|github_pat|glpat|xox[abpors]|AKIA|ASIA|AIza|npm_|pypi-)/,
 	/^(?=[^/\\\s]*\d)(?=[^/\\\s]*[A-Za-z])[^/\\\s]{24,}$/,
+	// Base64-style secrets (AWS secret keys) contain `/` and `+`; real paths
+	// start with `/` or carry `.`, `-` or `_`, so they don't match.
+	/^(?!\/)(?=.*\d)(?=.*[A-Za-z])[A-Za-z0-9+/]{30,}={0,2}$/,
 ];
 
 const PLACEHOLDER = /\$\{[^}]+\}/g;

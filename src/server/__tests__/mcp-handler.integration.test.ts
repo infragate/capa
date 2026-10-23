@@ -8,7 +8,8 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { CapaDatabase } from '../../db/database';
 import { SessionManager } from '../session-manager';
-import { CapaMCPServer, unknownToolMessage } from '../mcp-handler';
+import { CapaMCPServer, exposurePolicyReason, unknownToolMessage } from '../mcp-handler';
+import { buildSearchPayload } from '../mcp-tool-defaults';
 import type { Capabilities } from '../../types/capabilities';
 
 const PROJECT_ID = 'test-proj';
@@ -1053,5 +1054,29 @@ describe('unknownToolMessage', () => {
     expect(unknownToolMessage('nope', caps('none'))).toMatch(/capa sh/);
     expect(unknownToolMessage('nope', caps('expose-all'))).toMatch(/your tool list/);
     expect(unknownToolMessage('get_issue', caps('search'))).toMatch(/Closest names: github\.get_issue/);
+  });
+});
+
+describe('search explains a missing tool name', () => {
+  const caps = (servers: unknown[]) =>
+    ({ providers: ['claude-code'], options: { toolExposure: 'search' }, skills: [], servers, tools: [] }) as unknown as Capabilities;
+  const srv = (id: string, expose: string, tools: string[] = []) => ({
+    id, type: 'mcp', def: { url: 'https://x' }, expose, tools,
+  });
+
+  it('names the policy that hides it', () => {
+    const except = exposurePolicyReason('gitlab.delete_repo', caps([srv('gitlab', 'except', ['delete_repo'])]));
+    expect(buildSearchPayload('gitlab.delete_repo', [], { unknownName: true, detail: except?.hidden }).message)
+      .toMatch(/^Tool "gitlab.delete_repo" is not exposed by this project: servers\.gitlab lists it under "expose: except"/);
+
+    const exactly = exposurePolicyReason('gitlab.list_mrs', caps([srv('gitlab', 'exactly', ['get_mr'])]));
+    expect(buildSearchPayload('gitlab.list_mrs', [], { unknownName: true, detail: exactly?.note }).message)
+      .toMatch(/^No tool named "gitlab.list_mrs" is exposed by this project\. Note: servers\.gitlab uses "expose: exactly"/);
+  });
+
+  it('keeps the plain message when no policy applies', () => {
+    expect(exposurePolicyReason('nope_tool', caps([]))).toBeNull();
+    expect(buildSearchPayload('nope_tool', [], { unknownName: true }).message)
+      .toBe('No tool named "nope_tool" is exposed by this project. No tools matched. Try different words, or fewer of them.');
   });
 });

@@ -191,6 +191,9 @@ describe('cache', () => {
         await expect(resolveRef(mirrorDir, { ref: bad })).rejects.toThrow(/Invalid ref/);
       }
       await expect(resolveRef(mirrorDir, { pinnedSha: '../../../../etc/x' })).rejects.toThrow(/Invalid pinned commit/);
+      // A pin must be a commit SHA, not a branch or tag that would float.
+      await expect(resolveRef(mirrorDir, { pinnedSha: 'main' })).rejects.toThrow(/expected a commit SHA/);
+      await expect(resolveRef(mirrorDir, { pinnedSha: 'v1.0.0' })).rejects.toThrow(/expected a commit SHA/);
       // Plain names still resolve; anything git accepts as a ref name passes
       // validation (and then fails only because the fixture lacks the tag).
       expect((await resolveRef(mirrorDir, { version: 'v1.0.0' })).sha).toBe(fixture.firstSha);
