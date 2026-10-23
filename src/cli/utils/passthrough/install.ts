@@ -108,9 +108,7 @@ export async function passthroughInstall(opts: {
 
     const declaredPlugins = capabilities.plugins?.length ?? 0;
     const resolvedPlugins = capabilities.resolvedPlugins?.length ?? 0;
-    const pluginFailures = pluginResult.warnings.filter((w) =>
-      w.includes('failed to resolve and was skipped'),
-    );
+    const pluginFailures = pluginResult.failures;
     if (declaredPlugins > 0 && resolvedPlugins === 0 && pluginFailures.length > 0) {
       failed++;
       const message = pluginFailures.join('\n');

@@ -348,6 +348,9 @@ describe('resolvePlugins isolates per-plugin failures', () => {
           w.includes('failed to resolve and was skipped'),
       ),
     ).toBe(true);
+    // The same message is returned as a structured failure.
+    expect(result.failures).toHaveLength(1);
+    expect(result.warnings).toContain(result.failures[0]);
   });
 
 });

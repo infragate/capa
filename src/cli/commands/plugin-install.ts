@@ -301,6 +301,9 @@ export interface ResolvePluginsResult {
    * the install task is marked as failed rather than silently skipping the
    * plugin. */
   warnings: string[];
+  /** One message per declared plugin that failed to resolve and was skipped.
+   * Each is also in `warnings`; use this list to tell failures apart. */
+  failures: string[];
 }
 
 /**
@@ -378,6 +381,7 @@ export async function resolvePlugins(
   // `${PLUGIN_DATA}` dir names of every declared plugin, failed or not.
   const declaredDataIds = new Set<string>();
   const warnings: string[] = [];
+  const failures: string[] = [];
 
   const registeredServerIds = new Set(mergedServers.map(s => s.id));
   const registeredSubagentIds = new Set(mergedSubagents.map((a) => a.id));
@@ -1075,9 +1079,9 @@ export async function resolvePlugins(
           }
         }
       }
-      warnings.push(
-        `Plugin "${pluginLabel}" failed to resolve and was skipped: ${message}`,
-      );
+      const failure = `Plugin "${pluginLabel}" failed to resolve and was skipped: ${message}`;
+      warnings.push(failure);
+      failures.push(failure);
     } finally {
       releasePluginLock?.();
     }
@@ -1134,5 +1138,10 @@ export async function resolvePlugins(
   };
 
   // Warnings carry plugin-supplied names and keys: strip terminal controls.
-  return { mergedCapabilities, tempDirsToCleanup: tempDirs, warnings: warnings.map(stripControlChars) };
+  return {
+    mergedCapabilities,
+    tempDirsToCleanup: tempDirs,
+    warnings: warnings.map(stripControlChars),
+    failures: failures.map(stripControlChars),
+  };
 }
