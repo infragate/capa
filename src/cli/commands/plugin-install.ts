@@ -30,6 +30,7 @@ import {
 } from '../../shared/plugin-manifest';
 import { getPluginDataId, getProjectPluginDataDir, getProjectPluginsDir } from '../../shared/plugin-paths';
 import { getProvider } from '../../shared/providers';
+import { shellQuoteArg } from '../../shared/providers/hook-handlers';
 import { getGitProvider } from '../../shared/git-providers/registry';
 import { assertSafeRepoPath } from '../../shared/repo-file';
 import { assertCapaOwnedInstallPath } from '../../shared/install-path-guard';
@@ -69,13 +70,108 @@ function pluginProviderToCapaId(provider: UnifiedPluginManifest['provider']): st
   return provider === 'cursor' ? 'cursor' : 'claude-code';
 }
 
-function copyPluginToStable(tempDir: string, pluginStablePath: string): void {
+/**
+ * Copy a plugin out of its snapshot. Symlinks are replaced by what they point
+ * to, which may be anywhere in the snapshot (e.g. GitLab's plugins link
+ * `skills/<name>` to the repo's top-level `skills/`), so the copy stands alone.
+ */
+function copyPluginToStable(
+  manifestRoot: string,
+  pluginStablePath: string,
+  snapshotRoot: string,
+  onSkippedLink?: (relPath: string, reason: string) => void,
+): void {
   mkdirSync(resolve(pluginStablePath, '..'), { recursive: true });
-  try {
-    cpSync(tempDir, pluginStablePath, { recursive: true });
-  } catch {
-    copySkillTree({ src: tempDir, dst: pluginStablePath });
+  copySkillTree({
+    src: manifestRoot,
+    dst: pluginStablePath,
+    root: snapshotRoot,
+    // No per-file cap, as with the old cpSync copy. Each directory is copied
+    // at most once, so links can't multiply the size.
+    maxFileBytes: Number.POSITIVE_INFINITY,
+    onSkippedLink,
+  });
+}
+
+/**
+ * Hooks that read the `CLAUDE_PLUGIN_ROOT` environment variable at runtime
+ * (`process.env.CLAUDE_PLUGIN_ROOT`, `$CLAUDE_PLUGIN_ROOT`) break once capa
+ * writes them into project settings: Claude Code only sets it for hooks of an
+ * installed plugin (#326). `${CLAUDE_PLUGIN_ROOT}` placeholders were already
+ * expanded, so any name left is such a read: set the variable in front of the
+ * command. Exec form can't set env, so it becomes one shell command.
+ */
+export function withPluginRootEnv(
+  command: string | undefined,
+  args: string[] | undefined,
+  pluginRoot: string,
+): { command: string | undefined; args: string[] | undefined; setsRoot: boolean } {
+  if (!command || !(readsPluginRootEnv(command) || (args ?? []).some(readsPluginRootEnv))) {
+    return { command, args, setsRoot: false };
   }
+  const shellCommand = args?.length
+    ? [command, ...args].map(shellQuoteArg).join(' ')
+    : command;
+  const root = shellQuoteArg(pluginRoot.replace(/\\/g, '/'));
+  // `export` (not a `VAR=x cmd` prefix) so every command of a chain or pipe
+  // sees it; the hook runs in its own shell, so nothing leaks past it.
+  return {
+    command: `export CLAUDE_PLUGIN_ROOT=${root}; ${shellCommand}`,
+    args: undefined,
+    setsRoot: true,
+  };
+}
+
+/**
+ * Runtime reads of the variable in the usual shells and runtimes. A bare
+ * mention (`env | grep CLAUDE_PLUGIN_ROOT`) is data, not a read.
+ */
+function readsPluginRootEnv(value: string): boolean {
+  return (
+    /(?:\$\{?|%|\$env:|process\.env\.)CLAUDE_PLUGIN_ROOT\b/.test(value) ||
+    /(?:process\.env|environ|ENV)\s*\[\s*['"]CLAUDE_PLUGIN_ROOT['"]/.test(value) ||
+    /(?:getenv|environ\.get|Getenv)\s*\(\s*['"]CLAUDE_PLUGIN_ROOT['"]/.test(value)
+  );
+}
+
+/**
+ * Claude Code runs project hooks through Git Bash on Windows and falls back
+ * to PowerShell without it, where the `export` above doesn't parse.
+ */
+function windowsWithoutBash(): boolean {
+  if (process.platform !== 'win32') return false;
+  if (Bun.which('bash') || process.env.CLAUDE_CODE_GIT_BASH_PATH) return false;
+  return !existsSync('C:\\Program Files\\Git\\bin\\bash.exe');
+}
+
+/** Owner label for skills declared in the capabilities file itself. */
+const AUTHORED_SKILL_OWNER = '';
+
+/** `base`, or `base-2`, `base-3`, ... when a skill already uses that id. */
+function unusedSkillId(base: string, skills: Skill[], owners: Map<string, string>): string {
+  const taken = (id: string) => owners.has(id) || skills.some((s) => s.id === id);
+  let id = base;
+  for (let n = 2; taken(id); n++) id = `${base}-${n}`;
+  return id;
+}
+
+/**
+ * Point a copied SKILL.md's `name` at the id it was installed under, so a
+ * renamed skill doesn't show up under the other skill's name (Claude Code's
+ * `/` menu uses `name`; the Agent Skills spec wants it to match the folder).
+ */
+export function setSkillMdName(skillMdPath: string, name: string): void {
+  const text = readFileSync(skillMdPath, 'utf-8');
+  const fm = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  let next: string;
+  if (!fm) {
+    next = `---\nname: ${name}\n---\n\n${text}`;
+  } else if (/^name:.*$/m.test(fm[1]!)) {
+    next = text.replace(fm[0], fm[0].replace(/^name:.*$/m, `name: ${name}`));
+  } else {
+    next = text.replace(/^---\r?\n/, (open) => `${open}name: ${name}\n`);
+  }
+  writeFileSync(skillMdPath, next, 'utf-8');
 }
 
 /** Records which source a stable plugin copy was made from. */
@@ -101,6 +197,8 @@ export function ensureStablePluginCopy(
   manifestRoot: string,
   pluginStablePath: string,
   stamp: string,
+  snapshotRoot: string = manifestRoot,
+  onSkippedLink?: (relPath: string, reason: string) => void,
 ): boolean {
   if (readPluginStamp(pluginStablePath) === stamp) return false;
 
@@ -108,7 +206,7 @@ export function ensureStablePluginCopy(
   const staging = `${pluginStablePath}.staging-${unique}`;
   const old = `${pluginStablePath}.old-${unique}`;
   try {
-    copyPluginToStable(manifestRoot, staging);
+    copyPluginToStable(manifestRoot, staging, snapshotRoot, onSkippedLink);
     writeFileSync(join(staging, PLUGIN_STAMP_FILE), stamp, 'utf-8');
 
     if (existsSync(pluginStablePath)) renameSync(pluginStablePath, old);
@@ -203,6 +301,9 @@ export interface ResolvePluginsResult {
    * the install task is marked as failed rather than silently skipping the
    * plugin. */
   warnings: string[];
+  /** One message per declared plugin that failed to resolve and was skipped.
+   * Each is also in `warnings`; use this list to tell failures apart. */
+  failures: string[];
 }
 
 /**
@@ -280,6 +381,7 @@ export async function resolvePlugins(
   // `${PLUGIN_DATA}` dir names of every declared plugin, failed or not.
   const declaredDataIds = new Set<string>();
   const warnings: string[] = [];
+  const failures: string[] = [];
 
   const registeredServerIds = new Set(mergedServers.map(s => s.id));
   const registeredSubagentIds = new Set(mergedSubagents.map((a) => a.id));
@@ -290,13 +392,24 @@ export async function resolvePlugins(
   // to these when a matching plugin manifest skill is found, and avoid auto-adding
   // a duplicate auto-merged entry for the same id.
   const userPluginSkills = new Map<string, Skill>();
+  // Who installs each skill id. The capabilities file's own skills come
+  // first, then plugins in the order they are listed; a later plugin never
+  // overwrites an earlier owner's files (#330).
+  const skillOwners = new Map<string, string>();
   for (const skill of mergedSkills) {
     if (skill.type === 'plugin') {
       userPluginSkills.set(skill.id, skill);
+    } else {
+      skillOwners.set(skill.id, AUTHORED_SKILL_OWNER);
     }
   }
 
-  function installSkillTree(entryId: string, srcSkillDir: string, pluginName: string): void {
+  function installSkillTree(
+    entryId: string,
+    srcSkillDir: string,
+    pluginName: string,
+    renamed = false,
+  ): void {
     if (!existsSync(join(srcSkillDir, 'SKILL.md'))) return;
     if (!isSafeCapabilityId(entryId)) {
       warnings.push(
@@ -347,6 +460,7 @@ export async function resolvePlugins(
             copySkillTree({ src: srcSkillDir, dst: destSkillDir });
           }
         }
+        if (renamed) setSkillMdName(join(destSkillDir, 'SKILL.md'), entryId);
         if (trackManaged) {
           db.addManagedFile(projectId, destSkillDir);
         }
@@ -374,6 +488,8 @@ export async function resolvePlugins(
     let releasePluginLock: (() => void) | undefined;
     /** Stamp of a copy this resolver swapped in during this run (for failure cleanup). */
     let publishedStamp: string | undefined;
+    // Skill-name claims before this entry, restored if it fails.
+    const ownersSnap = new Map(skillOwners);
     const mergeSnap = {
       skills: mergedSkills.length,
       servers: mergedServers.length,
@@ -532,9 +648,13 @@ export async function resolvePlugins(
     // stable copy is synchronous and runs while the lock is held.
     mkdirSync(pluginsBase, { recursive: true });
     releasePluginLock = await acquireFileLock(join(pluginsBase, `.${pluginInstallId}.lock`));
-    const stamp = `${platform}:${repoPath}@${snapshot.resolvedSha}:${resolvedSubpath || ''}`;
+    // `copy-v2`: symlinks are dereferenced since #312. Older copies kept
+    // broken relative links, so they are made again once.
+    const stamp = `copy-v2|${platform}:${repoPath}@${snapshot.resolvedSha}:${resolvedSubpath || ''}`;
     try {
-      if (ensureStablePluginCopy(manifestRoot, pluginStablePath, stamp)) {
+      const onSkippedLink = (relPath: string, reason: string) =>
+        warnings.push(`Plugin "${pluginInstallId}": skipped symlink "${relPath}" (${reason}).`);
+      if (ensureStablePluginCopy(manifestRoot, pluginStablePath, stamp, snapshot.snapshotDir, onSkippedLink)) {
         publishedStamp = stamp;
       }
     } catch (err: any) {
@@ -574,6 +694,8 @@ export async function resolvePlugins(
       provider: manifest.provider,
     };
     const pluginSkillIds: string[] = [];
+    /** Manifest skill id -> id it was installed under (differs after a name clash). */
+    const installedSkillIds = new Map<string, string>();
     const pluginServerIds: string[] = [];
     const pluginSubagentIds: string[] = [];
     const pluginHookIds: string[] = [];
@@ -646,28 +768,44 @@ export async function resolvePlugins(
       const srcSkillDir = join(pluginStablePath, entry.relativePath);
       if (!existsSync(join(srcSkillDir, 'SKILL.md'))) continue;
 
-      pluginSkillIds.push(entry.id);
+      // First claim wins: the capabilities file's own skills, then plugins in
+      // the order they are listed. A later plugin's skill with a taken name is
+      // installed as "<plugin id>-<skill>" instead of overwriting it (#330).
+      const owner = skillOwners.get(entry.id);
+      const skillId =
+        owner === undefined
+          ? entry.id
+          : unusedSkillId(`${pluginInstallId}-${entry.id}`, mergedSkills, skillOwners);
+      if (owner !== undefined) {
+        const kept =
+          owner === AUTHORED_SKILL_OWNER
+            ? `Plugin "${pluginInstallId}" also provides skill "${entry.id}", which the capabilities file already declares; "/${entry.id}" stays yours`
+            : `Skill "${entry.id}" is provided by plugins "${owner}" and "${pluginInstallId}"; "/${entry.id}" is ${owner}'s`;
+        const reorder =
+          owner === AUTHORED_SKILL_OWNER
+            ? ''
+            : ` To make ${pluginInstallId}'s version "/${entry.id}", list it before "${owner}" in the capabilities file.`;
+        warnings.push(`${kept}, and ${pluginInstallId}'s is installed as "/${skillId}".${reorder}`);
+      }
+      skillOwners.set(skillId, pluginInstallId);
+
+      pluginSkillIds.push(skillId);
+      installedSkillIds.set(entry.id, skillId);
       if (materializeProjectSkills) {
-        installSkillTree(entry.id, srcSkillDir, manifest.name);
+        installSkillTree(skillId, srcSkillDir, manifest.name, skillId !== entry.id);
       }
 
-      const userEntry = userPluginSkills.get(entry.id);
+      const userEntry = skillId === entry.id ? userPluginSkills.get(entry.id) : undefined;
       if (userEntry) {
         userEntry.sourcePlugin = sourcePlugin;
         continue;
       }
 
-      if (mergedSkills.some((s) => s.id === entry.id)) {
-        warnings.push(
-          `Plugin skill id "${entry.id}" collides with an existing skill; skipping auto-merge.`,
-        );
-        continue;
-      }
-
       mergedSkills.push({
-        id: entry.id,
+        id: skillId,
         type: 'plugin',
-        def: {},
+        // A renamed skill records where it lives inside the plugin.
+        def: skillId === entry.id ? {} : { path: entry.relativePath.replace(/\\/g, '/') },
         sourcePlugin,
       });
     }
@@ -744,7 +882,6 @@ export async function resolvePlugins(
     }
 
     const capaProviderId = pluginProviderToCapaId(manifest.provider);
-    const pluginSkillIdSet = new Set(pluginSkillIds);
 
     for (const agent of manifest.agentEntries ?? []) {
       if (!isSafeCapabilityId(agent.id)) {
@@ -766,7 +903,10 @@ export async function resolvePlugins(
       }
       registeredSubagentIds.add(agent.id);
       pluginSubagentIds.push(agent.id);
-      const skillIds = agent.skillIds.filter((id) => pluginSkillIdSet.has(id));
+      // Follow renames: an agent's `handoff` may be installed as `<plugin>-handoff`.
+      const skillIds = agent.skillIds
+        .map((id) => installedSkillIds.get(id))
+        .filter((id): id is string => id !== undefined);
       mergedSubagents.push({
         id: agent.id,
         description: agent.description,
@@ -792,11 +932,23 @@ export async function resolvePlugins(
         hookEntry.event,
         hookEntry.matcher,
       );
-      const command = hookEntry.command
-        ? resolvePluginRootInString(hookEntry.command, pluginStablePath, {
-            shellQuote: true,
-          })
-        : undefined;
+      // Exec form (`command` + `args`) never goes through a shell, so paths
+      // are expanded unquoted; the writer quotes them for shell-only providers.
+      const resolved = withPluginRootEnv(
+        hookEntry.command
+          ? resolvePluginRootInString(hookEntry.command, pluginStablePath, {
+              shellQuote: !hookEntry.args,
+            })
+          : undefined,
+        hookEntry.args?.map((arg) => resolvePluginRootInString(arg, pluginStablePath)),
+        pluginStablePath,
+      );
+      const { command, args } = resolved;
+      if (resolved.setsRoot && windowsWithoutBash()) {
+        warnings.push(
+          `Plugin hook from "${manifest.name}" sets CLAUDE_PLUGIN_ROOT with sh syntax; it needs Git Bash, which was not found. Without it Claude Code runs hooks in PowerShell and this hook will fail.`,
+        );
+      }
       const prompt = hookEntry.prompt
         ? resolvePluginRootInString(hookEntry.prompt, pluginStablePath, {
             shellQuote: true,
@@ -810,6 +962,7 @@ export async function resolvePlugins(
         on,
         type: hookEntry.type,
         command,
+        ...(args ? { args } : {}),
         prompt,
         matcher: hookEntry.matcher,
         timeout: hookEntry.timeout,
@@ -890,6 +1043,10 @@ export async function resolvePlugins(
         currentPluginIds.delete(pluginInstallId);
         failedPluginIds.add(pluginInstallId);
         lockBuilder.removePlugin(pluginInstallId);
+        // Release the skill names this entry claimed, so a later plugin keeps
+        // them. Restored from the snapshot: another entry may share this id.
+        skillOwners.clear();
+        for (const [id, owner] of ownersSnap) skillOwners.set(id, owner);
         mergedSkills.length = mergeSnap.skills;
         mergedServers.length = mergeSnap.servers;
         mergedTools.length = mergeSnap.tools;
@@ -922,9 +1079,9 @@ export async function resolvePlugins(
           }
         }
       }
-      warnings.push(
-        `Plugin "${pluginLabel}" failed to resolve and was skipped: ${message}`,
-      );
+      const failure = `Plugin "${pluginLabel}" failed to resolve and was skipped: ${message}`;
+      warnings.push(failure);
+      failures.push(failure);
     } finally {
       releasePluginLock?.();
     }
@@ -981,5 +1138,10 @@ export async function resolvePlugins(
   };
 
   // Warnings carry plugin-supplied names and keys: strip terminal controls.
-  return { mergedCapabilities, tempDirsToCleanup: tempDirs, warnings: warnings.map(stripControlChars) };
+  return {
+    mergedCapabilities,
+    tempDirsToCleanup: tempDirs,
+    warnings: warnings.map(stripControlChars),
+    failures: failures.map(stripControlChars),
+  };
 }

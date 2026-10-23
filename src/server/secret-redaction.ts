@@ -40,8 +40,80 @@ function clearEmptyOAuthEndpoint(
 	for (const alias of aliases) delete oauth2[alias];
 }
 
+/** Env names are `SNAKE_CASE`, so `API_KEY` / `GITHUB_PAT` need their own net. */
+const SENSITIVE_ENV =
+	/token|key|secret|pass|pwd|(^|_)pat(_|$)|credential|auth|cookie|session|private|dsn/i;
+
+/**
+ * Values that read as a credential whatever the name: URL userinfo
+ * (`scheme://user:pass@host`), an auth scheme, a well-known token prefix, or a
+ * long run of mixed letters and digits with no path separator or whitespace.
+ */
+const CREDENTIAL_VALUE = [
+	// URL userinfo with a password (`user:pass@`) ...
+	/:\/\/[^/\s:@]+:[^/\s@]+@/,
+	// ... or a token alone (`https://TOKEN@host`): 16 characters or more. A
+	// short username such as `ssh://git@github.com` is not a credential.
+	/:\/\/[^/\s:@]{16,}@/,
+	// Credential parameters in a query string or connection string.
+	/(^|[?&;\s])(password|passwd|pwd|secret|token|access[-_]?token|api[-_]?key|access[-_]?key|sig|signature)=[^&;\s]/i,
+	/\b(bearer|basic)\s+\S/i,
+	/^(sk|pk|rk)[-_]|^(ghp|gho|ghu|ghs|ghr|github_pat|glpat|xox[abpors]|AKIA|ASIA|AIza|npm_|pypi-)/,
+	/^(?=[^/\\\s]*\d)(?=[^/\\\s]*[A-Za-z])[^/\\\s]{24,}$/,
+];
+
+/**
+ * Base64-style secrets contain `/` and `+`, so the rule above misses them. A
+ * relative path can look the same (`opt/ghidra11/support/analyzeHeadless`),
+ * so tell them apart by randomness, as secret scanners do: path segments are
+ * words (about 4 bits per character), random keys are not (4.5 and up).
+ * `+` or `=`, or the 40 mixed-case characters of an AWS secret key, count
+ * whatever the entropy.
+ */
+function isBase64Secret(value: string): boolean {
+	if (!/^(?!\/)[A-Za-z0-9+/]{30,}={0,2}$/.test(value)) return false;
+	if (!/\d/.test(value) || !/[A-Za-z]/.test(value)) return false;
+	if (/[+=]/.test(value)) return true;
+	if (value.length === 40 && /[A-Z]/.test(value) && /[a-z]/.test(value)) {
+		return true;
+	}
+	return shannonEntropy(value) >= 4.3;
+}
+
+/** Bits per character. */
+function shannonEntropy(value: string): number {
+	const counts = new Map<string, number>();
+	for (const ch of value) counts.set(ch, (counts.get(ch) ?? 0) + 1);
+	let bits = 0;
+	for (const n of counts.values()) {
+		const p = n / value.length;
+		bits -= p * Math.log2(p);
+	}
+	return bits;
+}
+
+const PLACEHOLDER = /\$\{[^}]+\}/g;
+
 export function isSensitiveHeaderName(name: string): boolean {
 	return SENSITIVE_HEADER.test(name);
+}
+
+/**
+ * Env values are returned as configured: `${VAR}` placeholders are references
+ * (resolved only at spawn) and plain literals are config. A literal is blanked
+ * when its name or its value reads like a credential.
+ */
+function redactEnvValue(name: string, value: string): string {
+	const literal = value.replace(PLACEHOLDER, "").trim();
+	if (!literal) return value;
+	if (SENSITIVE_ENV.test(name)) return "";
+	if (
+		CREDENTIAL_VALUE.some((re) => re.test(value) || re.test(literal)) ||
+		isBase64Secret(literal)
+	) {
+		return "";
+	}
+	return value;
 }
 
 export interface ApiServerSecrets {
@@ -61,7 +133,9 @@ export function redactServerForApi<T extends ApiServerSecrets>(server: T): T {
 		const next: Record<string, SecretValue> = {};
 		for (const [key, value] of Object.entries(env)) {
 			// Keep external source pointers; blank only literal secret strings.
-			next[key] = isSecretValueObject(value) ? value : "";
+			next[key] = isSecretValueObject(value)
+				? value
+				: redactEnvValue(key, value);
 		}
 		env = next;
 	}

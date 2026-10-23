@@ -273,6 +273,24 @@ export interface ResolveResult {
 }
 
 /**
+ * Only names git itself accepts as a ref (`git check-ref-format`) or a commit
+ * SHA reach `git rev-parse`. That rules out its revision syntax (`HEAD~2`,
+ * `main@{1}`, `:/text`, `a..b`) and anything that looks like an option, while
+ * monorepo tags such as `@scope/pkg@1.2.3` still work.
+ */
+const GIT_REF_FORBIDDEN =
+	// biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what we reject
+	/[\x00-\x20\x7f~^:?*[\\]|\.\.|@\{|^[-/.]|\/$|\/\/|\/\.|\.$|\.lock(?:\/|$)|^@$/;
+
+export function assertGitRefName(field: string, value: string | undefined): void {
+	if (value && (value.length > 255 || GIT_REF_FORBIDDEN.test(value))) {
+		throw new Error(
+			`Invalid ${field} "${value}": use a tag, branch or commit SHA (no spaces, ~ ^ : ? * [ \\, "..", "@{", or leading "-").`,
+		);
+	}
+}
+
+/**
  * Resolve a (version|ref|pinned|HEAD) request to a concrete commit SHA against
  * a mirror clone. Will fetch the mirror at most once if the ref is unknown.
  */
@@ -282,6 +300,15 @@ export async function resolveRef(
 	authFetch?: AuthenticatedFetch,
 ): Promise<ResolveResult> {
 	const { version, ref, pinnedSha } = opts;
+	assertGitRefName("version", version);
+	assertGitRefName("ref", ref);
+	// A lockfile pin is a commit SHA (full, or abbreviated if hand-edited);
+	// a branch or tag name there would silently float.
+	if (pinnedSha && !/^[0-9a-f]{7,40}$/i.test(pinnedSha)) {
+		throw new Error(
+			`Invalid pinned commit "${pinnedSha}" in capabilities.lock: expected a commit SHA. Remove the entry or run "capa install --no-cache" to re-pin.`,
+		);
+	}
 
 	if (pinnedSha) {
 		const sha = await tryResolveRefInMirror(mirrorDir, pinnedSha);

@@ -43,14 +43,36 @@ function decryptCiphertext(value: string): string {
 	);
 }
 
-/** Canonical on-disk form: ciphertext, or encrypt legacy / colliding plaintext. */
-export function canonicalizeStoredSecret(value: string): string {
-	if (!value.startsWith(SECRET_CIPHER_PREFIX)) return encryptSecret(value);
+/** IV (12) + auth tag (16), base64 after the prefix; an empty secret has no data. */
+const MIN_CIPHER_BYTES = 12 + 16;
+
+/** True when `value` has the shape encryptSecret produces (not whether it decrypts). */
+function isCipherEnvelope(value: string): boolean {
+	if (!value.startsWith(SECRET_CIPHER_PREFIX)) return false;
+	const body = value.slice(SECRET_CIPHER_PREFIX.length);
+	if (!/^[A-Za-z0-9+/]+={0,2}$/.test(body) || body.length % 4 !== 0) return false;
+	return Buffer.from(body, "base64").length >= MIN_CIPHER_BYTES;
+}
+
+/**
+ * Canonical on-disk form: encrypt legacy plaintext, keep ciphertext as is.
+ * Ciphertext that does not decrypt (wrong master key) is never re-encrypted:
+ * that would lock it under the wrong key for good. It stays byte-identical
+ * and is reported as `undecryptable`, so restoring the right key recovers it.
+ */
+export function canonicalizeStoredSecret(value: string): {
+	value: string;
+	undecryptable: boolean;
+} {
+	// Legacy plaintext that merely starts with the prefix is still plaintext.
+	if (!isCipherEnvelope(value)) {
+		return { value: encryptSecret(value), undecryptable: false };
+	}
 	try {
 		decryptCiphertext(value);
-		return value;
+		return { value, undecryptable: false };
 	} catch {
-		return encryptSecret(value);
+		return { value, undecryptable: true };
 	}
 }
 

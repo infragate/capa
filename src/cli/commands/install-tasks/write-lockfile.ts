@@ -8,6 +8,7 @@ import {
   revertInstructionContextConfig,
 } from '../../utils/instruction-context-config';
 import type { InstallCtx } from './context';
+import { recordInstallFailure } from './install-error-policy';
 
 export function writeLockfileTask(): Task<InstallCtx> {
   return {
@@ -56,7 +57,8 @@ export function writeLockfileTask(): Task<InstallCtx> {
           await saveLockfile(ctx.projectPath, lockfileToSave);
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : String(err);
-          ctx.warnings.push(`Failed to write capabilities.lock: ${message}`);
+          // A failure, not a warning: the new pins are not on disk.
+          recordInstallFailure(ctx, `Failed to write capabilities.lock: ${message}`);
           // The on-disk lockfile still describes the previous settings, so put
           // provider settings back to match it rather than leave them untracked.
           const before = ctx.providerConfigBefore ?? [];

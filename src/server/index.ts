@@ -219,6 +219,12 @@ class CapaServer {
 		// Initialize database
 		const dbPath = getDatabasePath(this.settings);
 		this.db = new CapaDatabase(dbPath);
+		if (this.db.undecryptableSecrets > 0) {
+			this.logger.warn(
+				`${this.db.undecryptableSecrets} stored secret(s) can't be decrypted with the current master key. ` +
+					"They were left untouched; restore the master key they were saved with to use them, or set them again.",
+			);
+		}
 
 		// Cleanup projects whose directories no longer exist
 		await this.cleanupMissingProjects();
@@ -427,7 +433,10 @@ class CapaServer {
 					status: "ok",
 					version: VERSION,
 					uptime: uptime,
-					secretStorage: { tier: getSecretStorageTier() },
+					secretStorage: {
+						tier: getSecretStorageTier(),
+						undecryptable: this.db.undecryptableSecrets,
+					},
 				}),
 				{ headers: { "Content-Type": "application/json" } },
 			);

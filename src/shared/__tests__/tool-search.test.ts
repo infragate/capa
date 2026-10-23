@@ -2,6 +2,9 @@ import { describe, expect, it } from "bun:test";
 import type { Capabilities } from "../../types/capabilities";
 import {
 	type SearchableTool,
+	exactNameMatches,
+	isToolNameQuery,
+	suggestToolNames,
 	queryTerms,
 	searchableTools,
 	searchTools,
@@ -235,5 +238,47 @@ describe("ranking and tokenizing details", () => {
 			{ qualifiedName: "other", id: "other", description: "Unrelated." },
 		];
 		expect(names(searchTools(tools, "how do I"))).toEqual(["how_to"]);
+	});
+});
+
+describe("exact tool names", () => {
+	const more: SearchableTool[] = [
+		...TOOLS,
+		{
+			qualifiedName: "github.get_issue",
+			id: "get_issue",
+			remoteName: "get_issue",
+			context: "github",
+			description: "Get an issue.",
+		},
+		{
+			qualifiedName: "jira.get_issue_comments",
+			id: "get_issue_comments",
+			remoteName: "get_issue_comments",
+			context: "jira",
+			description: "Get issue comments, then get the issue with get_issue.",
+		},
+	];
+
+	it("ranks a tool searched by its exact name first", () => {
+		expect(names(searchTools(more, "get_issue"))[0]).toBe("github.get_issue");
+		expect(names(searchTools(more, "github.get_issue"))[0]).toBe("github.get_issue");
+		// The remote name finds the tool whose local id differs.
+		expect(names(searchTools(more, "chat_postMessage"))[0]).toBe("slack.post_message");
+	});
+
+	it("maps a bare remote name to its qualified tool", () => {
+		expect(exactNameMatches(more, "GET_ISSUE").map((t) => t.qualifiedName)).toEqual([
+			"github.get_issue",
+		]);
+		expect(suggestToolNames(more, "get_issue")[0]).toBe("github.get_issue");
+		expect(exactNameMatches(more, "list_issues")).toEqual([]);
+	});
+
+	it("recognizes tool-name queries", () => {
+		expect(isToolNameQuery("get_issue")).toBe(true);
+		expect(isToolNameQuery("github.get_issue")).toBe(true);
+		expect(isToolNameQuery("open a pull request")).toBe(false);
+		expect(isToolNameQuery("issues")).toBe(false);
 	});
 });

@@ -117,6 +117,12 @@ export interface Hook {
 
   /** Inline shell command. Required when `type` is `command` and `source` is unset. */
   command?: string;
+  /**
+   * Exec-form arguments: `command` is the executable and each entry is one
+   * argument, passed verbatim (no shell). Providers that only take a command
+   * string get them appended shell-quoted.
+   */
+  args?: string[];
   /** Inline prompt text. Required when `type` is `prompt` and `source` is unset. */
   prompt?: string;
 

@@ -15,6 +15,8 @@ export interface Task<Ctx = unknown> {
 
 export interface RunTasksOptions {
   exitOnError?: boolean
+  /** Called for a task that threw when `exitOnError` is false, so callers can record it. */
+  onError?: (title: string, err: unknown) => void
 }
 
 function formatLive(title: string, output: string): string {
@@ -53,7 +55,7 @@ export async function runTasks<Ctx = Record<string, unknown>>(
     !process.env.CI
 
   if (!useSpinner) {
-    return runLinear(tasks, ctx, exitOnError)
+    return runLinear(tasks, ctx, exitOnError, options.onError)
   }
 
   let s = spinner()
@@ -105,6 +107,7 @@ export async function runTasks<Ctx = Record<string, unknown>>(
       s.error(currentTitle)
       started = false
       if (exitOnError) throw err
+      options.onError?.(currentTitle, err)
       s = spinner()
       continue
     }
@@ -124,6 +127,7 @@ async function runLinear<Ctx>(
   tasks: Task<Ctx>[],
   ctx: Ctx,
   exitOnError: boolean,
+  onError?: (title: string, err: unknown) => void,
 ): Promise<Ctx> {
   const print = !isJson() && !isQuiet()
 
@@ -161,6 +165,7 @@ async function runLinear<Ctx>(
     } catch (err) {
       if (print) console.log(`✖ ${title}`)
       if (exitOnError) throw err
+      onError?.(title, err)
       continue
     }
 

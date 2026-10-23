@@ -2,6 +2,7 @@ import * as childProcess from 'child_process';
 import { promisify } from 'util';
 import { getGitProvider } from '../../../../shared/git-providers/registry';
 import type { CachePlatform } from '../../../../shared/cache';
+import { isGitProcessError } from '../../../../shared/cache/git-cli';
 
 export async function checkGitInstalled(): Promise<boolean> {
   try {
@@ -57,11 +58,6 @@ function explainGenericGitError(error: any, errorMessage: string, repoUrl: strin
         `remembers the credentials, then re-run \`capa install\`.`
     );
   }
-  // The cache's own ref errors ("Tag/branch "v2" not found", "Commit … not
-  // found", "Pinned commit …") already name the cause; keep them.
-  if (/^(Tag\/branch |Commit |Pinned commit )/.test(error?.message ?? '')) {
-    return error instanceof Error ? error : new Error(errorMessage);
-  }
   if (/repository '.*' not found/.test(errorMessage) || errorMessage.includes('does not appear to be a git repository')) {
     return new Error(`Repository not found: ${repoUrl}\nCheck the URL, or sign in with git if it is private.`);
   }
@@ -83,6 +79,9 @@ export function explainGitError(
   hasAuth: boolean,
   cloneUrl?: string
 ): Error {
+  // The cache's own errors (an invalid ref or pin, a missing tag or commit)
+  // already name the cause. Only a failed git process needs explaining.
+  if (error instanceof Error && !isGitProcessError(error)) return error;
   const errorMessage: string = error?.stderr || error?.message || '';
   const host = cloneUrl ? hostOf(cloneUrl) : `${platform}.com`;
   const platformName = getGitProvider(platform)?.displayName ?? host;

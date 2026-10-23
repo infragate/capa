@@ -100,6 +100,91 @@ describe("credential at-rest encryption", () => {
 		expect(row.value).not.toContain("plain-to-migrate");
 	});
 
+	it("keeps an encrypted empty secret as it is across reopens", () => {
+		db.setVariable("p1", "EMPTY", "");
+		db.close();
+		const stored = () => {
+			const raw = new Database(dbPath, { readonly: true });
+			const row = raw
+				.query("SELECT value FROM variables WHERE key = ?")
+				.get("EMPTY") as { value: string } | null;
+			raw.close();
+			return row?.value;
+		};
+		const before = stored();
+		for (let i = 0; i < 2; i++) {
+			db = new CapaDatabase(dbPath);
+			expect(db.undecryptableSecrets).toBe(0);
+			db.close();
+		}
+		expect(stored()).toBe(before);
+		db = new CapaDatabase(dbPath);
+		expect(db.getVariable("p1", "EMPTY") ?? "").toBe("");
+	});
+
+	it("encrypts legacy plaintext that only looks like the cipher prefix", () => {
+		db.close();
+		const raw = new Database(dbPath);
+		raw.run(
+			"INSERT INTO variables (project_id, key, value, created_at) VALUES (?, ?, ?, ?)",
+			["p1", "ODD", "enc:v1:not-really-ciphertext", Date.now()],
+		);
+		raw.close();
+
+		db = new CapaDatabase(dbPath);
+		expect(db.undecryptableSecrets).toBe(0);
+		expect(db.getVariable("p1", "ODD")).toBe("enc:v1:not-really-ciphertext");
+		const check = new Database(dbPath, { readonly: true });
+		const row = check
+			.query("SELECT value FROM variables WHERE key = ?")
+			.get("ODD") as { value: string };
+		check.close();
+		expect(row.value).not.toBe("enc:v1:not-really-ciphertext");
+		expect(row.value.startsWith("enc:v1:")).toBe(true);
+	});
+
+	it("never re-encrypts secrets under a wrong master key (#305)", () => {
+		db.setVariable("p1", "API_KEY", SECRET);
+		db.setGitIntegration("github", {
+			access_token: SECRET,
+			refresh_token: `${SECRET}-refresh`,
+			token_type: "Bearer",
+		});
+		db.close();
+		const snapshot = () => {
+			const raw = new Database(dbPath, { readonly: true });
+			const rows = [
+				raw.query("SELECT value FROM variables").all(),
+				raw.query("SELECT access_token, refresh_token FROM git_integrations").all(),
+			];
+			raw.close();
+			return JSON.stringify(rows);
+		};
+		const before = snapshot();
+
+		// Key B: a different HOME has its own master.key.
+		const otherHome = mkdtempSync(join(tmpdir(), "capa-at-rest-b-"));
+		process.env.HOME = otherHome;
+		process.env.USERPROFILE = otherHome;
+		resetSecretCryptoForTests();
+		db = new CapaDatabase(dbPath);
+		expect(db.undecryptableSecrets).toBe(3);
+		db.close();
+		expect(snapshot()).toBe(before);
+
+		// Back on key A everything still decrypts.
+		process.env.HOME = home;
+		process.env.USERPROFILE = home;
+		resetSecretCryptoForTests();
+		db = new CapaDatabase(dbPath);
+		expect(db.undecryptableSecrets).toBe(0);
+		expect(db.getVariable("p1", "API_KEY")).toBe(SECRET);
+		expect(db.getGitIntegration("github")?.refresh_token).toBe(`${SECRET}-refresh`);
+		try {
+			rmSync(otherHome, { recursive: true, force: true });
+		} catch {}
+	});
+
 	it("encrypts oauth access and refresh tokens at rest", () => {
 		db.setOAuthToken("p1", "svc", {
 			access_token: SECRET,

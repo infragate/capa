@@ -201,6 +201,13 @@ export function validateHooks(raw: unknown[]): HookValidationResult {
 		};
 		if (typeof obj.description === "string") hook.description = obj.description;
 		if (command) hook.command = command;
+		if (
+			Array.isArray(obj.args) &&
+			obj.args.length > 0 &&
+			obj.args.every((a: unknown) => typeof a === "string")
+		) {
+			hook.args = obj.args as string[];
+		}
 		if (prompt) hook.prompt = prompt;
 		if (typeof obj.matcher === "string") hook.matcher = obj.matcher;
 		if (typeof obj.timeout === "number") hook.timeout = obj.timeout;

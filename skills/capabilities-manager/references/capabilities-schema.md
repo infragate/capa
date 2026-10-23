@@ -2,6 +2,8 @@
 
 Full reference for `capabilities.yaml` / `capabilities.json` structure: basic layout, skills (all seven types), servers, tools, rules (including `type: local`), plugins (full unpack), security, `agentActivity`, `requiresCommands`, the `agents` section, and sub-agents.
 
+A machine-readable JSON Schema lives at `https://raw.githubusercontent.com/infragate/capa/main/schema/capabilities.schema.json`. `capa init` references it (a `# yaml-language-server: $schema=…` first line in YAML, a `$schema` key in JSON) so editors autocomplete and validate the file.
+
 ## Basic Structure (YAML)
 
 ```yaml
@@ -482,7 +484,7 @@ Providers without a hooks integration (most of the rest of the registry) emit a 
 
 Remote plugin packages that capa **unpacks** into the same primitives as everything else: skills, servers/tools, rules, sub-agents, and hooks. Capa does **not** install plugins as opaque units.
 
-Supported manifests today: **Claude** (`.claude-plugin/`), **Cursor** (`.cursor-plugin/`), and **[Agent Plugins](https://agent-plugins.org/specification)** (root `plugin.json` with `"$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"`), tried in that order. An Agent Plugins package contributes only `skills/` and `mcp.json` servers (`stdio` and `streamable-http`; `sse` is skipped). Manifest or `mcp.json` problems are install warnings, and a broken `mcp.json` never blocks the skills. `${PLUGIN_ROOT}` / `${PLUGIN_DATA}` expand in `args`, `env` values and `cwd`; `${PLUGIN_DATA}` is `~/.capa/plugin-data/<projectId>/<pluginId>/` and survives plugin updates. If no manifest is found, discover-mode still scans `skills/`, `commands/`, `agents/`, `hooks/`, `rules/`, and `.mcp.json`. Unsupported artifacts (LSP, themes, monitors, …) produce install warnings and are skipped.
+Supported manifests today: **Claude** (`.claude-plugin/`), **Cursor** (`.cursor-plugin/`), and **[Agent Plugins](https://agent-plugins.org/specification)** (root `plugin.json` with `"$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"`), tried in that order. An Agent Plugins package contributes only `skills/` and `mcp.json` servers (`stdio` and `streamable-http`; `sse` is skipped). Manifest or `mcp.json` problems are install warnings, and a broken `mcp.json` never blocks the skills. `${PLUGIN_ROOT}` / `${PLUGIN_DATA}` expand in `args`, `env` values and `cwd`; `${PLUGIN_DATA}` is `~/.capa/plugin-data/<projectId>/<slug>-<hash>/`, where the hash comes from the plugin's declared source (not its own `name`); it survives plugin updates, and is deleted by `capa install` once the plugin is no longer declared and by `capa clean`. If no manifest is found, discover-mode still scans `skills/`, `commands/`, `agents/`, `hooks/`, `rules/`, and `.mcp.json`. Unsupported artifacts (LSP, themes, monitors, …) produce install warnings and are skipped.
 
 Plugin tools and skills are NOT auto-exposed to the agent — declare the tools you want under the top-level `tools` section and the skills you want under `skills` with `type: plugin`. Plugin-sourced rules / hooks / sub-agents flow through the normal install tasks (shown locked/badged in the Web UI).
 

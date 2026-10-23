@@ -144,7 +144,7 @@ let inflightMarketplace: Promise<MarketplaceCache | null> | null = null;
 function classifySource(raw: unknown): MarketplaceSource {
   if (typeof raw === 'string') {
     // Marketplace-relative path, e.g. "./plugins/frontend-design".
-    return { kind: 'monorepo-local', path: raw.replace(/^\.\/?/, '') };
+    return { kind: 'monorepo-local', path: raw.replace(/^\.(?:\/|$)/, '') };
   }
   if (raw && typeof raw === 'object') {
     const o = raw as Record<string, unknown>;

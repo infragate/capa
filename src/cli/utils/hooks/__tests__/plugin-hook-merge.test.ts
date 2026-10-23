@@ -145,3 +145,24 @@ describe('coalescePluginHook', () => {
     expect(merged).toHaveLength(1);
   });
 });
+
+describe('pluginHookMergeKey with exec-form args (#325)', () => {
+  it('keeps hooks that share a command but not their args apart', () => {
+    const base = { on: 'afterFileEdit', type: 'command' as const, command: 'node' };
+    expect(pluginHookMergeKey({ ...base, args: ['/p/a.js'] })).not.toBe(
+      pluginHookMergeKey({ ...base, args: ['/p/b.js'] }),
+    );
+    expect(pluginHookMergeKey({ ...base, args: ['/p/a.js'] })).toBe(
+      pluginHookMergeKey({ ...base, args: ['/p/a.js'] }),
+    );
+  });
+});
+
+describe('pluginHookMergeKey argument boundaries', () => {
+  it('keeps ["a b"] and ["a", "b"] apart', () => {
+    const base = { on: 'stop', type: 'command' as const, command: 'run' };
+    expect(pluginHookMergeKey({ ...base, args: ['a b'] })).not.toBe(
+      pluginHookMergeKey({ ...base, args: ['a', 'b'] }),
+    );
+  });
+});

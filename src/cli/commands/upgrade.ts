@@ -5,7 +5,6 @@ import { getServerStatus, stopServer } from '../utils/server-manager';
 import {
   header,
   footer,
-  success,
   info,
   error,
   isYes,
@@ -89,35 +88,14 @@ export async function upgradeCommand(): Promise<void> {
     CAPA_VERSION: plan.version,
   };
 
-  if (process.platform === 'win32') {
-    const proc = Bun.spawn(
-      [
-        'powershell.exe',
-        '-NoProfile',
-        '-ExecutionPolicy',
-        'Bypass',
-        '-File',
-        installerPath,
-      ],
-      {
-        stdout: 'ignore',
-        stderr: 'ignore',
-        stdin: 'ignore',
-        detached: true,
-        env,
-      },
-    );
-    proc.unref();
-    success(
-      'Verified installer started. This window will close; capa will update in the background.',
-    );
-    info(
-      'Restart your terminal when the installer finishes, then run `capa --version` to confirm.',
-    );
-    process.exit(0);
-  }
-
-  const proc = Bun.spawn(['bash', installerPath], {
+  // Run the installer in the foreground on every platform so failures are
+  // visible. On Windows the installer renames this running capa.exe aside
+  // before dropping the new one in, so it doesn't need us to exit first.
+  const cmd =
+    process.platform === 'win32'
+      ? ['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', installerPath]
+      : ['bash', installerPath];
+  const proc = Bun.spawn(cmd, {
     stdout: 'inherit',
     stderr: 'inherit',
     stdin: 'inherit',

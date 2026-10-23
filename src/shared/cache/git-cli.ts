@@ -63,6 +63,19 @@ export function gitHttpCredentialEnv(token: string): Record<string, string> {
 	};
 }
 
+/** Errors `git()` rejected with: git itself failed, or could not be started. */
+const gitProcessErrors = new WeakSet<object>();
+
+/**
+ * True when `err` came from running git, as opposed to one of capa's own
+ * checks (an invalid ref, a missing tag), whose message already says what's
+ * wrong. Tracked here rather than read off the error's shape, which differs
+ * between runtimes.
+ */
+export function isGitProcessError(err: unknown): boolean {
+	return typeof err === "object" && err !== null && gitProcessErrors.has(err);
+}
+
 export async function git(
 	args: string[],
 	opts: ExecFileOptions = {},
@@ -83,6 +96,7 @@ export async function git(
 			},
 			(err, stdout, stderr) => {
 				if (err) {
+					gitProcessErrors.add(err);
 					reject(err);
 					return;
 				}

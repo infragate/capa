@@ -147,7 +147,7 @@ function resolveMatcher(input: HookEntryInput): string {
 			? input.hook.matcher
 			: "";
 	const prefix =
-		"matcherPrefix" in input.mapping ? input.mapping.matcherPrefix : "";
+		("matcherPrefix" in input.mapping ? input.mapping.matcherPrefix : "") ?? "";
 	if (prefix && userMatcher) {
 		if (prefix === userMatcher || matcherWithinPrefix(userMatcher, prefix)) {
 			return userMatcher;
@@ -155,6 +155,12 @@ function resolveMatcher(input: HookEntryInput): string {
 		return `(?:${prefix})|(?:${userMatcher})`;
 	}
 	return userMatcher || prefix;
+}
+
+/** Quote one argument for sh/bash (Git Bash on Windows): verbatim, no expansion. */
+export function shellQuoteArg(arg: string): string {
+	if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(arg)) return arg;
+	return `'${arg.replace(/'/g, `'\\''`)}'`;
 }
 
 // ---------------------------------------------------------------------------
@@ -257,13 +263,29 @@ function buildAntigravityEntry(input: HookEntryInput): HookEntryOutput {
  */
 export function buildHookEntry(
 	integration: HooksIntegration,
-	input: HookEntryInput,
+	rawInput: HookEntryInput,
 ): HookEntryOutput {
+	const args =
+		(rawInput.hook.type ?? "command") === "command" ? rawInput.hook.args : undefined;
+	const execArgs = !!args?.length && integration.supportsExecArgs === true;
+	// Without exec form the provider runs one shell string: append the
+	// arguments POSIX-quoted, so each stays one verbatim argument.
+	const input: HookEntryInput =
+		args?.length && !execArgs
+			? {
+					...rawInput,
+					// With args, the command is one executable (a path may contain spaces).
+					runReference: [rawInput.runReference, ...args].map(shellQuoteArg).join(" "),
+				}
+			: rawInput;
 	switch (integration.shape) {
 		case "claude":
 		case "gemini":
-		case "windsurf":
-			return buildClaudeLikeEntry(input, integration.supportsNameTag);
+		case "windsurf": {
+			const out = buildClaudeLikeEntry(input, integration.supportsNameTag);
+			if (execArgs) out.entry.args = [...args!];
+			return out;
+		}
 		case "antigravity":
 			return buildAntigravityEntry(input);
 		case "cursor":
@@ -333,6 +355,7 @@ export function upsertHookEntry(
 		case "gemini":
 		case "windsurf": {
 			const { eventName, entry, matcher, nameTag } = output;
+			removeTaggedElsewhere(integration, hooksRoot, nameTag, eventName, matcher);
 			const events = ensureArray(hooksRoot, eventName);
 			// Each element is `{ matcher: string, hooks: [{ … }] }`.
 			let matcherIdx = events.findIndex(
@@ -358,6 +381,7 @@ export function upsertHookEntry(
 		}
 		case "cursor": {
 			const { eventName, entry, nameTag } = output;
+			removeTaggedElsewhere(integration, hooksRoot, nameTag, eventName, "");
 			const events = ensureArray(hooksRoot, eventName);
 			const existingIdx = nameTag
 				? events.findIndex((e) => isPlainObject(e) && e.name === nameTag)
@@ -373,6 +397,43 @@ export function upsertHookEntry(
 			throw new Error(
 				`Unsupported hook shape: ${(integration as { shape: string }).shape}`,
 			);
+	}
+}
+
+/**
+ * Drop capa entries tagged `nameTag` that sit outside the event (and, for
+ * claude-like shapes, matcher group) the hook is being written to. Without
+ * this, changing a hook's `on` or `matcher` left the old entry running, and
+ * nothing pointed at it any more to clean it up (#306). The entry already in
+ * the target group stays put, so re-installs don't reorder the file.
+ */
+function removeTaggedElsewhere(
+	integration: HooksIntegration,
+	hooksRoot: Record<string, unknown>,
+	nameTag: string | null,
+	keepEvent: string,
+	keepMatcher: string,
+): void {
+	if (!nameTag || !isCapaNameTag(nameTag)) return;
+	const isTagged = (e: unknown) => isPlainObject(e) && e.name === nameTag;
+	for (const [eventName, events] of Object.entries(hooksRoot)) {
+		if (!Array.isArray(events)) continue;
+		const before = events.length;
+		for (let i = events.length - 1; i >= 0; i--) {
+			const item = events[i];
+			if (integration.shape === "cursor") {
+				if (eventName !== keepEvent && isTagged(item)) events.splice(i, 1);
+				continue;
+			}
+			if (!isPlainObject(item) || !Array.isArray(item.hooks)) continue;
+			if (eventName === keepEvent && (item.matcher ?? "") === keepMatcher) continue;
+			const kept = item.hooks.filter((h) => !isTagged(h));
+			if (kept.length === item.hooks.length) continue;
+			if (kept.length === 0) events.splice(i, 1);
+			else item.hooks = kept;
+		}
+		// Only drop an event this call emptied; leave a user's own `[]` alone.
+		if (before > 0 && events.length === 0) delete hooksRoot[eventName];
 	}
 }
 

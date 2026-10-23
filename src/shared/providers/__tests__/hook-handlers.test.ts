@@ -292,6 +292,59 @@ describe('hook-handlers — upsertHookEntry / removeHookEntryAt', () => {
     });
     expect(root.PostToolUse).toBeUndefined();
   });
+
+  describe('a changed event or matcher replaces the old entry (#306)', () => {
+    const place = (integration: HooksIntegration, root: Record<string, unknown>, hook: Hook, event: string, matcherPrefix?: string) =>
+      upsertHookEntry(
+        integration,
+        root,
+        buildHookEntry(integration, { hook, runReference: './guard.sh', mapping: { event, matcherPrefix } }),
+      );
+    const tags = (root: Record<string, unknown>) => JSON.stringify(root).match(/capa:guard/g)?.length ?? 0;
+
+    it('claude: event change', () => {
+      const root: Record<string, unknown> = {
+        PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'user.sh' }] }],
+      };
+      place(claudeIntegration, root, { id: 'guard', on: 'beforeShell', command: 'x' }, 'PreToolUse', 'Bash');
+      place(claudeIntegration, root, { id: 'guard', on: 'afterFileEdit', command: 'x' }, 'PostToolUse', 'Edit|MultiEdit|Write');
+      expect(tags(root)).toBe(1);
+      expect(root.PostToolUse).toBeDefined();
+      // The user's own entry in the old group is untouched.
+      expect(root.PreToolUse).toEqual([{ matcher: 'Bash', hooks: [{ type: 'command', command: 'user.sh' }] }]);
+    });
+
+    it('leaves event arrays the user left empty', () => {
+      const root: Record<string, unknown> = { Stop: [], disabled: [] };
+      place(claudeIntegration, root, { id: 'guard', on: 'beforeShell', command: 'x' }, 'PreToolUse', 'Bash');
+      expect(root.Stop).toEqual([]);
+      expect(root.disabled).toEqual([]);
+    });
+
+    it('claude: matcher change', () => {
+      const root: Record<string, unknown> = {};
+      place(claudeIntegration, root, { id: 'guard', on: 'beforeTool', command: 'x', matcher: 'Bash' }, 'PreToolUse');
+      place(claudeIntegration, root, { id: 'guard', on: 'beforeTool', command: 'x', matcher: 'Read' }, 'PreToolUse');
+      expect(root.PreToolUse).toEqual([
+        { matcher: 'Read', hooks: [{ type: 'command', command: './guard.sh', name: 'capa:guard' }] },
+      ]);
+    });
+
+    it('claude: re-install keeps sibling order', () => {
+      const root: Record<string, unknown> = {};
+      for (const id of ['a', 'b', 'a', 'b']) place(claudeIntegration, root, { id, on: 'beforeTool', command: id }, 'PreToolUse');
+      const names = ((root.PreToolUse as any[])[0].hooks as any[]).map((h) => h.name);
+      expect(names).toEqual(['capa:a', 'capa:b']);
+    });
+
+    it('cursor: event change', () => {
+      const root: Record<string, unknown> = {};
+      place(cursorIntegration, root, { id: 'guard', on: 'beforeShell', command: 'x' }, 'beforeShellExecution');
+      place(cursorIntegration, root, { id: 'guard', on: 'afterFileEdit', command: 'x' }, 'afterFileEdit');
+      expect(tags(root)).toBe(1);
+      expect(root.beforeShellExecution).toBeUndefined();
+    });
+  });
 });
 
 describe('hook-handlers — name tag helpers', () => {
@@ -372,5 +425,69 @@ describe('hook-handlers — antigravity shape', () => {
         mapping: { event: 'enabled' },
       }),
     ).toThrow(/toggle/);
+  });
+});
+
+describe('hook-handlers — exec-form args (#325)', () => {
+  const hook: Hook = {
+    id: 'seo',
+    on: 'afterFileEdit',
+    command: 'node',
+    args: ['/plugins/seo/hooks/run.js', '${tool_input.file_path}', "it's"],
+  };
+
+  it('keeps args as an array for providers with exec form', () => {
+    const out = buildHookEntry(
+      { ...claudeIntegration, supportsExecArgs: true },
+      { hook, runReference: 'node', mapping: { event: 'PostToolUse' } },
+    );
+    expect(out.entry.command).toBe('node');
+    expect(out.entry.args).toEqual(hook.args);
+  });
+
+  it('appends args shell-quoted for providers that only take a command string', () => {
+    const expected = "node /plugins/seo/hooks/run.js '${tool_input.file_path}' 'it'\\''s'";
+    const claudeLike = buildHookEntry(claudeIntegration, {
+      hook,
+      runReference: 'node',
+      mapping: { event: 'PostToolUse' },
+    });
+    expect(claudeLike.entry.command).toBe(expected);
+    expect(claudeLike.entry.args).toBeUndefined();
+    const cursor = buildHookEntry(cursorIntegration, {
+      hook,
+      runReference: 'node',
+      mapping: { event: 'afterFileEdit' },
+    });
+    expect(cursor.entry.command).toBe(expected);
+  });
+});
+
+describe('hook-handlers — exec form with spaces in the plugin path', () => {
+  const hook: Hook = {
+    id: 'spaced',
+    on: 'afterFileEdit',
+    command: 'C:/Users/Jane Doe/.capa/plugins/p/bin/run',
+    args: ['C:/Users/Jane Doe/.capa/plugins/p/a.js'],
+  };
+
+  it('quotes the executable too for command-string providers', () => {
+    const out = buildHookEntry(cursorIntegration, {
+      hook,
+      runReference: hook.command!,
+      mapping: { event: 'afterFileEdit' },
+    });
+    expect(out.entry.command).toBe(
+      "'C:/Users/Jane Doe/.capa/plugins/p/bin/run' 'C:/Users/Jane Doe/.capa/plugins/p/a.js'",
+    );
+  });
+
+  it('keeps unquoted values for exec form', () => {
+    const out = buildHookEntry(
+      { ...claudeIntegration, supportsExecArgs: true },
+      { hook, runReference: hook.command!, mapping: { event: 'PostToolUse' } },
+    );
+    expect(out.entry.command).toBe(hook.command);
+    expect(out.entry.args).toEqual(hook.args);
   });
 });

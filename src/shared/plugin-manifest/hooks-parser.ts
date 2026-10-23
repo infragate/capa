@@ -64,6 +64,13 @@ function parseHookAction(
 
 	const command =
 		typeof action.command === "string" ? action.command : undefined;
+	// Exec form: `{ command: "node", args: ["${CLAUDE_PLUGIN_ROOT}/x.js"] }`.
+	const args =
+		Array.isArray(action.args) &&
+		action.args.length > 0 &&
+		action.args.every((a) => typeof a === "string")
+			? (action.args as string[])
+			: undefined;
 	const prompt =
 		typeof action.prompt === "string"
 			? action.prompt
@@ -101,6 +108,7 @@ function parseHookAction(
 		event,
 		type,
 		command,
+		...(args && type === "command" ? { args } : {}),
 		prompt,
 		matcher,
 		timeout,

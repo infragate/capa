@@ -12,13 +12,17 @@ export interface RemoteToolInfo {
 	description?: string;
 }
 
-/** Server ids that at least one `tools:` entry points at. */
+/**
+ * Server ids that at least one authored `tools:` entry points at. Tools capa
+ * synthesized from a server's `expose` policy don't count: the running
+ * server's capabilities carry them, and they would switch that policy off.
+ */
 export function serverIdsWithDeclaredTools(
 	capabilities: Capabilities,
 ): Set<string> {
 	const ids = new Set<string>();
 	for (const tool of capabilities.tools ?? []) {
-		if (tool.type !== "mcp") continue;
+		if (tool.type !== "mcp" || tool.fromServerExpose) continue;
 		ids.add(tool.def.server.replace(/^@/, ""));
 	}
 	return ids;

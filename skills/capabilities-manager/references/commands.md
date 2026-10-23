@@ -246,8 +246,12 @@ capa start              # Start the CAPA server (background)
 capa start -f           # Start in foreground (for debugging)
 capa stop               # Stop the CAPA server + active wrap sessions
 capa restart            # Restart the CAPA server
-capa status             # Check server health, uptime, secret-storage tier, and Web UI URL
+capa status             # Server health, uptime, secret-storage tier, Web UI URL, and this folder's project state
+capa status --json      # Same, as JSON for scripts and CI
+capa status --strict    # Exit 1 unless the project is installed, up to date and without problems
 ```
+
+The project part reports one of: **not initialized** (no capabilities file here), **not installed**, **out of date** (the capabilities file or `capabilities.lock` changed since the last `capa install`, or capa was upgraded since), or **installed**, with providers, item counts and problems such as failures from the last install or variables without a value.
 
 **When to use**: Managing the background MCP server that handles tool execution, credential management, the Web UI, registries, and activity ingest.
 

@@ -1,16 +1,24 @@
 import type { Database } from "bun:sqlite";
 import { canonicalizeStoredSecret } from "../shared/secret-crypto";
 
-function nextSecret(value: string | null): { value: string | null; changed: boolean } {
-	if (typeof value !== "string" || value.length === 0) {
-		return { value, changed: false };
-	}
-	const next = canonicalizeStoredSecret(value);
-	return { value: next, changed: next !== value };
-}
+/**
+ * Encrypt legacy plaintext secret columns. Safe to run on every open.
+ * Returns how many stored secrets don't decrypt with the current master key;
+ * those are left untouched.
+ */
+export function migrateSecretsAtRest(db: Database): { undecryptable: number } {
+	let undecryptable = 0;
+	const nextSecret = (
+		value: string | null,
+	): { value: string | null; changed: boolean } => {
+		if (typeof value !== "string" || value.length === 0) {
+			return { value, changed: false };
+		}
+		const next = canonicalizeStoredSecret(value);
+		if (next.undecryptable) undecryptable++;
+		return { value: next.value, changed: next.value !== value };
+	};
 
-/** Encrypt legacy plaintext secret columns. Safe to run on every open. */
-export function migrateSecretsAtRest(db: Database): void {
 	const tx = db.transaction(() => {
 		for (const row of db
 			.query("SELECT project_id, key, value FROM variables")
@@ -61,4 +69,5 @@ export function migrateSecretsAtRest(db: Database): void {
 		}
 	});
 	tx();
+	return { undecryptable };
 }

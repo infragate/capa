@@ -96,6 +96,23 @@ export async function ensureCapaDir(): Promise<void> {
 	restrictCapaHomeModes();
 }
 
+/**
+ * Database path for read-only commands (`capa status`): unlike loadSettings,
+ * never creates ~/.capa or settings.json.
+ */
+export function peekDatabasePath(): string {
+	try {
+		const settingsPath = getSettingsPath();
+		if (fs.existsSync(settingsPath)) {
+			const settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
+			return getDatabasePath({ ...DEFAULT_SETTINGS, ...settings });
+		}
+	} catch {
+		// Unreadable settings: fall back to the default location.
+	}
+	return getDatabasePath(DEFAULT_SETTINGS);
+}
+
 export async function loadSettings(): Promise<ServerSettings> {
 	const settingsPath = getSettingsPath();
 

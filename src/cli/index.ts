@@ -268,9 +268,11 @@ if (process.argv[2] === '__server__') {
 
     program
       .command('status')
-      .description('Check the health status of the capa server')
-      .action(async () => {
-        await statusCommand();
+      .description('Show the capa server and the current project (installed, out of date, or not set up)')
+      .option('--json', 'Print the status as JSON')
+      .option('--strict', 'Exit with 1 unless the project is installed, up to date and without problems')
+      .action(async (options: { json?: boolean; strict?: boolean }) => {
+        await statusCommand(options);
       });
 
     program
@@ -489,8 +491,9 @@ if (process.argv[2] === '__server__') {
     // Show update notice after the command completes (if a newer version is available)
     const updateInfo = await updateCheckPromise;
     if (!skipVersionCheck && updateInfo?.hasUpdate) {
-      console.log(`\n  A new version of capa is available: ${updateInfo.latestVersion} (current: ${updateInfo.currentVersion})`);
-      console.log('  Run "capa upgrade" to update.\n');
+      // stderr, so it never lands in output a script reads (`capa status --json`).
+      console.error(`\n  A new version of capa is available: ${updateInfo.latestVersion} (current: ${updateInfo.currentVersion})`);
+      console.error('  Run "capa upgrade" to update.\n');
     }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

@@ -11,7 +11,18 @@ import type { CapaDatabase } from "../db/database";
 import { logger } from "../shared/logger";
 import { CAPA_SERVER_ICONS } from "../shared/mcp-icons";
 import { projectNameFromId } from "../shared/paths";
-import { searchableTools, searchTools } from "../shared/tool-search";
+import {
+	type SearchableTool,
+	exactNameMatches,
+	isToolNameQuery,
+	searchableTools,
+	searchTools,
+	suggestToolNames,
+} from "../shared/tool-search";
+import {
+	effectiveExpose,
+	serverIdsWithDeclaredTools,
+} from "../shared/server-tool-exposure";
 import type {
 	Capabilities,
 	MCPServerDefinition,
@@ -93,6 +104,84 @@ function toolTextError(message: string): {
 	return {
 		content: [{ type: "text", text: JSON.stringify({ error: message }) }],
 	};
+}
+
+/**
+ * Why a tool name that isn't in the catalog may be missing, from the servers'
+ * `expose` policies. `hidden` is definite (the name is in an active `except`
+ * list, so the tool exists); `note` is context under `exactly` / `none`,
+ * where a hidden tool and a typo look the same. Null when no policy applies
+ * or the name is callable elsewhere.
+ */
+export function exposurePolicyReason(
+	name: string,
+	capabilities: Capabilities | null,
+	/** Tools the caller can call (a sub-agent sees fewer); defaults to all. */
+	visible?: SearchableTool[],
+): { hidden?: string; note?: string } | null {
+	if (!capabilities) return null;
+	const callable = visible ?? searchableTools(capabilities);
+	if (exactNameMatches(callable, name).length > 0) return null;
+	// Only servers whose `expose` is in effect: hand-written `tools:` entries
+	// turn the policy off.
+	const declared = serverIdsWithDeclaredTools(capabilities);
+	const norm = (s: string) => normalizeToolName(s).toLowerCase();
+	let note: string | undefined;
+	for (const server of capabilities.servers ?? []) {
+		if (declared.has(server.id)) continue;
+		const expose = effectiveExpose(server);
+		const prefix = `${server.id}.`;
+		const qualified = name.startsWith(prefix);
+		const remote = qualified ? name.slice(prefix.length) : name;
+		const listed = (server.tools ?? []).some((t) => norm(t) === norm(remote));
+		if (expose === "except" && listed) {
+			return {
+				hidden: `Tool "${name}" is not exposed by this project: servers.${server.id} lists it under "expose: except". It can only be called after the user changes that in the capabilities file.`,
+			};
+		}
+		if (qualified && (expose === "none" || (expose === "exactly" && !listed))) {
+			note =
+				expose === "none"
+					? `Note: servers.${server.id} uses "expose: none", so none of its tools are exposed.`
+					: `Note: servers.${server.id} uses "expose: exactly", so only the tools it lists are exposed; if "${remote}" is one of its tools, the user has to add it there.`;
+		}
+	}
+	return note ? { note } : null;
+}
+
+/**
+ * Error text for a tool name that isn't in the project's catalog. Says whether
+ * a server's `expose` policy hides it, suggests close names (a bare remote
+ * name such as `get_issue` maps to `github.get_issue`), and gives the next
+ * step for this exposure mode, so it can't read as a skills/setup problem.
+ */
+export function unknownToolMessage(
+	name: string,
+	capabilities: Capabilities | null,
+): string {
+	const mode: ToolExposureMode =
+		capabilities?.options?.toolExposure || "expose-all";
+	const tools = capabilities ? searchableTools(capabilities) : [];
+	const callable = exactNameMatches(tools, name);
+	const policy = exposurePolicyReason(name, capabilities);
+	if (policy?.hidden) return policy.hidden;
+	const policyNote = policy?.note ? ` ${policy.note}` : "";
+
+	const suggestions = [
+		...callable.map((t) => t.qualifiedName),
+		...suggestToolNames(tools, name),
+	].filter((n, i, all) => all.indexOf(n) === i).slice(0, 3);
+	const didYouMean =
+		suggestions.length > 0 ? ` Closest names: ${suggestions.join(", ")}.` : "";
+	const next =
+		mode === "search"
+			? ` Call search("<what you need to do>") (or search one of those names) and then call_tool with a name it returns.`
+			: mode === "on-demand"
+				? " Call setup_tools with the skill that needs it, then use a tool name it returns."
+				: mode === "none"
+					? ' Run "capa sh" to list the tools this project provides.'
+					: " Call one of the tools in your tool list.";
+	return `Tool not found: "${name}" is not in this project's capa tool catalog.${didYouMean}${policyNote}${next}`;
 }
 
 export class CapaMCPServer {
@@ -437,7 +526,7 @@ export class CapaMCPServer {
 			args: cleanArgs,
 		});
 		if (!toolDef) {
-			const message = `Tool not found: ${name}`;
+			const message = unknownToolMessage(name, capabilities);
 			if (style === "http") {
 				this.logger.warn("Tool not found");
 				this.finishTraceError(traceId, message);
@@ -629,7 +718,16 @@ export class CapaMCPServer {
 				);
 			}
 
-			const payload = buildSearchPayload(query, matches);
+			const unknownName =
+				isToolNameQuery(query) && exactNameMatches(candidates, query).length === 0;
+			// Say why a named tool is missing when an `expose` policy explains it.
+			const policy = unknownName
+				? exposurePolicyReason(query.trim(), capabilities, candidates)
+				: null;
+			const payload = buildSearchPayload(query, matches, {
+				unknownName,
+				...(policy ?? {}),
+			});
 			const result = {
 				content: [{ type: "text", text: JSON.stringify(payload) }],
 			};
@@ -839,7 +937,10 @@ export class CapaMCPServer {
 				// No schema attached — by definition we don't have a matching tool.
 				const result = await this.buildCallToolErrorResult(
 					toolName,
-					`Tool not found: ${toolName}. Make sure you've called setup_tools to activate the required skills.`,
+					unknownToolMessage(
+						toolName,
+						this.sessionManager.getProjectCapabilities(this.projectId),
+					),
 					{ includeSchema: false },
 				);
 				this.finishTraceError(traceId, `Tool not found: ${toolName}`, result);
@@ -892,7 +993,7 @@ export class CapaMCPServer {
 				const discoveryStep =
 					this.sessionManager.getProjectCapabilities(this.projectId)?.options
 						?.toolExposure === "search"
-						? `Call search("<what you need to do>") first.`
+						? `It is in this project's catalog but not activated in this session yet: call search(${JSON.stringify(toolName)}), which activates it, then call_tool again.`
 						: "Call setup_tools with the appropriate skills first.";
 				const result = await this.buildCallToolErrorResult(
 					toolName,
