@@ -110,15 +110,16 @@ export async function initCommand(format: CapabilitiesFormat): Promise<void> {
   let capabilities: Capabilities;
   let created = false;
 
-  if (existsSync(capabilitiesPath)) {
+  const detected = await detectCapabilitiesFile(projectPath);
+  if (detected) {
+    console.warn(
+      `⚠ ${detected.path} already exists. Skipping file creation.`,
+    );
+    capabilities = await parseCapabilitiesFile(detected.path, detected.format);
+  } else if (existsSync(capabilitiesPath)) {
+    // Requested path exists but discovery missed it (race); parse directly.
     console.warn(`⚠ ${capabilitiesPath} already exists. Skipping file creation.`);
-    const detected = await detectCapabilitiesFile(projectPath);
-    if (!detected) {
-      // File exists at the requested format path but detect failed — parse directly.
-      capabilities = await parseCapabilitiesFile(capabilitiesPath, format);
-    } else {
-      capabilities = await parseCapabilitiesFile(detected.path, detected.format);
-    }
+    capabilities = await parseCapabilitiesFile(capabilitiesPath, format);
   } else {
     capabilities = createDefaultCapabilities();
     await writeCapabilitiesFile(capabilitiesPath, format, capabilities);
