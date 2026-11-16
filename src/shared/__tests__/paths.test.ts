@@ -7,6 +7,7 @@ import {
   generateProjectId,
   getCapabilitiesPath,
   detectCapabilitiesFile,
+  getProjectUploadRelDir,
   listCapabilitiesCandidates,
   projectNameFromId,
 } from '../paths';
@@ -189,6 +190,62 @@ describe('paths', () => {
         join(projectDir, '.config', 'capabilities', 'config.yaml'),
         join(projectDir, '.config', 'capabilities', 'config.json'),
       ]);
+    });
+  });
+
+  describe('getProjectUploadRelDir', () => {
+    let projectDir: string;
+
+    beforeEach(() => {
+      projectDir = makeTempDir();
+    });
+
+    afterEach(() => {
+      rmSync(projectDir, { recursive: true, force: true });
+    });
+
+    it('uses .capa/imports when capabilities are at project root', async () => {
+      writeFileSync(join(projectDir, 'capabilities.yaml'), 'providers: []\n');
+      expect(await getProjectUploadRelDir(projectDir, 'skills')).toBe(
+        '.capa/imports',
+      );
+      expect(await getProjectUploadRelDir(projectDir, 'rules')).toBe(
+        '.capa/imports',
+      );
+    });
+
+    it('uses typed .config/capabilities dirs when config is under .config', async () => {
+      mkdirSync(join(projectDir, '.config'), { recursive: true });
+      writeFileSync(
+        join(projectDir, '.config', 'capabilities.yaml'),
+        'providers: []\n',
+      );
+      expect(await getProjectUploadRelDir(projectDir, 'skills')).toBe(
+        '.config/capabilities/skills',
+      );
+      expect(await getProjectUploadRelDir(projectDir, 'rules')).toBe(
+        '.config/capabilities/rules',
+      );
+      expect(await getProjectUploadRelDir(projectDir, 'instructions')).toBe(
+        '.config/capabilities/instructions',
+      );
+    });
+
+    it('uses typed dirs when config is .config/capabilities/config.toml', async () => {
+      mkdirSync(join(projectDir, '.config', 'capabilities'), { recursive: true });
+      writeFileSync(
+        join(projectDir, '.config', 'capabilities', 'config.toml'),
+        'providers = []\n',
+      );
+      expect(await getProjectUploadRelDir(projectDir, 'rules')).toBe(
+        '.config/capabilities/rules',
+      );
+    });
+
+    it('falls back to .capa/imports when no capabilities file exists', async () => {
+      expect(await getProjectUploadRelDir(projectDir, 'skills')).toBe(
+        '.capa/imports',
+      );
     });
   });
 });

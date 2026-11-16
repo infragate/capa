@@ -190,3 +190,39 @@ async function existsAsync(path: string): Promise<boolean> {
 		return false;
 	}
 }
+
+/** Web UI upload destination kind. */
+export type ProjectUploadKind = "skills" | "rules" | "instructions";
+
+const LEGACY_UPLOAD_REL_DIR = ".capa/imports";
+
+/**
+ * True when the winning capabilities file lives under `<project>/.config`.
+ */
+export function isCapabilitiesUnderDotConfig(
+	projectPath: string,
+	capabilitiesPath: string,
+): boolean {
+	return isPathInside(capabilitiesPath, join(resolve(projectPath), ".config"));
+}
+
+/**
+ * Project-relative directory for Web UI uploads of the given kind.
+ * Root (or missing) capabilities → `.capa/imports`.
+ * Any `.config` winner → `.config/capabilities/{skills|rules|instructions}`.
+ */
+export async function getProjectUploadRelDir(
+	projectPath: string,
+	kind: ProjectUploadKind,
+): Promise<string> {
+	const detected = await detectCapabilitiesFile(projectPath);
+	if (
+		detected &&
+		isCapabilitiesUnderDotConfig(projectPath, detected.path)
+	) {
+		return `.config/capabilities/${kind}`;
+	}
+	return LEGACY_UPLOAD_REL_DIR;
+}
+
+export { LEGACY_UPLOAD_REL_DIR };
