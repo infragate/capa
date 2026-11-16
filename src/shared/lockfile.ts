@@ -1,8 +1,8 @@
 /**
  * Read/write helpers for `capabilities.lock`.
  *
- * The lockfile lives next to the winning capabilities file (toml/yaml/json).
- * Format mirrors that capabilities file; YAML is the default when none exists.
+ * The lockfile lives next to the winning capabilities file. New writes are
+ * always TOML; legacy YAML/JSON locks are sniffed on read and migrated to TOML.
  */
 
 import TOML from "@iarna/toml";
@@ -49,12 +49,11 @@ export function getLockfilePath(projectPath: string): string {
 }
 
 /**
- * Pick the lockfile serialization format for a project.
- * Mirrors the winning capabilities file format; YAML when none exists.
+ * Format used when writing a lockfile. Always TOML, independent of the
+ * capabilities file format (yaml/json/toml).
  */
-export function detectLockfileFormat(projectPath: string): LockfileFormat {
-	const existing = listExistingCapabilitiesCandidatesSync(projectPath);
-	return existing[0]?.format ?? "yaml";
+export function detectLockfileFormat(_projectPath?: string): LockfileFormat {
+	return "toml";
 }
 
 /**
@@ -83,19 +82,69 @@ function isNullableString(value: unknown): value is string | null {
 	return value === null || typeof value === "string";
 }
 
-/** TOML omits nulls on write; restore expected null fields before validation. */
+/**
+ * TOML omits nulls on write. Restore them in a fixed key order so semantic
+ * equality (JSON.stringify) matches freshly built lock entries.
+ */
 function restoreOmittedNulls(
 	entries: unknown[],
 	keys: readonly string[],
+	fieldOrder: readonly string[],
 ): void {
-	for (const entry of entries) {
+	for (let i = 0; i < entries.length; i++) {
+		const entry = entries[i];
 		if (!entry || typeof entry !== "object") continue;
-		const obj = entry as Record<string, unknown>;
+		const src = entry as Record<string, unknown>;
 		for (const key of keys) {
-			if (!(key in obj) || obj[key] === undefined) obj[key] = null;
+			if (!(key in src) || src[key] === undefined) src[key] = null;
 		}
+		const ordered: Record<string, unknown> = {};
+		for (const key of fieldOrder) {
+			if (key in src) ordered[key] = src[key];
+		}
+		for (const key of Object.keys(src)) {
+			if (!(key in ordered)) ordered[key] = src[key];
+		}
+		entries[i] = ordered;
 	}
 }
+
+const SKILL_FIELD_ORDER = [
+	"id",
+	"source",
+	"repo",
+	"url",
+	"skillName",
+	"requestedVersion",
+	"requestedRef",
+	"resolvedRef",
+	"resolvedVersion",
+] as const;
+const PLUGIN_FIELD_ORDER = [
+	"id",
+	"source",
+	"repo",
+	"url",
+	"subpath",
+	"requestedSearchName",
+	"requestedVersion",
+	"requestedRef",
+	"resolvedRef",
+	"resolvedVersion",
+	"manifestName",
+	"manifestVersion",
+] as const;
+const HOOK_FIELD_ORDER = [
+	"id",
+	"source",
+	"repo",
+	"url",
+	"requestedVersion",
+	"requestedRef",
+	"resolvedRef",
+	"resolvedVersion",
+	"bodySha256",
+] as const;
 
 const SKILL_NULLABLE_KEYS = [
 	"requestedVersion",
@@ -281,13 +330,17 @@ function parseLockfileContent(content: string, format: LockfileFormat): Lockfile
 		if (parsed && typeof parsed === "object") {
 			const obj = parsed as Record<string, unknown>;
 			if (Array.isArray(obj.skills)) {
-				restoreOmittedNulls(obj.skills, SKILL_NULLABLE_KEYS);
+				restoreOmittedNulls(obj.skills, SKILL_NULLABLE_KEYS, SKILL_FIELD_ORDER);
 			}
 			if (Array.isArray(obj.plugins)) {
-				restoreOmittedNulls(obj.plugins, PLUGIN_NULLABLE_KEYS);
+				restoreOmittedNulls(
+					obj.plugins,
+					PLUGIN_NULLABLE_KEYS,
+					PLUGIN_FIELD_ORDER,
+				);
 			}
 			if (Array.isArray(obj.hooks)) {
-				restoreOmittedNulls(obj.hooks, HOOK_NULLABLE_KEYS);
+				restoreOmittedNulls(obj.hooks, HOOK_NULLABLE_KEYS, HOOK_FIELD_ORDER);
 			}
 		}
 	} else {

@@ -87,7 +87,7 @@ CAPA also loads a capabilities file from alternate locations (first match wins; 
 2. `.config/capabilities.toml` / `.yaml` / `.json`
 3. `.config/capabilities/config.toml` / `.yaml` / `.json`
 
-`capabilities.lock` is written next to whichever file won.
+`capabilities.lock` is written next to whichever file won (always TOML; legacy YAML/JSON locks are migrated on load).
 
 The new file points at the [JSON Schema](./schema/capabilities.schema.json), so editors with YAML/JSON language support autocomplete and validate it. For an existing YAML file, add this first line:
 

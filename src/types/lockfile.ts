@@ -5,7 +5,8 @@
  * exact commit SHA it was resolved to. This makes installs reproducible and
  * lets the cache key incoming requests by SHA so re-installs are network-free.
  *
- * Format is auto-detected based on the capabilities file format (toml/yaml/json).
+ * On disk, capa always writes TOML. Legacy YAML/JSON locks are still readable
+ * and migrated to TOML on the next load/save.
  */
 
 export type LockfileFormat = 'toml' | 'yaml' | 'json';

@@ -20,7 +20,7 @@ After init, capa also **loads** an existing file from alternate locations if you
 2. `.config/capabilities.toml` / `.yaml` / `.json`
 3. `.config/capabilities/config.toml` / `.yaml` / `.json`
 
-`capabilities.lock` is written next to whichever file won. If more than one candidate exists, capa warns and uses the winner.
+`capabilities.lock` is written next to whichever file won (always TOML). If more than one candidate exists, capa warns and uses the winner.
 
 Also **registers the project** with the local CAPA server so it appears in the Web UI (`http://localhost:5912`). The server is started if it isn't already running.
 

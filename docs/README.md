@@ -200,8 +200,9 @@ flowchart TD
   location). Multiple matches produce a warning; the first in that order wins.
   `capa init` still writes root `capabilities.yaml` by default.
 - **Lockfile**. `capabilities.lock` (co-located with the winning capabilities
-  file) pins resolved commit SHAs for every
-  `github`/`gitlab` skill, plugin, and hook source. The lockfile is built
+  file; always written as TOML) pins resolved commit SHAs for every
+  `github`/`gitlab` skill, plugin, and hook source. Legacy YAML/JSON locks are
+  still readable and migrated to TOML on the next load. The lockfile is built
   incrementally during install (`ctx.lockBuilder.upsertSkill / upsertPlugin
   / upsertHook`) and pruned to the current set of IDs at the end.
   `--no-cache` disables both lockfile lookups and the on-disk snapshot

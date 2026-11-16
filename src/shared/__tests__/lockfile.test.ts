@@ -142,28 +142,13 @@ describe('lockfile', () => {
   });
 
   describe('detectLockfileFormat', () => {
-    it('returns yaml when no capabilities file is present', () => {
-      expect(detectLockfileFormat(projectDir)).toBe('yaml');
-    });
-
-    it('returns json when capabilities.json exists', () => {
-      writeFileSync(join(projectDir, 'capabilities.json'), '{}');
-      expect(detectLockfileFormat(projectDir)).toBe('json');
-    });
-
-    it('returns yaml when capabilities.yaml exists', () => {
-      writeFileSync(join(projectDir, 'capabilities.yaml'), 'providers: []');
-      expect(detectLockfileFormat(projectDir)).toBe('yaml');
-    });
-
-    it('returns toml when capabilities.toml exists', () => {
-      writeFileSync(join(projectDir, 'capabilities.toml'), 'providers = []\n');
+    it('always returns toml regardless of capabilities format', () => {
       expect(detectLockfileFormat(projectDir)).toBe('toml');
-    });
-
-    it('prefers toml over yaml for lock format', () => {
+      writeFileSync(join(projectDir, 'capabilities.json'), '{}');
+      expect(detectLockfileFormat(projectDir)).toBe('toml');
+      writeFileSync(join(projectDir, 'capabilities.yaml'), 'providers: []');
+      expect(detectLockfileFormat(projectDir)).toBe('toml');
       writeFileSync(join(projectDir, 'capabilities.toml'), 'providers = []\n');
-      writeFileSync(join(projectDir, 'capabilities.yaml'), 'providers: []\n');
       expect(detectLockfileFormat(projectDir)).toBe('toml');
     });
   });
@@ -238,16 +223,35 @@ describe('lockfile', () => {
         generatedAt: '2026-01-01T00:00:00.000Z',
         skills: [sampleSkill],
       };
-      await saveLockfile(projectDir, lf, 'yaml');
+      await saveLockfile(projectDir, lf);
       const before = readFileSync(join(projectDir, LOCKFILE_NAME), 'utf-8');
 
       await saveLockfile(
         projectDir,
         { ...lf, generatedAt: '2026-12-31T23:59:59.000Z' },
-        'yaml',
       );
       const after = readFileSync(join(projectDir, LOCKFILE_NAME), 'utf-8');
       expect(after).toBe(before);
+    });
+
+    it('keeps semantic equality after a TOML round-trip with null fields', async () => {
+      writeFileSync(join(projectDir, 'capabilities.yaml'), 'providers: []\n');
+      const lf: Lockfile = {
+        ...emptyLockfile(),
+        generatedAt: '2026-01-01T00:00:00.000Z',
+        skills: [sampleSkill],
+        plugins: [samplePlugin],
+      };
+      await saveLockfile(projectDir, lf);
+      const onDisk = readFileSync(join(projectDir, LOCKFILE_NAME), 'utf-8');
+      expect(onDisk).toMatch(/^version\s*=/m);
+
+      const loaded = await loadLockfile(projectDir);
+      expect(loaded).not.toBeNull();
+      expect(lockfilesSemanticallyEqual(loaded!, lf)).toBe(true);
+      expect(new LockfileBuilder(loaded).build().generatedAt).toBe(
+        '2026-01-01T00:00:00.000Z',
+      );
     });
   });
 
@@ -257,10 +261,13 @@ describe('lockfile', () => {
       expect(lf).toBeNull();
     });
 
-    it('writes and reads a yaml lockfile', async () => {
+    it('writes and reads a toml lockfile by default', async () => {
       const lf: Lockfile = { ...emptyLockfile(), skills: [sampleSkill] };
-      await saveLockfile(projectDir, lf, 'yaml');
+      await saveLockfile(projectDir, lf);
       expect(existsSync(join(projectDir, LOCKFILE_NAME))).toBe(true);
+      expect(readFileSync(join(projectDir, LOCKFILE_NAME), 'utf-8')).toMatch(
+        /^version\s*=/m,
+      );
 
       const loaded = await loadLockfile(projectDir);
       expect(loaded).not.toBeNull();
@@ -269,15 +276,25 @@ describe('lockfile', () => {
       expect(loaded!.skills[0].resolvedRef).toBe(sampleSkill.resolvedRef);
     });
 
-    it('writes and reads a json lockfile', async () => {
+    it('still writes toml when capabilities.json exists', async () => {
       writeFileSync(join(projectDir, 'capabilities.json'), '{}');
       const lf: Lockfile = { ...emptyLockfile(), plugins: [samplePlugin] };
       await saveLockfile(projectDir, lf);
 
+      expect(readFileSync(join(projectDir, LOCKFILE_NAME), 'utf-8')).toMatch(
+        /^version\s*=/m,
+      );
       const loaded = await loadLockfile(projectDir);
       expect(loaded).not.toBeNull();
       expect(loaded!.plugins.length).toBe(1);
       expect(loaded!.plugins[0].manifestName).toBe('my-plugin');
+    });
+
+    it('still loads a legacy yaml lockfile from disk', async () => {
+      const lf: Lockfile = { ...emptyLockfile(), skills: [sampleSkill] };
+      writeFileSync(join(projectDir, LOCKFILE_NAME), serializeLockfile(lf, 'yaml'));
+      const loaded = await loadLockfile(projectDir);
+      expect(loaded!.skills[0].id).toBe('my-skill');
     });
 
     it('round-trips providerConfig ownership and omits it when empty', async () => {
@@ -290,7 +307,7 @@ describe('lockfile', () => {
       };
       const builder = new LockfileBuilder(null);
       builder.setProviderConfig([entry]);
-      await saveLockfile(projectDir, builder.build(), 'yaml');
+      await saveLockfile(projectDir, builder.build());
 
       const loaded = await loadLockfile(projectDir);
       expect(loaded!.providerConfig).toEqual([entry]);
@@ -298,7 +315,7 @@ describe('lockfile', () => {
 
       const empty = new LockfileBuilder(null).build();
       expect('providerConfig' in empty).toBe(false);
-      expect(serializeLockfile(empty, 'yaml')).not.toContain('providerConfig');
+      expect(serializeLockfile(empty, 'toml')).not.toContain('providerConfig');
     });
 
     it('drops invalid providerConfig entries', async () => {
