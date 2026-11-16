@@ -1,3 +1,4 @@
+import TOML from "@iarna/toml";
 import * as yaml from "js-yaml";
 import type { YAMLMap, YAMLSeq } from "yaml";
 import { isMap, isSeq, parseDocument } from "yaml";
@@ -413,7 +414,7 @@ export function normalizeCapabilities(parsed: unknown): Capabilities {
 		typeof parsed !== "object" ||
 		Array.isArray(parsed)
 	) {
-		throw new Error("capabilities file is empty or not a YAML/JSON object");
+		throw new Error("capabilities file is empty or not a TOML/YAML/JSON object");
 	}
 
 	// `$schema` only points editors at the JSON Schema; it is not capability data.
@@ -436,6 +437,26 @@ export function normalizeCapabilities(parsed: unknown): Capabilities {
 	return result.data as unknown as Capabilities;
 }
 
+function parseStructuredCapabilities(
+	content: string,
+	format: "json" | "toml",
+): Record<string, unknown> {
+	if (format === "json") {
+		return JSON.parse(content) as Record<string, unknown>;
+	}
+	return TOML.parse(content) as Record<string, unknown>;
+}
+
+function serializeStructuredCapabilities(
+	data: Record<string, unknown>,
+	format: "json" | "toml",
+): string {
+	if (format === "json") {
+		return JSON.stringify(data, null, 2) + "\n";
+	}
+	return TOML.stringify(data as TOML.JsonMap);
+}
+
 export async function parseCapabilitiesFile(
 	path: string,
 	format: CapabilitiesFormat,
@@ -443,16 +464,18 @@ export async function parseCapabilitiesFile(
 	const file = Bun.file(path);
 	const content = await file.text();
 
-	if (format === "json") {
-		return normalizeCapabilities(JSON.parse(content));
-	} else {
-		// js-yaml v5 throws on empty input instead of returning undefined, so guard
-		// here to keep emitting our own clearer "empty or not an object" error.
-		if (content.trim() === "") {
+	if (format === "json" || format === "toml") {
+		if (format === "toml" && content.trim() === "") {
 			return normalizeCapabilities(undefined);
 		}
-		return normalizeCapabilities(yaml.load(content));
+		return normalizeCapabilities(parseStructuredCapabilities(content, format));
 	}
+	// js-yaml v5 throws on empty input instead of returning undefined, so guard
+	// here to keep emitting our own clearer "empty or not an object" error.
+	if (content.trim() === "") {
+		return normalizeCapabilities(undefined);
+	}
+	return normalizeCapabilities(yaml.load(content));
 }
 
 export function createDefaultCapabilities(): Capabilities {
@@ -499,6 +522,8 @@ export async function writeCapabilitiesFile(
 			null,
 			2,
 		);
+	} else if (format === "toml") {
+		content = TOML.stringify(capabilities as unknown as TOML.JsonMap);
 	} else {
 		content = `# yaml-language-server: $schema=${CAPABILITIES_SCHEMA_URL}\n${yaml.dump(capabilities, { indent: 2 })}`;
 	}
@@ -603,14 +628,14 @@ export async function appendCapabilityEntry<S extends ArrayCapabilitySection>(
 	const content = await Bun.file(path).text();
 	const node = entry as unknown as Record<string, unknown>;
 
-	if (format === "json") {
-		const data = JSON.parse(content) as Record<string, unknown>;
+	if (format === "json" || format === "toml") {
+		const data = parseStructuredCapabilities(content, format);
 		const list = Array.isArray(data[section])
 			? (data[section] as unknown[])
 			: [];
 		list.push(node);
 		data[section] = list;
-		await Bun.write(path, JSON.stringify(data, null, 2) + "\n");
+		await Bun.write(path, serializeStructuredCapabilities(data, format));
 		return;
 	}
 
@@ -639,8 +664,8 @@ export async function removeCapabilityEntry(
 ): Promise<number> {
 	const content = await Bun.file(path).text();
 
-	if (format === "json") {
-		const data = JSON.parse(content) as Record<string, unknown>;
+	if (format === "json" || format === "toml") {
+		const data = parseStructuredCapabilities(content, format);
 		const list = Array.isArray(data[section])
 			? (data[section] as unknown[])
 			: [];
@@ -650,7 +675,7 @@ export async function removeCapabilityEntry(
 		});
 		const removed = list.length - next.length;
 		data[section] = next;
-		await Bun.write(path, JSON.stringify(data, null, 2) + "\n");
+		await Bun.write(path, serializeStructuredCapabilities(data, format));
 		return removed;
 	}
 
@@ -686,8 +711,8 @@ export async function updateCapabilityEntry(
 ): Promise<boolean> {
 	const content = await Bun.file(path).text();
 
-	if (format === "json") {
-		const data = JSON.parse(content) as Record<string, unknown>;
+	if (format === "json" || format === "toml") {
+		const data = parseStructuredCapabilities(content, format);
 		const list = Array.isArray(data[section])
 			? (data[section] as unknown[])
 			: [];
@@ -701,7 +726,7 @@ export async function updateCapabilityEntry(
 			return item;
 		});
 		if (updated) {
-			await Bun.write(path, JSON.stringify(data, null, 2) + "\n");
+			await Bun.write(path, serializeStructuredCapabilities(data, format));
 		}
 		return updated;
 	}
@@ -742,8 +767,8 @@ export async function reorderCapabilityEntries(
 
 	const content = await Bun.file(path).text();
 
-	if (format === "json") {
-		const data = JSON.parse(content) as Record<string, unknown>;
+	if (format === "json" || format === "toml") {
+		const data = parseStructuredCapabilities(content, format);
 		const list = Array.isArray(data[section])
 			? (data[section] as unknown[])
 			: [];
@@ -775,7 +800,7 @@ export async function reorderCapabilityEntries(
 		}
 		next.push(...withoutKey);
 		data[section] = next;
-		await Bun.write(path, JSON.stringify(data, null, 2) + "\n");
+		await Bun.write(path, serializeStructuredCapabilities(data, format));
 		return;
 	}
 
@@ -853,8 +878,8 @@ export async function upsertOptions(
 ): Promise<void> {
 	const content = await Bun.file(path).text();
 
-	if (format === "json") {
-		const data = JSON.parse(content) as Record<string, unknown>;
+	if (format === "json" || format === "toml") {
+		const data = parseStructuredCapabilities(content, format);
 		const options = asPlainObject(data.options) ?? {};
 		for (const [key, value] of Object.entries(patch)) {
 			if (value === undefined) {
@@ -864,7 +889,7 @@ export async function upsertOptions(
 			}
 		}
 		data.options = options;
-		await Bun.write(path, JSON.stringify(data, null, 2) + "\n");
+		await Bun.write(path, serializeStructuredCapabilities(data, format));
 		return;
 	}
 
@@ -897,14 +922,14 @@ async function setTopLevelKey(
 ): Promise<void> {
 	const content = await Bun.file(path).text();
 
-	if (format === "json") {
-		const data = JSON.parse(content) as Record<string, unknown>;
+	if (format === "json" || format === "toml") {
+		const data = parseStructuredCapabilities(content, format);
 		if (value === null) {
 			delete data[key];
 		} else {
 			data[key] = value;
 		}
-		await Bun.write(path, JSON.stringify(data, null, 2) + "\n");
+		await Bun.write(path, serializeStructuredCapabilities(data, format));
 		return;
 	}
 

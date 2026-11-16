@@ -34,22 +34,22 @@ describe('capabilities', () => {
   describe('normalizeCapabilities', () => {
     it('throws a clear error for null input', () => {
       expect(() => normalizeCapabilities(null)).toThrow(
-        'capabilities file is empty or not a YAML/JSON object'
+        'capabilities file is empty or not a TOML/YAML/JSON object'
       );
     });
 
     it('throws a clear error for undefined input', () => {
       expect(() => normalizeCapabilities(undefined)).toThrow(
-        'capabilities file is empty or not a YAML/JSON object'
+        'capabilities file is empty or not a TOML/YAML/JSON object'
       );
     });
 
     it('throws a clear error for non-object input', () => {
       expect(() => normalizeCapabilities('not-an-object')).toThrow(
-        'capabilities file is empty or not a YAML/JSON object'
+        'capabilities file is empty or not a TOML/YAML/JSON object'
       );
       expect(() => normalizeCapabilities([])).toThrow(
-        'capabilities file is empty or not a YAML/JSON object'
+        'capabilities file is empty or not a TOML/YAML/JSON object'
       );
     });
 
@@ -473,6 +473,38 @@ describe('capabilities', () => {
         subagents: [],
         hooks: [],
       });
+    });
+
+    it('should write and parse TOML capabilities file', async () => {
+      const capabilities = createDefaultCapabilities();
+      const filePath = join(tempDir, 'capabilities.toml');
+
+      await writeCapabilitiesFile(filePath, 'toml', capabilities);
+      const parsed = await parseCapabilitiesFile(filePath, 'toml');
+
+      expect(parsed.skills?.map((s) => s.id)).toEqual(
+        capabilities.skills.map((s) => s.id),
+      );
+      expect(parsed.options?.toolExposure).toBe('search');
+      expect(parsed.servers).toEqual([]);
+      expect(parsed.plugins).toEqual([]);
+    });
+
+    it('appends a skill entry to a TOML capabilities file', async () => {
+      const filePath = join(tempDir, 'capabilities.toml');
+      await writeCapabilitiesFile(filePath, 'toml', {
+        skills: [],
+        servers: [],
+        tools: [],
+      });
+      await appendCapabilityEntry(filePath, 'toml', 'skills', {
+        id: 'extra',
+        type: 'inline',
+        def: { content: '# Extra' },
+      });
+      const parsed = await parseCapabilitiesFile(filePath, 'toml');
+      expect(parsed.skills).toHaveLength(1);
+      expect(parsed.skills[0].id).toBe('extra');
     });
 
     it('should parse MCP env/headers secret source objects', async () => {
