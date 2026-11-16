@@ -163,6 +163,19 @@ describe('paths', () => {
       warn.mockRestore();
     });
 
+    it('dedupes multi-file warnings for the same conflict signature', async () => {
+      writeFileSync(join(projectDir, 'capabilities.yaml'), 'providers: []\n');
+      writeFileSync(join(projectDir, 'capabilities.json'), '{}');
+      const warn = spyOn(logger, 'warn').mockImplementation(() => {});
+      await detectCapabilitiesFile(projectDir);
+      await detectCapabilitiesFile(projectDir);
+      const multiCalls = warn.mock.calls.filter((c) =>
+        String(c[0] ?? '').match(/multiple/i),
+      );
+      expect(multiCalls).toHaveLength(1);
+      warn.mockRestore();
+    });
+
     it('lists candidates in discovery order', () => {
       const paths = listCapabilitiesCandidates(projectDir).map((c) => c.path);
       expect(paths).toEqual([

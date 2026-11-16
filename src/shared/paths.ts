@@ -141,25 +141,17 @@ export function listExistingCapabilitiesCandidatesSync(
 	);
 }
 
+/** Warn once per process per conflict signature (joined existing paths). */
+const warnedMultipleSignatures = new Set<string>();
+
 function warnIfMultiple(existing: CapabilitiesCandidate[]): void {
 	if (existing.length <= 1) return;
 	const listed = existing.map((c) => c.path).join(", ");
+	if (warnedMultipleSignatures.has(listed)) return;
+	warnedMultipleSignatures.add(listed);
 	logger.warn(
 		`Multiple capabilities files found (${listed}). Using ${existing[0].path}.`,
 	);
-}
-
-/**
- * Sync resolve of the winning capabilities file (for lockfile path helpers).
- * Warns when multiple candidates exist; never throws for multi-file conflicts.
- */
-export function detectCapabilitiesFileSync(
-	projectPath: string,
-): CapabilitiesCandidate | null {
-	const existing = listExistingCapabilitiesCandidatesSync(projectPath);
-	if (existing.length === 0) return null;
-	warnIfMultiple(existing);
-	return existing[0];
 }
 
 /**
@@ -187,12 +179,7 @@ export async function detectCapabilitiesFile(
 		if (await existsAsync(c.path)) existing.push(c);
 	}
 	if (existing.length === 0) return null;
-	if (existing.length > 1) {
-		const listed = existing.map((c) => c.path).join(", ");
-		logger.warn(
-			`Multiple capabilities files found (${listed}). Using ${existing[0].path}.`,
-		);
-	}
+	warnIfMultiple(existing);
 	return existing[0];
 }
 
