@@ -83,6 +83,64 @@ describe('lockfile', () => {
     });
   });
 
+  describe('loadLockfile migration', () => {
+    it('migrates a root lockfile when the capabilities file moved under .config/', async () => {
+      const lf: Lockfile = {
+        ...emptyLockfile(),
+        skills: [sampleSkill],
+        plugins: [samplePlugin],
+      };
+      writeFileSync(join(projectDir, LOCKFILE_NAME), serializeLockfile(lf, 'yaml'));
+      mkdirSync(join(projectDir, '.config'), { recursive: true });
+      writeFileSync(join(projectDir, '.config', 'capabilities.yaml'), 'providers: []\n');
+
+      const loaded = await loadLockfile(projectDir);
+      expect(loaded?.skills[0].resolvedRef).toBe(sampleSkill.resolvedRef);
+      expect(existsSync(join(projectDir, '.config', LOCKFILE_NAME))).toBe(true);
+      expect(existsSync(join(projectDir, LOCKFILE_NAME))).toBe(false);
+    });
+
+    it('reads an orphan yaml lock even when the new config format is toml', async () => {
+      const lf: Lockfile = { ...emptyLockfile(), skills: [sampleSkill] };
+      writeFileSync(join(projectDir, LOCKFILE_NAME), serializeLockfile(lf, 'yaml'));
+      mkdirSync(join(projectDir, '.config', 'capabilities'), { recursive: true });
+      writeFileSync(
+        join(projectDir, '.config', 'capabilities', 'config.toml'),
+        'providers = []\n',
+      );
+
+      const loaded = await loadLockfile(projectDir);
+      expect(loaded?.skills[0].id).toBe('my-skill');
+      expect(existsSync(join(projectDir, '.config', 'capabilities', LOCKFILE_NAME))).toBe(
+        true,
+      );
+      expect(existsSync(join(projectDir, LOCKFILE_NAME))).toBe(false);
+    });
+
+    it('removes leftover orphan lockfiles after migrating the preferred one', async () => {
+      const lf: Lockfile = { ...emptyLockfile(), skills: [sampleSkill] };
+      writeFileSync(join(projectDir, LOCKFILE_NAME), serializeLockfile(lf, 'yaml'));
+      mkdirSync(join(projectDir, '.config'), { recursive: true });
+      writeFileSync(
+        join(projectDir, '.config', LOCKFILE_NAME),
+        serializeLockfile({ ...emptyLockfile(), skills: [] }, 'yaml'),
+      );
+      mkdirSync(join(projectDir, '.config', 'capabilities'), { recursive: true });
+      writeFileSync(
+        join(projectDir, '.config', 'capabilities', 'config.yaml'),
+        'providers: []\n',
+      );
+
+      const loaded = await loadLockfile(projectDir);
+      expect(loaded?.skills).toHaveLength(1);
+      expect(
+        existsSync(join(projectDir, '.config', 'capabilities', LOCKFILE_NAME)),
+      ).toBe(true);
+      expect(existsSync(join(projectDir, LOCKFILE_NAME))).toBe(false);
+      expect(existsSync(join(projectDir, '.config', LOCKFILE_NAME))).toBe(false);
+    });
+  });
+
   describe('detectLockfileFormat', () => {
     it('returns yaml when no capabilities file is present', () => {
       expect(detectLockfileFormat(projectDir)).toBe('yaml');

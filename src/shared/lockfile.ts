@@ -6,7 +6,7 @@
  */
 
 import TOML from "@iarna/toml";
-import { existsSync } from "fs";
+import { existsSync, mkdirSync, rmSync } from "fs";
 import * as yaml from "js-yaml";
 import { dirname, join, resolve } from "path";
 import type {
@@ -23,6 +23,19 @@ import { logger } from "./logger";
 import { listExistingCapabilitiesCandidatesSync } from "./paths";
 
 export const LOCKFILE_NAME = "capabilities.lock";
+
+/**
+ * Directories that may hold `capabilities.lock`, in the same order as
+ * capabilities discovery (root → `.config/` → `.config/capabilities/`).
+ */
+export function listLockfileCandidatePaths(projectPath: string): string[] {
+	const root = resolve(projectPath);
+	return [
+		join(root, LOCKFILE_NAME),
+		join(root, ".config", LOCKFILE_NAME),
+		join(root, ".config", "capabilities", LOCKFILE_NAME),
+	];
+}
 
 /**
  * Resolve the absolute path of the lockfile for a project.
@@ -241,22 +254,25 @@ function validateLockfile(parsed: unknown): Lockfile {
 }
 
 /**
- * Read and parse the lockfile for a project. Returns null if the file does
- * not exist. Throws on parse / schema errors so the user notices a corrupted
- * lockfile instead of silently re-resolving everything.
+ * Infer the on-disk lockfile format from content.
+ * Used when reading an orphan lock that may not match the current
+ * capabilities format (e.g. yaml lock left behind after moving to toml).
  */
-export async function loadLockfile(
-	projectPath: string,
-): Promise<Lockfile | null> {
-	const path = getLockfilePath(projectPath);
-	if (!existsSync(path)) return null;
-
-	const file = Bun.file(path);
-	const content = await file.text();
+export function sniffLockfileFormat(content: string): LockfileFormat {
 	const trimmed = content.trim();
-	if (trimmed === "") return null;
+	if (trimmed.startsWith("{")) return "json";
+	// TOML uses `key =` / `[[array]]`; YAML uses `key:`.
+	if (
+		/^version\s*=/.test(trimmed) ||
+		/\[\[(?:skills|plugins|hooks)\]\]/.test(trimmed)
+	) {
+		return "toml";
+	}
+	return "yaml";
+}
 
-	const format = detectLockfileFormat(projectPath);
+function parseLockfileContent(content: string, format: LockfileFormat): Lockfile {
+	const trimmed = content.trim();
 	let parsed: unknown;
 	if (format === "json" || trimmed.startsWith("{")) {
 		parsed = JSON.parse(content);
@@ -278,6 +294,77 @@ export async function loadLockfile(
 		parsed = yaml.load(content);
 	}
 	return validateLockfile(parsed);
+}
+
+/**
+ * If the co-located lock is missing, move pins from a former location and
+ * delete every other supported lock path so orphans cannot become active.
+ */
+async function migrateLockfileIfNeeded(
+	projectPath: string,
+	primaryPath: string,
+): Promise<Lockfile | null> {
+	const candidates = listLockfileCandidatePaths(projectPath).filter(
+		(p) => p !== primaryPath && existsSync(p),
+	);
+	if (candidates.length === 0) return null;
+
+	const sourcePath = candidates[0];
+	const content = await Bun.file(sourcePath).text();
+	if (content.trim() === "") {
+		for (const orphan of candidates) {
+			try {
+				rmSync(orphan, { force: true });
+			} catch {
+				// ignore
+			}
+		}
+		return null;
+	}
+
+	const lockfile = parseLockfileContent(content, sniffLockfileFormat(content));
+	const targetFormat = detectLockfileFormat(projectPath);
+	const dir = dirname(primaryPath);
+	if (!existsSync(dir)) {
+		mkdirSync(dir, { recursive: true });
+	}
+	await Bun.write(primaryPath, serializeLockfile(lockfile, targetFormat));
+
+	for (const orphan of candidates) {
+		try {
+			rmSync(orphan, { force: true });
+		} catch {
+			// ignore
+		}
+	}
+	logger.info(
+		`Migrated ${LOCKFILE_NAME} from ${sourcePath} to ${primaryPath}`,
+	);
+	return lockfile;
+}
+
+/**
+ * Read and parse the lockfile for a project. Returns null if the file does
+ * not exist. Throws on parse / schema errors so the user notices a corrupted
+ * lockfile instead of silently re-resolving everything.
+ *
+ * When the capabilities file has moved, migrates a lockfile found at a former
+ * supported location into the co-located path and retires the old copy.
+ */
+export async function loadLockfile(
+	projectPath: string,
+): Promise<Lockfile | null> {
+	const path = getLockfilePath(projectPath);
+	if (!existsSync(path)) {
+		return migrateLockfileIfNeeded(projectPath, path);
+	}
+
+	const content = await Bun.file(path).text();
+	if (content.trim() === "") return null;
+
+	// Prefer content sniff so a migrated-in-place yaml lock still parses when
+	// the winning capabilities file is now toml/json.
+	return parseLockfileContent(content, sniffLockfileFormat(content));
 }
 
 /**

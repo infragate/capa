@@ -1,6 +1,10 @@
 import { existsSync, rmSync } from 'fs';
 import type { Task } from '../../ui';
-import { getLockfilePath, saveLockfile } from '../../../shared/lockfile';
+import {
+  getLockfilePath,
+  listLockfileCandidatePaths,
+  saveLockfile,
+} from '../../../shared/lockfile';
 import { validateHooks } from '../../../shared/hooks-validate';
 import {
   newlyOwnedProviderConfig,
@@ -46,9 +50,13 @@ export function writeLockfileTask(): Task<InstallCtx> {
         (lockfileToSave.providerConfig ?? []).length === 0
       ) {
         try {
-          const lockPath = getLockfilePath(ctx.projectPath);
-          if (existsSync(lockPath)) {
-            rmSync(lockPath, { force: true });
+          for (const lockPath of [
+            getLockfilePath(ctx.projectPath),
+            ...listLockfileCandidatePaths(ctx.projectPath),
+          ]) {
+            if (existsSync(lockPath)) {
+              rmSync(lockPath, { force: true });
+            }
           }
         } catch {}
       } else {
