@@ -5,10 +5,14 @@ import { useTranslation } from 'react-i18next';
 import { projectsApi } from '../api';
 import type { ProjectFsEntry } from '../../../types/api';
 
+export type UploadKind = 'skills' | 'rules' | 'instructions';
+
 export interface LocalPathPickerProps {
   projectId: string;
   value: string;
   onChange: (path: string) => void;
+  /** Destination kind for uploads (skills / rules / instructions). */
+  uploadKind: UploadKind;
   /** Filter listed files by extension (e.g. `md`). */
   ext?: string;
   /** Only list directories (for picking skill folders). */
@@ -23,6 +27,7 @@ export function LocalPathPicker({
   projectId,
   value,
   onChange,
+  uploadKind,
   ext,
   dirsOnly,
   uploadAsSkillDir,
@@ -65,6 +70,7 @@ export function LocalPathPicker({
     setError(null);
     try {
       const res = await projectsApi.uploadFs(projectId, file, {
+        kind: uploadKind,
         asSkillDir: uploadAsSkillDir,
       });
       onChange(res.path);

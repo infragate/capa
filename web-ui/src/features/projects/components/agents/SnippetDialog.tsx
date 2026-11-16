@@ -154,6 +154,7 @@ export function SnippetDialog({
                     projectId={projectId}
                     value={path}
                     onChange={setPath}
+                    uploadKind="instructions"
                     ext="md"
                     placeholder={t('agents.snippetPathHint')}
                   />

@@ -166,12 +166,17 @@ export const projectsApi = {
   uploadFs: async (
     projectId: string,
     file: File,
-    opts?: { asSkillDir?: boolean; subdir?: string },
+    opts: {
+      kind: 'skills' | 'rules' | 'instructions';
+      asSkillDir?: boolean;
+      subdir?: string;
+    },
   ) => {
     const form = new FormData();
     form.append('file', file);
-    if (opts?.asSkillDir) form.append('asSkillDir', 'true');
-    if (opts?.subdir) form.append('subdir', opts.subdir);
+    form.append('kind', opts.kind);
+    if (opts.asSkillDir) form.append('asSkillDir', 'true');
+    if (opts.subdir) form.append('subdir', opts.subdir);
     const res = await fetch(
       `/api/projects/${encodeURIComponent(projectId)}/fs`,
       { method: 'POST', body: form, headers: apiAuthHeaders() },

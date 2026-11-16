@@ -50,7 +50,9 @@ export function BaseDialog({
           return;
         }
         const file = new File([content.trim() + '\n'], 'agents-base.md', { type: 'text/markdown' });
-        const uploaded = await projectsApi.uploadFs(projectId, file);
+        const uploaded = await projectsApi.uploadFs(projectId, file, {
+          kind: 'instructions',
+        });
         await onSave({ type: 'local', path: uploaded.path, ref: null, def: null });
       } else {
         if (!path.trim()) {
@@ -116,6 +118,7 @@ export function BaseDialog({
                     projectId={projectId}
                     value={path}
                     onChange={setPath}
+                    uploadKind="instructions"
                     ext="md"
                     placeholder={t('agents.basePathHint')}
                   />
