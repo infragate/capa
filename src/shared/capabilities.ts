@@ -1,4 +1,5 @@
 import TOML from "@iarna/toml";
+import { patch as patchToml } from "@decimalturn/toml-patch";
 import * as yaml from "js-yaml";
 import type { YAMLMap, YAMLSeq } from "yaml";
 import { isMap, isSeq, parseDocument } from "yaml";
@@ -450,9 +451,14 @@ function parseStructuredCapabilities(
 function serializeStructuredCapabilities(
 	data: Record<string, unknown>,
 	format: "json" | "toml",
+	originalContent?: string,
 ): string {
 	if (format === "json") {
 		return JSON.stringify(data, null, 2) + "\n";
+	}
+	// Preserve comments/whitespace when editing an existing TOML file.
+	if (originalContent != null && originalContent.trim() !== "") {
+		return patchToml(originalContent, data);
 	}
 	return TOML.stringify(data as TOML.JsonMap);
 }
@@ -635,7 +641,7 @@ export async function appendCapabilityEntry<S extends ArrayCapabilitySection>(
 			: [];
 		list.push(node);
 		data[section] = list;
-		await Bun.write(path, serializeStructuredCapabilities(data, format));
+		await Bun.write(path, serializeStructuredCapabilities(data, format, content));
 		return;
 	}
 
@@ -675,7 +681,7 @@ export async function removeCapabilityEntry(
 		});
 		const removed = list.length - next.length;
 		data[section] = next;
-		await Bun.write(path, serializeStructuredCapabilities(data, format));
+		await Bun.write(path, serializeStructuredCapabilities(data, format, content));
 		return removed;
 	}
 
@@ -726,7 +732,7 @@ export async function updateCapabilityEntry(
 			return item;
 		});
 		if (updated) {
-			await Bun.write(path, serializeStructuredCapabilities(data, format));
+			await Bun.write(path, serializeStructuredCapabilities(data, format, content));
 		}
 		return updated;
 	}
@@ -800,7 +806,7 @@ export async function reorderCapabilityEntries(
 		}
 		next.push(...withoutKey);
 		data[section] = next;
-		await Bun.write(path, serializeStructuredCapabilities(data, format));
+		await Bun.write(path, serializeStructuredCapabilities(data, format, content));
 		return;
 	}
 
@@ -889,7 +895,7 @@ export async function upsertOptions(
 			}
 		}
 		data.options = options;
-		await Bun.write(path, serializeStructuredCapabilities(data, format));
+		await Bun.write(path, serializeStructuredCapabilities(data, format, content));
 		return;
 	}
 
@@ -929,7 +935,7 @@ async function setTopLevelKey(
 		} else {
 			data[key] = value;
 		}
-		await Bun.write(path, serializeStructuredCapabilities(data, format));
+		await Bun.write(path, serializeStructuredCapabilities(data, format, content));
 		return;
 	}
 

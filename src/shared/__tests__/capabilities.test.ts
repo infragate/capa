@@ -507,6 +507,36 @@ describe('capabilities', () => {
       expect(parsed.skills[0].id).toBe('extra');
     });
 
+    it('preserves TOML comments across append and upsertOptions', async () => {
+      const filePath = join(tempDir, 'commented.toml');
+      await Bun.write(
+        filePath,
+        [
+          '# keep me above skills',
+          'providers = ["cursor"]',
+          '',
+          '[[skills]]',
+          'id = "keep"',
+          'type = "inline"',
+          'def = {content = "a"}',
+          '',
+        ].join('\n'),
+      );
+
+      await appendCapabilityEntry(filePath, 'toml', 'skills', {
+        id: 'extra',
+        type: 'inline',
+        def: { content: 'b' },
+      });
+      await upsertOptions(filePath, 'toml', { toolExposure: 'search' });
+
+      const rewritten = await Bun.file(filePath).text();
+      expect(rewritten).toContain('# keep me above skills');
+      const parsed = await parseCapabilitiesFile(filePath, 'toml');
+      expect(parsed.skills.map((s) => s.id)).toEqual(['keep', 'extra']);
+      expect(parsed.options?.toolExposure).toBe('search');
+    });
+
     it('should parse MCP env/headers secret source objects', async () => {
       const filePath = join(tempDir, 'secret-sources.yaml');
       await writeFile(
