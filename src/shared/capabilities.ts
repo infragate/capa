@@ -901,18 +901,23 @@ export async function upsertOptions(
 
 	const doc = parseDocument(content);
 	const existing = doc.get("options");
-	const options: Record<string, unknown> = isMap(existing)
-		? ((existing as YAMLMap).toJSON() as Record<string, unknown>)
-		: (asPlainObject(existing) ?? {});
+	// Mutate the existing map in place so comments on options keys survive.
+	// Pass plain values to set() — createNode() replaces the Pair and drops comments.
+	let optionsMap: YAMLMap;
+	if (isMap(existing)) {
+		optionsMap = existing as YAMLMap;
+	} else {
+		optionsMap = doc.createNode({}) as YAMLMap;
+		doc.set("options", optionsMap);
+	}
 
 	for (const [key, value] of Object.entries(patch)) {
 		if (value === undefined) {
-			delete options[key];
+			optionsMap.delete(key);
 		} else {
-			options[key] = value;
+			optionsMap.set(key, value);
 		}
 	}
-	doc.set("options", doc.createNode(options));
 	await Bun.write(path, doc.toString());
 }
 

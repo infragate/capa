@@ -537,6 +537,42 @@ describe('capabilities', () => {
       expect(parsed.options?.toolExposure).toBe('search');
     });
 
+    it('preserves YAML comments across append and upsertOptions', async () => {
+      const filePath = join(tempDir, 'commented.yaml');
+      await Bun.write(
+        filePath,
+        [
+          '# keep me above skills',
+          'providers:',
+          '  - cursor',
+          '',
+          'options:',
+          '  toolExposure: on-demand # inline option comment',
+          '',
+          'skills:',
+          '  - id: keep',
+          '    type: inline',
+          '    def:',
+          '      content: a',
+          '',
+        ].join('\n'),
+      );
+
+      await appendCapabilityEntry(filePath, 'yaml', 'skills', {
+        id: 'extra',
+        type: 'inline',
+        def: { content: 'b' },
+      });
+      await upsertOptions(filePath, 'yaml', { toolExposure: 'search' });
+
+      const rewritten = await Bun.file(filePath).text();
+      expect(rewritten).toContain('# keep me above skills');
+      expect(rewritten).toContain('# inline option comment');
+      const parsed = await parseCapabilitiesFile(filePath, 'yaml');
+      expect(parsed.skills.map((s) => s.id)).toEqual(['keep', 'extra']);
+      expect(parsed.options?.toolExposure).toBe('search');
+    });
+
     it('should parse MCP env/headers secret source objects', async () => {
       const filePath = join(tempDir, 'secret-sources.yaml');
       await writeFile(
