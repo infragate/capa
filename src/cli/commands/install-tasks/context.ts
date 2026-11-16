@@ -1,4 +1,4 @@
-import type { Capabilities } from '../../../types/capabilities';
+import type { Capabilities, CapabilitiesFormat } from '../../../types/capabilities';
 import type { CapaDatabase } from '../../../db/database';
 import type { loadSettings } from '../../../shared/config';
 import type { LockfileBuilder } from '../../../shared/lockfile';
@@ -12,7 +12,7 @@ export type SkillInstallOutcome = 'installed' | 'skipped' | 'failed';
 export interface InstallCtx {
   projectPath: string;
   projectId: string;
-  capabilitiesFile: { path: string; format: 'json' | 'yaml' };
+  capabilitiesFile: { path: string; format: CapabilitiesFormat };
   capabilities: Capabilities;
   capabilitiesToUse: Capabilities;
   envFile?: string | boolean;

@@ -1,6 +1,8 @@
 import { createHash } from "crypto";
 import { existsSync, realpathSync } from "fs";
 import { basename, dirname, join, relative, resolve, sep } from "path";
+import type { CapabilitiesFormat } from "../types/capabilities";
+import { logger } from "./logger";
 
 /**
  * Resolve to an absolute path, preferring the realpath when the target exists.
@@ -69,50 +71,129 @@ export function projectNameFromId(projectId: string): string {
 	return projectId.replace(/-[a-f0-9]{4}$/i, "");
 }
 
+/** Format preference within a location: toml → yaml → json. */
+export const CAPABILITIES_FORMAT_ORDER: readonly CapabilitiesFormat[] = [
+	"toml",
+	"yaml",
+	"json",
+] as const;
+
+type LocationSpec = {
+	dir: (root: string) => string;
+	basenames: Record<CapabilitiesFormat, string>;
+};
+
+const CAPABILITIES_LOCATIONS: LocationSpec[] = [
+	{
+		dir: (root) => root,
+		basenames: {
+			toml: "capabilities.toml",
+			yaml: "capabilities.yaml",
+			json: "capabilities.json",
+		},
+	},
+	{
+		dir: (root) => join(root, ".config"),
+		basenames: {
+			toml: "capabilities.toml",
+			yaml: "capabilities.yaml",
+			json: "capabilities.json",
+		},
+	},
+	{
+		dir: (root) => join(root, ".config", "capabilities"),
+		basenames: {
+			toml: "config.toml",
+			yaml: "config.yaml",
+			json: "config.json",
+		},
+	},
+];
+
+export type CapabilitiesCandidate = {
+	path: string;
+	format: CapabilitiesFormat;
+};
+
 /**
- * Get the capabilities file path for a project
+ * All candidate capabilities paths in discovery order (locations × formats).
+ */
+export function listCapabilitiesCandidates(
+	projectPath: string,
+): CapabilitiesCandidate[] {
+	const root = resolve(projectPath);
+	const out: CapabilitiesCandidate[] = [];
+	for (const loc of CAPABILITIES_LOCATIONS) {
+		const dir = loc.dir(root);
+		for (const format of CAPABILITIES_FORMAT_ORDER) {
+			out.push({ path: join(dir, loc.basenames[format]), format });
+		}
+	}
+	return out;
+}
+
+/** Existing candidates in discovery order (no warning). */
+export function listExistingCapabilitiesCandidatesSync(
+	projectPath: string,
+): CapabilitiesCandidate[] {
+	return listCapabilitiesCandidates(projectPath).filter((c) =>
+		existsSync(c.path),
+	);
+}
+
+function warnIfMultiple(existing: CapabilitiesCandidate[]): void {
+	if (existing.length <= 1) return;
+	const listed = existing.map((c) => c.path).join(", ");
+	logger.warn(
+		`Multiple capabilities files found (${listed}). Using ${existing[0].path}.`,
+	);
+}
+
+/**
+ * Sync resolve of the winning capabilities file (for lockfile path helpers).
+ * Warns when multiple candidates exist; never throws for multi-file conflicts.
+ */
+export function detectCapabilitiesFileSync(
+	projectPath: string,
+): CapabilitiesCandidate | null {
+	const existing = listExistingCapabilitiesCandidatesSync(projectPath);
+	if (existing.length === 0) return null;
+	warnIfMultiple(existing);
+	return existing[0];
+}
+
+/**
+ * Get the capabilities file path for `capa init` writes (always project root).
  */
 export function getCapabilitiesPath(
 	projectPath: string,
-	format: "json" | "yaml",
+	format: CapabilitiesFormat,
 ): string {
 	return resolve(projectPath, `capabilities.${format}`);
 }
 
 /**
  * Detect which capabilities file exists in the project.
- * Throws an error if both capabilities.yaml and capabilities.json exist.
+ * Prefers toml → yaml → json within each location, then root → `.config/` →
+ * `.config/capabilities/`. Warns when multiple candidates exist; does not throw.
  * Returns null if no capabilities file is found.
- *
- * @throws Error if both YAML and JSON capabilities files exist
  */
 export async function detectCapabilitiesFile(
 	projectPath: string,
-): Promise<{ path: string; format: "json" | "yaml" } | null> {
-	const jsonPath = getCapabilitiesPath(projectPath, "json");
-	const yamlPath = getCapabilitiesPath(projectPath, "yaml");
-
-	const jsonExists = await existsAsync(jsonPath);
-	const yamlExists = await existsAsync(yamlPath);
-
-	// Error if both files exist
-	if (jsonExists && yamlExists) {
-		throw new Error(
-			"Both capabilities.yaml and capabilities.json found. Please keep only one capabilities file.",
+): Promise<CapabilitiesCandidate | null> {
+	const candidates = listCapabilitiesCandidates(projectPath);
+	const existing: CapabilitiesCandidate[] = [];
+	for (const c of candidates) {
+		if (await existsAsync(c.path)) existing.push(c);
+	}
+	if (existing.length === 0) return null;
+	if (existing.length > 1) {
+		const listed = existing.map((c) => c.path).join(", ");
+		logger.warn(
+			`Multiple capabilities files found (${listed}). Using ${existing[0].path}.`,
 		);
 	}
-
-	// Check for YAML first (default format)
-	if (yamlExists) {
-		return { path: yamlPath, format: "yaml" };
-	}
-
-	// Then check for JSON
-	if (jsonExists) {
-		return { path: jsonPath, format: "json" };
-	}
-
-	return null;
+	return existing[0];
 }
 
 async function existsAsync(path: string): Promise<boolean> {

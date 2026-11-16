@@ -51,15 +51,7 @@ export class CapabilitiesFileWatcher {
 		this.unwatchProject(projectId);
 		this.projectPaths.set(projectId, projectPath);
 
-		let file: { path: string; format: "json" | "yaml" } | null = null;
-		try {
-			file = await detectCapabilitiesFile(projectPath);
-		} catch (err: any) {
-			this.log.warn(
-				`Capabilities watch skipped for ${projectId}: ${err?.message ?? err}`,
-			);
-			return;
-		}
+		const file = await detectCapabilitiesFile(projectPath);
 		if (!file) {
 			this.log.debug(`No capabilities file to watch for ${projectId}`);
 			return;

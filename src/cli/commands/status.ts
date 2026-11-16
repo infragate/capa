@@ -120,14 +120,7 @@ export async function collectProjectReport(
   const problem = (prefix: string, err: unknown) =>
     report.problems.push(`${prefix}: ${err instanceof Error ? err.message : String(err)}`);
 
-  let file: Awaited<ReturnType<typeof detectCapabilitiesFile>>;
-  try {
-    file = await detectCapabilitiesFile(projectPath);
-  } catch (err) {
-    // e.g. both capabilities.yaml and capabilities.json in one folder.
-    problem('The capabilities file is ambiguous', err);
-    return report;
-  }
+  const file = await detectCapabilitiesFile(projectPath);
   if (!file) return report;
   report.capabilitiesFile = file.path;
   report.state = 'not-installed';
