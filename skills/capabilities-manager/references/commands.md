@@ -22,6 +22,8 @@ After init, capa also **loads** an existing file from alternate locations if you
 
 `capabilities.lock` is written next to whichever file won (always TOML). If more than one candidate exists, capa warns and uses the winner.
 
+Web UI file uploads use `.capa/imports/` for a root capabilities file, or `.config/capabilities/{skills,rules,instructions}/` when the winning file is under `.config`.
+
 Also **registers the project** with the local CAPA server so it appears in the Web UI (`http://localhost:5912`). The server is started if it isn't already running.
 
 **When to use**: First-time setup or starting a new project.

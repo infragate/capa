@@ -89,6 +89,8 @@ CAPA also loads a capabilities file from alternate locations (first match wins; 
 
 `capabilities.lock` is written next to whichever file won (always TOML; legacy YAML/JSON locks are migrated on load).
 
+Web UI uploads land under `.capa/imports/` when the winning file is at the project root, or under `.config/capabilities/{skills,rules,instructions}/` when it lives under `.config` (legacy `.capa/imports` paths referenced from the config are migrated on upload).
+
 The new file points at the [JSON Schema](./schema/capabilities.schema.json), so editors with YAML/JSON language support autocomplete and validate it. For an existing YAML file, add this first line:
 
 ```yaml

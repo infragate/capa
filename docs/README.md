@@ -207,6 +207,10 @@ flowchart TD
   / upsertHook`) and pruned to the current set of IDs at the end.
   `--no-cache` disables both lockfile lookups and the on-disk snapshot
   cache.
+- **Web UI uploads**. Local skill/rule/agent uploads go to `.capa/imports/`
+  when the winning capabilities file is at the project root, or to
+  `.config/capabilities/{skills,rules,instructions}/` when it is under
+  `.config`. Referenced legacy `.capa/imports` paths are migrated on upload.
 
 ---
 
