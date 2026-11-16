@@ -1,6 +1,9 @@
 import { existsSync, type FSWatcher, statSync, watch } from "fs";
-import { basename, dirname } from "path";
-import { detectCapabilitiesFile } from "../shared/paths";
+import { basename, dirname, join, resolve } from "path";
+import {
+	detectCapabilitiesFile,
+	listCapabilitiesCandidates,
+} from "../shared/paths";
 
 const DEBOUNCE_MS = 400;
 /** Ignore watcher events shortly after a capa-owned write to the same file. */
@@ -13,11 +16,13 @@ export type CapabilitiesChangeHandler = (
 ) => void | Promise<void>;
 
 /**
- * Watches each project's capabilities.yaml/json so the running server (and UI)
+ * Watches each project's capabilities file so the running server (and UI)
  * stay in sync with on-disk edits — including those made outside capa.
+ *
+ * Re-runs discovery when the winning file changes (format or location).
  */
 export class CapabilitiesFileWatcher {
-	private watchers = new Map<string, FSWatcher>();
+	private watchers = new Map<string, FSWatcher[]>();
 	private pollTimers = new Map<string, ReturnType<typeof setInterval>>();
 	private debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 	private mtimes = new Map<string, number>();
@@ -25,6 +30,7 @@ export class CapabilitiesFileWatcher {
 	private projectPaths = new Map<string, string>();
 	private filePaths = new Map<string, string>();
 	private running = new Set<string>();
+	private rebinding = new Set<string>();
 
 	constructor(
 		private readonly onChange: CapabilitiesChangeHandler,
@@ -41,65 +47,113 @@ export class CapabilitiesFileWatcher {
 	}
 
 	async watchProject(projectId: string, projectPath: string): Promise<void> {
-		// Already watching the same project path — leave the handles alone.
-		if (
-			this.projectPaths.get(projectId) === projectPath &&
-			this.watchers.has(projectId)
-		) {
-			return;
-		}
-		this.unwatchProject(projectId);
-		this.projectPaths.set(projectId, projectPath);
+		const absProject = resolve(projectPath);
+		const file = await detectCapabilitiesFile(absProject);
+		const previous = this.filePaths.get(projectId);
+		const alreadySameProject =
+			this.projectPaths.get(projectId) === absProject &&
+			(this.watchers.get(projectId)?.length ?? 0) > 0;
 
-		const file = await detectCapabilitiesFile(projectPath);
-		if (!file) {
-			this.log.debug(`No capabilities file to watch for ${projectId}`);
+		if (alreadySameProject && file?.path === previous) {
 			return;
 		}
 
-		this.filePaths.set(projectId, file.path);
-		this.mtimes.set(projectId, safeMtime(file.path));
+		const selfUntil = this.selfWriteUntil.get(projectId);
+		this.clearHandles(projectId);
+		if (selfUntil != null) this.selfWriteUntil.set(projectId, selfUntil);
 
-		const capsDir = dirname(file.path);
-		const capsName = basename(file.path);
+		this.projectPaths.set(projectId, absProject);
 
-		try {
-			const w = watch(capsDir, { persistent: true }, (_event, filename) => {
-				if (
-					filename &&
-					filename !== capsName &&
-					basename(String(filename)) !== capsName
-				) {
-					return;
-				}
-				this.schedule(projectId);
-			});
-			w.on("error", (err) => {
+		if (file) {
+			this.filePaths.set(projectId, file.path);
+			// Force a reload when the winner changes (mtime alone may not fire).
+			this.mtimes.set(
+				projectId,
+				previous && previous !== file.path ? 0 : safeMtime(file.path),
+			);
+		} else {
+			this.filePaths.delete(projectId);
+			this.mtimes.delete(projectId);
+		}
+
+		const handles: FSWatcher[] = [];
+		for (const dir of watchDirsForProject(absProject)) {
+			try {
+				if (!existsSync(dir)) continue;
+				const w = watch(dir, { persistent: true }, (_event, filename) => {
+					if (filename) {
+						const name = basename(String(filename));
+						// Root watch also notices `.config` appearing so nested dirs can bind later.
+						if (
+							dir === absProject &&
+							(name === ".config" || name.startsWith(".config"))
+						) {
+							void this.onFsEvent(projectId);
+							return;
+						}
+						if (!isWatchedBasename(name, absProject, dir)) return;
+					}
+					void this.onFsEvent(projectId);
+				});
+				w.on("error", (err) => {
+					this.log.warn(
+						`Capabilities watch error for ${projectId}: ${err.message}`,
+					);
+				});
+				handles.push(w);
+			} catch (err: any) {
 				this.log.warn(
-					`Capabilities watch error for ${projectId}: ${err.message}`,
+					`fs.watch failed for ${projectId} (${dir}): ${err?.message ?? err}`,
 				);
-			});
-			this.watchers.set(projectId, w);
-		} catch (err: any) {
-			this.log.warn(`fs.watch failed for ${projectId}: ${err?.message ?? err}`);
+			}
 		}
+		this.watchers.set(projectId, handles);
 
-		const poll = setInterval(() => this.checkMtime(projectId), POLL_MS);
-		// Keep referenced so the timer is not GC'd in long-running server.
+		const poll = setInterval(() => void this.checkMtime(projectId), POLL_MS);
 		this.pollTimers.set(projectId, poll);
-		this.log.debug(`Watching capabilities for ${projectId}: ${file.path}`);
+		this.log.debug(
+			file
+				? `Watching capabilities for ${projectId}: ${file.path}`
+				: `Watching for capabilities creation in ${projectId}`,
+		);
+
+		if (previous && file && previous !== file.path) {
+			this.schedule(projectId);
+		}
 	}
 
 	unwatchProject(projectId: string): void {
-		const w = this.watchers.get(projectId);
-		if (w) {
+		this.clearHandles(projectId);
+		this.selfWriteUntil.delete(projectId);
+		this.projectPaths.delete(projectId);
+		this.filePaths.delete(projectId);
+		this.running.delete(projectId);
+		this.rebinding.delete(projectId);
+	}
+
+	stop(): void {
+		for (const id of [...this.projectPaths.keys()]) {
+			this.unwatchProject(id);
+		}
+	}
+
+	/** Re-resolve the file path (e.g. after yaml↔toml switch) and restart watch. */
+	async refreshProject(projectId: string): Promise<void> {
+		const projectPath = this.projectPaths.get(projectId);
+		if (!projectPath) return;
+		await this.watchProject(projectId, projectPath);
+	}
+
+	private clearHandles(projectId: string): void {
+		const handles = this.watchers.get(projectId) ?? [];
+		for (const w of handles) {
 			try {
 				w.close();
 			} catch {
 				// ignore
 			}
-			this.watchers.delete(projectId);
 		}
+		this.watchers.delete(projectId);
 		const poll = this.pollTimers.get(projectId);
 		if (poll) {
 			clearInterval(poll);
@@ -111,33 +165,35 @@ export class CapabilitiesFileWatcher {
 			this.debounceTimers.delete(projectId);
 		}
 		this.mtimes.delete(projectId);
-		this.selfWriteUntil.delete(projectId);
-		this.projectPaths.delete(projectId);
-		this.filePaths.delete(projectId);
-		this.running.delete(projectId);
 	}
 
-	stop(): void {
-		for (const id of [...this.watchers.keys()]) {
-			this.unwatchProject(id);
+	private async onFsEvent(projectId: string): Promise<void> {
+		const projectPath = this.projectPaths.get(projectId);
+		if (!projectPath || this.rebinding.has(projectId)) return;
+		this.rebinding.add(projectId);
+		try {
+			await this.watchProject(projectId, projectPath);
+		} finally {
+			this.rebinding.delete(projectId);
 		}
+		this.schedule(projectId);
 	}
 
-	/** Re-resolve the file path (e.g. after yaml↔json switch) and restart watch. */
-	async refreshProject(projectId: string): Promise<void> {
+	private async checkMtime(projectId: string): Promise<void> {
 		const projectPath = this.projectPaths.get(projectId);
 		if (!projectPath) return;
-		await this.watchProject(projectId, projectPath);
-	}
 
-	private checkMtime(projectId: string): void {
-		const filePath = this.filePaths.get(projectId);
-		if (!filePath || !existsSync(filePath)) {
-			// File may have been renamed/removed — try re-detect.
-			const projectPath = this.projectPaths.get(projectId);
-			if (projectPath) void this.watchProject(projectId, projectPath);
+		const file = await detectCapabilitiesFile(projectPath);
+		const previous = this.filePaths.get(projectId);
+		if (file?.path !== previous) {
+			await this.watchProject(projectId, projectPath);
+			if (file) this.schedule(projectId);
 			return;
 		}
+
+		const filePath = this.filePaths.get(projectId);
+		if (!filePath || !existsSync(filePath)) return;
+
 		const mtime = safeMtime(filePath);
 		const prev = this.mtimes.get(projectId);
 		if (prev != null && mtime !== prev) {
@@ -163,10 +219,18 @@ export class CapabilitiesFileWatcher {
 			return;
 		}
 
+		const projectPath = this.projectPaths.get(projectId);
+		if (projectPath) {
+			const file = await detectCapabilitiesFile(projectPath);
+			const previous = this.filePaths.get(projectId);
+			if (file?.path !== previous) {
+				await this.watchProject(projectId, projectPath);
+			}
+		}
+
 		const filePath = this.filePaths.get(projectId);
 		const until = this.selfWriteUntil.get(projectId) ?? 0;
 		if (Date.now() < until) {
-			// Swallow our own write; adopt the new mtime so we don't re-fire later.
 			if (filePath && existsSync(filePath)) {
 				this.mtimes.set(projectId, safeMtime(filePath));
 			}
@@ -191,12 +255,31 @@ export class CapabilitiesFileWatcher {
 			);
 		} finally {
 			this.running.delete(projectId);
-			// Capture mtime after reload (configure may not touch the file).
 			if (filePath && existsSync(filePath)) {
 				this.mtimes.set(projectId, safeMtime(filePath));
 			}
 		}
 	}
+}
+
+function watchDirsForProject(projectPath: string): string[] {
+	return [
+		projectPath,
+		join(projectPath, ".config"),
+		join(projectPath, ".config", "capabilities"),
+	];
+}
+
+function isWatchedBasename(
+	filename: string,
+	projectPath: string,
+	dir: string,
+): boolean {
+	const name = basename(filename);
+	const candidates = listCapabilitiesCandidates(projectPath);
+	return candidates.some(
+		(c) => dirname(c.path) === resolve(dir) && basename(c.path) === name,
+	);
 }
 
 function safeMtime(path: string): number {
