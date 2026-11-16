@@ -36,8 +36,8 @@ Agent config today is scattered across `CLAUDE.md`, `.cursor/rules/`, `AGENTS.md
 
 CAPA collapses that into one version-controlled file next to your code — and a local MCP gateway in front of every tool:
 
-- **`capabilities.yaml`** — source of truth for every capability
-- **`capabilities.lock`** — SHA pins so tomorrow's clone gets the same bytes
+- **`capabilities.yaml`** (also `.toml` / `.json`) — source of truth for every capability
+- **`capabilities.lock`** — SHA pins co-located with the capabilities file
 - **Marker blocks** — surgical writes that leave hand-edited content alone
 - **MCP gateway** — one endpoint per project; CAPA proxies stdio / HTTP / SSE servers, applies formatters, and records activity
 
@@ -79,9 +79,17 @@ cd your-project
 capa init
 ```
 
-Creates `capabilities.yaml` and registers the project with the local CAPA server (default `http://localhost:5912`).
+Creates `capabilities.yaml` at the project root and registers the project with the local CAPA server (default `http://localhost:5912`). Use `capa init -f toml` or `-f json` for those formats.
 
-The new file points at the [JSON Schema](./schema/capabilities.schema.json), so editors with YAML/JSON language support autocomplete and validate it. For an existing file, add this first line:
+CAPA also loads a capabilities file from alternate locations (first match wins; preference **toml → yaml → json** within each location). If more than one candidate exists, CAPA warns and uses the winner:
+
+1. `capabilities.toml` / `.yaml` / `.json` at the project root
+2. `.config/capabilities.toml` / `.yaml` / `.json`
+3. `.config/capabilities/config.toml` / `.yaml` / `.json`
+
+`capabilities.lock` is written next to whichever file won.
+
+The new file points at the [JSON Schema](./schema/capabilities.schema.json), so editors with YAML/JSON language support autocomplete and validate it. For an existing YAML file, add this first line:
 
 ```yaml
 # yaml-language-server: $schema=https://raw.githubusercontent.com/infragate/capa/main/schema/capabilities.schema.json

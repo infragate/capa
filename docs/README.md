@@ -39,7 +39,7 @@ depend on state set by an earlier task.
 
 ```mermaid
 flowchart TD
-    Start([capa install]) --> Detect[Detect capabilities.yaml<br/>or capabilities.json]
+    Start([capa install]) --> Detect[Detect capabilities file<br/>root / .config / .config/capabilities<br/>toml → yaml → json]
     Detect --> Parse[Parse capabilities file<br/>parseCapabilitiesFile]
     Parse --> EnsureServer[Ensure local server is running<br/>ensureServer]
     EnsureServer --> ResolveProviders[Resolve providers list<br/>flag → file → DB → detect]
@@ -194,7 +194,13 @@ flowchart TD
   in place and must never be deleted on clean). `prune-orphan-hooks`,
   `install-hooks`, and `capa clean` all read and mutate this table.
 
-- **Lockfile**. `capabilities.lock` pins resolved commit SHAs for every
+- **Capabilities discovery**. CAPA looks for `capabilities.{toml,yaml,json}` at
+  the project root, then `.config/capabilities.*`, then
+  `.config/capabilities/config.*` (toml preferred over yaml over json within a
+  location). Multiple matches produce a warning; the first in that order wins.
+  `capa init` still writes root `capabilities.yaml` by default.
+- **Lockfile**. `capabilities.lock` (co-located with the winning capabilities
+  file) pins resolved commit SHAs for every
   `github`/`gitlab` skill, plugin, and hook source. The lockfile is built
   incrementally during install (`ctx.lockBuilder.upsertSkill / upsertPlugin
   / upsertHook`) and pruned to the current set of IDs at the end.
