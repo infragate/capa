@@ -1,5 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import {
@@ -43,18 +50,47 @@ describe('project-fs', () => {
     expect(() => resolveInsideProject(root, 'docs/../../etc/passwd')).toThrow();
   });
 
-  it('writes uploads under .capa/imports', () => {
+  it('writes uploads under .capa/imports when capabilities are at root', async () => {
+    writeFileSync(join(root, 'capabilities.yaml'), 'providers: []\n');
     const bytes = new TextEncoder().encode('# imported\n');
-    const file = writeProjectImport(root, { filename: 'note.md', bytes });
+    const file = await writeProjectImport(root, {
+      filename: 'note.md',
+      bytes,
+      kind: 'rules',
+    });
     expect(file.path.startsWith('.capa/imports/')).toBe(true);
     expect(file.path.endsWith('note.md') || file.path.includes('note')).toBe(true);
 
-    const skill = writeProjectImport(root, {
+    const skill = await writeProjectImport(root, {
       filename: 'my-skill.md',
       bytes,
+      kind: 'skills',
       asSkillDir: true,
     });
     expect(skill.path).toBe('.capa/imports/my-skill');
+  });
+
+  it('writes uploads under typed .config/capabilities dirs', async () => {
+    mkdirSync(join(root, '.config'), { recursive: true });
+    writeFileSync(join(root, '.config', 'capabilities.yaml'), 'providers: []\n');
+    const bytes = new TextEncoder().encode('# rule\n');
+    const file = await writeProjectImport(root, {
+      filename: 'note.md',
+      bytes,
+      kind: 'rules',
+    });
+    expect(file.path).toBe('capabilities/rules/note.md');
+    expect(existsSync(join(root, '.config', 'capabilities', 'rules', 'note.md'))).toBe(
+      true,
+    );
+
+    const skill = await writeProjectImport(root, {
+      filename: 'my-skill.md',
+      bytes,
+      kind: 'skills',
+      asSkillDir: true,
+    });
+    expect(skill.path).toBe('.config/capabilities/skills/my-skill');
   });
 
   it('refuses to mkdir through a symlink that escapes the project', () => {

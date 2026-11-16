@@ -3,6 +3,7 @@ import type { CapaDatabase } from "../db/database";
 import { isSystemActivityHookId } from "../shared/agent-activity";
 import { parseCapabilitiesFile } from "../shared/capabilities";
 import { detectCapabilitiesFile } from "../shared/paths";
+import { isProjectUploadKind } from "../shared/project-uploads";
 import { isUnderWrapWorkspacesDir } from "../shared/workspaces/paths";
 import type { Capabilities, MCPServer } from "../types/capabilities";
 import type { ToolCallRecord } from "../types/database";
@@ -462,10 +463,20 @@ export async function handleProjectFsUpload(
 		}
 		const asSkillDir = String(form.get("asSkillDir") || "") === "true";
 		const subdir = form.get("subdir");
+		const kindRaw = String(form.get("kind") || "");
+		if (!isProjectUploadKind(kindRaw)) {
+			return new Response(
+				JSON.stringify({
+					error: 'Missing or invalid kind (expected "skills", "rules", or "instructions")',
+				}),
+				{ status: 400, headers: JSON_HEADERS },
+			);
+		}
 		const bytes = new Uint8Array(await file.arrayBuffer());
-		const written = writeProjectImport(project.path, {
+		const written = await writeProjectImport(project.path, {
 			filename: file.name || "upload.md",
 			bytes,
+			kind: kindRaw,
 			subdir: typeof subdir === "string" && subdir ? subdir : undefined,
 			asSkillDir,
 		});
