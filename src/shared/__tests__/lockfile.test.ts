@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, spyOn } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync } from 'fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import * as yaml from 'js-yaml';
@@ -59,8 +59,27 @@ describe('lockfile', () => {
   });
 
   describe('getLockfilePath', () => {
-    it('returns capabilities.lock under the project root', () => {
+    it('returns capabilities.lock under the project root when no config exists', () => {
       expect(getLockfilePath(projectDir)).toBe(join(projectDir, LOCKFILE_NAME));
+    });
+
+    it('co-locates the lockfile with .config/capabilities.yaml', () => {
+      mkdirSync(join(projectDir, '.config'), { recursive: true });
+      writeFileSync(join(projectDir, '.config', 'capabilities.yaml'), 'providers: []\n');
+      expect(getLockfilePath(projectDir)).toBe(
+        join(projectDir, '.config', LOCKFILE_NAME),
+      );
+    });
+
+    it('co-locates the lockfile with .config/capabilities/config.toml', () => {
+      mkdirSync(join(projectDir, '.config', 'capabilities'), { recursive: true });
+      writeFileSync(
+        join(projectDir, '.config', 'capabilities', 'config.toml'),
+        'providers = []\n',
+      );
+      expect(getLockfilePath(projectDir)).toBe(
+        join(projectDir, '.config', 'capabilities', LOCKFILE_NAME),
+      );
     });
   });
 
@@ -77,6 +96,17 @@ describe('lockfile', () => {
     it('returns yaml when capabilities.yaml exists', () => {
       writeFileSync(join(projectDir, 'capabilities.yaml'), 'providers: []');
       expect(detectLockfileFormat(projectDir)).toBe('yaml');
+    });
+
+    it('returns toml when capabilities.toml exists', () => {
+      writeFileSync(join(projectDir, 'capabilities.toml'), 'providers = []\n');
+      expect(detectLockfileFormat(projectDir)).toBe('toml');
+    });
+
+    it('prefers toml over yaml for lock format', () => {
+      writeFileSync(join(projectDir, 'capabilities.toml'), 'providers = []\n');
+      writeFileSync(join(projectDir, 'capabilities.yaml'), 'providers: []\n');
+      expect(detectLockfileFormat(projectDir)).toBe('toml');
     });
   });
 
@@ -98,6 +128,16 @@ describe('lockfile', () => {
       expect(parsed.version).toBe(1);
       expect(parsed.skills[0].resolvedRef).toBe(sampleSkill.resolvedRef);
       expect(parsed.plugins[0].manifestName).toBe('my-plugin');
+    });
+
+    it('round-trips through toml', async () => {
+      writeFileSync(join(projectDir, 'capabilities.toml'), 'providers = []\n');
+      const lf: Lockfile = { ...emptyLockfile(), skills: [sampleSkill], plugins: [samplePlugin] };
+      await saveLockfile(projectDir, lf, 'toml');
+      expect(existsSync(join(projectDir, LOCKFILE_NAME))).toBe(true);
+      const loaded = await loadLockfile(projectDir);
+      expect(loaded?.skills[0].resolvedRef).toBe(sampleSkill.resolvedRef);
+      expect(loaded?.plugins[0].manifestName).toBe('my-plugin');
     });
 
     it('round-trips through json', () => {

@@ -1,14 +1,14 @@
 /**
  * Read/write helpers for `capabilities.lock`.
  *
- * The lockfile lives next to the capabilities file (yaml or json). Format is
- * auto-detected: if `capabilities.json` exists we serialize as JSON; otherwise
- * (yaml is the default) we use YAML.
+ * The lockfile lives next to the winning capabilities file (toml/yaml/json).
+ * Format mirrors that capabilities file; YAML is the default when none exists.
  */
 
+import TOML from "@iarna/toml";
 import { existsSync } from "fs";
 import * as yaml from "js-yaml";
-import { join } from "path";
+import { dirname, join, resolve } from "path";
 import type {
 	Lockfile,
 	LockfileFormat,
@@ -20,24 +20,28 @@ import type {
 } from "../types/lockfile";
 import { VERSION } from "../version";
 import { logger } from "./logger";
+import { listExistingCapabilitiesCandidatesSync } from "./paths";
 
 export const LOCKFILE_NAME = "capabilities.lock";
 
 /**
  * Resolve the absolute path of the lockfile for a project.
+ * Co-located with the winning capabilities file; falls back to project root.
  */
 export function getLockfilePath(projectPath: string): string {
-	return join(projectPath, LOCKFILE_NAME);
+	const existing = listExistingCapabilitiesCandidatesSync(projectPath);
+	const dir =
+		existing.length > 0 ? dirname(existing[0].path) : resolve(projectPath);
+	return join(dir, LOCKFILE_NAME);
 }
 
 /**
  * Pick the lockfile serialization format for a project.
- * Mirrors the capabilities file format when possible: JSON if `capabilities.json`
- * exists, otherwise YAML.
+ * Mirrors the winning capabilities file format; YAML when none exists.
  */
 export function detectLockfileFormat(projectPath: string): LockfileFormat {
-	const jsonPath = join(projectPath, "capabilities.json");
-	return existsSync(jsonPath) ? "json" : "yaml";
+	const existing = listExistingCapabilitiesCandidatesSync(projectPath);
+	return existing[0]?.format ?? "yaml";
 }
 
 /**
@@ -65,6 +69,42 @@ function isLockHookSource(value: unknown): value is LockHookEntry["source"] {
 function isNullableString(value: unknown): value is string | null {
 	return value === null || typeof value === "string";
 }
+
+/** TOML omits nulls on write; restore expected null fields before validation. */
+function restoreOmittedNulls(
+	entries: unknown[],
+	keys: readonly string[],
+): void {
+	for (const entry of entries) {
+		if (!entry || typeof entry !== "object") continue;
+		const obj = entry as Record<string, unknown>;
+		for (const key of keys) {
+			if (!(key in obj) || obj[key] === undefined) obj[key] = null;
+		}
+	}
+}
+
+const SKILL_NULLABLE_KEYS = [
+	"requestedVersion",
+	"requestedRef",
+	"resolvedVersion",
+] as const;
+const PLUGIN_NULLABLE_KEYS = [
+	"subpath",
+	"requestedSearchName",
+	"requestedVersion",
+	"requestedRef",
+	"resolvedVersion",
+	"manifestVersion",
+] as const;
+const HOOK_NULLABLE_KEYS = [
+	"repo",
+	"url",
+	"requestedVersion",
+	"requestedRef",
+	"resolvedRef",
+	"resolvedVersion",
+] as const;
 
 export function isValidSkillLockEntry(x: unknown): x is LockSkillEntry {
 	if (!x || typeof x !== "object") return false;
@@ -216,9 +256,24 @@ export async function loadLockfile(
 	const trimmed = content.trim();
 	if (trimmed === "") return null;
 
+	const format = detectLockfileFormat(projectPath);
 	let parsed: unknown;
-	if (trimmed.startsWith("{")) {
+	if (format === "json" || trimmed.startsWith("{")) {
 		parsed = JSON.parse(content);
+	} else if (format === "toml") {
+		parsed = TOML.parse(content);
+		if (parsed && typeof parsed === "object") {
+			const obj = parsed as Record<string, unknown>;
+			if (Array.isArray(obj.skills)) {
+				restoreOmittedNulls(obj.skills, SKILL_NULLABLE_KEYS);
+			}
+			if (Array.isArray(obj.plugins)) {
+				restoreOmittedNulls(obj.plugins, PLUGIN_NULLABLE_KEYS);
+			}
+			if (Array.isArray(obj.hooks)) {
+				restoreOmittedNulls(obj.hooks, HOOK_NULLABLE_KEYS);
+			}
+		}
 	} else {
 		parsed = yaml.load(content);
 	}
@@ -284,6 +339,9 @@ export function serializeLockfile(
 ): string {
 	if (format === "json") {
 		return JSON.stringify(lockfile, null, 2) + "\n";
+	}
+	if (format === "toml") {
+		return TOML.stringify(lockfile as unknown as TOML.JsonMap);
 	}
 	return yaml.dump(lockfile, { indent: 2, lineWidth: 120, noRefs: true });
 }
