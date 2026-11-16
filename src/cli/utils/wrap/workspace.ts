@@ -5,6 +5,7 @@ import { rm } from 'fs/promises';
 import * as yaml from 'js-yaml';
 import { detectCapabilitiesFile, generateProjectId } from '../../../shared/paths';
 import {
+  getLockfilePath,
   LOCKFILE_NAME,
   lockfileSemanticPayload,
   type Lockfile,
@@ -81,7 +82,7 @@ export async function computeCapabilitiesFingerprint(realProjectPath: string): P
   } else {
     parts.push('');
   }
-  const lockPath = join(realProjectPath, LOCKFILE_NAME);
+  const lockPath = getLockfilePath(realProjectPath);
   if (existsSync(lockPath)) {
     try {
       const raw = await Bun.file(lockPath).text();
