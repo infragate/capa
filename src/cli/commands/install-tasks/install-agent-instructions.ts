@@ -14,6 +14,7 @@ export function installAgentInstructionsTask(): Task<InstallCtx> {
       const providers = ctx.capabilitiesToUse.providers ?? ctx.resolvedProviders;
       const repoFetchAuth = createAuthenticatedFetch(ctx.db);
       const repoFetchCtx = {
+        sourceProjectPath: ctx.sourceProjectPath ?? ctx.projectPath,
         authFetch: repoFetchAuth,
         getRepoSnapshot: (platform: CachePlatform, repoPath: string, auth: AuthenticatedFetch, opts: any) =>
           getRepoSnapshot(platform, repoPath, auth, opts),

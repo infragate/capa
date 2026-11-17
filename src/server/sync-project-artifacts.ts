@@ -61,6 +61,7 @@ export interface SyncProjectArtifactsResult {
  */
 export async function syncProjectManagedArtifacts(opts: {
 	projectPath: string;
+	sourceProjectPath?: string;
 	projectId: string;
 	capabilitiesFilePath: string;
 	capabilities: Capabilities;
@@ -169,6 +170,7 @@ export async function syncProjectManagedArtifactsAndWrapShadows(opts: {
 			const shadowResult = await syncProjectManagedArtifacts({
 				...opts,
 				projectPath: shadow.workspacePath,
+				sourceProjectPath: opts.projectPath,
 				providers: [provider.id],
 				pruneOptions: {
 					onlyDesiredProviders: true,
@@ -452,6 +454,7 @@ async function syncInstructionContextConfig(
 
 async function syncProjectAgentInstructions(opts: {
 	projectPath: string;
+	sourceProjectPath?: string;
 	capabilitiesFilePath: string;
 	capabilities: Capabilities;
 	db: CapaDatabase;
@@ -506,6 +509,7 @@ async function syncProjectAgentInstructions(opts: {
 				getRepoSnapshot: (platform, repoPath, auth, snapOpts) =>
 					getRepoSnapshot(platform, repoPath, auth, snapOpts),
 				quiet: true,
+				sourceProjectPath: opts.sourceProjectPath ?? opts.projectPath,
 				forceMaterialize: opts.materializeShadow === true,
 				onBlockedPhrase: (sourceLabel, phrase) => {
 					throw new Error(

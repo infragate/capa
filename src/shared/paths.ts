@@ -1,6 +1,6 @@
 import { createHash } from "crypto";
 import { existsSync, realpathSync } from "fs";
-import { basename, dirname, join, relative, resolve, sep } from "path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "path";
 import type { CapabilitiesFormat } from "../types/capabilities";
 import { logger } from "./logger";
 
@@ -59,7 +59,7 @@ export function generateProjectId(projectPath: string): string {
 export function isPathInside(child: string, parent: string): boolean {
 	const rel = relative(resolve(parent), resolve(child));
 	return (
-		rel === "" || (!rel.startsWith("..") && !rel.startsWith(`..${sep}`))
+		rel === "" || (!isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`))
 	);
 }
 

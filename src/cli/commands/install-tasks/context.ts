@@ -11,6 +11,7 @@ export type SkillInstallOutcome = 'installed' | 'skipped' | 'failed';
 
 export interface InstallCtx {
   projectPath: string;
+  sourceProjectPath?: string;
   projectId: string;
   capabilitiesFile: { path: string; format: CapabilitiesFormat };
   capabilities: Capabilities;

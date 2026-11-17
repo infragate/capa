@@ -269,6 +269,7 @@ async function installCommandBody(opts: {
   // Hoisted so the catch block can surface ctx.errors accumulated before the throw.
   const initialCtx: InstallCtx = {
     projectPath,
+    sourceProjectPath: idPath,
     projectId,
     capabilitiesFile,
     capabilities,
