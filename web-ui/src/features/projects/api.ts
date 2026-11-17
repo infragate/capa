@@ -151,12 +151,13 @@ export const projectsApi = {
 
   listFs: (
     projectId: string,
-    opts?: { path?: string; ext?: string; dirsOnly?: boolean },
+    opts?: { path?: string; ext?: string; dirsOnly?: boolean; kind?: 'skills' | 'rules' | 'instructions' },
   ) => {
     const params = new URLSearchParams();
     if (opts?.path) params.set('path', opts.path);
     if (opts?.ext) params.set('ext', opts.ext);
     if (opts?.dirsOnly) params.set('dirsOnly', 'true');
+    if (opts?.kind) params.set('kind', opts.kind);
     const qs = params.toString();
     return api.get<ProjectFsListResponse>(
       `/api/projects/${encodeURIComponent(projectId)}/fs${qs ? `?${qs}` : ''}`,

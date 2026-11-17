@@ -47,7 +47,7 @@ export function LocalPathPicker({
       setLoading(true);
       setError(null);
       try {
-        const res = await projectsApi.listFs(projectId, { path, ext, dirsOnly });
+        const res = await projectsApi.listFs(projectId, { path, ext, dirsOnly, kind: uploadKind });
         setCwd(res.path);
         setEntries(res.entries);
       } catch (err) {
@@ -57,7 +57,7 @@ export function LocalPathPicker({
         setLoading(false);
       }
     },
-    [projectId, ext, dirsOnly],
+    [projectId, ext, dirsOnly, uploadKind],
   );
 
   useEffect(() => {
@@ -167,7 +167,7 @@ export function LocalPathPicker({
                               void load(entry.path);
                             }
                           } else {
-                            onChange(entry.path);
+                            onChange(entry.storedPath ?? entry.path);
                             setBrowseOpen(false);
                           }
                         }}
@@ -187,14 +187,14 @@ export function LocalPathPicker({
                             tabIndex={0}
                             onClick={(e) => {
                               e.stopPropagation();
-                              onChange(entry.path);
+                              onChange(entry.storedPath ?? entry.path);
                               setBrowseOpen(false);
                             }}
                             onKeyDown={(e) => {
                               if (e.key === 'Enter' || e.key === ' ') {
                                 e.preventDefault();
                                 e.stopPropagation();
-                                onChange(entry.path);
+                                onChange(entry.storedPath ?? entry.path);
                                 setBrowseOpen(false);
                               }
                             }}

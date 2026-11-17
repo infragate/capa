@@ -418,7 +418,11 @@ export async function handleProjectFsList(
 	const ext = url.searchParams.get("ext") || undefined;
 	const dirsOnly = url.searchParams.get("dirsOnly") === "true";
 	try {
-		const result = listProjectFs(project.path, rel, { ext, dirsOnly });
+		const kind = url.searchParams.get("kind");
+        if (kind !== null && !isProjectUploadKind(kind)) {
+            throw new Error('Invalid kind (expected "skills", "rules", or "instructions")');
+        }
+        const result = await listProjectFs(project.path, rel, { ext, dirsOnly, kind: kind ?? undefined });
 		return new Response(JSON.stringify(result), { headers: JSON_HEADERS });
 	} catch (err: unknown) {
 		return new Response(

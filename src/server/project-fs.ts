@@ -25,6 +25,8 @@ export interface ProjectFsEntry {
 	name: string;
 	type: "file" | "dir";
 	path: string;
+	/** Authored config path, distinct from the project-relative navigation path. */
+	storedPath?: string;
 }
 
 function normalizeRel(rel: string): string {
@@ -158,15 +160,17 @@ export function mkdirInsideProject(
  * `ext` filters files by extension (e.g. `md`); directories always included.
  * `dirsOnly` returns only directories (for picking skill folders).
  */
-export function listProjectFs(
+export async function listProjectFs(
 	projectRoot: string,
 	relPath = "",
-	opts: { ext?: string; dirsOnly?: boolean } = {},
-): { path: string; entries: ProjectFsEntry[] } {
+	opts: { ext?: string; dirsOnly?: boolean; kind?: ProjectUploadKind } = {},
+): Promise<{ path: string; entries: ProjectFsEntry[] }> {
 	const abs = resolveInsideProject(projectRoot, relPath);
 	if (!existsSync(abs)) {
 		throw new Error(`Path not found: ${relPath || "."}`);
 	}
+	assertRealPathInside(projectRoot, abs);
+	const detected = opts.kind ? await detectCapabilitiesFile(projectRoot) : null;
 	let dirents: Dirent[];
 	try {
 		dirents = readdirSync(abs, { withFileTypes: true });
@@ -177,11 +181,13 @@ export function listProjectFs(
 	const ext = opts.ext?.replace(/^\./, "").toLowerCase();
 	const entries: ProjectFsEntry[] = [];
 	for (const d of dirents) {
-		if (d.name.startsWith(".")) continue;
+		if (d.name.startsWith(".") && !(abs === resolve(projectRoot) && d.name === ".config")) continue;
+		if (d.isSymbolicLink()) continue;
 		const childAbs = join(abs, d.name);
 		const childRel = toProjectRelative(projectRoot, childAbs);
+		const selection = opts.kind ? { storedPath: pathStoredInCapabilities({ projectRoot, capabilitiesFilePath: detected?.path ?? null, kind: opts.kind, absolutePath: childAbs }) } : {};
 		if (d.isDirectory()) {
-			entries.push({ name: d.name, type: "dir", path: childRel });
+			entries.push({ name: d.name, type: "dir", path: childRel, ...selection });
 			continue;
 		}
 		if (opts.dirsOnly) continue;
@@ -191,7 +197,7 @@ export function listProjectFs(
 				const fileExt = dot >= 0 ? d.name.slice(dot + 1).toLowerCase() : "";
 				if (fileExt !== ext) continue;
 			}
-			entries.push({ name: d.name, type: "file", path: childRel });
+			entries.push({ name: d.name, type: "file", path: childRel, ...selection });
 		}
 	}
 
