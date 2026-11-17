@@ -11,6 +11,7 @@ Finish PR #383's project-local config discovery and TOML support while addressin
 - [Paths and wrap evidence](paths-audit.md)
 - [Serialization evidence](serialization-audit.md)
 - [Watcher evidence](watcher-research.md)
+- [Future work: on-demand watcher lifecycle](future-work-on-demand-watchers.md), outside this PR.
 - Reference main: `d7af1197d4214599b8143794212b6094c9096d99`.
 - Current PR head at planning time: `1d35b3b2db998442a1c23e5c88c0b1de12bc0b12`.
 
