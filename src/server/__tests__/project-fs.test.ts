@@ -70,7 +70,7 @@ describe('project-fs', () => {
     expect(skill.path).toBe('.capa/imports/my-skill');
   });
 
-  it('writes uploads under typed .config/capabilities dirs', async () => {
+  it('writes uploads under typed .config/capa dirs', async () => {
     mkdirSync(join(root, '.config'), { recursive: true });
     writeFileSync(join(root, '.config', 'capabilities.yaml'), 'providers: []\n');
     const bytes = new TextEncoder().encode('# rule\n');
@@ -79,8 +79,8 @@ describe('project-fs', () => {
       bytes,
       kind: 'rules',
     });
-    expect(file.path).toBe('capabilities/rules/note.md');
-    expect(existsSync(join(root, '.config', 'capabilities', 'rules', 'note.md'))).toBe(
+    expect(file.path).toBe('capa/rules/note.md');
+    expect(existsSync(join(root, '.config', 'capa', 'rules', 'note.md'))).toBe(
       true,
     );
 
@@ -90,7 +90,23 @@ describe('project-fs', () => {
       kind: 'skills',
       asSkillDir: true,
     });
-    expect(skill.path).toBe('.config/capabilities/skills/my-skill');
+    expect(skill.path).toBe('.config/capa/skills/my-skill');
+  });
+
+  it('returns portable upload paths through a symlinked project root', async () => {
+    const parent = mkdtempSync(join(tmpdir(), 'capa-upload-alias-'));
+    const alias = join(parent, 'alias');
+    try {
+      symlinkSync(root, alias, process.platform === 'win32' ? 'junction' : 'dir');
+      mkdirSync(join(root, '.config', 'capa'), { recursive: true });
+      writeFileSync(join(root, '.config', 'capa', 'config.toml'), 'providers = []\n');
+      for (const kind of ['skills', 'rules', 'instructions'] as const) {
+        const result = await writeProjectImport(alias, { filename: 'note.md', bytes: new TextEncoder().encode('# note'), kind });
+        expect(result.path).toBe(kind === 'skills' ? '.config/capa/skills/note.md' : `${kind}/note.md`);
+      }
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
   });
 
   it('refuses to mkdir through a symlink that escapes the project', () => {

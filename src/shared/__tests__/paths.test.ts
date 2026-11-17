@@ -131,15 +131,15 @@ describe('paths', () => {
       });
     });
 
-    it('detects .config/capabilities/config.toml', async () => {
-      mkdirSync(join(projectDir, '.config', 'capabilities'), { recursive: true });
+    it('detects .config/capa/config.toml', async () => {
+      mkdirSync(join(projectDir, '.config', 'capa'), { recursive: true });
       writeFileSync(
-        join(projectDir, '.config', 'capabilities', 'config.toml'),
+        join(projectDir, '.config', 'capa', 'config.toml'),
         'providers = []\n',
       );
       const result = await detectCapabilitiesFile(projectDir);
       expect(result).toEqual({
-        path: join(projectDir, '.config', 'capabilities', 'config.toml'),
+        path: join(projectDir, '.config', 'capa', 'config.toml'),
         format: 'toml',
       });
     });
@@ -186,9 +186,9 @@ describe('paths', () => {
         join(projectDir, '.config', 'capabilities.toml'),
         join(projectDir, '.config', 'capabilities.yaml'),
         join(projectDir, '.config', 'capabilities.json'),
-        join(projectDir, '.config', 'capabilities', 'config.toml'),
-        join(projectDir, '.config', 'capabilities', 'config.yaml'),
-        join(projectDir, '.config', 'capabilities', 'config.json'),
+        join(projectDir, '.config', 'capa', 'config.toml'),
+        join(projectDir, '.config', 'capa', 'config.yaml'),
+        join(projectDir, '.config', 'capa', 'config.json'),
       ]);
     });
   });
@@ -214,31 +214,31 @@ describe('paths', () => {
       );
     });
 
-    it('uses typed .config/capabilities dirs when config is under .config', async () => {
+    it('uses typed .config/capa dirs when config is under .config', async () => {
       mkdirSync(join(projectDir, '.config'), { recursive: true });
       writeFileSync(
         join(projectDir, '.config', 'capabilities.yaml'),
         'providers: []\n',
       );
       expect(await getProjectUploadRelDir(projectDir, 'skills')).toBe(
-        '.config/capabilities/skills',
+        '.config/capa/skills',
       );
       expect(await getProjectUploadRelDir(projectDir, 'rules')).toBe(
-        '.config/capabilities/rules',
+        '.config/capa/rules',
       );
       expect(await getProjectUploadRelDir(projectDir, 'instructions')).toBe(
-        '.config/capabilities/instructions',
+        '.config/capa/instructions',
       );
     });
 
-    it('uses typed dirs when config is .config/capabilities/config.toml', async () => {
-      mkdirSync(join(projectDir, '.config', 'capabilities'), { recursive: true });
+    it('uses typed dirs when config is .config/capa/config.toml', async () => {
+      mkdirSync(join(projectDir, '.config', 'capa'), { recursive: true });
       writeFileSync(
-        join(projectDir, '.config', 'capabilities', 'config.toml'),
+        join(projectDir, '.config', 'capa', 'config.toml'),
         'providers = []\n',
       );
       expect(await getProjectUploadRelDir(projectDir, 'rules')).toBe(
-        '.config/capabilities/rules',
+        '.config/capa/rules',
       );
     });
 

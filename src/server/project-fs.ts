@@ -18,7 +18,6 @@ import {
 	type ProjectUploadKind,
 } from "../shared/paths";
 import {
-	ensureProjectUploadsMigrated,
 	pathStoredInCapabilities,
 } from "../shared/project-uploads";
 
@@ -207,7 +206,7 @@ export function listProjectFs(
 /**
  * Write an uploaded file under the kind-specific upload directory.
  * Root capabilities → `.capa/imports/…`; `.config` capabilities →
- * `.config/capabilities/{skills|rules|instructions}/…`.
+ * `.config/capa/{skills|rules|instructions}/…`.
  *
  * Returns the path to store in the capabilities file (project-relative for
  * skills; relative to the capabilities file for rules/instructions).
@@ -224,8 +223,6 @@ export async function writeProjectImport(
 		asSkillDir?: boolean;
 	},
 ): Promise<{ path: string }> {
-	await ensureProjectUploadsMigrated(projectRoot);
-
 	const safeName = basename(opts.filename).replace(/[^a-zA-Z0-9._-]/g, "_");
 	if (!safeName || safeName === "." || safeName === "..") {
 		throw new Error("Invalid filename");
@@ -237,8 +234,8 @@ export async function writeProjectImport(
 		}
 	}
 
-	const uploadRelDir = await getProjectUploadRelDir(projectRoot, opts.kind);
 	const detected = await detectCapabilitiesFile(projectRoot);
+	const uploadRelDir = await getProjectUploadRelDir(projectRoot, opts.kind, detected);
 
 	if (opts.asSkillDir) {
 		const id = safeName.replace(/\.md$/i, "") || "skill";

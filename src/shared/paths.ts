@@ -101,7 +101,7 @@ const CAPABILITIES_LOCATIONS: LocationSpec[] = [
 		},
 	},
 	{
-		dir: (root) => join(root, ".config", "capabilities"),
+		dir: (root) => join(root, ".config", "capa"),
 		basenames: {
 			toml: "config.toml",
 			yaml: "config.yaml",
@@ -167,7 +167,7 @@ export function getCapabilitiesPath(
 /**
  * Detect which capabilities file exists in the project.
  * Prefers toml → yaml → json within each location, then root → `.config/` →
- * `.config/capabilities/`. Warns when multiple candidates exist; does not throw.
+ * `.config/capa/`. Warns when multiple candidates exist; does not throw.
  * Returns null if no capabilities file is found.
  */
 export async function detectCapabilitiesFile(
@@ -209,18 +209,19 @@ export function isCapabilitiesUnderDotConfig(
 /**
  * Project-relative directory for Web UI uploads of the given kind.
  * Root (or missing) capabilities → `.capa/imports`.
- * Any `.config` winner → `.config/capabilities/{skills|rules|instructions}`.
+ * Any `.config` winner → `.config/capa/{skills|rules|instructions}`.
  */
 export async function getProjectUploadRelDir(
 	projectPath: string,
 	kind: ProjectUploadKind,
+	detected: CapabilitiesCandidate | null | undefined = undefined,
 ): Promise<string> {
-	const detected = await detectCapabilitiesFile(projectPath);
+	if (detected === undefined) detected = await detectCapabilitiesFile(projectPath);
 	if (
 		detected &&
 		isCapabilitiesUnderDotConfig(projectPath, detected.path)
 	) {
-		return `.config/capabilities/${kind}`;
+		return `.config/capa/${kind}`;
 	}
 	return LEGACY_UPLOAD_REL_DIR;
 }

@@ -266,7 +266,7 @@ function watchDirsForProject(projectPath: string): string[] {
 	return [
 		projectPath,
 		join(projectPath, ".config"),
-		join(projectPath, ".config", "capabilities"),
+		join(projectPath, ".config", "capa"),
 	];
 }
 
