@@ -95,3 +95,36 @@ it('rediscovers on unnamed events and repairs errored directory watches', async 
     await until(() => changed.length === 2);
   } finally { watcher.stop(); watch.mockRestore(); }
 });
+
+it('recovers from a transient watch creation failure before any config exists', async () => {
+  let attempts = 0;
+  let notify: ((event: string, filename: string | null) => void) | undefined;
+  const watch = spyOn(filesystem, 'watch').mockImplementation(((_directory: string, callback: (event: string, filename: string | null) => void) => {
+    attempts++;
+    if (attempts === 1) throw Object.assign(new Error('temporary watch limit'), { code: 'EMFILE' });
+    notify = callback;
+    return Object.assign(new EventEmitter(), { close: () => {} });
+  }) as never);
+  try {
+    await watcher.watchProject('p', root);
+    await until(() => attempts === 2);
+    writeFileSync(join(root, 'capabilities.yaml'), 'providers: []');
+    notify!('rename', 'capabilities.yaml');
+    await until(() => changed.length === 1);
+  } finally { watcher.stop(); watch.mockRestore(); }
+});
+
+it('bounds recovery when replacement watches repeatedly emit errors', async () => {
+  let attempts = 0;
+  const watch = spyOn(filesystem, 'watch').mockImplementation((() => {
+    attempts++;
+    const handle = Object.assign(new EventEmitter(), { close: () => {} });
+    setTimeout(() => handle.emit('error', new Error('repeated failure')), 0);
+    return handle;
+  }) as never);
+  try {
+    await watcher.watchProject('p', root);
+    await Bun.sleep(4600);
+    expect(attempts).toBe(4);
+  } finally { watcher.stop(); watch.mockRestore(); }
+}, 6000);
