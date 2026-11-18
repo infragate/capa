@@ -185,6 +185,14 @@ describe('lockfile', () => {
   });
 
   describe('lockfilesSemanticallyEqual / saveLockfile skip', () => {
+    it('compares lock values independently of object order and omitted null metadata', () => {
+      const first = { ...emptyLockfile(), skills: [sampleSkill] };
+      const reordered = Object.fromEntries(Object.entries(sampleSkill).reverse().filter(([key]) => key !== 'requestedRef'));
+      const second = { ...first, skills: [reordered] } as Lockfile;
+      expect(lockfilesSemanticallyEqual(first, second)).toBe(true);
+      expect(lockfilesSemanticallyEqual(first, { ...first, skills: [{ ...sampleSkill, resolvedRef: 'changed' }] })).toBe(false);
+    });
+
     it('treats timestamp-only differences as equal', () => {
       const a: Lockfile = {
         ...emptyLockfile(),

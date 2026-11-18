@@ -2,13 +2,12 @@ import { createHash } from 'crypto';
 import { basename, isAbsolute, join, relative, resolve } from 'path';
 import { existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'fs';
 import { rm } from 'fs/promises';
-import * as yaml from 'js-yaml';
 import { detectCapabilitiesFile, generateProjectId } from '../../../shared/paths';
 import {
   getLockfilePath,
   LOCKFILE_NAME,
-  lockfileSemanticPayload,
-  type Lockfile,
+  lockfileSemanticKey,
+  parseLockfileContent,
 } from '../../../shared/lockfile';
 import { loadSettings, getDatabasePath, ensureCapaDir } from '../../../shared/config';
 import { CapaDatabase } from '../../../db/database';
@@ -72,7 +71,7 @@ function pathsEqual(a: string, b: string): boolean {
  */
 export async function computeCapabilitiesFingerprint(realProjectPath: string): Promise<string> {
   const caps = await detectCapabilitiesFile(realProjectPath);
-  const parts: string[] = [];
+  const parts: string[] = [caps ? relative(realProjectPath, caps.path).replace(/\\/g, '/') : 'noconfig'];
   if (caps) {
     try {
       parts.push(await Bun.file(caps.path).text());
@@ -101,12 +100,7 @@ export function fingerprintLockfileText(raw: string): string {
   const trimmed = raw.trim();
   if (!trimmed) return 'nolock';
   try {
-    const parsed =
-      trimmed.startsWith('{')
-        ? (JSON.parse(trimmed) as Lockfile)
-        : (yaml.load(trimmed) as Lockfile);
-    if (!parsed || typeof parsed !== 'object') return raw;
-    return JSON.stringify(lockfileSemanticPayload(parsed));
+    return lockfileSemanticKey(parseLockfileContent(raw));
   } catch {
     return raw;
   }

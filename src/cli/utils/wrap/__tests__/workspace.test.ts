@@ -197,6 +197,21 @@ hooks: []
     expect(a).toBe(b);
   });
 
+  it('ignores timestamp-only TOML lock edits but detects a config location switch', async () => {
+    const { emptyLockfile, serializeLockfile } = await import('../../../../shared/lockfile');
+    const lock = emptyLockfile();
+    writeFileSync(join(realDir, 'capabilities.lock'), serializeLockfile(lock, 'toml'));
+    const before = await computeCapabilitiesFingerprint(realDir);
+    writeFileSync(join(realDir, 'capabilities.lock'), serializeLockfile({ ...lock, generatedAt: '2030-01-01T00:00:00Z' }, 'toml'));
+    expect(await computeCapabilitiesFingerprint(realDir)).toBe(before);
+    const content = readFileSync(join(realDir, 'capabilities.yaml'), 'utf8');
+    rmSync(join(realDir, 'capabilities.yaml'));
+    mkdirSync(join(realDir, '.config', 'capa'), { recursive: true });
+    writeFileSync(join(realDir, '.config', 'capa', 'config.yaml'), content);
+    writeFileSync(join(realDir, '.config', 'capa', 'capabilities.lock'), serializeLockfile(lock, 'toml'));
+    expect(await computeCapabilitiesFingerprint(realDir)).not.toBe(before);
+  });
+
   it('fingerprint changes when capabilities.yaml changes', async () => {
     const a = await computeCapabilitiesFingerprint(realDir);
     writeFileSync(

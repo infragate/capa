@@ -78,91 +78,15 @@ function isNullableString(value: unknown): value is string | null {
 	return value === null || typeof value === "string";
 }
 
-/**
- * TOML omits nulls on write. Restore them in a fixed key order so semantic
- * equality (JSON.stringify) matches freshly built lock entries.
- */
-function restoreOmittedNulls(
-	entries: unknown[],
-	keys: readonly string[],
-	fieldOrder: readonly string[],
-): void {
-	for (let i = 0; i < entries.length; i++) {
-		const entry = entries[i];
-		if (!entry || typeof entry !== "object") continue;
-		const src = entry as Record<string, unknown>;
-		for (const key of keys) {
-			if (!(key in src) || src[key] === undefined) src[key] = null;
-		}
-		const ordered: Record<string, unknown> = {};
-		for (const key of fieldOrder) {
-			if (key in src) ordered[key] = src[key];
-		}
-		for (const key of Object.keys(src)) {
-			if (!(key in ordered)) ordered[key] = src[key];
-		}
-		entries[i] = ordered;
-	}
+/** Nullable metadata defaults are checked against entry types, not used for key order. */
+type NullDefaults<T> = { [K in keyof T as null extends T[K] ? K : never]-?: null };
+const skillNulls: NullDefaults<LockSkillEntry> = { requestedVersion: null, requestedRef: null, resolvedVersion: null };
+const pluginNulls: NullDefaults<LockPluginEntry> = { subpath: null, requestedSearchName: null, requestedVersion: null, requestedRef: null, resolvedVersion: null, manifestVersion: null };
+const hookNulls: NullDefaults<LockHookEntry> = { repo: null, url: null, requestedVersion: null, requestedRef: null, resolvedRef: null, resolvedVersion: null };
+
+function decodeTomlEntries(entries: unknown[], defaults: object): unknown[] {
+  return entries.map(entry => entry && typeof entry === "object" && !Array.isArray(entry) ? { ...defaults, ...entry } : entry);
 }
-
-const SKILL_FIELD_ORDER = [
-	"id",
-	"source",
-	"repo",
-	"url",
-	"skillName",
-	"requestedVersion",
-	"requestedRef",
-	"resolvedRef",
-	"resolvedVersion",
-] as const;
-const PLUGIN_FIELD_ORDER = [
-	"id",
-	"source",
-	"repo",
-	"url",
-	"subpath",
-	"requestedSearchName",
-	"requestedVersion",
-	"requestedRef",
-	"resolvedRef",
-	"resolvedVersion",
-	"manifestName",
-	"manifestVersion",
-] as const;
-const HOOK_FIELD_ORDER = [
-	"id",
-	"source",
-	"repo",
-	"url",
-	"requestedVersion",
-	"requestedRef",
-	"resolvedRef",
-	"resolvedVersion",
-	"bodySha256",
-] as const;
-
-const SKILL_NULLABLE_KEYS = [
-	"requestedVersion",
-	"requestedRef",
-	"resolvedVersion",
-] as const;
-const PLUGIN_NULLABLE_KEYS = [
-	"subpath",
-	"requestedSearchName",
-	"requestedVersion",
-	"requestedRef",
-	"resolvedVersion",
-	"manifestVersion",
-] as const;
-const HOOK_NULLABLE_KEYS = [
-	"repo",
-	"url",
-	"requestedVersion",
-	"requestedRef",
-	"resolvedRef",
-	"resolvedVersion",
-] as const;
 
 export function isValidSkillLockEntry(x: unknown): x is LockSkillEntry {
 	if (!x || typeof x !== "object") return false;
@@ -300,8 +224,7 @@ function validateLockfile(parsed: unknown): Lockfile {
 
 /**
  * Infer the on-disk lockfile format from content.
- * Used when reading an orphan lock that may not match the current
- * capabilities format (e.g. yaml lock left behind after moving to toml).
+ * Active lock content can differ from a newly selected config format.
  */
 /** Parse syntax before choosing a format; quoted marker text is not a format signal. */
 export function sniffLockfileFormat(content: string): LockfileFormat {
@@ -317,7 +240,7 @@ export function sniffLockfileFormat(content: string): LockfileFormat {
   } catch { return "yaml"; }
 }
 
-function parseLockfileContent(content: string, format: LockfileFormat): Lockfile {
+export function parseLockfileContent(content: string, format: LockfileFormat = sniffLockfileFormat(content)): Lockfile {
 	const trimmed = content.trim();
 	let parsed: unknown;
 	if (format === "json" || trimmed.startsWith("{")) {
@@ -327,17 +250,13 @@ function parseLockfileContent(content: string, format: LockfileFormat): Lockfile
 		if (parsed && typeof parsed === "object") {
 			const obj = parsed as Record<string, unknown>;
 			if (Array.isArray(obj.skills)) {
-				restoreOmittedNulls(obj.skills, SKILL_NULLABLE_KEYS, SKILL_FIELD_ORDER);
+				obj.skills = decodeTomlEntries(obj.skills, skillNulls);
 			}
 			if (Array.isArray(obj.plugins)) {
-				restoreOmittedNulls(
-					obj.plugins,
-					PLUGIN_NULLABLE_KEYS,
-					PLUGIN_FIELD_ORDER,
-				);
+				obj.plugins = decodeTomlEntries(obj.plugins, pluginNulls);
 			}
 			if (Array.isArray(obj.hooks)) {
-				restoreOmittedNulls(obj.hooks, HOOK_NULLABLE_KEYS, HOOK_FIELD_ORDER);
+				obj.hooks = decodeTomlEntries(obj.hooks, hookNulls);
 			}
 		}
 	} else {
@@ -385,8 +304,16 @@ export function lockfileSemanticPayload(lockfile: Lockfile): unknown {
 	};
 }
 
+function canonicalLockValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalLockValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== null && entry !== undefined).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, entry]) => [key, canonicalLockValue(entry)]));
+  }
+  return value;
+}
+
 export function lockfileSemanticKey(lockfile: Lockfile): string {
-	return JSON.stringify(lockfileSemanticPayload(lockfile));
+  return JSON.stringify(canonicalLockValue(lockfileSemanticPayload(lockfile)));
 }
 
 /**
