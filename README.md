@@ -85,11 +85,15 @@ CAPA also loads a capabilities file from alternate locations (first match wins; 
 
 1. `capabilities.toml` / `.yaml` / `.json` at the project root
 2. `.config/capabilities.toml` / `.yaml` / `.json`
-3. `.config/capabilities/config.toml` / `.yaml` / `.json`
+3. `.config/capa/config.toml` / `.yaml` / `.json`
 
-`capabilities.lock` is written next to whichever file won (always TOML; legacy YAML/JSON locks are migrated on load).
+`capabilities.lock` uses the winning configuration’s format and lives beside it. Wrap keeps an independent lock at its private working-directory root. Loading is read-only and ignores locks in other locations. To preserve pins when moving a configuration, move its lock alongside it.
 
-Web UI uploads land under `.capa/imports/` when the winning file is at the project root, or under `.config/capabilities/{skills,rules,instructions}/` when it lives under `.config` (legacy `.capa/imports` paths referenced from the config are migrated on upload).
+Web UI uploads land under `.capa/imports/` when the winning file is at the project root, or under `.config/capa/{skills,rules,instructions}/` when it lives under `.config`. Existing uploads and references stay in place.
+
+Browse shows the project’s `.config` folder but stays inside the project. Skills use project-relative paths. Rules and agent instructions use paths relative to the configuration file. Browse translates selected paths automatically. Agent instructions can reference other files within the project, including through `..`, but cannot escape the project. Existing external rule paths remain supported.
+
+Moving a configuration also changes the base for rule and instruction paths. Adjust those relative references when moving it. The project root remains the current directory or explicit project path, including in nested Git projects.
 
 The new file points at the [JSON Schema](./schema/capabilities.schema.json), so editors with YAML/JSON language support autocomplete and validate it. For an existing YAML file, add this first line:
 

@@ -13,7 +13,7 @@ The user has a repo that already works with at least one AI coding agent (Claude
 
 Trigger words and shapes: "bootstrap capa", "capify", "set capa up on this repo", "convert my .claude/.cursor config to capa", "I have a bunch of skills and rules already — onboard them".
 
-If a capabilities file already exists (root `capabilities.{toml,yaml,json}`, `.config/capabilities.*`, or `.config/capabilities/config.*`), this skill is the wrong tool — point the user at the `capabilities-manager` skill instead, which knows how to extend an existing file.
+If a capabilities file already exists (root `capabilities.{toml,yaml,json}`, `.config/capabilities.*`, or `.config/capa/config.*`), this skill is the wrong tool — point the user at the `capabilities-manager` skill instead, which knows how to extend an existing file.
 
 ## How this relates to `capabilities-manager`
 
@@ -45,7 +45,7 @@ Before scanning, confirm three things:
 - If it's `main`, `master`, `trunk`, or matches the repo's default branch (from `git symbolic-ref refs/remotes/origin/HEAD` — fall back to `main` if unset), create a new branch named `capa/bootstrap` (or a unique suffix if that already exists) with `git checkout -b capa/bootstrap`. Bootstrap touches many files; isolating that in a branch makes it trivially revertable.
 - If it's anything else, the user is already working on something — stay on that branch and tell them so. Don't switch.
 
-**Existing capabilities file.** If any of `capabilities.{toml,yaml,json}` exists at the repo root, under `.config/`, or as `.config/capabilities/config.*`, stop. Tell the user the project is already bootstrapped and they should use `capabilities-manager` to extend it.
+**Existing capabilities file.** If any of `capabilities.{toml,yaml,json}` exists at the repo root, under `.config/`, or as `.config/capa/config.*`, stop. Tell the user the project is already bootstrapped and they should use `capabilities-manager` to extend it.
 
 ## Phase 2 — Discover
 

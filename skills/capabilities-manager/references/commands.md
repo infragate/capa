@@ -18,11 +18,11 @@ After init, capa also **loads** an existing file from alternate locations if you
 
 1. `capabilities.toml` / `.yaml` / `.json` at the project root
 2. `.config/capabilities.toml` / `.yaml` / `.json`
-3. `.config/capabilities/config.toml` / `.yaml` / `.json`
+3. `.config/capa/config.toml` / `.yaml` / `.json`
 
-`capabilities.lock` is written next to whichever file won (always TOML). If more than one candidate exists, capa warns and uses the winner.
+`capabilities.lock` uses the winning configuration’s format and lives beside it. Wrap keeps an independent lock at its private working-directory root. Loading never moves or deletes locks. If more than one candidate exists, capa warns and uses the winner.
 
-Web UI file uploads use `.capa/imports/` for a root capabilities file, or `.config/capabilities/{skills,rules,instructions}/` when the winning file is under `.config`.
+Web UI file uploads use `.capa/imports/` for a root capabilities file, or `.config/capa/{skills,rules,instructions}/` when the winning file is under `.config`.
 
 Also **registers the project** with the local CAPA server so it appears in the Web UI (`http://localhost:5912`). The server is started if it isn't already running.
 
@@ -245,7 +245,7 @@ capa sh gitlab --help                       # List gitlab subcommands
 capa sh gitlab list-merge-requests --help   # Show argument details
 ```
 
-**Requires**: a capabilities file in the project (`capabilities.{toml,yaml,json}` at the root, under `.config/`, or as `.config/capabilities/config.*`; or inside a wrap workspace — capa resolves the real project path) and the CAPA server running (`capa start`). Run `capa install` at least once to register the project.
+**Requires**: a capabilities file in the project (`capabilities.{toml,yaml,json}` at the root, under `.config/`, or as `.config/capa/config.*`; or inside a wrap workspace — capa resolves the real project path) and the CAPA server running (`capa start`). Run `capa install` at least once to register the project.
 
 ---
 

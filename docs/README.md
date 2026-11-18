@@ -196,21 +196,37 @@ flowchart TD
 
 - **Capabilities discovery**. CAPA looks for `capabilities.{toml,yaml,json}` at
   the project root, then `.config/capabilities.*`, then
-  `.config/capabilities/config.*` (toml preferred over yaml over json within a
+  `.config/capa/config.*` (toml preferred over yaml over json within a
   location). Multiple matches produce a warning; the first in that order wins.
   `capa init` still writes root `capabilities.yaml` by default.
 - **Lockfile**. `capabilities.lock` (co-located with the winning capabilities
-  file; always written as TOML) pins resolved commit SHAs for every
-  `github`/`gitlab` skill, plugin, and hook source. Legacy YAML/JSON locks are
-  still readable and migrated to TOML on the next load. The lockfile is built
+  file, in the same format) pins resolved commit SHAs for every
+  `github`/`gitlab` skill, plugin, and hook source. The reader recognizes YAML, JSON, and TOML at the active path without writing or moving files. Wrap uses a private root lock. Unrelated locks stay untouched. The lockfile is built
   incrementally during install (`ctx.lockBuilder.upsertSkill / upsertPlugin
   / upsertHook`) and pruned to the current set of IDs at the end.
   `--no-cache` disables both lockfile lookups and the on-disk snapshot
   cache.
 - **Web UI uploads**. Local skill/rule/agent uploads go to `.capa/imports/`
   when the winning capabilities file is at the project root, or to
-  `.config/capabilities/{skills,rules,instructions}/` when it is under
-  `.config`. Referenced legacy `.capa/imports` paths are migrated on upload.
+  `.config/capa/{skills,rules,instructions}/` when it is under
+  `.config`. Existing uploaded assets and references stay untouched.
+
+- **Local source paths**. Skills resolve from the project root. Rules and agent
+  instructions resolve from the selected configuration's directory. Browse keeps
+  navigation project-relative and translates selections into the appropriate
+  stored path. It shows the root `.config` directory while hiding other hidden
+  entries. Agent sources can traverse to other files inside the trusted source
+  project, but cannot escape through parent paths or symlinks. Wrap uses its real
+  source project for reads and its private working directory for generated output.
+- **Configuration watchers**. Directory events trigger discovery and update
+  watches for newly created configuration directories. The 1.5-second backup
+  poll normally checks only the active file. If a creation event is missed while
+  the active file stays unchanged, a new candidate can remain undiscovered until
+  another relevant event, explicit refresh, or server restart.
+- **Moving configuration**. Move the lock alongside the configuration to retain
+  pins, and adjust config-relative rule/instruction paths. No automatic migration
+  occurs. TOML writes reject values that the installed writer/reader cannot
+  preserve and leave the original file unchanged on representation failure.
 
 ---
 
