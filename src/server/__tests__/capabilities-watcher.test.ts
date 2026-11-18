@@ -49,6 +49,10 @@ it('discovers nested folders created while the winning root config stays unchang
 
 it('does not scan all config candidates during normal polling and stops cleanly', async () => {
   writeFileSync(join(root, 'capabilities.yaml'), 'providers: []');
+  // Inert watch handles: macOS can deliver the pre-watch write as a late event,
+  // which would trigger a legitimate discovery and hide what polling does.
+  const watch = spyOn(filesystem, 'watch').mockImplementation((() =>
+    Object.assign(new EventEmitter(), { close: () => {} })) as never);
   const detect = spyOn(paths, 'detectCapabilitiesFile');
   try {
     await watcher.watchProject('p', root);
@@ -59,7 +63,7 @@ it('does not scan all config candidates during normal polling and stops cleanly'
     writeFileSync(join(root, 'capabilities.yaml'), 'providers: [codex]');
     await Bun.sleep(550);
     expect(changed).toEqual([]);
-  } finally { detect.mockRestore(); }
+  } finally { detect.mockRestore(); watch.mockRestore(); }
 });
 
 it('reloads on a format switch with matching mtimes and ignores marked self-writes', async () => {
