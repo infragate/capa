@@ -409,6 +409,7 @@ function RuleDialog({
                     projectId={projectId}
                     value={path}
                     onChange={setPath}
+                    uploadKind="rules"
                     ext="md"
                     placeholder={t('actions.ruleLocalPathHint')}
                   />

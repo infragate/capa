@@ -1,216 +1,264 @@
-import { existsSync, type FSWatcher, statSync, watch } from "fs";
-import { basename, dirname } from "path";
-import { detectCapabilitiesFile } from "../shared/paths";
+import { type FSWatcher, statSync, watch } from "fs";
+import { basename, dirname, join, resolve } from "path";
+import {
+	detectCapabilitiesFile,
+	listCapabilitiesCandidates,
+} from "../shared/paths";
 
 const DEBOUNCE_MS = 400;
-/** Ignore watcher events shortly after a capa-owned write to the same file. */
 const SELF_WRITE_GRACE_MS = 1200;
-/** Backup poll — fs.watch can drop events on Windows. */
 const POLL_MS = 1500;
-
 export type CapabilitiesChangeHandler = (
 	projectId: string,
 ) => void | Promise<void>;
+type DirectoryWatch = { handle: FSWatcher; identity: string };
+type ProjectWatch = {
+	root: string;
+	directories: Map<string, DirectoryWatch>;
+	file?: string;
+	mtime?: number;
+	selfWriteUntil: number;
+	poll?: ReturnType<typeof setInterval>;
+	debounce?: ReturnType<typeof setTimeout>;
+	pendingDiscovery: boolean;
+	watchRetries: number;
+	recovery?: ReturnType<typeof setTimeout>;
+	running?: Promise<void>;
+	stopped: boolean;
+};
 
-/**
- * Watches each project's capabilities.yaml/json so the running server (and UI)
- * stay in sync with on-disk edits — including those made outside capa.
- */
+/** Directory events discover candidates; the backup poll only inspects the active file. */
 export class CapabilitiesFileWatcher {
-	private watchers = new Map<string, FSWatcher>();
-	private pollTimers = new Map<string, ReturnType<typeof setInterval>>();
-	private debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
-	private mtimes = new Map<string, number>();
-	private selfWriteUntil = new Map<string, number>();
-	private projectPaths = new Map<string, string>();
-	private filePaths = new Map<string, string>();
-	private running = new Set<string>();
-
+	private projects = new Map<string, ProjectWatch>();
 	constructor(
 		private readonly onChange: CapabilitiesChangeHandler,
 		private readonly log: {
-			info: (m: string) => void;
-			warn: (m: string) => void;
-			debug: (m: string) => void;
+			info: (message: string) => void;
+			warn: (message: string) => void;
+			debug: (message: string) => void;
 		},
 	) {}
 
-	/** Call immediately before/after capa writes the capabilities file. */
 	markSelfWrite(projectId: string): void {
-		this.selfWriteUntil.set(projectId, Date.now() + SELF_WRITE_GRACE_MS);
+		const state = this.projects.get(projectId);
+		if (state) state.selfWriteUntil = Date.now() + SELF_WRITE_GRACE_MS;
 	}
 
 	async watchProject(projectId: string, projectPath: string): Promise<void> {
-		// Already watching the same project path — leave the handles alone.
-		if (
-			this.projectPaths.get(projectId) === projectPath &&
-			this.watchers.has(projectId)
-		) {
+		const root = resolve(projectPath);
+		let state = this.projects.get(projectId);
+		if (state?.root === root) {
+			// Configure can call back into us during a reload. Do not await ourselves.
+			if (!state.running) {
+				state.watchRetries = 0;
+				this.reconcileDirectories(projectId, state);
+				this.schedule(projectId, state, true);
+			}
 			return;
 		}
 		this.unwatchProject(projectId);
-		this.projectPaths.set(projectId, projectPath);
-
-		let file: { path: string; format: "json" | "yaml" } | null = null;
-		try {
-			file = await detectCapabilitiesFile(projectPath);
-		} catch (err: any) {
-			this.log.warn(
-				`Capabilities watch skipped for ${projectId}: ${err?.message ?? err}`,
-			);
-			return;
-		}
-		if (!file) {
-			this.log.debug(`No capabilities file to watch for ${projectId}`);
-			return;
-		}
-
-		this.filePaths.set(projectId, file.path);
-		this.mtimes.set(projectId, safeMtime(file.path));
-
-		const capsDir = dirname(file.path);
-		const capsName = basename(file.path);
-
-		try {
-			const w = watch(capsDir, { persistent: true }, (_event, filename) => {
-				if (
-					filename &&
-					filename !== capsName &&
-					basename(String(filename)) !== capsName
-				) {
-					return;
-				}
-				this.schedule(projectId);
-			});
-			w.on("error", (err) => {
-				this.log.warn(
-					`Capabilities watch error for ${projectId}: ${err.message}`,
-				);
-			});
-			this.watchers.set(projectId, w);
-		} catch (err: any) {
-			this.log.warn(`fs.watch failed for ${projectId}: ${err?.message ?? err}`);
-		}
-
-		const poll = setInterval(() => this.checkMtime(projectId), POLL_MS);
-		// Keep referenced so the timer is not GC'd in long-running server.
-		this.pollTimers.set(projectId, poll);
-		this.log.debug(`Watching capabilities for ${projectId}: ${file.path}`);
-	}
-
-	unwatchProject(projectId: string): void {
-		const w = this.watchers.get(projectId);
-		if (w) {
-			try {
-				w.close();
-			} catch {
-				// ignore
-			}
-			this.watchers.delete(projectId);
-		}
-		const poll = this.pollTimers.get(projectId);
-		if (poll) {
-			clearInterval(poll);
-			this.pollTimers.delete(projectId);
-		}
-		const debounce = this.debounceTimers.get(projectId);
-		if (debounce) {
-			clearTimeout(debounce);
-			this.debounceTimers.delete(projectId);
-		}
-		this.mtimes.delete(projectId);
-		this.selfWriteUntil.delete(projectId);
-		this.projectPaths.delete(projectId);
-		this.filePaths.delete(projectId);
-		this.running.delete(projectId);
-	}
-
-	stop(): void {
-		for (const id of [...this.watchers.keys()]) {
-			this.unwatchProject(id);
-		}
-	}
-
-	/** Re-resolve the file path (e.g. after yaml↔json switch) and restart watch. */
-	async refreshProject(projectId: string): Promise<void> {
-		const projectPath = this.projectPaths.get(projectId);
-		if (!projectPath) return;
-		await this.watchProject(projectId, projectPath);
-	}
-
-	private checkMtime(projectId: string): void {
-		const filePath = this.filePaths.get(projectId);
-		if (!filePath || !existsSync(filePath)) {
-			// File may have been renamed/removed — try re-detect.
-			const projectPath = this.projectPaths.get(projectId);
-			if (projectPath) void this.watchProject(projectId, projectPath);
-			return;
-		}
-		const mtime = safeMtime(filePath);
-		const prev = this.mtimes.get(projectId);
-		if (prev != null && mtime !== prev) {
-			this.schedule(projectId);
-		}
-	}
-
-	private schedule(projectId: string): void {
-		const existing = this.debounceTimers.get(projectId);
-		if (existing) clearTimeout(existing);
-		this.debounceTimers.set(
-			projectId,
-			setTimeout(() => {
-				this.debounceTimers.delete(projectId);
-				void this.fire(projectId);
-			}, DEBOUNCE_MS),
+		state = {
+			root,
+			directories: new Map(),
+			selfWriteUntil: 0,
+			pendingDiscovery: false,
+			watchRetries: 0,
+			stopped: false,
+		};
+		this.projects.set(projectId, state);
+		this.reconcileDirectories(projectId, state);
+		const selected = await detectCapabilitiesFile(root);
+		if (state.stopped) return;
+		state.file = selected?.path;
+		state.mtime = state.file ? this.mtime(state.file) : undefined;
+		state.poll = setInterval(() => this.poll(projectId, state!), POLL_MS);
+		this.log.debug(
+			`Watching capabilities for ${projectId}: ${state.file ?? "awaiting creation"}`,
 		);
 	}
 
-	private async fire(projectId: string): Promise<void> {
-		if (this.running.has(projectId)) {
-			this.schedule(projectId);
-			return;
-		}
+	async refreshProject(projectId: string): Promise<void> {
+		const state = this.projects.get(projectId);
+		if (!state) return;
+		state.watchRetries = 0;
+		state.pendingDiscovery = true;
+		await this.process(projectId, state);
+	}
 
-		const filePath = this.filePaths.get(projectId);
-		const until = this.selfWriteUntil.get(projectId) ?? 0;
-		if (Date.now() < until) {
-			// Swallow our own write; adopt the new mtime so we don't re-fire later.
-			if (filePath && existsSync(filePath)) {
-				this.mtimes.set(projectId, safeMtime(filePath));
-			}
-			return;
-		}
+	unwatchProject(projectId: string): void {
+		const state = this.projects.get(projectId);
+		if (!state) return;
+		state.stopped = true;
+		if (state.poll) clearInterval(state.poll);
+		if (state.debounce) clearTimeout(state.debounce);
+		if (state.recovery) clearTimeout(state.recovery);
+		for (const { handle } of state.directories.values()) handle.close();
+		this.projects.delete(projectId);
+	}
 
-		if (!filePath || !existsSync(filePath)) return;
+	stop(): void {
+		for (const id of this.projects.keys()) this.unwatchProject(id);
+	}
 
-		const mtime = safeMtime(filePath);
-		if (mtime === this.mtimes.get(projectId)) {
-			return;
-		}
-		this.mtimes.set(projectId, mtime);
-
-		this.running.add(projectId);
+	private mtime(path: string): number | undefined {
 		try {
-			this.log.info(`Capabilities file changed for ${projectId}, reloading`);
-			await this.onChange(projectId);
-		} catch (err: any) {
-			this.log.warn(
-				`Failed to reload capabilities for ${projectId}: ${err?.message ?? err}`,
-			);
-		} finally {
-			this.running.delete(projectId);
-			// Capture mtime after reload (configure may not touch the file).
-			if (filePath && existsSync(filePath)) {
-				this.mtimes.set(projectId, safeMtime(filePath));
-			}
+			return statSync(path).mtimeMs;
+		} catch (error) {
+			if (
+				(error as NodeJS.ErrnoException).code === "ENOENT" ||
+				(error as NodeJS.ErrnoException).code === "ENOTDIR"
+			)
+				return undefined;
+			throw error;
 		}
 	}
-}
 
-function safeMtime(path: string): number {
-	try {
-		return statSync(path).mtimeMs;
-	} catch {
-		return 0;
+	private poll(projectId: string, state: ProjectWatch): void {
+		if (state.stopped || !state.file) return;
+		try {
+			const next = this.mtime(state.file);
+			if (next === undefined) this.schedule(projectId, state, true);
+			else if (next !== state.mtime) this.schedule(projectId, state, false);
+		} catch (error) {
+			this.log.warn(
+				`Capabilities poll failed for ${projectId}: ${String(error)}`,
+			);
+		}
+	}
+
+	private schedule(
+		projectId: string,
+		state: ProjectWatch,
+		discover: boolean,
+	): void {
+		if (state.stopped) return;
+		state.pendingDiscovery ||= discover;
+		if (state.debounce) clearTimeout(state.debounce);
+		state.debounce = setTimeout(() => {
+			state.debounce = undefined;
+			void this.process(projectId, state);
+		}, DEBOUNCE_MS);
+	}
+
+	private process(projectId: string, state: ProjectWatch): Promise<void> {
+		if (state.stopped) return Promise.resolve();
+		if (state.running) {
+			// The pending discovery bit and the next scheduled pass retain intervening events.
+			this.schedule(projectId, state, state.pendingDiscovery);
+			return state.running;
+		}
+		state.running = this.reload(projectId, state)
+			.catch((error) => {
+				this.log.warn(
+					`Failed to reload capabilities for ${projectId}: ${String(error)}`,
+				);
+			})
+			.finally(() => {
+				state.running = undefined;
+				if (state.pendingDiscovery) this.schedule(projectId, state, true);
+			});
+		return state.running;
+	}
+
+	private async reload(projectId: string, state: ProjectWatch): Promise<void> {
+		const previous = state.file;
+		if (state.pendingDiscovery) {
+			state.pendingDiscovery = false;
+			this.reconcileDirectories(projectId, state);
+			const selected = await detectCapabilitiesFile(state.root);
+			if (state.stopped) return;
+			state.file = selected?.path;
+		}
+		const winnerChanged = previous !== state.file;
+		const nextMtime = state.file ? this.mtime(state.file) : undefined;
+		if (state.stopped) return;
+		if (Date.now() < state.selfWriteUntil && !winnerChanged) {
+			state.mtime = nextMtime;
+			return;
+		}
+		if (
+			!winnerChanged &&
+			(nextMtime === undefined || nextMtime === state.mtime)
+		)
+			return;
+		// First selection must reload even when its freshly sampled timestamp is unchanged.
+		this.log.info(`Capabilities file changed for ${projectId}, reloading`);
+		await this.onChange(projectId);
+		if (!state.stopped) state.mtime = nextMtime;
+	}
+
+	private recoverWatch(projectId: string, state: ProjectWatch): void {
+		if (state.stopped || state.recovery || state.watchRetries >= 3) return;
+		const delay = DEBOUNCE_MS * 2 ** state.watchRetries++;
+		state.recovery = setTimeout(() => {
+			state.recovery = undefined;
+			this.schedule(projectId, state, true);
+		}, delay);
+	}
+
+	private reconcileDirectories(projectId: string, state: ProjectWatch): void {
+		const directories = [
+			state.root,
+			join(state.root, ".config"),
+			join(state.root, ".config", "capa"),
+		];
+		const candidates = listCapabilitiesCandidates(state.root);
+		let failed = false;
+		for (const directory of directories) {
+			let identity: string | undefined;
+			try {
+				const stat = statSync(directory);
+				if (stat.isDirectory()) identity = `${stat.dev}:${stat.ino}`;
+			} catch (error) {
+				if (
+					!["ENOENT", "ENOTDIR"].includes(
+						(error as NodeJS.ErrnoException).code ?? "",
+					)
+				)
+					this.log.warn(`Cannot watch ${directory}: ${String(error)}`);
+			}
+			const current = state.directories.get(directory);
+			if (current && current.identity !== identity) {
+				current.handle.close();
+				state.directories.delete(directory);
+			}
+			if (!identity || state.directories.has(directory)) continue;
+			try {
+				const handle = watch(directory, (_event, filename) => {
+					if (filename) {
+						const name = basename(String(filename));
+						const structural =
+							(directory === state.root && name === ".config") ||
+							(directory === join(state.root, ".config") && name === "capa");
+						if (
+							!structural &&
+							!candidates.some(
+								(candidate) =>
+									dirname(candidate.path) === directory &&
+									basename(candidate.path) === name,
+							)
+						)
+							return;
+					}
+					state.watchRetries = 0;
+					this.schedule(projectId, state, true);
+				});
+				handle.on("error", (error) => {
+					handle.close();
+					state.directories.delete(directory);
+					this.log.warn(
+						`Capabilities watch error for ${projectId}: ${error.message}`,
+					);
+					this.recoverWatch(projectId, state);
+				});
+				state.directories.set(directory, { handle, identity });
+			} catch (error) {
+				failed = true;
+				this.log.warn(
+					`fs.watch failed for ${projectId} (${directory}): ${String(error)}`,
+				);
+			}
+		}
+		if (failed) this.recoverWatch(projectId, state);
 	}
 }

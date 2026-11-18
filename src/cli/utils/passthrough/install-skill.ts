@@ -2,7 +2,7 @@ import { join } from 'path';
 import { installOneSkill } from '../../commands/install-tasks/helpers/install-one-skill';
 import { LockfileBuilder } from '../../../shared/lockfile';
 import { getProvider } from '../../../shared/providers';
-import { emptyCapabilities } from './env';
+import { emptyCapabilities, resolvePassthroughCapabilitiesPath } from './env';
 import type { CapaDatabase } from '../../../db/database';
 import type { loadSettings } from '../../../shared/config';
 import type { Skill } from '../../../types/capabilities';
@@ -20,6 +20,7 @@ export async function passthroughInstallSkill(opts: {
   const { skill, projectPath, projectId, providers, db, settings, noCache, written } = opts;
   const caps = emptyCapabilities(providers);
   const lockBuilder = new LockfileBuilder(null);
+  const capabilitiesFilePath = await resolvePassthroughCapabilitiesPath(projectPath);
   const outcome = await installOneSkill(
     skill,
     projectPath,
@@ -28,7 +29,7 @@ export async function passthroughInstallSkill(opts: {
     db,
     settings,
     caps,
-    join(projectPath, 'capabilities.yaml'),
+    capabilitiesFilePath,
     lockBuilder,
     noCache,
     new Map(),

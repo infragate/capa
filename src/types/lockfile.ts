@@ -5,10 +5,11 @@
  * exact commit SHA it was resolved to. This makes installs reproducible and
  * lets the cache key incoming requests by SHA so re-installs are network-free.
  *
- * Format is auto-detected based on the capabilities file format (yaml/json).
+ * On disk, the lock uses the winning config format. Reads recognize existing
+ * YAML, JSON, and TOML content without migration.
  */
 
-export type LockfileFormat = 'json' | 'yaml';
+export type LockfileFormat = 'toml' | 'yaml' | 'json';
 
 /** `git` is any other host, identified by `url`. */
 export type LockSource = 'github' | 'gitlab' | 'git';

@@ -22,6 +22,7 @@
   },
   "dependencies": {
     "@clack/prompts": "^1.4.0",
+    "@decimalturn/toml-patch": "^3.3.3",
     "@iarna/toml": "^2.2.5",
     "@modelcontextprotocol/sdk": "^1.0.4",
     "@napi-rs/keyring": "^2.0.0",

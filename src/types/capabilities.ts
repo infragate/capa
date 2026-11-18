@@ -24,7 +24,7 @@ export interface OAuth2Config {
   pkce?: boolean;
 }
 
-export type CapabilitiesFormat = 'json' | 'yaml';
+export type CapabilitiesFormat = 'toml' | 'yaml' | 'json';
 export type { Plugin, SourcePlugin, ResolvedPluginInfo } from './plugin';
 export type { Rule } from './rules';
 export type {

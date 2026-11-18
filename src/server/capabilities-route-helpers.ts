@@ -99,13 +99,12 @@ export async function loadProjectFile(
 	let file: Awaited<ReturnType<typeof resolveCapabilitiesFile>>;
 	let caps: Capabilities;
 	try {
-		// Inside the try: having both capabilities.yaml and .json throws here.
 		file = await resolveCapabilitiesFile(project.path);
 		if (!file) {
 			return {
 				ok: false,
 				response: jsonError(
-					"No capabilities.yaml or capabilities.json found in project",
+					"No capabilities file found in project (capabilities.toml|.yaml|.json, or under .config/)",
 					404,
 				),
 			};

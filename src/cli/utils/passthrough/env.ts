@@ -1,13 +1,25 @@
-import { resolve } from 'path';
+import { join, resolve } from 'path';
 import { existsSync } from 'fs';
 import { resolveProviders } from '../../../shared/providers/resolve';
 import { loadSettings, getDatabasePath } from '../../../shared/config';
 import { CapaDatabase } from '../../../db/database';
+import { detectCapabilitiesFile } from '../../../shared/paths';
 import type { Capabilities } from '../../../types/capabilities';
 import {
   resolveSecretValueRecord,
   type SecretValue,
 } from '../../../shared/secret-value';
+
+/**
+ * Path used for config-relative local rule/hook/skill resolution in passthrough.
+ * Prefers the discovered capabilities file; falls back to root capabilities.yaml.
+ */
+export async function resolvePassthroughCapabilitiesPath(
+  projectPath: string,
+): Promise<string> {
+  const detected = await detectCapabilitiesFile(projectPath);
+  return detected?.path ?? join(projectPath, 'capabilities.yaml');
+}
 
 /** Expand `${NAME}` placeholders from process.env (passthrough only). */
 export function expandEnvInRecord(

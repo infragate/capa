@@ -134,6 +134,25 @@ describe('initCommand', () => {
     }
   });
 
+  it('does not create root yaml when .config/capabilities.yaml already exists', async () => {
+    const { mkdirSync } = await import('fs');
+    mkdirSync(join(projectDir, '.config'), { recursive: true });
+    const existing = join(projectDir, '.config', 'capabilities.yaml');
+    await writeCapabilitiesFile(existing, 'yaml', {
+      ...createDefaultCapabilities(),
+      skills: [
+        { id: 'kept', type: 'inline', def: { content: '# Kept\n', description: 'test' } },
+      ],
+    });
+    const before = await Bun.file(existing).text();
+
+    await initCommand('yaml');
+
+    expect(existsSync(join(projectDir, 'capabilities.yaml'))).toBe(false);
+    expect(await Bun.file(existing).text()).toBe(before);
+    expect(ensureServerMock).toHaveBeenCalled();
+  });
+
   it('rolls back a newly inserted project when configure fails', async () => {
     fetchMock.mockImplementationOnce(async () => ({
       ok: false,

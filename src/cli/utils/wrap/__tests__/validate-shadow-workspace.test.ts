@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   rmSync,
+  readFileSync,
   symlinkSync,
   writeFileSync,
 } from 'fs';
@@ -57,6 +58,17 @@ describe('validateAndRepairShadowWorkspace', () => {
     expect(result.repaired).toContain('.cursor/skills');
     expect(result.needsReinstall).toBe(true);
     expect(existsSync(join(wsDir, '.cursor', 'skills'))).toBe(false);
+  });
+
+  it('detaches an unsafe private lock link without changing the real lock', () => {
+    const realLock = join(realDir, LOCKFILE_NAME);
+    const before = readFileSync(realLock, 'utf8');
+    symlinkSync(realLock, join(wsDir, LOCKFILE_NAME));
+    const result = validateAndRepairShadowWorkspace(realDir, wsDir, CURSOR_ONLY);
+    expect(result.repaired).toContain(LOCKFILE_NAME);
+    expect(result.needsReinstall).toBe(true);
+    expect(existsSync(join(wsDir, LOCKFILE_NAME))).toBe(false);
+    expect(readFileSync(realLock, 'utf8')).toBe(before);
   });
 
   it('leaves materialized provider dirs intact', () => {

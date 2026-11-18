@@ -1,7 +1,7 @@
-import type { Capabilities } from '../../../types/capabilities';
+import type { Capabilities, CapabilitiesFormat } from '../../../types/capabilities';
 import type { CapaDatabase } from '../../../db/database';
 import type { loadSettings } from '../../../shared/config';
-import type { LockfileBuilder } from '../../../shared/lockfile';
+import type { LockfileBuilder, LockfileLocation } from '../../../shared/lockfile';
 import type { LockProviderConfigEntry } from '../../../types/lockfile';
 import type { GetSnapshotResult, CachePlatform } from '../../../shared/cache';
 import type { AuthenticatedFetch } from '../../../shared/authenticated-fetch';
@@ -11,8 +11,9 @@ export type SkillInstallOutcome = 'installed' | 'skipped' | 'failed';
 
 export interface InstallCtx {
   projectPath: string;
+  sourceProjectPath?: string;
   projectId: string;
-  capabilitiesFile: { path: string; format: 'json' | 'yaml' };
+  capabilitiesFile: { path: string; format: CapabilitiesFormat };
   capabilities: Capabilities;
   capabilitiesToUse: Capabilities;
   envFile?: string | boolean;
@@ -39,6 +40,7 @@ export interface InstallCtx {
    */
   isWrapInstall: boolean;
   lockBuilder: LockfileBuilder;
+  lockfileLocation?: LockfileLocation;
   configureResult?: Record<string, unknown>;
   mcpUrl: string;
   ruleBodies?: Map<string, string>;

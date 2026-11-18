@@ -1,5 +1,6 @@
-import { existsSync, readFileSync } from 'fs';
-import { dirname } from 'path';
+import { existsSync, readFileSync, realpathSync } from 'fs';
+import { dirname, posix, resolve, win32 } from 'path';
+import { canonicalizePath, isPathInside } from '../../../shared/paths';
 import type { AgentFileConfig, SecurityOptions } from '../../../types/capabilities';
 import {
   loadBlockedPhrases,
@@ -12,7 +13,7 @@ import {
 } from '../../../shared/skill-security';
 import { getAllProviders } from '../../../shared/providers';
 import { allIsolatedInstructionFilenames, computeInstructionLayout } from '../rules-placement';
-import { fetchRepoFile, assertSafeRepoPath } from '../../../shared/repo-file';
+import { fetchRepoFile } from '../../../shared/repo-file';
 import { taskLog } from '../../ui';
 import {
   renderAgentInstructionSnippets,
@@ -30,6 +31,23 @@ import {
   type RepoFetchContext,
 } from './remote';
 import { assertAgentSourceNotInstructionsTarget } from './source-guard';
+
+/** Resolve authored paths without treating the config directory as the project root. */
+function resolveInstructionSource(projectPath: string, configPath: string, sourceRoot: string, storedPath: string): string {
+  if (posix.isAbsolute(storedPath) || win32.isAbsolute(storedPath) || /^[a-zA-Z]:/.test(storedPath)) {
+    throw new Error(`Invalid instruction path "${storedPath}": absolute paths are not allowed.`);
+  }
+  const candidate = resolve(dirname(configPath), storedPath.replace(/\\/g, '/'));
+  const trustedRoot = canonicalizePath(sourceRoot);
+  // A shadow can reach the source through its linked tree or use the real config path.
+  if (!isPathInside(candidate, projectPath) && !isPathInside(candidate, sourceRoot) && !isPathInside(candidate, trustedRoot)) {
+    throw new Error(`Instruction source "${storedPath}" is outside the project.`);
+  }
+  if (existsSync(candidate) && !isPathInside(realpathSync(candidate), trustedRoot)) {
+    throw new Error(`Instruction source "${storedPath}" resolves outside the project through a symlink.`);
+  }
+  return candidate;
+}
 
 const UNIVERSAL_AGENTS_FILENAME = 'AGENTS.md';
 
@@ -219,8 +237,7 @@ export async function installAgentsFile(
           `agents.base type 'local' requires the capabilities file path to resolve relative paths.`
         );
       }
-      const capabilitiesDir = dirname(capabilitiesFilePath);
-      const resolvedPath = assertSafeRepoPath(capabilitiesDir, config.base.path);
+      const resolvedPath = resolveInstructionSource(projectPath, capabilitiesFilePath, ctx.sourceProjectPath ?? projectPath, config.base.path);
       if (!existsSync(resolvedPath)) {
         throw new Error(
           `agents.base local file not found: ${resolvedPath} (resolved from path "${config.base.path}")`
@@ -337,8 +354,7 @@ export async function installAgentsFile(
         );
       }
       resolvedId = snippet.id;
-      const capabilitiesDir = dirname(capabilitiesFilePath);
-      const resolvedPath = assertSafeRepoPath(capabilitiesDir, snippet.path);
+      const resolvedPath = resolveInstructionSource(projectPath, capabilitiesFilePath, ctx.sourceProjectPath ?? projectPath, snippet.path);
       if (!existsSync(resolvedPath)) {
         throw new Error(
           `Agent snippet "${snippet.id}" local file not found: ${resolvedPath} ` +

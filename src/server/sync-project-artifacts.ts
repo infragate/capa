@@ -14,7 +14,7 @@ import {
 	revertInstructionContextConfig,
 } from "../cli/utils/instruction-context-config";
 import {
-	getLockfilePath,
+	resolveLockfileLocation,
 	LockfileBuilder,
 	loadLockfile,
 	saveLockfile,
@@ -61,6 +61,7 @@ export interface SyncProjectArtifactsResult {
  */
 export async function syncProjectManagedArtifacts(opts: {
 	projectPath: string;
+	sourceProjectPath?: string;
 	projectId: string;
 	capabilitiesFilePath: string;
 	capabilities: Capabilities;
@@ -169,6 +170,7 @@ export async function syncProjectManagedArtifactsAndWrapShadows(opts: {
 			const shadowResult = await syncProjectManagedArtifacts({
 				...opts,
 				projectPath: shadow.workspacePath,
+				sourceProjectPath: opts.projectPath,
 				providers: [provider.id],
 				pruneOptions: {
 					onlyDesiredProviders: true,
@@ -290,6 +292,7 @@ async function syncProjectHooks(opts: {
 
 async function syncProjectRules(opts: {
 	projectPath: string;
+	materializeShadow?: boolean;
 	projectId: string;
 	capabilitiesFilePath: string;
 	capabilities: Capabilities;
@@ -329,7 +332,7 @@ async function syncProjectRules(opts: {
 		);
 	}
 
-	warnings.push(...(await syncInstructionContextConfig(opts.projectPath, opts.providers)));
+	warnings.push(...(await syncInstructionContextConfig(opts.projectPath, opts.providers, opts.capabilitiesFilePath, opts.materializeShadow === true)));
 
 	if (currentRules.length === 0) {
 		return { installed, removed, warnings };
@@ -414,9 +417,13 @@ async function syncProjectRules(opts: {
 async function syncInstructionContextConfig(
 	projectPath: string,
 	providers: string[],
+	configPath: string,
+	privateRoot: boolean,
 ): Promise<string[]> {
 	try {
-		const lockfile = await loadLockfile(projectPath);
+		const config = { path: configPath, format: configPath.endsWith(".toml") ? "toml" as const : configPath.endsWith(".json") ? "json" as const : "yaml" as const };
+		const location = resolveLockfileLocation(projectPath, { privateRoot, config });
+		const lockfile = await loadLockfile(projectPath, location);
 		const builder = new LockfileBuilder(lockfile);
 		const before = builder.getProviderConfig();
 		const result = applyInstructionContextConfig(projectPath, providers, before);
@@ -429,9 +436,9 @@ async function syncInstructionContextConfig(
 			(next.providerConfig ?? []).length === 0;
 		try {
 			if (!empty) {
-				await saveLockfile(projectPath, next);
+				await saveLockfile(projectPath, next, location);
 			} else if (lockfile) {
-				rmSync(getLockfilePath(projectPath), { force: true });
+				rmSync(location.path, { force: true });
 			}
 		} catch (err: unknown) {
 			// No ownership record was saved: put settings back to match the old lockfile.
@@ -452,6 +459,7 @@ async function syncInstructionContextConfig(
 
 async function syncProjectAgentInstructions(opts: {
 	projectPath: string;
+	sourceProjectPath?: string;
 	capabilitiesFilePath: string;
 	capabilities: Capabilities;
 	db: CapaDatabase;
@@ -506,6 +514,7 @@ async function syncProjectAgentInstructions(opts: {
 				getRepoSnapshot: (platform, repoPath, auth, snapOpts) =>
 					getRepoSnapshot(platform, repoPath, auth, snapOpts),
 				quiet: true,
+				sourceProjectPath: opts.sourceProjectPath ?? opts.projectPath,
 				forceMaterialize: opts.materializeShadow === true,
 				onBlockedPhrase: (sourceLabel, phrase) => {
 					throw new Error(

@@ -26,6 +26,8 @@ export async function fetchRemoteContent(
  * fetches that fail (silently!) on auth-gated GitLab / GitHub URLs.
  */
 export interface RepoFetchContext {
+  /** Trusted real source tree; output may be a linked wrap workspace. */
+  sourceProjectPath?: string;
   authFetch?: AuthenticatedFetch;
   getRepoSnapshot?: RepoSnapshotResolver;
   noCache?: boolean;
