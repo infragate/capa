@@ -507,6 +507,44 @@ describe('capabilities', () => {
       expect(parsed.skills[0].id).toBe('extra');
     });
 
+    it('rejects meaningful nulls before a fresh TOML write changes the file', async () => {
+      const filePath = join(tempDir, 'null.toml');
+      const original = '# original\nskills = []\n';
+      await Bun.write(filePath, original);
+      await expect(writeCapabilitiesFile(filePath, 'toml', { skills: [], servers: [], tools: [{ id: 'find', type: 'mcp', def: { server: '@s', tool: 'find', defaults: { filter: null } } }] })).rejects.toThrow(/tools\[0\].def.defaults.filter/);
+      expect(await Bun.file(filePath).text()).toBe(original);
+    });
+
+    it('validates patched numeric arrays with the production TOML reader before writing', async () => {
+      const filePath = join(tempDir, 'numeric.toml');
+      const original = '# keep\nskills = []\ntools = []\n';
+      await Bun.write(filePath, original);
+      await expect(appendCapabilityEntry(filePath, 'toml', 'tools', { id: 'find', type: 'mcp', def: { server: '@s', tool: 'find', defaults: { range: [1, 2.5] } } })).rejects.toThrow(/TOML.*(reader|represent|compatib)/i);
+      expect(await Bun.file(filePath).text()).toBe(original);
+    });
+
+    it('omits optional nulls while preserving comments in TOML edits', async () => {
+      const filePath = join(tempDir, 'optional.toml');
+      await Bun.write(filePath, '# keep\nskills = []\n');
+      await appendCapabilityEntry(filePath, 'toml', 'skills', { id: 'extra', type: 'inline', def: { content: 'hi', description: null } } as never);
+      expect(await Bun.file(filePath).text()).toContain('# keep');
+      const parsed = await parseCapabilitiesFile(filePath, 'toml');
+      expect(parsed.skills[0].def.description).toBeUndefined();
+    });
+
+    it('preserves supported nested arrays and rejects null array elements without writing', async () => {
+      const filePath = join(tempDir, 'arrays.toml');
+      await writeCapabilitiesFile(filePath, 'toml', { skills: [], servers: [], tools: [] });
+      await appendCapabilityEntry(filePath, 'toml', 'tools', { id: 'find', type: 'mcp', def: { server: '@s', tool: 'find', defaults: { groups: [[1], ['two']] } } });
+      const tool = (await parseCapabilitiesFile(filePath, 'toml')).tools[0];
+      expect(tool.type).toBe('mcp');
+      if (tool.type !== 'mcp') throw new Error('Expected MCP tool');
+      expect(tool.def.defaults).toEqual({ groups: [[1], ['two']] });
+      const original = await Bun.file(filePath).text();
+      await expect(appendCapabilityEntry(filePath, 'toml', 'tools', { id: 'bad', type: 'mcp', def: { server: '@s', tool: 'find', defaults: { groups: [1, null, 2] } } })).rejects.toThrow(/groups\[1\]/);
+      expect(await Bun.file(filePath).text()).toBe(original);
+    });
+
     it('preserves TOML comments across append and upsertOptions', async () => {
       const filePath = join(tempDir, 'commented.toml');
       await Bun.write(
