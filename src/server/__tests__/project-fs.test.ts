@@ -62,6 +62,20 @@ describe('project-fs', () => {
     expect(skill.entries[0].storedPath).toBe('skills/foo');
   });
 
+  it('measures selections from the logical config dir when .config is a link', async () => {
+    const dotfiles = mkdtempSync(join(tmpdir(), 'capa-linked-config-'));
+    try {
+      mkdirSync(join(dotfiles, 'capa'));
+      writeFileSync(join(dotfiles, 'capa', 'config.yaml'), 'providers: []\n');
+      symlinkSync(dotfiles, join(root, '.config'), process.platform === 'win32' ? 'junction' : 'dir');
+      const listed = await listProjectFs(root, 'docs', { kind: 'rules' });
+      // Install resolves this from <root>/.config/capa, not from the link target.
+      expect(listed.entries[0].storedPath).toBe('../../docs/rules.md');
+    } finally {
+      rmSync(dotfiles, { recursive: true, force: true });
+    }
+  });
+
   it('does not browse through a symlink outside the project', async () => {
     const outside = mkdtempSync(join(tmpdir(), 'capa-browse-outside-'));
     try {

@@ -1,4 +1,4 @@
-import { dirname, relative } from "path";
+import { dirname, isAbsolute, join, relative, resolve } from "path";
 import { canonicalizePath, type ProjectUploadKind } from "./paths";
 
 export function isProjectUploadKind(value: string): value is ProjectUploadKind {
@@ -20,10 +20,11 @@ export function pathStoredInCapabilities(opts: {
 	absolutePath: string;
 }): string {
 	const { projectRoot, capabilitiesFilePath, kind, absolutePath } = opts;
-	if (kind === "skills" || !capabilitiesFilePath) {
-		return normalizeRel(relative(canonicalizePath(projectRoot), canonicalizePath(absolutePath)));
-	}
-	return normalizeRel(
-		relative(canonicalizePath(dirname(capabilitiesFilePath)), canonicalizePath(absolutePath)),
-	);
+	const real = canonicalizePath(absolutePath);
+	const fromRoot = relative(canonicalizePath(projectRoot), real);
+	if (kind === "skills" || !capabilitiesFilePath) return normalizeRel(fromRoot);
+	// Install resolves these from the config's logical directory, so measure from
+	// there: a linked .config must not leak its real location into the path.
+	const target = isAbsolute(fromRoot) ? real : join(resolve(projectRoot), fromRoot);
+	return normalizeRel(relative(dirname(resolve(capabilitiesFilePath)), target));
 }
