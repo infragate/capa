@@ -2,7 +2,6 @@ import { existsSync, rmSync } from 'fs';
 import type { Task } from '../../ui';
 import {
   getLockfilePath,
-  listLockfileCandidatePaths,
   saveLockfile,
 } from '../../../shared/lockfile';
 import { validateHooks } from '../../../shared/hooks-validate';
@@ -50,18 +49,12 @@ export function writeLockfileTask(): Task<InstallCtx> {
         (lockfileToSave.providerConfig ?? []).length === 0
       ) {
         try {
-          for (const lockPath of [
-            getLockfilePath(ctx.projectPath),
-            ...listLockfileCandidatePaths(ctx.projectPath),
-          ]) {
-            if (existsSync(lockPath)) {
-              rmSync(lockPath, { force: true });
-            }
-          }
+          const lockPath = ctx.lockfileLocation?.path ?? getLockfilePath(ctx.projectPath);
+          if (existsSync(lockPath)) rmSync(lockPath, { force: true });
         } catch {}
       } else {
         try {
-          await saveLockfile(ctx.projectPath, lockfileToSave);
+          await saveLockfile(ctx.projectPath, lockfileToSave, ctx.lockfileLocation);
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : String(err);
           // A failure, not a warning: the new pins are not on disk.

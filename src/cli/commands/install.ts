@@ -10,7 +10,7 @@ import {
   resolveProvidersForInstall,
   validateProvider,
 } from '../../shared/providers/resolve';
-import { LockfileBuilder, loadLockfile } from '../../shared/lockfile';
+import { LockfileBuilder, loadLockfile, resolveLockfileLocation } from '../../shared/lockfile';
 import { computeInstallFingerprint } from '../../shared/install-fingerprint';
 import { runTasks, summary, info, warn, error, setFlags, getFlags } from '../ui';
 import { buildInstallTasks } from './install-tasks';
@@ -205,7 +205,8 @@ async function installCommandBody(opts: {
   const settings = await loadSettings();
   const dbPath = getDatabasePath(settings);
   const db = new CapaDatabase(dbPath);
-  const existingLockfile = await loadLockfile(projectPath);
+  const lockfileLocation = resolveLockfileLocation(projectPath, { privateRoot: resolve(idPath) !== resolve(projectPath), config: capabilitiesFile });
+  const existingLockfile = await loadLockfile(projectPath, lockfileLocation);
   const lockBuilder = new LockfileBuilder(noCache ? null : existingLockfile);
   if (noCache && existingLockfile?.providerConfig) {
     lockBuilder.setProviderConfig(existingLockfile.providerConfig);
@@ -285,6 +286,7 @@ async function installCommandBody(opts: {
     configureProviders,
     isWrapInstall,
     lockBuilder,
+    lockfileLocation,
     mcpUrl,
     resolvedRepos: new Map(),
     added: 0,
@@ -384,7 +386,7 @@ async function recordInstallState(
   outcome: { completed: boolean; ctx: InstallCtx; extraError?: string },
 ): Promise<void> {
   try {
-    const fingerprint = await computeInstallFingerprint(projectPath, capabilitiesText);
+    const fingerprint = await computeInstallFingerprint(projectPath, capabilitiesText, outcome.ctx.lockfileLocation);
     if (!fingerprint) return;
     const { ctx } = outcome;
     const messages = [...ctx.failures, ...ctx.errors];

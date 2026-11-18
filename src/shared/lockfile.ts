@@ -2,11 +2,11 @@
  * Read/write helpers for `capabilities.lock`.
  *
  * The lockfile lives next to the winning capabilities file. New writes are
- * always TOML; legacy YAML/JSON locks are sniffed on read and migrated to TOML.
+ * in the config format; active lock contents are recognized without read-side writes.
  */
 
 import TOML from "@iarna/toml";
-import { existsSync, mkdirSync, rmSync } from "fs";
+import { existsSync, lstatSync } from "fs";
 import * as yaml from "js-yaml";
 import { dirname, join, resolve } from "path";
 import type {
@@ -24,36 +24,32 @@ import { listExistingCapabilitiesCandidatesSync } from "./paths";
 
 export const LOCKFILE_NAME = "capabilities.lock";
 
-/**
- * Directories that may hold `capabilities.lock`, in the same order as
- * capabilities discovery (root → `.config/` → `.config/capabilities/`).
- */
-export function listLockfileCandidatePaths(projectPath: string): string[] {
-	const root = resolve(projectPath);
-	return [
-		join(root, LOCKFILE_NAME),
-		join(root, ".config", LOCKFILE_NAME),
-		join(root, ".config", "capabilities", LOCKFILE_NAME),
-	];
+/** Explicit internal location, used when wrap writes to its private tree. */
+export interface LockfileLocation {
+  path: string;
+  format: LockfileFormat;
+  private?: boolean;
 }
 
-/**
- * Resolve the absolute path of the lockfile for a project.
- * Co-located with the winning capabilities file; falls back to project root.
- */
 export function getLockfilePath(projectPath: string): string {
-	const existing = listExistingCapabilitiesCandidatesSync(projectPath);
-	const dir =
-		existing.length > 0 ? dirname(existing[0].path) : resolve(projectPath);
-	return join(dir, LOCKFILE_NAME);
+  const selected = listExistingCapabilitiesCandidatesSync(projectPath)[0];
+  return join(selected ? dirname(selected.path) : resolve(projectPath), LOCKFILE_NAME);
 }
 
-/**
- * Format used when writing a lockfile. Always TOML, independent of the
- * capabilities file format (yaml/json/toml).
- */
-export function detectLockfileFormat(_projectPath?: string): LockfileFormat {
-	return "toml";
+export function detectLockfileFormat(projectPath: string): LockfileFormat {
+  return listExistingCapabilitiesCandidatesSync(projectPath)[0]?.format ?? "yaml";
+}
+
+export function resolveLockfileLocation(projectPath: string, options: {
+  privateRoot?: boolean;
+  config?: { path: string; format: LockfileFormat } | null;
+} = {}): LockfileLocation {
+  const config = options.config === undefined ? listExistingCapabilitiesCandidatesSync(projectPath)[0] : options.config;
+  return {
+    path: join(options.privateRoot || !config ? resolve(projectPath) : dirname(config.path), LOCKFILE_NAME),
+    format: config?.format ?? "yaml",
+    private: options.privateRoot === true,
+  };
 }
 
 /**
@@ -307,17 +303,18 @@ function validateLockfile(parsed: unknown): Lockfile {
  * Used when reading an orphan lock that may not match the current
  * capabilities format (e.g. yaml lock left behind after moving to toml).
  */
+/** Parse syntax before choosing a format; quoted marker text is not a format signal. */
 export function sniffLockfileFormat(content: string): LockfileFormat {
-	const trimmed = content.trim();
-	if (trimmed.startsWith("{")) return "json";
-	// TOML uses `key =` / `[[array]]`; YAML uses `key:`.
-	if (
-		/^version\s*=/.test(trimmed) ||
-		/\[\[(?:skills|plugins|hooks)\]\]/.test(trimmed)
-	) {
-		return "toml";
-	}
-	return "yaml";
+  const trimmed = content.trim();
+  if (trimmed.startsWith("{")) return "json";
+  try {
+    const parsed = yaml.load(content);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return "yaml";
+  } catch { /* TOML may not be valid YAML syntax. */ }
+  try {
+    TOML.parse(content);
+    return "toml";
+  } catch { return "yaml"; }
 }
 
 function parseLockfileContent(content: string, format: LockfileFormat): Lockfile {
@@ -349,75 +346,28 @@ function parseLockfileContent(content: string, format: LockfileFormat): Lockfile
 	return validateLockfile(parsed);
 }
 
-/**
- * If the co-located lock is missing, move pins from a former location and
- * delete every other supported lock path so orphans cannot become active.
- */
-async function migrateLockfileIfNeeded(
-	projectPath: string,
-	primaryPath: string,
+/** Read only the active lock; missing active files do not revive orphan pins. */
+export async function loadLockfile(
+  projectPath: string,
+  location?: LockfileLocation,
 ): Promise<Lockfile | null> {
-	const candidates = listLockfileCandidatePaths(projectPath).filter(
-		(p) => p !== primaryPath && existsSync(p),
-	);
-	if (candidates.length === 0) return null;
-
-	const sourcePath = candidates[0];
-	const content = await Bun.file(sourcePath).text();
-	if (content.trim() === "") {
-		for (const orphan of candidates) {
-			try {
-				rmSync(orphan, { force: true });
-			} catch {
-				// ignore
-			}
-		}
-		return null;
-	}
-
-	const lockfile = parseLockfileContent(content, sniffLockfileFormat(content));
-	const targetFormat = detectLockfileFormat(projectPath);
-	const dir = dirname(primaryPath);
-	if (!existsSync(dir)) {
-		mkdirSync(dir, { recursive: true });
-	}
-	await Bun.write(primaryPath, serializeLockfile(lockfile, targetFormat));
-
-	for (const orphan of candidates) {
-		try {
-			rmSync(orphan, { force: true });
-		} catch {
-			// ignore
-		}
-	}
-	logger.info(
-		`Migrated ${LOCKFILE_NAME} from ${sourcePath} to ${primaryPath}`,
-	);
-	return lockfile;
+  const path = location?.path ?? getLockfilePath(projectPath);
+  assertPrivateLockIsNotLinked(location);
+  if (!existsSync(path)) return null;
+  const content = await Bun.file(path).text();
+  if (content.trim() === "") return null;
+  return parseLockfileContent(content, sniffLockfileFormat(content));
 }
 
-/**
- * Read and parse the lockfile for a project. Returns null if the file does
- * not exist. Throws on parse / schema errors so the user notices a corrupted
- * lockfile instead of silently re-resolving everything.
- *
- * When the capabilities file has moved, migrates a lockfile found at a former
- * supported location into the co-located path and retires the old copy.
- */
-export async function loadLockfile(
-	projectPath: string,
-): Promise<Lockfile | null> {
-	const path = getLockfilePath(projectPath);
-	if (!existsSync(path)) {
-		return migrateLockfileIfNeeded(projectPath, path);
-	}
-
-	const content = await Bun.file(path).text();
-	if (content.trim() === "") return null;
-
-	// Prefer content sniff so a migrated-in-place yaml lock still parses when
-	// the winning capabilities file is now toml/json.
-	return parseLockfileContent(content, sniffLockfileFormat(content));
+/** An explicitly selected private lock must not redirect writes to real sources. */
+function assertPrivateLockIsNotLinked(location?: LockfileLocation): void {
+  if (!location?.private) return;
+  try {
+    const stat = lstatSync(location.path);
+    if (stat.isSymbolicLink() || stat.nlink > 1) throw new Error(`Refusing linked private lock: ${location.path}`);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
 }
 
 /**
@@ -453,13 +403,16 @@ export function lockfilesSemanticallyEqual(a: Lockfile, b: Lockfile): boolean {
 export async function saveLockfile(
 	projectPath: string,
 	lockfile: Lockfile,
-	format?: LockfileFormat,
+	formatOrLocation?: LockfileFormat | LockfileLocation,
 ): Promise<void> {
-	const path = getLockfilePath(projectPath);
-	const fmt = format ?? detectLockfileFormat(projectPath);
+	const location = typeof formatOrLocation === "object" ? formatOrLocation : undefined;
+	const path = location?.path ?? getLockfilePath(projectPath);
+	const fmt = location?.format ?? (typeof formatOrLocation === "string" ? formatOrLocation : detectLockfileFormat(projectPath));
+	assertPrivateLockIsNotLinked(location);
 	try {
-		const existing = await loadLockfile(projectPath);
-		if (existing && lockfilesSemanticallyEqual(existing, lockfile)) {
+		const existing = await loadLockfile(projectPath, location);
+		const sameFormat = sniffLockfileFormat(await Bun.file(path).text()) === fmt;
+		if (existing && sameFormat && lockfilesSemanticallyEqual(existing, lockfile)) {
 			return;
 		}
 	} catch {
