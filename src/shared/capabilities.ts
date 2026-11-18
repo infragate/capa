@@ -397,7 +397,7 @@ const ARBITRARY_VALUE_KEYS = new Set(["defaults", "default"]);
  */
 function stripNulls(value: unknown): unknown {
 	if (Array.isArray(value)) return value.map(stripNulls);
-	if (value === null || typeof value !== "object") return value;
+	if (value === null || typeof value !== "object" || value instanceof Date) return value;
 	const out: Record<string, unknown> = {};
 	for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
 		if (ARBITRARY_VALUE_KEYS.has(key)) {
@@ -449,49 +449,102 @@ function parseStructuredCapabilities(
 	return TOML.parse(content) as Record<string, unknown>;
 }
 
+/** Programmatic values must not be flattened before representation validation. */
+function assertTomlObjects(value: unknown, path = "(root)"): void {
+	if (!value || typeof value !== "object" || value instanceof Date) return;
+	if (Array.isArray(value)) {
+		value.forEach((entry, index) =>
+			assertTomlObjects(entry, `${path}[${index}]`),
+		);
+		return;
+	}
+	const prototype = Object.getPrototypeOf(value);
+	if (prototype !== Object.prototype && prototype !== null) {
+		throw new Error(
+			`Unsupported object for TOML at ${path}; use plain records, arrays, and supported dates.`,
+		);
+	}
+	for (const [key, entry] of Object.entries(value))
+		assertTomlObjects(entry, `${path}.${key}`);
+}
+
 /** Return a path for a value that cannot survive this TOML writer/reader pair. */
-function checkTomlValues(value: unknown, path = "(root)", arrays: string[] = []): string[] {
-  if (value === null || value === undefined || typeof value === "function" || typeof value === "symbol" || typeof value === "bigint") {
-    throw new Error(`Cannot represent TOML value at ${path}; use YAML or JSON for this value.`);
-  }
-  if (Array.isArray(value)) {
-    arrays.push(path);
-    value.forEach((entry, index) => checkTomlValues(entry, `${path}[${index}]`, arrays));
-  } else if (value && typeof value === "object" && !(value instanceof Date)) {
-    for (const [key, entry] of Object.entries(value)) {
-      // Undefined object properties mean absent optional fields.
-      if (entry !== undefined) checkTomlValues(entry, path === "(root)" ? key : `${path}.${key}`, arrays);
-    }
-  }
-  return arrays;
+function checkTomlValues(
+	value: unknown,
+	path = "(root)",
+	arrays: string[] = [],
+): string[] {
+	if (
+		value === null ||
+		value === undefined ||
+		typeof value === "function" ||
+		typeof value === "symbol" ||
+		typeof value === "bigint"
+	) {
+		throw new Error(
+			`Cannot represent TOML value at ${path}; use YAML or JSON for this value.`,
+		);
+	}
+	if (Array.isArray(value)) {
+		arrays.push(path);
+		value.forEach((entry, index) =>
+			checkTomlValues(entry, `${path}[${index}]`, arrays),
+		);
+	} else if (value && typeof value === "object" && !(value instanceof Date)) {
+		for (const [key, entry] of Object.entries(value)) {
+			// Undefined object properties mean absent optional fields.
+			if (entry !== undefined)
+				checkTomlValues(
+					entry,
+					path === "(root)" ? key : `${path}.${key}`,
+					arrays,
+				);
+		}
+	}
+	return arrays;
 }
 
 function omitUndefinedFields(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(omitUndefinedFields);
-  if (value && typeof value === "object" && !(value instanceof Date)) return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined).map(([key, entry]) => [key, omitUndefinedFields(entry)]));
-  return value;
+	if (Array.isArray(value)) return value.map(omitUndefinedFields);
+	if (value && typeof value === "object" && !(value instanceof Date))
+		return Object.fromEntries(
+			Object.entries(value)
+				.filter(([, entry]) => entry !== undefined)
+				.map(([key, entry]) => [key, omitUndefinedFields(entry)]),
+		);
+	return value;
 }
 
 function serializeStructuredCapabilities(
-  data: Record<string, unknown>,
-  format: "json" | "toml",
-  originalContent?: string,
+	data: Record<string, unknown>,
+	format: "json" | "toml",
+	originalContent?: string,
 ): string {
-  if (format === "json") return JSON.stringify(data, null, 2) + "\n";
-  const prepared = omitUndefinedFields(stripNulls(data)) as Record<string, unknown>;
-  const arrays = checkTomlValues(prepared);
-  try {
-    const content = originalContent?.trim() ? patchToml(originalContent, prepared) : TOML.stringify(prepared as TOML.JsonMap);
-    const decoded = TOML.parse(content);
-    if (!isDeepStrictEqual(decoded, prepared)) {
-      throw new Error("serialized values differ from the intended configuration");
-    }
-    return content;
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    const paths = arrays.length ? ` (array values: ${arrays.join(", ")})` : "";
-    throw new Error(`TOML writer/reader compatibility error${paths}: ${detail}. Use YAML or JSON if this value is not supported.`);
-  }
+	if (format === "json") return JSON.stringify(data, null, 2) + "\n";
+	assertTomlObjects(data);
+	const prepared = omitUndefinedFields(stripNulls(data)) as Record<
+		string,
+		unknown
+	>;
+	const arrays = checkTomlValues(prepared);
+	try {
+		const content = originalContent?.trim()
+			? patchToml(originalContent, prepared)
+			: TOML.stringify(prepared as TOML.JsonMap);
+		const decoded = TOML.parse(content);
+		if (!isDeepStrictEqual(decoded, prepared)) {
+			throw new Error(
+				"serialized values differ from the intended configuration",
+			);
+		}
+		return content;
+	} catch (error) {
+		const detail = error instanceof Error ? error.message : String(error);
+		const paths = arrays.length ? ` (array values: ${arrays.join(", ")})` : "";
+		throw new Error(
+			`TOML writer/reader compatibility error${paths}: ${detail}. Use YAML or JSON if this value is not supported.`,
+		);
+	}
 }
 
 export async function parseCapabilitiesFile(

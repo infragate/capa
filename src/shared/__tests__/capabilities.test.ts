@@ -545,6 +545,25 @@ describe('capabilities', () => {
       expect(await Bun.file(filePath).text()).toBe(original);
     });
 
+    it('rejects unsupported programmatic objects before normalization can erase them', async () => {
+      const filePath = join(tempDir, 'objects.toml');
+      const original = '# unchanged\nskills = []\n';
+      for (const value of [new Map([['key', 'value']]), new Set(['value']), /value/, new Uint8Array([1, 2])]) {
+        await Bun.write(filePath, original);
+        await expect(writeCapabilitiesFile(filePath, 'toml', { skills: [], servers: [], tools: [{ id: 'find', type: 'mcp', def: { server: '@s', tool: 'find', defaults: { value } } }] })).rejects.toThrow(/unsupported.*object|object.*TOML/i);
+        expect(await Bun.file(filePath).text()).toBe(original);
+      }
+    });
+
+    it('preserves TOML datetimes during an unrelated edit', async () => {
+      const filePath = join(tempDir, 'datetime.toml');
+      await Bun.write(filePath, '# keep datetime\nstamp = 1979-05-27T07:32:00Z\nskills = []\n');
+      await appendCapabilityEntry(filePath, 'toml', 'skills', { id: 'extra', type: 'inline', def: { content: 'hi' } });
+      const content = await Bun.file(filePath).text();
+      expect(content).toContain('stamp = 1979-05-27T07:32:00Z');
+      expect(content).toContain('# keep datetime');
+    });
+
     it('preserves TOML comments across append and upsertOptions', async () => {
       const filePath = join(tempDir, 'commented.toml');
       await Bun.write(
