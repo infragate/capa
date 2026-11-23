@@ -6,7 +6,11 @@ import { resolvePlugins } from '../../commands/plugin-install';
 import { getProvider } from '../../../shared/providers';
 import { upsertNativeMcpServer } from './native-mcp';
 import { runNativePluginInstall, type NativePluginInstall } from './native-plugin-install';
-import { expandSecretRecord, emptyCapabilities } from './env';
+import {
+  expandSecretRecord,
+  emptyCapabilities,
+  resolvePassthroughCapabilitiesPath,
+} from './env';
 import { installRules } from '../rules-installer';
 import { installHooks } from '../hooks';
 import { installSubAgentInstructions } from '../agents-file/index';
@@ -66,7 +70,7 @@ export async function passthroughInstallPlugin(opts: {
   caps.plugins = [plugin];
   const authFetch = createAuthenticatedFetch(db);
   const lockBuilder = new LockfileBuilder(null);
-  const capabilitiesFilePath = join(projectPath, 'capabilities.yaml');
+  const capabilitiesFilePath = await resolvePassthroughCapabilitiesPath(projectPath);
   const result = await resolvePlugins(
     caps,
     projectPath,

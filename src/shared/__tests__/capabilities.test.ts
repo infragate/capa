@@ -34,22 +34,22 @@ describe('capabilities', () => {
   describe('normalizeCapabilities', () => {
     it('throws a clear error for null input', () => {
       expect(() => normalizeCapabilities(null)).toThrow(
-        'capabilities file is empty or not a YAML/JSON object'
+        'capabilities file is empty or not a TOML/YAML/JSON object'
       );
     });
 
     it('throws a clear error for undefined input', () => {
       expect(() => normalizeCapabilities(undefined)).toThrow(
-        'capabilities file is empty or not a YAML/JSON object'
+        'capabilities file is empty or not a TOML/YAML/JSON object'
       );
     });
 
     it('throws a clear error for non-object input', () => {
       expect(() => normalizeCapabilities('not-an-object')).toThrow(
-        'capabilities file is empty or not a YAML/JSON object'
+        'capabilities file is empty or not a TOML/YAML/JSON object'
       );
       expect(() => normalizeCapabilities([])).toThrow(
-        'capabilities file is empty or not a YAML/JSON object'
+        'capabilities file is empty or not a TOML/YAML/JSON object'
       );
     });
 
@@ -473,6 +473,161 @@ describe('capabilities', () => {
         subagents: [],
         hooks: [],
       });
+    });
+
+    it('should write and parse TOML capabilities file', async () => {
+      const capabilities = createDefaultCapabilities();
+      const filePath = join(tempDir, 'capabilities.toml');
+
+      await writeCapabilitiesFile(filePath, 'toml', capabilities);
+      const parsed = await parseCapabilitiesFile(filePath, 'toml');
+
+      expect(parsed.skills?.map((s) => s.id)).toEqual(
+        capabilities.skills.map((s) => s.id),
+      );
+      expect(parsed.options?.toolExposure).toBe('search');
+      expect(parsed.servers).toEqual([]);
+      expect(parsed.plugins).toEqual([]);
+    });
+
+    it('appends a skill entry to a TOML capabilities file', async () => {
+      const filePath = join(tempDir, 'capabilities.toml');
+      await writeCapabilitiesFile(filePath, 'toml', {
+        skills: [],
+        servers: [],
+        tools: [],
+      });
+      await appendCapabilityEntry(filePath, 'toml', 'skills', {
+        id: 'extra',
+        type: 'inline',
+        def: { content: '# Extra' },
+      });
+      const parsed = await parseCapabilitiesFile(filePath, 'toml');
+      expect(parsed.skills).toHaveLength(1);
+      expect(parsed.skills[0].id).toBe('extra');
+    });
+
+    it('rejects meaningful nulls before a fresh TOML write changes the file', async () => {
+      const filePath = join(tempDir, 'null.toml');
+      const original = '# original\nskills = []\n';
+      await Bun.write(filePath, original);
+      await expect(writeCapabilitiesFile(filePath, 'toml', { skills: [], servers: [], tools: [{ id: 'find', type: 'mcp', def: { server: '@s', tool: 'find', defaults: { filter: null } } }] })).rejects.toThrow(/tools\[0\].def.defaults.filter/);
+      expect(await Bun.file(filePath).text()).toBe(original);
+    });
+
+    it('validates patched numeric arrays with the production TOML reader before writing', async () => {
+      const filePath = join(tempDir, 'numeric.toml');
+      const original = '# keep\nskills = []\ntools = []\n';
+      await Bun.write(filePath, original);
+      await expect(appendCapabilityEntry(filePath, 'toml', 'tools', { id: 'find', type: 'mcp', def: { server: '@s', tool: 'find', defaults: { range: [1, 2.5] } } })).rejects.toThrow(/TOML.*(reader|represent|compatib)/i);
+      expect(await Bun.file(filePath).text()).toBe(original);
+    });
+
+    it('omits optional nulls while preserving comments in TOML edits', async () => {
+      const filePath = join(tempDir, 'optional.toml');
+      await Bun.write(filePath, '# keep\nskills = []\n');
+      await appendCapabilityEntry(filePath, 'toml', 'skills', { id: 'extra', type: 'inline', def: { content: 'hi', description: null } } as never);
+      expect(await Bun.file(filePath).text()).toContain('# keep');
+      const parsed = await parseCapabilitiesFile(filePath, 'toml');
+      expect(parsed.skills[0].def.description).toBeUndefined();
+    });
+
+    it('preserves supported nested arrays and rejects null array elements without writing', async () => {
+      const filePath = join(tempDir, 'arrays.toml');
+      await writeCapabilitiesFile(filePath, 'toml', { skills: [], servers: [], tools: [] });
+      await appendCapabilityEntry(filePath, 'toml', 'tools', { id: 'find', type: 'mcp', def: { server: '@s', tool: 'find', defaults: { groups: [[1], ['two']] } } });
+      const tool = (await parseCapabilitiesFile(filePath, 'toml')).tools[0];
+      expect(tool.type).toBe('mcp');
+      if (tool.type !== 'mcp') throw new Error('Expected MCP tool');
+      expect(tool.def.defaults).toEqual({ groups: [[1], ['two']] });
+      const original = await Bun.file(filePath).text();
+      await expect(appendCapabilityEntry(filePath, 'toml', 'tools', { id: 'bad', type: 'mcp', def: { server: '@s', tool: 'find', defaults: { groups: [1, null, 2] } } })).rejects.toThrow(/groups\[1\]/);
+      expect(await Bun.file(filePath).text()).toBe(original);
+    });
+
+    it('rejects unsupported programmatic objects before normalization can erase them', async () => {
+      const filePath = join(tempDir, 'objects.toml');
+      const original = '# unchanged\nskills = []\n';
+      for (const value of [new Map([['key', 'value']]), new Set(['value']), /value/, new Uint8Array([1, 2])]) {
+        await Bun.write(filePath, original);
+        await expect(writeCapabilitiesFile(filePath, 'toml', { skills: [], servers: [], tools: [{ id: 'find', type: 'mcp', def: { server: '@s', tool: 'find', defaults: { value } } }] })).rejects.toThrow(/unsupported.*object|object.*TOML/i);
+        expect(await Bun.file(filePath).text()).toBe(original);
+      }
+    });
+
+    it('preserves TOML datetimes during an unrelated edit', async () => {
+      const filePath = join(tempDir, 'datetime.toml');
+      await Bun.write(filePath, '# keep datetime\nstamp = 1979-05-27T07:32:00Z\nskills = []\n');
+      await appendCapabilityEntry(filePath, 'toml', 'skills', { id: 'extra', type: 'inline', def: { content: 'hi' } });
+      const content = await Bun.file(filePath).text();
+      expect(content).toContain('stamp = 1979-05-27T07:32:00Z');
+      expect(content).toContain('# keep datetime');
+    });
+
+    it('preserves TOML comments across append and upsertOptions', async () => {
+      const filePath = join(tempDir, 'commented.toml');
+      await Bun.write(
+        filePath,
+        [
+          '# keep me above skills',
+          'providers = ["cursor"]',
+          '',
+          '[[skills]]',
+          'id = "keep"',
+          'type = "inline"',
+          'def = {content = "a"}',
+          '',
+        ].join('\n'),
+      );
+
+      await appendCapabilityEntry(filePath, 'toml', 'skills', {
+        id: 'extra',
+        type: 'inline',
+        def: { content: 'b' },
+      });
+      await upsertOptions(filePath, 'toml', { toolExposure: 'search' });
+
+      const rewritten = await Bun.file(filePath).text();
+      expect(rewritten).toContain('# keep me above skills');
+      const parsed = await parseCapabilitiesFile(filePath, 'toml');
+      expect(parsed.skills.map((s) => s.id)).toEqual(['keep', 'extra']);
+      expect(parsed.options?.toolExposure).toBe('search');
+    });
+
+    it('preserves YAML comments across append and upsertOptions', async () => {
+      const filePath = join(tempDir, 'commented.yaml');
+      await Bun.write(
+        filePath,
+        [
+          '# keep me above skills',
+          'providers:',
+          '  - cursor',
+          '',
+          'options:',
+          '  toolExposure: on-demand # inline option comment',
+          '',
+          'skills:',
+          '  - id: keep',
+          '    type: inline',
+          '    def:',
+          '      content: a',
+          '',
+        ].join('\n'),
+      );
+
+      await appendCapabilityEntry(filePath, 'yaml', 'skills', {
+        id: 'extra',
+        type: 'inline',
+        def: { content: 'b' },
+      });
+      await upsertOptions(filePath, 'yaml', { toolExposure: 'search' });
+
+      const rewritten = await Bun.file(filePath).text();
+      expect(rewritten).toContain('# keep me above skills');
+      expect(rewritten).toContain('# inline option comment');
+      const parsed = await parseCapabilitiesFile(filePath, 'yaml');
+      expect(parsed.skills.map((s) => s.id)).toEqual(['keep', 'extra']);
+      expect(parsed.options?.toolExposure).toBe('search');
     });
 
     it('should parse MCP env/headers secret source objects', async () => {

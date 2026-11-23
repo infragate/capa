@@ -94,9 +94,11 @@ if (process.argv[2] === '__server__') {
     program
       .command('init')
       .description('Initialize a new capabilities file')
-      .option('-f, --format <format>', 'File format (json or yaml)', 'yaml')
+      .option('-f, --format <format>', 'File format (toml, yaml, or json)', 'yaml')
       .action(async (options) => {
-        const format = options.format === 'json' ? 'json' : 'yaml';
+        const raw = String(options.format ?? 'yaml').toLowerCase();
+        const format =
+          raw === 'json' || raw === 'toml' || raw === 'yaml' ? raw : 'yaml';
         await initCommand(format);
       });
 

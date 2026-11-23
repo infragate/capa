@@ -169,11 +169,12 @@ describe('capa status: project report (#332)', () => {
     expect(row.value).toBe('plain');
   });
 
-  it('reports an ambiguous capabilities file as a problem instead of failing', async () => {
+  it('uses the preferred capabilities file when multiple formats exist', async () => {
     writeFileSync(join(projectPath, 'capabilities.yaml'), CAPS);
     writeFileSync(join(projectPath, 'capabilities.json'), '{}');
     const report = await collectProjectReport(projectPath, dbPath);
-    expect(report.problems[0]).toContain('ambiguous');
+    expect(report.capabilitiesFile).toBe(join(projectPath, 'capabilities.yaml'));
+    expect(report.problems.filter((p) => /ambiguous/i.test(p))).toEqual([]);
   });
 });
 

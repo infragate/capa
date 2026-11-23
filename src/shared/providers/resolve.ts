@@ -108,7 +108,7 @@ export interface ResolveInstallOpts {
  *
  * Priority:
  *  1. --provider flag (single value, validated)
- *  2. capabilities.providers (from the YAML/JSON file)
+ *  2. capabilities.providers (from the TOML/YAML/JSON file)
  *  3. Stored in DB from a previous install
  *  4. Interactive prompt (TTY only; errors in non-TTY)
  */

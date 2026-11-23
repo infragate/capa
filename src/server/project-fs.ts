@@ -12,11 +12,21 @@ import {
 } from "fs";
 import { basename, dirname, join, relative, resolve, sep } from "path";
 import { assertSafeRepoPath } from "../shared/repo-file";
+import {
+	detectCapabilitiesFile,
+	getProjectUploadRelDir,
+	type ProjectUploadKind,
+} from "../shared/paths";
+import {
+	pathStoredInCapabilities,
+} from "../shared/project-uploads";
 
 export interface ProjectFsEntry {
 	name: string;
 	type: "file" | "dir";
 	path: string;
+	/** Authored config path, distinct from the project-relative navigation path. */
+	storedPath?: string;
 }
 
 function normalizeRel(rel: string): string {
@@ -150,15 +160,17 @@ export function mkdirInsideProject(
  * `ext` filters files by extension (e.g. `md`); directories always included.
  * `dirsOnly` returns only directories (for picking skill folders).
  */
-export function listProjectFs(
+export async function listProjectFs(
 	projectRoot: string,
 	relPath = "",
-	opts: { ext?: string; dirsOnly?: boolean } = {},
-): { path: string; entries: ProjectFsEntry[] } {
+	opts: { ext?: string; dirsOnly?: boolean; kind?: ProjectUploadKind } = {},
+): Promise<{ path: string; entries: ProjectFsEntry[] }> {
 	const abs = resolveInsideProject(projectRoot, relPath);
 	if (!existsSync(abs)) {
 		throw new Error(`Path not found: ${relPath || "."}`);
 	}
+	assertRealPathInside(projectRoot, abs);
+	const detected = opts.kind ? await detectCapabilitiesFile(projectRoot) : null;
 	let dirents: Dirent[];
 	try {
 		dirents = readdirSync(abs, { withFileTypes: true });
@@ -169,11 +181,13 @@ export function listProjectFs(
 	const ext = opts.ext?.replace(/^\./, "").toLowerCase();
 	const entries: ProjectFsEntry[] = [];
 	for (const d of dirents) {
-		if (d.name.startsWith(".")) continue;
+		if (d.name.startsWith(".") && !(abs === resolve(projectRoot) && d.name === ".config")) continue;
+		if (d.isSymbolicLink()) continue;
 		const childAbs = join(abs, d.name);
 		const childRel = toProjectRelative(projectRoot, childAbs);
+		const selection = opts.kind ? { storedPath: pathStoredInCapabilities({ projectRoot, capabilitiesFilePath: detected?.path ?? null, kind: opts.kind, absolutePath: childAbs }) } : {};
 		if (d.isDirectory()) {
-			entries.push({ name: d.name, type: "dir", path: childRel });
+			entries.push({ name: d.name, type: "dir", path: childRel, ...selection });
 			continue;
 		}
 		if (opts.dirsOnly) continue;
@@ -183,7 +197,7 @@ export function listProjectFs(
 				const fileExt = dot >= 0 ? d.name.slice(dot + 1).toLowerCase() : "";
 				if (fileExt !== ext) continue;
 			}
-			entries.push({ name: d.name, type: "file", path: childRel });
+			entries.push({ name: d.name, type: "file", path: childRel, ...selection });
 		}
 	}
 
@@ -196,20 +210,25 @@ export function listProjectFs(
 }
 
 /**
- * Write an uploaded file under `.capa/imports/<safeName>` (or a subpath).
- * Returns the project-relative path of the written file.
+ * Write an uploaded file under the kind-specific upload directory.
+ * Root capabilities → `.capa/imports/…`; `.config` capabilities →
+ * `.config/capa/{skills|rules|instructions}/…`.
+ *
+ * Returns the path to store in the capabilities file (project-relative for
+ * skills; relative to the capabilities file for rules/instructions).
  */
-export function writeProjectImport(
+export async function writeProjectImport(
 	projectRoot: string,
 	opts: {
 		filename: string;
 		bytes: Uint8Array;
-		/** Optional subdirectory under .capa/imports */
+		kind: ProjectUploadKind;
+		/** Optional subdirectory under the upload dir */
 		subdir?: string;
 		/** When true, write as a skill directory with SKILL.md */
 		asSkillDir?: boolean;
 	},
-): { path: string } {
+): Promise<{ path: string }> {
 	const safeName = basename(opts.filename).replace(/[^a-zA-Z0-9._-]/g, "_");
 	if (!safeName || safeName === "." || safeName === "..") {
 		throw new Error("Invalid filename");
@@ -221,24 +240,41 @@ export function writeProjectImport(
 		}
 	}
 
+	const detected = await detectCapabilitiesFile(projectRoot);
+	const uploadRelDir = await getProjectUploadRelDir(projectRoot, opts.kind, detected);
+
 	if (opts.asSkillDir) {
 		const id = safeName.replace(/\.md$/i, "") || "skill";
 		const skillDirRel = normalizeRel(
-			join(".capa/imports", opts.subdir ?? "", id),
+			join(uploadRelDir, opts.subdir ?? "", id),
 		);
 		const skillDirAbs = mkdirInsideProject(projectRoot, skillDirRel);
 		const skillMd = join(skillDirAbs, "SKILL.md");
 		writeFileNoSymlink(skillMd, opts.bytes);
-		return { path: toProjectRelative(projectRoot, skillDirAbs) };
+		return {
+			path: pathStoredInCapabilities({
+				projectRoot,
+				capabilitiesFilePath: detected?.path ?? null,
+				kind: opts.kind,
+				absolutePath: skillDirAbs,
+			}),
+		};
 	}
 
 	const targetRel = normalizeRel(
-		join(".capa/imports", opts.subdir ?? "", safeName),
+		join(uploadRelDir, opts.subdir ?? "", safeName),
 	);
 	const parentAbs = mkdirInsideProject(projectRoot, dirname(targetRel));
 	const targetAbs = join(parentAbs, basename(targetRel));
 	writeFileNoSymlink(targetAbs, opts.bytes);
-	return { path: toProjectRelative(projectRoot, targetAbs) };
+	return {
+		path: pathStoredInCapabilities({
+			projectRoot,
+			capabilitiesFilePath: detected?.path ?? null,
+			kind: opts.kind,
+			absolutePath: targetAbs,
+		}),
+	};
 }
 
 /** Ensure a candidate skill path points at a directory that contains SKILL.md (or is SKILL.md itself → parent). */

@@ -197,11 +197,63 @@ hooks: []
     expect(a).toBe(b);
   });
 
+  it('ignores timestamp-only TOML lock edits but detects a config location switch', async () => {
+    const { emptyLockfile, serializeLockfile } = await import('../../../../shared/lockfile');
+    const lock = emptyLockfile();
+    writeFileSync(join(realDir, 'capabilities.lock'), serializeLockfile(lock, 'toml'));
+    const before = await computeCapabilitiesFingerprint(realDir);
+    writeFileSync(join(realDir, 'capabilities.lock'), serializeLockfile({ ...lock, generatedAt: '2030-01-01T00:00:00Z' }, 'toml'));
+    expect(await computeCapabilitiesFingerprint(realDir)).toBe(before);
+    const content = readFileSync(join(realDir, 'capabilities.yaml'), 'utf8');
+    rmSync(join(realDir, 'capabilities.yaml'));
+    mkdirSync(join(realDir, '.config', 'capa'), { recursive: true });
+    writeFileSync(join(realDir, '.config', 'capa', 'config.yaml'), content);
+    writeFileSync(join(realDir, '.config', 'capa', 'capabilities.lock'), serializeLockfile(lock, 'toml'));
+    expect(await computeCapabilitiesFingerprint(realDir)).not.toBe(before);
+  });
+
   it('fingerprint changes when capabilities.yaml changes', async () => {
     const a = await computeCapabilitiesFingerprint(realDir);
     writeFileSync(
       join(realDir, 'capabilities.yaml'),
       'skills:\n  - id: x\n    type: inline\n    def:\n      content: hi\n',
+    );
+    const b = await computeCapabilitiesFingerprint(realDir);
+    expect(a).not.toBe(b);
+  });
+
+  it('fingerprint reads a co-located lock under .config/', async () => {
+    const { mkdirSync, unlinkSync } = await import('fs');
+    // Discovery prefers root; remove it so `.config/` wins and lock co-locates there.
+    unlinkSync(join(realDir, 'capabilities.yaml'));
+    mkdirSync(join(realDir, '.config'), { recursive: true });
+    writeFileSync(join(realDir, '.config', 'capabilities.yaml'), 'providers: []\n');
+    writeFileSync(
+      join(realDir, '.config', 'capabilities.lock'),
+      `version = 1
+generator = "capa@test"
+generatedAt = "2026-01-01T00:00:00.000Z"
+skills = []
+plugins = []
+hooks = []
+`,
+    );
+    const a = await computeCapabilitiesFingerprint(realDir);
+    writeFileSync(
+      join(realDir, '.config', 'capabilities.lock'),
+      `version = 1
+generator = "capa@test"
+generatedAt = "2026-01-01T00:00:00.000Z"
+
+[[skills]]
+id = "moved"
+source = "github"
+repo = "o/r"
+skillName = "moved"
+requestedVersion = "v1"
+resolvedRef = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+resolvedVersion = "v1"
+`,
     );
     const b = await computeCapabilitiesFingerprint(realDir);
     expect(a).not.toBe(b);

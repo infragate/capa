@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import {
@@ -691,6 +691,46 @@ Ship small diffs.`,
     const written = readFileSync(join(projectDir, 'AGENTS.md'), 'utf8');
     expect(written).toContain('<!-- capa:start:team-local -->');
     expect(written).toContain('## Local team notes');
+  });
+
+  it('reads project-local parent paths from nested configs for bases and snippets', async () => {
+    const configDir = join(projectDir, '.config', 'capa');
+    mkdirSync(configDir, { recursive: true });
+    mkdirSync(join(projectDir, 'docs'));
+    writeFileSync(join(projectDir, 'docs', 'team.md'), 'Nested source notes');
+    const config = join(configDir, 'config.yaml');
+    writeFileSync(config, 'providers: [codex]');
+    await installAgentsFile(projectDir, {
+      base: { type: 'local', path: '../../docs/team.md' },
+      additional: [{ id: 'team', type: 'local', path: '../../docs/team.md' }],
+    }, ['codex'], undefined, config);
+    expect(readFileSync(join(projectDir, 'AGENTS.md'), 'utf8')).toContain('Nested source notes');
+  });
+
+  it('uses the trusted real source root when rendering a linked wrap workspace', async () => {
+    const shadow = join(projectDir, 'shadow');
+    const source = join(projectDir, 'source');
+    mkdirSync(join(source, '.config', 'capa'), { recursive: true });
+    mkdirSync(join(source, 'docs'));
+    mkdirSync(shadow);
+    writeFileSync(join(source, 'docs', 'team.md'), 'Real source notes');
+    const config = join(source, '.config', 'capa', 'config.yaml');
+    writeFileSync(config, 'providers: [codex]');
+    for (const entry of ['docs', '.config']) symlinkSync(join(source, entry), join(shadow, entry), process.platform === 'win32' ? 'junction' : 'dir');
+    await installAgentsFile(shadow, { additional: [{ id: 'team', type: 'local', path: '../../docs/team.md' }] }, ['codex'], undefined, join(shadow, '.config', 'capa', 'config.yaml'), { sourceProjectPath: source });
+    expect(readFileSync(join(shadow, 'AGENTS.md'), 'utf8')).toContain('Real source notes');
+    expect(existsSync(join(source, 'AGENTS.md'))).toBe(false);
+  });
+
+  it('rejects an instruction source symlink that leaves its project', async () => {
+    const outside = mkdtempSync(join(tmpdir(), 'capa-agent-outside-'));
+    try {
+      writeFileSync(join(outside, 'secret.md'), 'outside');
+      symlinkSync(outside, join(projectDir, 'escape'), process.platform === 'win32' ? 'junction' : 'dir');
+      const config = join(projectDir, 'capabilities.yaml');
+      writeFileSync(config, 'providers: [codex]');
+      await expect(installAgentsFile(projectDir, { base: { type: 'local', path: 'escape/secret.md' } }, ['codex'], undefined, config)).rejects.toThrow(/outside.*project/i);
+    } finally { rmSync(outside, { recursive: true, force: true }); }
   });
 
   it('rejects local additional snippets that escape the capabilities directory', async () => {

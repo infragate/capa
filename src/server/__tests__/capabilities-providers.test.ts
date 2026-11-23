@@ -96,11 +96,12 @@ describe("PUT /capabilities/providers", () => {
 		expect(error).not.toContain(dir.replaceAll("\\", "/"));
 	});
 
-	it("returns a JSON 400 when both capabilities.yaml and .json exist", async () => {
-		await Bun.write(join(dir, "capabilities.json"), "{}");
+	it("prefers yaml over json when both capabilities files exist", async () => {
+		await Bun.write(join(dir, "capabilities.json"), '{"providers":[]}');
 		const res = await put({ providers: ["cursor"] });
-		expect(res?.status).toBe(400);
-		expect((await res!.json()).error).toContain("Both capabilities.yaml and capabilities.json");
+		expect(res?.status).toBe(200);
+		const yamlText = await Bun.file(join(dir, "capabilities.yaml")).text();
+		expect(yamlText).toContain("cursor");
 	});
 
 	it("PUT /agents rejects a null or non-object body with a 400", async () => {

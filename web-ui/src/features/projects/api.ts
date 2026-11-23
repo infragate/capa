@@ -151,12 +151,13 @@ export const projectsApi = {
 
   listFs: (
     projectId: string,
-    opts?: { path?: string; ext?: string; dirsOnly?: boolean },
+    opts?: { path?: string; ext?: string; dirsOnly?: boolean; kind?: 'skills' | 'rules' | 'instructions' },
   ) => {
     const params = new URLSearchParams();
     if (opts?.path) params.set('path', opts.path);
     if (opts?.ext) params.set('ext', opts.ext);
     if (opts?.dirsOnly) params.set('dirsOnly', 'true');
+    if (opts?.kind) params.set('kind', opts.kind);
     const qs = params.toString();
     return api.get<ProjectFsListResponse>(
       `/api/projects/${encodeURIComponent(projectId)}/fs${qs ? `?${qs}` : ''}`,
@@ -166,12 +167,17 @@ export const projectsApi = {
   uploadFs: async (
     projectId: string,
     file: File,
-    opts?: { asSkillDir?: boolean; subdir?: string },
+    opts: {
+      kind: 'skills' | 'rules' | 'instructions';
+      asSkillDir?: boolean;
+      subdir?: string;
+    },
   ) => {
     const form = new FormData();
     form.append('file', file);
-    if (opts?.asSkillDir) form.append('asSkillDir', 'true');
-    if (opts?.subdir) form.append('subdir', opts.subdir);
+    form.append('kind', opts.kind);
+    if (opts.asSkillDir) form.append('asSkillDir', 'true');
+    if (opts.subdir) form.append('subdir', opts.subdir);
     const res = await fetch(
       `/api/projects/${encodeURIComponent(projectId)}/fs`,
       { method: 'POST', body: form, headers: apiAuthHeaders() },

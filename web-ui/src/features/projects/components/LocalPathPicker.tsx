@@ -5,10 +5,14 @@ import { useTranslation } from 'react-i18next';
 import { projectsApi } from '../api';
 import type { ProjectFsEntry } from '../../../types/api';
 
+export type UploadKind = 'skills' | 'rules' | 'instructions';
+
 export interface LocalPathPickerProps {
   projectId: string;
   value: string;
   onChange: (path: string) => void;
+  /** Destination kind for uploads (skills / rules / instructions). */
+  uploadKind: UploadKind;
   /** Filter listed files by extension (e.g. `md`). */
   ext?: string;
   /** Only list directories (for picking skill folders). */
@@ -23,6 +27,7 @@ export function LocalPathPicker({
   projectId,
   value,
   onChange,
+  uploadKind,
   ext,
   dirsOnly,
   uploadAsSkillDir,
@@ -42,7 +47,7 @@ export function LocalPathPicker({
       setLoading(true);
       setError(null);
       try {
-        const res = await projectsApi.listFs(projectId, { path, ext, dirsOnly });
+        const res = await projectsApi.listFs(projectId, { path, ext, dirsOnly, kind: uploadKind });
         setCwd(res.path);
         setEntries(res.entries);
       } catch (err) {
@@ -52,7 +57,7 @@ export function LocalPathPicker({
         setLoading(false);
       }
     },
-    [projectId, ext, dirsOnly],
+    [projectId, ext, dirsOnly, uploadKind],
   );
 
   useEffect(() => {
@@ -65,6 +70,7 @@ export function LocalPathPicker({
     setError(null);
     try {
       const res = await projectsApi.uploadFs(projectId, file, {
+        kind: uploadKind,
         asSkillDir: uploadAsSkillDir,
       });
       onChange(res.path);
@@ -161,7 +167,7 @@ export function LocalPathPicker({
                               void load(entry.path);
                             }
                           } else {
-                            onChange(entry.path);
+                            onChange(entry.storedPath ?? entry.path);
                             setBrowseOpen(false);
                           }
                         }}
@@ -181,14 +187,14 @@ export function LocalPathPicker({
                             tabIndex={0}
                             onClick={(e) => {
                               e.stopPropagation();
-                              onChange(entry.path);
+                              onChange(entry.storedPath ?? entry.path);
                               setBrowseOpen(false);
                             }}
                             onKeyDown={(e) => {
                               if (e.key === 'Enter' || e.key === ' ') {
                                 e.preventDefault();
                                 e.stopPropagation();
-                                onChange(entry.path);
+                                onChange(entry.storedPath ?? entry.path);
                                 setBrowseOpen(false);
                               }
                             }}

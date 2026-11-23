@@ -1,14 +1,14 @@
 /**
  * Read/write helpers for `capabilities.lock`.
  *
- * The lockfile lives next to the capabilities file (yaml or json). Format is
- * auto-detected: if `capabilities.json` exists we serialize as JSON; otherwise
- * (yaml is the default) we use YAML.
+ * The lockfile lives next to the winning capabilities file. New writes are
+ * in the config format; active lock contents are recognized without read-side writes.
  */
 
-import { existsSync } from "fs";
+import TOML from "@iarna/toml";
+import { existsSync, lstatSync } from "fs";
 import * as yaml from "js-yaml";
-import { join } from "path";
+import { dirname, join, resolve } from "path";
 import type {
 	Lockfile,
 	LockfileFormat,
@@ -20,24 +20,36 @@ import type {
 } from "../types/lockfile";
 import { VERSION } from "../version";
 import { logger } from "./logger";
+import { listExistingCapabilitiesCandidatesSync } from "./paths";
 
 export const LOCKFILE_NAME = "capabilities.lock";
 
-/**
- * Resolve the absolute path of the lockfile for a project.
- */
-export function getLockfilePath(projectPath: string): string {
-	return join(projectPath, LOCKFILE_NAME);
+/** Explicit internal location, used when wrap writes to its private tree. */
+export interface LockfileLocation {
+  path: string;
+  format: LockfileFormat;
+  private?: boolean;
 }
 
-/**
- * Pick the lockfile serialization format for a project.
- * Mirrors the capabilities file format when possible: JSON if `capabilities.json`
- * exists, otherwise YAML.
- */
+export function getLockfilePath(projectPath: string): string {
+  const selected = listExistingCapabilitiesCandidatesSync(projectPath)[0];
+  return join(selected ? dirname(selected.path) : resolve(projectPath), LOCKFILE_NAME);
+}
+
 export function detectLockfileFormat(projectPath: string): LockfileFormat {
-	const jsonPath = join(projectPath, "capabilities.json");
-	return existsSync(jsonPath) ? "json" : "yaml";
+  return listExistingCapabilitiesCandidatesSync(projectPath)[0]?.format ?? "yaml";
+}
+
+export function resolveLockfileLocation(projectPath: string, options: {
+  privateRoot?: boolean;
+  config?: { path: string; format: LockfileFormat } | null;
+} = {}): LockfileLocation {
+  const config = options.config === undefined ? listExistingCapabilitiesCandidatesSync(projectPath)[0] : options.config;
+  return {
+    path: join(options.privateRoot || !config ? resolve(projectPath) : dirname(config.path), LOCKFILE_NAME),
+    format: config?.format ?? "yaml",
+    private: options.privateRoot === true,
+  };
 }
 
 /**
@@ -64,6 +76,16 @@ function isLockHookSource(value: unknown): value is LockHookEntry["source"] {
 
 function isNullableString(value: unknown): value is string | null {
 	return value === null || typeof value === "string";
+}
+
+/** Nullable metadata defaults are checked against entry types, not used for key order. */
+type NullDefaults<T> = { [K in keyof T as null extends T[K] ? K : never]-?: null };
+const skillNulls: NullDefaults<LockSkillEntry> = { requestedVersion: null, requestedRef: null, resolvedVersion: null };
+const pluginNulls: NullDefaults<LockPluginEntry> = { subpath: null, requestedSearchName: null, requestedVersion: null, requestedRef: null, resolvedVersion: null, manifestVersion: null };
+const hookNulls: NullDefaults<LockHookEntry> = { repo: null, url: null, requestedVersion: null, requestedRef: null, resolvedRef: null, resolvedVersion: null };
+
+function decodeTomlEntries(entries: unknown[], defaults: object): unknown[] {
+  return entries.map(entry => entry && typeof entry === "object" && !Array.isArray(entry) ? { ...defaults, ...entry } : entry);
 }
 
 export function isValidSkillLockEntry(x: unknown): x is LockSkillEntry {
@@ -201,28 +223,70 @@ function validateLockfile(parsed: unknown): Lockfile {
 }
 
 /**
- * Read and parse the lockfile for a project. Returns null if the file does
- * not exist. Throws on parse / schema errors so the user notices a corrupted
- * lockfile instead of silently re-resolving everything.
+ * Infer the on-disk lockfile format from content.
+ * Active lock content can differ from a newly selected config format.
  */
-export async function loadLockfile(
-	projectPath: string,
-): Promise<Lockfile | null> {
-	const path = getLockfilePath(projectPath);
-	if (!existsSync(path)) return null;
+/** Parse syntax before choosing a format; quoted marker text is not a format signal. */
+export function sniffLockfileFormat(content: string): LockfileFormat {
+  const trimmed = content.trim();
+  if (trimmed.startsWith("{")) return "json";
+  try {
+    const parsed = yaml.load(content);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return "yaml";
+  } catch { /* TOML may not be valid YAML syntax. */ }
+  try {
+    TOML.parse(content);
+    return "toml";
+  } catch { return "yaml"; }
+}
 
-	const file = Bun.file(path);
-	const content = await file.text();
+export function parseLockfileContent(content: string, format: LockfileFormat = sniffLockfileFormat(content)): Lockfile {
 	const trimmed = content.trim();
-	if (trimmed === "") return null;
-
 	let parsed: unknown;
-	if (trimmed.startsWith("{")) {
+	if (format === "json" || trimmed.startsWith("{")) {
 		parsed = JSON.parse(content);
+	} else if (format === "toml") {
+		parsed = TOML.parse(content);
+		if (parsed && typeof parsed === "object") {
+			const obj = parsed as Record<string, unknown>;
+			if (Array.isArray(obj.skills)) {
+				obj.skills = decodeTomlEntries(obj.skills, skillNulls);
+			}
+			if (Array.isArray(obj.plugins)) {
+				obj.plugins = decodeTomlEntries(obj.plugins, pluginNulls);
+			}
+			if (Array.isArray(obj.hooks)) {
+				obj.hooks = decodeTomlEntries(obj.hooks, hookNulls);
+			}
+		}
 	} else {
 		parsed = yaml.load(content);
 	}
 	return validateLockfile(parsed);
+}
+
+/** Read only the active lock; missing active files do not revive orphan pins. */
+export async function loadLockfile(
+  projectPath: string,
+  location?: LockfileLocation,
+): Promise<Lockfile | null> {
+  const path = location?.path ?? getLockfilePath(projectPath);
+  assertPrivateLockIsNotLinked(location);
+  if (!existsSync(path)) return null;
+  const content = await Bun.file(path).text();
+  if (content.trim() === "") return null;
+  return parseLockfileContent(content, sniffLockfileFormat(content));
+}
+
+/** An explicitly selected private lock must not redirect writes to real sources. */
+function assertPrivateLockIsNotLinked(location?: LockfileLocation): void {
+  if (!location?.private) return;
+  try {
+    const stat = lstatSync(location.path);
+    if (stat.isSymbolicLink() || stat.nlink > 1) throw new Error(`Refusing linked private lock: ${location.path}`);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
 }
 
 /**
@@ -240,8 +304,16 @@ export function lockfileSemanticPayload(lockfile: Lockfile): unknown {
 	};
 }
 
+function canonicalLockValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalLockValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== null && entry !== undefined).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, entry]) => [key, canonicalLockValue(entry)]));
+  }
+  return value;
+}
+
 export function lockfileSemanticKey(lockfile: Lockfile): string {
-	return JSON.stringify(lockfileSemanticPayload(lockfile));
+  return JSON.stringify(canonicalLockValue(lockfileSemanticPayload(lockfile)));
 }
 
 /**
@@ -258,13 +330,22 @@ export function lockfilesSemanticallyEqual(a: Lockfile, b: Lockfile): boolean {
 export async function saveLockfile(
 	projectPath: string,
 	lockfile: Lockfile,
-	format?: LockfileFormat,
+	formatOrLocation?: LockfileFormat | LockfileLocation,
 ): Promise<void> {
-	const path = getLockfilePath(projectPath);
-	const fmt = format ?? detectLockfileFormat(projectPath);
+	const location = typeof formatOrLocation === "object" ? formatOrLocation : undefined;
+	const path = location?.path ?? getLockfilePath(projectPath);
+	const fmt = location?.format ?? (typeof formatOrLocation === "string" ? formatOrLocation : detectLockfileFormat(projectPath));
+	assertPrivateLockIsNotLinked(location);
 	try {
-		const existing = await loadLockfile(projectPath);
-		if (existing && lockfilesSemanticallyEqual(existing, lockfile)) {
+		// Read only an existing lock: on a first install the rejected read of a
+		// missing file does not hold the compiled CLI's event loop open, so the
+		// process exits mid-install.
+		const existing = await loadLockfile(projectPath, location);
+		if (
+			existing &&
+			lockfilesSemanticallyEqual(existing, lockfile) &&
+			sniffLockfileFormat(await Bun.file(path).text()) === fmt
+		) {
 			return;
 		}
 	} catch {
@@ -284,6 +365,9 @@ export function serializeLockfile(
 ): string {
 	if (format === "json") {
 		return JSON.stringify(lockfile, null, 2) + "\n";
+	}
+	if (format === "toml") {
+		return TOML.stringify(lockfile as unknown as TOML.JsonMap);
 	}
 	return yaml.dump(lockfile, { indent: 2, lineWidth: 120, noRefs: true });
 }

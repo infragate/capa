@@ -252,7 +252,7 @@
     "basePathHint": "Path to a local markdown file",
     "basePathRequired": "A file path is required",
     "baseContentRequired": "Content is required",
-    "inlineBaseHint": "Content is saved under .capa/imports and referenced as a local path.",
+    "inlineBaseHint": "Content is saved under the project upload folder (.capa/imports, or .config/capa/instructions when capabilities live under .config) and referenced as a local path.",
     "addSnippet": "Add snippet",
     "editSnippet": "Edit snippet",
     "snippetPath": "Snippet file",

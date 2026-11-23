@@ -61,6 +61,7 @@ desktop.ini
 .project
 .classpath
 .settings/
+.worktrees/
 
 # Testing
 coverage
@@ -88,8 +89,12 @@ capa-docs
 # Web UI build artifacts
 web-ui/dist/
 web-ui/src/.generated/
+.agents/
 .claude/
+.codex/
 .cursor/
+.kiro/
+.mcp.json
 capabilities.yaml
 capabilities.lock
 skills/bootstrap-workspace/

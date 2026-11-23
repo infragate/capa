@@ -36,8 +36,8 @@ Agent config today is scattered across `CLAUDE.md`, `.cursor/rules/`, `AGENTS.md
 
 CAPA collapses that into one version-controlled file next to your code — and a local MCP gateway in front of every tool:
 
-- **`capabilities.yaml`** — source of truth for every capability
-- **`capabilities.lock`** — SHA pins so tomorrow's clone gets the same bytes
+- **`capabilities.yaml`** (also `.toml` / `.json`) — source of truth for every capability
+- **`capabilities.lock`** — SHA pins co-located with the capabilities file
 - **Marker blocks** — surgical writes that leave hand-edited content alone
 - **MCP gateway** — one endpoint per project; CAPA proxies stdio / HTTP / SSE servers, applies formatters, and records activity
 
@@ -79,9 +79,23 @@ cd your-project
 capa init
 ```
 
-Creates `capabilities.yaml` and registers the project with the local CAPA server (default `http://localhost:5912`).
+Creates `capabilities.yaml` at the project root and registers the project with the local CAPA server (default `http://localhost:5912`). Use `capa init -f toml` or `-f json` for those formats.
 
-The new file points at the [JSON Schema](./schema/capabilities.schema.json), so editors with YAML/JSON language support autocomplete and validate it. For an existing file, add this first line:
+CAPA also loads a capabilities file from alternate locations (first match wins; preference **toml → yaml → json** within each location). If more than one candidate exists, CAPA warns and uses the winner:
+
+1. `capabilities.toml` / `.yaml` / `.json` at the project root
+2. `.config/capabilities.toml` / `.yaml` / `.json`
+3. `.config/capa/config.toml` / `.yaml` / `.json`
+
+`capabilities.lock` uses the winning configuration’s format and lives beside it. Wrap keeps an independent lock at its private working-directory root. Loading is read-only and ignores locks in other locations. To preserve pins when moving a configuration, move its lock alongside it.
+
+Web UI uploads land under `.capa/imports/` when the winning file is at the project root, or under `.config/capa/{skills,rules,instructions}/` when it lives under `.config`. Existing uploads and references stay in place.
+
+Browse shows the project’s `.config` folder but stays inside the project. Skills use project-relative paths. Rules and agent instructions use paths relative to the configuration file. Browse translates selected paths automatically. Agent instructions can reference other files within the project, including through `..`, but cannot escape the project. Existing external rule paths remain supported.
+
+Moving a configuration also changes the base for rule and instruction paths. Adjust those relative references when moving it. The project root remains the current directory or explicit project path, including in nested Git projects.
+
+The new file points at the [JSON Schema](./schema/capabilities.schema.json), so editors with YAML/JSON language support autocomplete and validate it. For an existing YAML file, add this first line:
 
 ```yaml
 # yaml-language-server: $schema=https://raw.githubusercontent.com/infragate/capa/main/schema/capabilities.schema.json

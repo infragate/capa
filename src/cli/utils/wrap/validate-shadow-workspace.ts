@@ -1,5 +1,6 @@
 import { existsSync, lstatSync, rmSync } from 'fs';
 import { join, resolve } from 'path';
+import { LOCKFILE_NAME } from '../../../shared/lockfile';
 import { collectProviderInstallRelativePaths } from '../../../shared/install-path-guard';
 import { getProvider, resolveProviderId } from '../../../shared/providers';
 import {
@@ -56,6 +57,20 @@ export function validateAndRepairShadowWorkspace(
   const realRoot = resolve(realProjectPath);
   const repaired: string[] = [];
   let needsReinstall = false;
+
+  // Root locks are private even when a nested config directory is linked.
+  try {
+    const lockPath = join(wsRoot, LOCKFILE_NAME);
+    const stat = lstatSync(lockPath);
+    if (stat.isSymbolicLink() || stat.nlink > 1) {
+      rmSync(lockPath, { force: true });
+      repaired.push(LOCKFILE_NAME);
+      needsReinstall = true;
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') needsReinstall = true;
+  }
+
 
   for (const name of excluded) {
     if (ALWAYS_EXCLUDE.has(name)) continue;

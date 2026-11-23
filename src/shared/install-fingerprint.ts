@@ -1,6 +1,6 @@
 import { createHash } from "crypto";
 import { readFileSync } from "fs";
-import { loadLockfile, lockfileSemanticKey } from "./lockfile";
+import { loadLockfile, lockfileSemanticKey, type LockfileLocation } from "./lockfile";
 import { detectCapabilitiesFile } from "./paths";
 
 /**
@@ -13,6 +13,7 @@ export async function computeInstallFingerprint(
 	projectPath: string,
 	/** The capabilities text an install applied; read from disk when omitted. */
 	capabilitiesText?: string,
+	lockfileLocation?: LockfileLocation,
 ): Promise<string | null> {
 	let text = capabilitiesText;
 	if (text === undefined) {
@@ -24,7 +25,7 @@ export async function computeInstallFingerprint(
 	const capabilities = text.replace(/\r\n/g, "\n");
 	let lock: string;
 	try {
-		const lockfile = await loadLockfile(projectPath);
+		const lockfile = await loadLockfile(projectPath, lockfileLocation);
 		lock = lockfile ? lockfileSemanticKey(lockfile) : "";
 	} catch {
 		lock = "unreadable";

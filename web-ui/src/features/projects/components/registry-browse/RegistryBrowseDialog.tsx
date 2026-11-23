@@ -334,6 +334,7 @@ export function RegistryBrowseDialog({
                     projectId={projectId}
                     value={localPath}
                     onChange={setLocalPath}
+                    uploadKind="skills"
                     dirsOnly
                     uploadAsSkillDir
                     placeholder={t('actions.skillLocalPathHint')}

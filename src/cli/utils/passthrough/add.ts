@@ -1,4 +1,3 @@
-import { join } from 'path';
 import { createAuthenticatedFetch } from '../../../shared/authenticated-fetch';
 import { generateProjectId } from '../../../shared/paths';
 import { getRepoSnapshot } from '../../commands/install-tasks/helpers/repo-snapshot';
@@ -18,7 +17,13 @@ import { tryResolveRegistryItem } from '../../commands/resolve-registry-source';
 import { upsertNativeMcpServer } from './native-mcp';
 import { passthroughInstallSkill } from './install-skill';
 import { passthroughInstallPlugin } from './install-plugin';
-import { expandSecretRecord, loadEnvFileOptional, openAuthDb, resolvePassthroughProviders } from './env';
+import {
+  expandSecretRecord,
+  loadEnvFileOptional,
+  openAuthDb,
+  resolvePassthroughCapabilitiesPath,
+  resolvePassthroughProviders,
+} from './env';
 import type { Skill, MCPServer } from '../../../types/capabilities';
 import type { Plugin } from '../../../types/capabilities';
 import type { Rule } from '../../../types/rules';
@@ -43,6 +48,7 @@ export async function passthroughAdd(
   const providers = await resolvePassthroughProviders(options.provider);
   const projectPath = process.cwd();
   const projectId = generateProjectId(projectPath);
+  const capabilitiesFilePath = await resolvePassthroughCapabilitiesPath(projectPath);
   const written: string[] = [];
   const warnings: string[] = [];
 
@@ -191,7 +197,7 @@ export async function passthroughAdd(
       })) as unknown as Rule;
       const authFetch = createAuthenticatedFetch(db);
       const body = await resolveRuleBody(entry, {
-        capabilitiesFilePath: join(projectPath, 'capabilities.yaml'),
+        capabilitiesFilePath,
         authFetch,
         getRepoSnapshot,
         noCache: !!options.noCache,
@@ -221,7 +227,7 @@ export async function passthroughAdd(
       const result = await installHooks({
         projectPath,
         projectId,
-        capabilitiesFilePath: join(projectPath, 'capabilities.yaml'),
+        capabilitiesFilePath,
         hooks: [entry],
         providers,
         db,

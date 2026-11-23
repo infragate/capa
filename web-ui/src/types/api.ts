@@ -255,6 +255,7 @@ export interface ProjectFsEntry {
   name: string;
   type: 'file' | 'dir';
   path: string;
+  storedPath?: string;
 }
 
 export interface ProjectFsListResponse {
