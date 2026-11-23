@@ -337,9 +337,15 @@ export async function saveLockfile(
 	const fmt = location?.format ?? (typeof formatOrLocation === "string" ? formatOrLocation : detectLockfileFormat(projectPath));
 	assertPrivateLockIsNotLinked(location);
 	try {
+		// Read only an existing lock: on a first install the rejected read of a
+		// missing file does not hold the compiled CLI's event loop open, so the
+		// process exits mid-install.
 		const existing = await loadLockfile(projectPath, location);
-		const sameFormat = sniffLockfileFormat(await Bun.file(path).text()) === fmt;
-		if (existing && sameFormat && lockfilesSemanticallyEqual(existing, lockfile)) {
+		if (
+			existing &&
+			lockfilesSemanticallyEqual(existing, lockfile) &&
+			sniffLockfileFormat(await Bun.file(path).text()) === fmt
+		) {
 			return;
 		}
 	} catch {
